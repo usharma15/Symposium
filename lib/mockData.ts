@@ -7,24 +7,38 @@ import {
   LibraryBig,
   MessagesSquare,
   ScrollText,
-  Sparkles,
-  UserRound
+  Sparkles
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-export type RoomId = "arrival" | "office" | "symposium" | "library" | "amphitheater";
+export type RoomId = "hall" | "office" | "symposium" | "library" | "amphitheater";
 export type FeedScope = "suggested" | "following" | "rooms";
 export type ContentKind = "paper" | "thought" | "draft" | "note" | "code";
+
+export type InquiryComment = {
+  author: string;
+  body: string;
+  stance: string;
+  replies?: InquiryComment[];
+};
+
+export type InquiryMetrics = {
+  endorsements: string;
+  reshares: string;
+  saves: string;
+  views: string;
+};
 
 export type InquiryItem = {
   id: string;
   kind: ContentKind;
-  room: Exclude<RoomId, "arrival">;
+  room: Exclude<RoomId, "hall">;
   title: string;
   author: string;
   affiliation: string;
   date: string;
   status: string;
+  metrics: InquiryMetrics;
   gatheringReason: string;
   excerpt: string;
   body: string;
@@ -38,11 +52,7 @@ export type InquiryItem = {
   evidence: string[];
   tests: string[];
   forks: string[];
-  comments: {
-    author: string;
-    body: string;
-    stance: string;
-  }[];
+  comments: InquiryComment[];
   saved?: boolean;
 };
 
@@ -60,20 +70,30 @@ export type Room = {
   includes: ContentKind[];
 };
 
+export type ResearchProfile = {
+  name: string;
+  handle: string;
+  role: string;
+  location: string;
+  bio: string;
+  proof: string[];
+  fields: string[];
+};
+
 export const rooms: Room[] = [
   {
-    id: "arrival",
-    name: "Arrival",
-    shortName: "Arrival",
+    id: "hall",
+    name: "Main Hall",
+    shortName: "Hall",
     icon: Columns3,
-    eyebrow: "Aegean approach",
-    title: "The stairs are open.",
+    eyebrow: "Interior threshold",
+    title: "The hall before the rooms.",
     description:
-      "Marble, sea light, bronze, glass. A first public form of Symposium, before the full world is built.",
-    feedLabel: "World map",
-    location: "Outer stairs",
-    ambient: "Sea wind under the columns",
-    includes: []
+      "A navigable interior: office to the left, amphitheater farther down, library up the short stair, and the public Symposium room on the right.",
+    feedLabel: "Wayfinding",
+    location: "Main hall",
+    ambient: "Footsteps, marble, low voices, sea light through the doors",
+    includes: ["paper", "thought"]
   },
   {
     id: "office",
@@ -156,12 +176,123 @@ export const libraryFolders = [
 
 export const profile = {
   name: "Udayan Sharma",
+  handle: "@usharma",
   role: "Independent researcher",
   location: "Science Rebirth",
+  bio:
+    "Building Science Rebirth and Symposium as a living public structure for serious inquiry, objections, forks, and proof-of-work.",
   proof: ["Dialogues started: 8", "Objections logged: 27", "Saved artifacts: 18"],
-  fields: ["Metascience", "Physics", "AI for science", "Institution design"],
-  icon: UserRound
+  fields: ["Metascience", "Physics", "AI for science", "Institution design"]
+} satisfies ResearchProfile;
+
+export const profilesByName: Record<string, ResearchProfile> = {
+  [profile.name]: profile,
+  "Mira Sato": {
+    name: "Mira Sato",
+    handle: "@mira_sato",
+    role: "Benchmark designer",
+    location: "Metascience Working Notes",
+    bio:
+      "Designs blind rediscovery tasks and critique protocols for AI-assisted scientific exploration.",
+    proof: ["Protocols drafted: 5", "Open objections answered: 18", "Forks adopted: 3"],
+    fields: ["AI agents", "Metascience", "Benchmarks", "Epistemology"]
+  },
+  "Elena Voss": {
+    name: "Elena Voss",
+    handle: "@e_voss",
+    role: "Historian of discovery",
+    location: "History of Discovery",
+    bio:
+      "Studies anomaly survival, prepared minds, and the institutional conditions that let strange results stay alive.",
+    proof: ["Case maps: 14", "Counterexamples logged: 31", "Archived failures: 22"],
+    fields: ["History of science", "Institutions", "Anomalies", "Discovery"]
+  },
+  "Leah K.": {
+    name: "Leah K.",
+    handle: "@leahk",
+    role: "Critic-engine researcher",
+    location: "Independent review room",
+    bio: "Works on critique architectures, failure modes, and review systems for live inquiry.",
+    proof: ["Critiques posted: 42", "Test designs: 6", "Useful objections: 17"],
+    fields: ["Critique", "Evaluation", "AI systems", "Review"]
+  },
+  "N. Arvind": {
+    name: "N. Arvind",
+    handle: "@narvind",
+    role: "Methods skeptic",
+    location: "Library upper floor",
+    bio: "Focuses on leakage, denominator problems, and whether beautiful protocols survive contact with reality.",
+    proof: ["Leakage audits: 9", "Replications checked: 12", "Methods notes: 21"],
+    fields: ["Methods", "Statistics", "Replication", "Benchmarks"]
+  },
+  Amara: {
+    name: "Amara",
+    handle: "@amara",
+    role: "Product theorist",
+    location: "Symposium room",
+    bio: "Explores how public interfaces can show the motion of an idea without flattening it into popularity.",
+    proof: ["Design notes: 26", "Lineage maps: 8", "Dialogue reviews: 11"],
+    fields: ["Product", "Dialogue", "Lineage", "Status"]
+  },
+  Jules: {
+    name: "Jules",
+    handle: "@jules",
+    role: "Interaction designer",
+    location: "Main hall",
+    bio: "Designs serious tools that keep structure without becoming dead administrative software.",
+    proof: ["Prototype passes: 13", "UX warnings: 19", "Room studies: 4"],
+    fields: ["Interaction design", "Tools", "Research UX", "Worldbuilding"]
+  },
+  "Rahul M.": {
+    name: "Rahul M.",
+    handle: "@rahulm",
+    role: "Historical methods critic",
+    location: "Library tables",
+    bio: "Keeps discovery stories honest by asking where the failures, denominators, and counterexamples went.",
+    proof: ["Counterexample lists: 7", "Historical audits: 15", "Saved threads: 24"],
+    fields: ["History", "Methods", "Failure archives", "Institutions"]
+  },
+  "Celia Noor": {
+    name: "Celia Noor",
+    handle: "@celianoor",
+    role: "Research systems analyst",
+    location: "Amphitheater",
+    bio: "Studies apparatus, specialization, and why some kinds of ambition are expensive before they are unfashionable.",
+    proof: ["System notes: 18", "Objections sharpened: 29", "Field maps: 6"],
+    fields: ["Research systems", "Specialization", "Infrastructure", "Ambition"]
+  },
+  "M. Iqbal": {
+    name: "M. Iqbal",
+    handle: "@miqbal",
+    role: "Institution builder",
+    location: "Rogue youth labs",
+    bio: "Works on practical conditions where talented young researchers can build artifacts instead of waiting for permission.",
+    proof: ["Pilot proposals: 3", "Advisor protocols: 5", "Proof logs: 16"],
+    fields: ["Youth labs", "Institution design", "Proof-of-work", "Mentorship"]
+  },
+  "AI tablet": {
+    name: "AI tablet",
+    handle: "@symposium_tablet",
+    role: "Site assistant",
+    location: "Every room",
+    bio:
+      "A contextual assistant that helps readers find objections, next tests, forks, and saved work inside the current room.",
+    proof: ["Context lenses: 5", "Prompt stacks: 14", "Notebook assists: 9"],
+    fields: ["Assistance", "Search", "Critique", "Synthesis"]
+  },
+  Self: profile
 };
+
+export const getProfileForName = (name: string): ResearchProfile =>
+  profilesByName[name] ?? {
+    name,
+    handle: `@${name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`,
+    role: "Symposium participant",
+    location: "Public rooms",
+    bio: "A participant in the current inquiry thread.",
+    proof: ["Comments: visible", "Room presence: active", "Profile: mock"],
+    fields: ["Inquiry", "Critique", "Discussion"]
+  };
 
 export const inquiryItems: InquiryItem[] = [
   {
@@ -173,6 +304,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "Metascience Working Notes",
     date: "Today",
     status: "Needs Experiment",
+    metrics: { endorsements: "412", reshares: "58", saves: "129", views: "18.4k" },
     gatheringReason:
       "People are here because the claim is useful but dangerous: AI can search broadly, but truth still has to be paid for.",
     excerpt:
@@ -216,13 +348,29 @@ export const inquiryItems: InquiryItem[] = [
         author: "Leah K.",
         stance: "Endorsement with reason",
         body:
-          "This is the first version that makes the cheap-exploration point measurable instead of rhetorical."
+          "This is the first version that makes the cheap-exploration point measurable instead of rhetorical.",
+        replies: [
+          {
+            author: "Mira Sato",
+            stance: "Author reply",
+            body:
+              "Yes. I want the benchmark to punish impressive search that never earns contact with held-out reality."
+          }
+        ]
       },
       {
         author: "N. Arvind",
         stance: "Strong objection",
         body:
-          "The benchmark needs a leakage penalty from the start or every result will look cleaner than it is."
+          "The benchmark needs a leakage penalty from the start or every result will look cleaner than it is.",
+        replies: [
+          {
+            author: "Leah K.",
+            stance: "Follow-up",
+            body:
+              "Agreed. I would add an adversarial source packet and score unsupported mechanism invention separately."
+          }
+        ]
       }
     ],
     saved: true
@@ -236,6 +384,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "Symposium product notebook",
     date: "Yesterday",
     status: "Core Shape",
+    metrics: { endorsements: "771", reshares: "146", saves: "244", views: "31.9k" },
     gatheringReason:
       "People are here because a normal feed will collapse Symposium into another academic social network.",
     excerpt:
@@ -276,7 +425,15 @@ export const inquiryItems: InquiryItem[] = [
         author: "Amara",
         stance: "Product note",
         body:
-          "The status panel should explain why the label changed, not just show the label."
+          "The status panel should explain why the label changed, not just show the label.",
+        replies: [
+          {
+            author: "Udayan Sharma",
+            stance: "Author reply",
+            body:
+              "Yes. Status without memory becomes a badge. The point is to show what moved the idea."
+          }
+        ]
       },
       {
         author: "Jules",
@@ -296,6 +453,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "History of Discovery",
     date: "Jun 10",
     status: "Contested",
+    metrics: { endorsements: "236", reshares: "42", saves: "88", views: "9.6k" },
     gatheringReason:
       "People are here because accident examples are powerful but easy to romanticize.",
     excerpt:
@@ -334,7 +492,15 @@ export const inquiryItems: InquiryItem[] = [
         author: "Rahul M.",
         stance: "Strong objection",
         body:
-          "The piece needs failure-rate context. Otherwise it becomes a beautiful story with no denominator."
+          "The piece needs failure-rate context. Otherwise it becomes a beautiful story with no denominator.",
+        replies: [
+          {
+            author: "Elena Voss",
+            stance: "Author reply",
+            body:
+              "That is the right pressure. I am separating survival stories from the archive of anomalies that went nowhere."
+          }
+        ]
       }
     ],
     saved: true
@@ -348,6 +514,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "Amphitheater note",
     date: "Jun 9",
     status: "Hot Objection",
+    metrics: { endorsements: "1.8k", reshares: "391", saves: "522", views: "74.2k" },
     gatheringReason:
       "People are here because the line is morally sharp and probably incomplete, which makes it worth fighting with.",
     excerpt:
@@ -390,7 +557,15 @@ export const inquiryItems: InquiryItem[] = [
         author: "Celia Noor",
         stance: "Objection",
         body:
-          "The phrasing is powerful, but it needs the role of expensive apparatus and specialization."
+          "The phrasing is powerful, but it needs the role of expensive apparatus and specialization.",
+        replies: [
+          {
+            author: "Udayan Sharma",
+            stance: "Author reply",
+            body:
+              "Yes. The claim should attack learned smallness without pretending equipment and specialization are fake constraints."
+          }
+        ]
       },
       {
         author: "M. Iqbal",
@@ -409,6 +584,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "Office code notebook",
     date: "Jun 8",
     status: "Prototype",
+    metrics: { endorsements: "94", reshares: "12", saves: "41", views: "2.1k" },
     gatheringReason:
       "This is saved because it could become the first proof-of-work artifact behind the AI/metascience idea.",
     excerpt:
@@ -458,6 +634,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "Office draft stack",
     date: "Jun 7",
     status: "Draft",
+    metrics: { endorsements: "63", reshares: "9", saves: "57", views: "1.4k" },
     gatheringReason:
       "This is a private working draft for turning the Science Rebirth diagnosis into an institutional pilot.",
     excerpt:

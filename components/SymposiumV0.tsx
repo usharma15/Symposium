@@ -1,34 +1,37 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
-  BookMarked,
-  BookOpen,
+  Bookmark,
   BrainCircuit,
   ChevronRight,
-  LibraryBig,
-  MessageSquareQuote,
+  Eye,
+  MessageCircle,
   Moon,
   NotebookPen,
-  PanelRightOpen,
+  Repeat2,
   Search,
   Send,
   Sparkles,
   Sun,
+  ThumbsUp,
   UserRound,
   X
 } from "lucide-react";
 import {
   feedScopes,
+  getProfileForName,
   inquiryItems,
   libraryFolders,
   profile,
   roomChips,
   rooms,
   type FeedScope,
+  type InquiryComment,
   type InquiryItem,
+  type ResearchProfile,
   type Room,
   type RoomId
 } from "@/lib/mockData";
@@ -45,28 +48,41 @@ const kindLabels: Record<InquiryItem["kind"], string> = {
 
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
 
+const countComments = (comments: InquiryComment[]): number =>
+  comments.reduce((total, comment) => total + 1 + countComments(comment.replies ?? []), 0);
+
+const initial = (name: string) =>
+  name
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
 export function SymposiumV0() {
   const [theme, setTheme] = useState<Theme>("day");
-  const [activeRoom, setActiveRoom] = useState<RoomId>("arrival");
+  const [entryComplete, setEntryComplete] = useState<boolean | null>(null);
+  const [activeRoom, setActiveRoom] = useState<RoomId>("hall");
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
   const [roomChip, setRoomChip] = useState(roomChips[0]);
   const [query, setQuery] = useState("");
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [tabletOpen, setTabletOpen] = useState(false);
   const [notebookOpen, setNotebookOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [selectedProfileName, setSelectedProfileName] = useState<string | null>(null);
   const [noteText, setNoteText] = useState(
     "First note: make the thing feel alive without pretending the whole world is built yet."
   );
 
   const activeRoomData = getRoom(activeRoom);
   const selectedItem = inquiryItems.find((item) => item.id === selectedItemId) ?? null;
+  const selectedProfile = selectedProfileName ? getProfileForName(selectedProfileName) : null;
 
   const visibleItems = useMemo(() => {
     const lowered = query.trim().toLowerCase();
     return inquiryItems
       .filter((item) => {
-        if (activeRoom === "arrival") return true;
+        if (activeRoom === "hall") return item.kind === "paper" || item.kind === "thought";
         if (activeRoom === "office") return item.saved || item.room === "office";
         if (activeRoom === "symposium") return item.kind === "paper" || item.kind === "thought";
         if (activeRoom === "library") return item.kind === "paper";
@@ -85,9 +101,24 @@ export function SymposiumV0() {
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("symposium-theme") as Theme | null;
     const storedNote = window.localStorage.getItem("symposium-notebook");
+    const hasEntered = window.sessionStorage.getItem("symposium-entry-complete") === "true";
+
     if (storedTheme === "day" || storedTheme === "night") setTheme(storedTheme);
     if (storedNote) setNoteText(storedNote);
+    setEntryComplete(hasEntered);
   }, []);
+
+  useEffect(() => {
+    if (entryComplete !== false) return undefined;
+
+    const timer = window.setTimeout(() => {
+      window.sessionStorage.setItem("symposium-entry-complete", "true");
+      setEntryComplete(true);
+      setActiveRoom("hall");
+    }, 5000);
+
+    return () => window.clearTimeout(timer);
+  }, [entryComplete]);
 
   useEffect(() => {
     window.localStorage.setItem("symposium-theme", theme);
@@ -101,18 +132,41 @@ export function SymposiumV0() {
     setActiveRoom(roomId);
     setSelectedItemId(null);
     setQuery("");
+    setSelectedProfileName(null);
+  };
+
+  const openProfile = (name: string) => {
+    setTabletOpen(false);
+    setNotebookOpen(false);
+    setSelectedProfileName(name);
+  };
+
+  const openNotebook = () => {
+    setTabletOpen(false);
+    setSelectedProfileName(null);
+    setNotebookOpen(true);
+  };
+
+  const openTablet = () => {
+    setNotebookOpen(false);
+    setSelectedProfileName(null);
+    setTabletOpen(true);
   };
 
   const currentContext = selectedItem
     ? `${selectedItem.title}: ${selectedItem.gatheringReason}`
     : `${activeRoomData.name}: ${activeRoomData.description}`;
 
+  if (entryComplete !== true) {
+    return <EntrySequence theme={theme} />;
+  }
+
   return (
     <main className={`symposium-shell ${theme}`} data-room={activeRoom}>
       <div className="ambient-layer" aria-hidden="true" />
 
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => enterRoom("arrival")}>
+        <button className="brand" type="button" onClick={() => enterRoom("hall")}>
           <span className="brand-glyph">S</span>
           <span>
             <strong>SYMPOSIUM</strong>
@@ -133,7 +187,7 @@ export function SymposiumV0() {
             className="icon-button"
             type="button"
             title="Open notebook"
-            onClick={() => setNotebookOpen(true)}
+            onClick={openNotebook}
           >
             <NotebookPen size={18} />
           </button>
@@ -141,23 +195,21 @@ export function SymposiumV0() {
             className="icon-button"
             type="button"
             title="Open AI tablet"
-            onClick={() => setTabletOpen(true)}
+            onClick={openTablet}
           >
             <BrainCircuit size={18} />
           </button>
           <button
             className="profile-button"
             type="button"
-            title="Profile"
-            onClick={() => setProfileOpen((open) => !open)}
+            title="Your profile"
+            onClick={() => openProfile(profile.name)}
           >
             <UserRound size={18} />
             <span>{profile.name}</span>
           </button>
         </nav>
       </header>
-
-      {profileOpen ? <ProfilePanel onClose={() => setProfileOpen(false)} /> : null}
 
       <aside className="world-rail" aria-label="Rooms">
         {rooms.map((room) => {
@@ -178,15 +230,16 @@ export function SymposiumV0() {
       </aside>
 
       <section className="stage">
-        {activeRoom === "arrival" ? (
-          <ArrivalView onEnter={enterRoom} />
+        {activeRoom === "hall" ? (
+          <HallView onEnter={enterRoom} />
         ) : selectedItem ? (
           <DetailView
             item={selectedItem}
             room={activeRoomData}
             onBack={() => setSelectedItemId(null)}
-            onOpenTablet={() => setTabletOpen(true)}
-            onOpenNotebook={() => setNotebookOpen(true)}
+            onOpenTablet={openTablet}
+            onOpenNotebook={openNotebook}
+            onOpenProfile={openProfile}
           />
         ) : (
           <RoomView
@@ -199,6 +252,7 @@ export function SymposiumV0() {
             onRoomChip={setRoomChip}
             onQuery={setQuery}
             onSelect={setSelectedItemId}
+            onOpenProfile={openProfile}
           />
         )}
       </section>
@@ -207,7 +261,7 @@ export function SymposiumV0() {
         className="pocket pocket-left"
         type="button"
         title="Notebook"
-        onClick={() => setNotebookOpen(true)}
+        onClick={openNotebook}
       >
         <NotebookPen size={18} />
         <span>Notebook</span>
@@ -217,13 +271,17 @@ export function SymposiumV0() {
         className="pocket pocket-right"
         type="button"
         title="AI tablet"
-        onClick={() => setTabletOpen(true)}
+        onClick={openTablet}
       >
         <BrainCircuit size={18} />
         <span>AI Tablet</span>
       </button>
 
       <MovementPad room={activeRoomData} />
+
+      {selectedProfile ? (
+        <ProfilePanel profile={selectedProfile} onClose={() => setSelectedProfileName(null)} />
+      ) : null}
 
       {notebookOpen ? (
         <NotebookPanel
@@ -246,59 +304,99 @@ export function SymposiumV0() {
   );
 }
 
-function ArrivalView({ onEnter }: { onEnter: (roomId: RoomId) => void }) {
+function EntrySequence({ theme }: { theme: Theme }) {
   return (
-    <div className="arrival-grid">
-      <section className="arrival-hero">
-        <Image
-          src="/symposium-arrival.jpg"
-          alt="Greco-futurist Symposium building above the Aegean sea"
-          fill
-          priority
-          sizes="100vw"
-          className="arrival-image"
-        />
-        <div className="arrival-shade" />
-        <div className="arrival-copy">
-          <p className="eyebrow">Aegean approach</p>
-          <h1>SYMPOSIUM</h1>
-          <p>
-            The first public hall: papers, thoughts, objections, saved work,
-            notebooks, and AI-assisted inquiry inside one early world.
-          </p>
-          <div className="arrival-actions">
-            <button className="primary-button" type="button" onClick={() => onEnter("symposium")}>
-              <MessagesIcon />
-              Enter the hall
-            </button>
-            <button className="secondary-button" type="button" onClick={() => onEnter("library")}>
-              <LibraryBig size={18} />
-              Go to library
-            </button>
-          </div>
+    <main className={`entry-sequence ${theme}`} aria-label="Approaching Symposium">
+      <Image
+        src="/symposium-arrival.jpg"
+        alt="Greco-futurist Symposium building above the Aegean sea"
+        fill
+        priority
+        sizes="100vw"
+        className="entry-image"
+      />
+      <div className="entry-veil" />
+      <div className="entry-stair-lines" aria-hidden="true">
+        {Array.from({ length: 9 }).map((_, index) => (
+          <span key={index} />
+        ))}
+      </div>
+      <div className="entry-copy">
+        <p>SYMPOSIUM</p>
+        <span>Approaching the hall</span>
+      </div>
+    </main>
+  );
+}
+
+function HallView({ onEnter }: { onEnter: (roomId: RoomId) => void }) {
+  const doorIds: Array<Exclude<RoomId, "hall">> = [
+    "office",
+    "amphitheater",
+    "library",
+    "symposium"
+  ];
+
+  return (
+    <div className="hall-layout">
+      <section className="hall-world" aria-label="Main hall">
+        <div className="hall-vault" aria-hidden="true" />
+        <div className="hall-floor" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
         </div>
+        <div className="library-stair" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+        {doorIds.map((roomId) => {
+          const room = getRoom(roomId);
+          const Icon = room.icon;
+          return (
+            <button
+              key={room.id}
+              className={`hall-door hall-door-${room.id}`}
+              type="button"
+              onClick={() => onEnter(room.id)}
+            >
+              <span className="door-icon">
+                <Icon size={20} />
+              </span>
+              <span>
+                <small>{room.location}</small>
+                <strong>{room.name}</strong>
+                <em>{room.feedLabel}</em>
+              </span>
+              <ChevronRight size={17} />
+            </button>
+          );
+        })}
       </section>
 
-      <section className="room-map" aria-label="Room map">
-        {rooms
-          .filter((room) => room.id !== "arrival")
-          .map((room) => {
-            const Icon = room.icon;
+      <aside className="hall-orientation">
+        <p className="eyebrow">Main hall</p>
+        <h1>Choose a room from the floor.</h1>
+        <p>
+          Office sits to the left, the Amphitheater is farther down that same side,
+          the Library is up the short stair at the end, and the public Symposium
+          room opens on the right.
+        </p>
+        <div className="hall-room-list">
+          {doorIds.map((roomId) => {
+            const room = getRoom(roomId);
             return (
-              <button className="room-door" key={room.id} type="button" onClick={() => onEnter(room.id)}>
-                <span className="door-icon">
-                  <Icon size={20} />
-                </span>
-                <span>
-                  <small>{room.eyebrow}</small>
-                  <strong>{room.name}</strong>
-                  <em>{room.feedLabel}</em>
-                </span>
-                <ChevronRight size={18} />
+              <button key={room.id} type="button" onClick={() => onEnter(room.id)}>
+                <span>{room.name}</span>
+                <small>{room.feedLabel}</small>
               </button>
             );
           })}
-      </section>
+        </div>
+      </aside>
     </div>
   );
 }
@@ -312,7 +410,8 @@ function RoomView({
   onFeedScope,
   onRoomChip,
   onQuery,
-  onSelect
+  onSelect,
+  onOpenProfile
 }: {
   room: Room;
   items: InquiryItem[];
@@ -323,6 +422,7 @@ function RoomView({
   onRoomChip: (chip: string) => void;
   onQuery: (query: string) => void;
   onSelect: (id: string) => void;
+  onOpenProfile: (name: string) => void;
 }) {
   const RoomIcon = room.icon;
 
@@ -381,9 +481,14 @@ function RoomView({
 
       {room.id === "office" ? <OfficeFolders /> : null}
 
-      <section className="feed-grid">
+      <section className="feed-stream" aria-label={`${room.name} feed`}>
         {items.map((item) => (
-          <FeedCard key={item.id} item={item} onSelect={onSelect} />
+          <FeedPost
+            key={item.id}
+            item={item}
+            onSelect={onSelect}
+            onOpenProfile={onOpenProfile}
+          />
         ))}
       </section>
     </div>
@@ -407,30 +512,116 @@ function OfficeFolders() {
   );
 }
 
-function FeedCard({ item, onSelect }: { item: InquiryItem; onSelect: (id: string) => void }) {
+function FeedPost({
+  item,
+  onSelect,
+  onOpenProfile
+}: {
+  item: InquiryItem;
+  onSelect: (id: string) => void;
+  onOpenProfile: (name: string) => void;
+}) {
+  const openPost = () => onSelect(item.id);
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openPost();
+    }
+  };
+
   return (
-    <article className="feed-card" data-testid={`feed-card-${item.id}`}>
-      <div className="card-topline">
-        <span>{kindLabels[item.kind]}</span>
-        <span>{item.status}</span>
-      </div>
-      <h2>{item.title}</h2>
-      <p>{item.excerpt}</p>
-      <div className="tag-row">
-        {item.tags.slice(0, 3).map((tag) => (
-          <span key={tag}>{tag}</span>
-        ))}
-      </div>
-      <div className="card-footer">
-        <span>
-          {item.author} · {item.date}
-        </span>
-        <button type="button" data-testid={`open-${item.id}`} onClick={() => onSelect(item.id)}>
-          Open
-          <ChevronRight size={16} />
-        </button>
+    <article
+      className="feed-post"
+      data-testid={`feed-card-${item.id}`}
+      role="button"
+      tabIndex={0}
+      onClick={openPost}
+      onKeyDown={onKeyDown}
+    >
+      <PostAuthor
+        item={item}
+        onOpenProfile={onOpenProfile}
+        onClickStop={(event) => event.stopPropagation()}
+      />
+      <div className="post-body">
+        <div className="card-topline">
+          <span>{kindLabels[item.kind]}</span>
+          <span>{item.status}</span>
+        </div>
+        <h2>{item.title}</h2>
+        <p>{item.excerpt}</p>
+        <div className="tag-row">
+          {item.tags.slice(0, 4).map((tag) => (
+            <span key={tag}>{tag}</span>
+          ))}
+        </div>
+        <SocialActions item={item} commentCount={countComments(item.comments)} />
       </div>
     </article>
+  );
+}
+
+function PostAuthor({
+  item,
+  onOpenProfile,
+  onClickStop
+}: {
+  item: InquiryItem;
+  onOpenProfile: (name: string) => void;
+  onClickStop?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      className="post-author"
+      type="button"
+      onClick={(event) => {
+        onClickStop?.(event);
+        onOpenProfile(item.author);
+      }}
+    >
+      <span className="avatar">{initial(item.author)}</span>
+      <span>
+        <strong>{item.author}</strong>
+        <small>
+          {item.affiliation} · {item.date}
+        </small>
+      </span>
+    </button>
+  );
+}
+
+function SocialActions({
+  item,
+  commentCount
+}: {
+  item: InquiryItem;
+  commentCount: number;
+}) {
+  const actions = [
+    { label: "Endorse", value: item.metrics.endorsements, icon: ThumbsUp },
+    { label: "Discuss", value: commentCount, icon: MessageCircle },
+    { label: "Reshare", value: item.metrics.reshares, icon: Repeat2 },
+    { label: "Save", value: item.metrics.saves, icon: Bookmark },
+    { label: "Views", value: item.metrics.views, icon: Eye }
+  ];
+
+  return (
+    <div className="social-actions" aria-label="Post actions">
+      {actions.map((action) => {
+        const Icon = action.icon;
+        return (
+          <button
+            key={action.label}
+            type="button"
+            title={action.label}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Icon size={16} />
+            <span>{action.value}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -439,13 +630,15 @@ function DetailView({
   room,
   onBack,
   onOpenTablet,
-  onOpenNotebook
+  onOpenNotebook,
+  onOpenProfile
 }: {
   item: InquiryItem;
   room: Room;
   onBack: () => void;
   onOpenTablet: () => void;
   onOpenNotebook: () => void;
+  onOpenProfile: (name: string) => void;
 }) {
   return (
     <article className="detail-layout">
@@ -459,11 +652,18 @@ function DetailView({
           {kindLabels[item.kind]} · {item.status}
         </p>
         <h1>{item.title}</h1>
-        <p className="detail-byline">
-          {item.author} · {item.affiliation} · {item.date}
-        </p>
+        <button className="detail-byline-button" type="button" onClick={() => onOpenProfile(item.author)}>
+          <span className="avatar">{initial(item.author)}</span>
+          <span>
+            <strong>{item.author}</strong>
+            <small>
+              {item.affiliation} · {item.date}
+            </small>
+          </span>
+        </button>
         <p className="gathering-reason">{item.gatheringReason}</p>
         <p className="detail-body">{item.body}</p>
+        <SocialActions item={item} commentCount={countComments(item.comments)} />
 
         <DetailSection title="Claims" items={item.claims} />
         <DetailSection title="Objections" items={item.objections} />
@@ -473,13 +673,7 @@ function DetailView({
 
         <section className="comments-section">
           <h2>Discussion</h2>
-          {item.comments.map((comment) => (
-            <div className="comment" key={`${comment.author}-${comment.stance}`}>
-              <strong>{comment.author}</strong>
-              <span>{comment.stance}</span>
-              <p>{comment.body}</p>
-            </div>
-          ))}
+          <CommentThread comments={item.comments} onOpenProfile={onOpenProfile} />
         </section>
       </section>
 
@@ -519,6 +713,36 @@ function DetailSection({ title, items }: { title: string; items: string[] }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+function CommentThread({
+  comments,
+  onOpenProfile,
+  depth = 0
+}: {
+  comments: InquiryComment[];
+  onOpenProfile: (name: string) => void;
+  depth?: number;
+}) {
+  return (
+    <div className={`comment-thread depth-${depth}`}>
+      {comments.map((comment) => (
+        <article className="comment" key={`${comment.author}-${comment.stance}-${comment.body}`}>
+          <button type="button" onClick={() => onOpenProfile(comment.author)}>
+            <span className="avatar small">{initial(comment.author)}</span>
+            <span>
+              <strong>{comment.author}</strong>
+              <small>{comment.stance}</small>
+            </span>
+          </button>
+          <p>{comment.body}</p>
+          {comment.replies?.length ? (
+            <CommentThread comments={comment.replies} onOpenProfile={onOpenProfile} depth={depth + 1} />
+          ) : null}
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -596,12 +820,47 @@ function TabletPanel({
   );
 }
 
+function ProfilePanel({
+  profile: person,
+  onClose
+}: {
+  profile: ResearchProfile;
+  onClose: () => void;
+}) {
+  return (
+    <aside className="profile-panel">
+      <PanelHeader icon={<UserRound size={18} />} title="Profile" onClose={onClose} />
+      <div className="profile-heading">
+        <span className="avatar large">{initial(person.name)}</span>
+        <span>
+          <h2>{person.name}</h2>
+          <small>{person.handle}</small>
+        </span>
+      </div>
+      <p>
+        {person.role} · {person.location}
+      </p>
+      <p>{person.bio}</p>
+      <div className="profile-fields">
+        {person.fields.map((field) => (
+          <span key={field}>{field}</span>
+        ))}
+      </div>
+      <div className="profile-proof">
+        {person.proof.map((proof) => (
+          <strong key={proof}>{proof}</strong>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
 function PanelHeader({
   icon,
   title,
   onClose
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   title: string;
   onClose: () => void;
 }) {
@@ -618,29 +877,6 @@ function PanelHeader({
   );
 }
 
-function ProfilePanel({ onClose }: { onClose: () => void }) {
-  const Icon = profile.icon;
-  return (
-    <aside className="profile-panel">
-      <PanelHeader icon={<Icon size={18} />} title="Profile" onClose={onClose} />
-      <h2>{profile.name}</h2>
-      <p>
-        {profile.role} · {profile.location}
-      </p>
-      <div className="profile-fields">
-        {profile.fields.map((field) => (
-          <span key={field}>{field}</span>
-        ))}
-      </div>
-      <div className="profile-proof">
-        {profile.proof.map((proof) => (
-          <strong key={proof}>{proof}</strong>
-        ))}
-      </div>
-    </aside>
-  );
-}
-
 function MovementPad({ room }: { room: Room }) {
   return (
     <aside className="movement-pad" aria-label="Movement concept">
@@ -651,8 +887,4 @@ function MovementPad({ room }: { room: Room }) {
       <small>{room.ambient}</small>
     </aside>
   );
-}
-
-function MessagesIcon() {
-  return <MessageSquareQuote size={18} />;
 }
