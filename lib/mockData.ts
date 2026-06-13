@@ -23,10 +23,11 @@ export type InquiryComment = {
 };
 
 export type InquiryMetrics = {
-  endorsements: string;
-  reshares: string;
+  signal: string;
+  critiques: string;
+  forks: string;
   saves: string;
-  views: string;
+  reads: string;
 };
 
 export type InquiryItem = {
@@ -76,7 +77,6 @@ export type ResearchProfile = {
   role: string;
   location: string;
   bio: string;
-  proof: string[];
   fields: string[];
 };
 
@@ -181,7 +181,6 @@ export const profile = {
   location: "Science Rebirth",
   bio:
     "Building Science Rebirth and Symposium as a living public structure for serious inquiry, objections, forks, and proof-of-work.",
-  proof: ["Dialogues started: 8", "Objections logged: 27", "Saved artifacts: 18"],
   fields: ["Metascience", "Physics", "AI for science", "Institution design"]
 } satisfies ResearchProfile;
 
@@ -194,7 +193,6 @@ export const profilesByName: Record<string, ResearchProfile> = {
     location: "Metascience Working Notes",
     bio:
       "Designs blind rediscovery tasks and critique protocols for AI-assisted scientific exploration.",
-    proof: ["Protocols drafted: 5", "Open objections answered: 18", "Forks adopted: 3"],
     fields: ["AI agents", "Metascience", "Benchmarks", "Epistemology"]
   },
   "Elena Voss": {
@@ -204,7 +202,6 @@ export const profilesByName: Record<string, ResearchProfile> = {
     location: "History of Discovery",
     bio:
       "Studies anomaly survival, prepared minds, and the institutional conditions that let strange results stay alive.",
-    proof: ["Case maps: 14", "Counterexamples logged: 31", "Archived failures: 22"],
     fields: ["History of science", "Institutions", "Anomalies", "Discovery"]
   },
   "Leah K.": {
@@ -213,7 +210,6 @@ export const profilesByName: Record<string, ResearchProfile> = {
     role: "Critic-engine researcher",
     location: "Independent review room",
     bio: "Works on critique architectures, failure modes, and review systems for live inquiry.",
-    proof: ["Critiques posted: 42", "Test designs: 6", "Useful objections: 17"],
     fields: ["Critique", "Evaluation", "AI systems", "Review"]
   },
   "N. Arvind": {
@@ -222,7 +218,6 @@ export const profilesByName: Record<string, ResearchProfile> = {
     role: "Methods skeptic",
     location: "Library upper floor",
     bio: "Focuses on leakage, denominator problems, and whether beautiful protocols survive contact with reality.",
-    proof: ["Leakage audits: 9", "Replications checked: 12", "Methods notes: 21"],
     fields: ["Methods", "Statistics", "Replication", "Benchmarks"]
   },
   Amara: {
@@ -231,7 +226,6 @@ export const profilesByName: Record<string, ResearchProfile> = {
     role: "Product theorist",
     location: "Symposium room",
     bio: "Explores how public interfaces can show the motion of an idea without flattening it into popularity.",
-    proof: ["Design notes: 26", "Lineage maps: 8", "Dialogue reviews: 11"],
     fields: ["Product", "Dialogue", "Lineage", "Status"]
   },
   Jules: {
@@ -240,7 +234,6 @@ export const profilesByName: Record<string, ResearchProfile> = {
     role: "Interaction designer",
     location: "Main hall",
     bio: "Designs serious tools that keep structure without becoming dead administrative software.",
-    proof: ["Prototype passes: 13", "UX warnings: 19", "Room studies: 4"],
     fields: ["Interaction design", "Tools", "Research UX", "Worldbuilding"]
   },
   "Rahul M.": {
@@ -249,7 +242,6 @@ export const profilesByName: Record<string, ResearchProfile> = {
     role: "Historical methods critic",
     location: "Library tables",
     bio: "Keeps discovery stories honest by asking where the failures, denominators, and counterexamples went.",
-    proof: ["Counterexample lists: 7", "Historical audits: 15", "Saved threads: 24"],
     fields: ["History", "Methods", "Failure archives", "Institutions"]
   },
   "Celia Noor": {
@@ -258,7 +250,6 @@ export const profilesByName: Record<string, ResearchProfile> = {
     role: "Research systems analyst",
     location: "Amphitheater",
     bio: "Studies apparatus, specialization, and why some kinds of ambition are expensive before they are unfashionable.",
-    proof: ["System notes: 18", "Objections sharpened: 29", "Field maps: 6"],
     fields: ["Research systems", "Specialization", "Infrastructure", "Ambition"]
   },
   "M. Iqbal": {
@@ -267,7 +258,6 @@ export const profilesByName: Record<string, ResearchProfile> = {
     role: "Institution builder",
     location: "Rogue youth labs",
     bio: "Works on practical conditions where talented young researchers can build artifacts instead of waiting for permission.",
-    proof: ["Pilot proposals: 3", "Advisor protocols: 5", "Proof logs: 16"],
     fields: ["Youth labs", "Institution design", "Proof-of-work", "Mentorship"]
   },
   "AI tablet": {
@@ -277,7 +267,6 @@ export const profilesByName: Record<string, ResearchProfile> = {
     location: "Every room",
     bio:
       "A contextual assistant that helps readers find objections, next tests, forks, and saved work inside the current room.",
-    proof: ["Context lenses: 5", "Prompt stacks: 14", "Notebook assists: 9"],
     fields: ["Assistance", "Search", "Critique", "Synthesis"]
   },
   Self: profile
@@ -290,7 +279,6 @@ export const getProfileForName = (name: string): ResearchProfile =>
     role: "Symposium participant",
     location: "Public rooms",
     bio: "A participant in the current inquiry thread.",
-    proof: ["Comments: visible", "Room presence: active", "Profile: mock"],
     fields: ["Inquiry", "Critique", "Discussion"]
   };
 
@@ -304,7 +292,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "Metascience Working Notes",
     date: "Today",
     status: "Needs Experiment",
-    metrics: { endorsements: "412", reshares: "58", saves: "129", views: "18.4k" },
+    metrics: { signal: "412", critiques: "4", forks: "58", saves: "129", reads: "18.4k" },
     gatheringReason:
       "People are here because the claim is useful but dangerous: AI can search broadly, but truth still has to be paid for.",
     excerpt:
@@ -384,7 +372,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "Symposium product notebook",
     date: "Yesterday",
     status: "Core Shape",
-    metrics: { endorsements: "771", reshares: "146", saves: "244", views: "31.9k" },
+    metrics: { signal: "771", critiques: "3", forks: "146", saves: "244", reads: "31.9k" },
     gatheringReason:
       "People are here because a normal feed will collapse Symposium into another academic social network.",
     excerpt:
@@ -453,7 +441,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "History of Discovery",
     date: "Jun 10",
     status: "Contested",
-    metrics: { endorsements: "236", reshares: "42", saves: "88", views: "9.6k" },
+    metrics: { signal: "236", critiques: "2", forks: "42", saves: "88", reads: "9.6k" },
     gatheringReason:
       "People are here because accident examples are powerful but easy to romanticize.",
     excerpt:
@@ -514,7 +502,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "Amphitheater note",
     date: "Jun 9",
     status: "Hot Objection",
-    metrics: { endorsements: "1.8k", reshares: "391", saves: "522", views: "74.2k" },
+    metrics: { signal: "1.8k", critiques: "5", forks: "391", saves: "522", reads: "74.2k" },
     gatheringReason:
       "People are here because the line is morally sharp and probably incomplete, which makes it worth fighting with.",
     excerpt:
@@ -584,7 +572,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "Office code notebook",
     date: "Jun 8",
     status: "Prototype",
-    metrics: { endorsements: "94", reshares: "12", saves: "41", views: "2.1k" },
+    metrics: { signal: "94", critiques: "1", forks: "12", saves: "41", reads: "2.1k" },
     gatheringReason:
       "This is saved because it could become the first proof-of-work artifact behind the AI/metascience idea.",
     excerpt:
@@ -634,7 +622,7 @@ export const inquiryItems: InquiryItem[] = [
     affiliation: "Office draft stack",
     date: "Jun 7",
     status: "Draft",
-    metrics: { endorsements: "63", reshares: "9", saves: "57", views: "1.4k" },
+    metrics: { signal: "63", critiques: "1", forks: "9", saves: "57", reads: "1.4k" },
     gatheringReason:
       "This is a private working draft for turning the Science Rebirth diagnosis into an institutional pilot.",
     excerpt:

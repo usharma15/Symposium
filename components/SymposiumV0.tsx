@@ -1,22 +1,21 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
   Bookmark,
   BrainCircuit,
   ChevronRight,
   Eye,
+  GitFork,
   MessageCircle,
   Moon,
   NotebookPen,
-  Repeat2,
   Search,
   Send,
   Sparkles,
   Sun,
-  ThumbsUp,
   UserRound,
   X
 } from "lucide-react";
@@ -37,6 +36,7 @@ import {
 } from "@/lib/mockData";
 
 type Theme = "day" | "night";
+type ProfileTab = "all" | "papers" | "thoughts" | "reshares" | "signals";
 
 const kindLabels: Record<InquiryItem["kind"], string> = {
   paper: "Paper",
@@ -51,6 +51,44 @@ const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? 
 const countComments = (comments: InquiryComment[]): number =>
   comments.reduce((total, comment) => total + 1 + countComments(comment.replies ?? []), 0);
 
+const topicTerms: Record<string, string[]> = {
+  "Frontier Physics": ["physics", "hidden", "oscillator", "law", "apparatus"],
+  "AI Metascience": ["ai", "agent", "agents", "metascience", "benchmark", "simulation"],
+  "Rogue Youth Labs": ["youth lab", "youth labs", "pilot", "proof-of-work"],
+  "History Of Discovery": ["history", "discovery", "accident", "anomaly", "prepared"],
+  "Tools And Instruments": ["tool", "tools", "code", "instrument", "runner", "notebook"]
+};
+
+const searchableText = (item: InquiryItem) =>
+  [
+    item.title,
+    item.author,
+    item.affiliation,
+    item.status,
+    item.excerpt,
+    item.body,
+    ...item.tags,
+    ...item.claims,
+    ...item.objections,
+    ...item.evidence,
+    ...item.tests,
+    ...item.forks
+  ]
+    .join(" ")
+    .toLowerCase();
+
+const matchesTopic = (item: InquiryItem, chip: string) => {
+  const terms = topicTerms[chip] ?? [];
+  const text = searchableText(item);
+  return terms.some((term) => text.includes(term));
+};
+
+const metricScore = (value: string) => {
+  const normalized = value.toLowerCase().replace(/,/g, "");
+  const multiplier = normalized.endsWith("k") ? 1000 : 1;
+  return Number.parseFloat(normalized) * multiplier || 0;
+};
+
 const initial = (name: string) =>
   name
     .split(" ")
@@ -63,6 +101,7 @@ export function SymposiumV0() {
   const [theme, setTheme] = useState<Theme>("day");
   const [entryComplete, setEntryComplete] = useState<boolean | null>(null);
   const [activeRoom, setActiveRoom] = useState<RoomId>("hall");
+  const [items, setItems] = useState<InquiryItem[]>(inquiryItems);
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
   const [roomChip, setRoomChip] = useState(roomChips[0]);
   const [query, setQuery] = useState("");
@@ -75,12 +114,12 @@ export function SymposiumV0() {
   );
 
   const activeRoomData = getRoom(activeRoom);
-  const selectedItem = inquiryItems.find((item) => item.id === selectedItemId) ?? null;
+  const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
   const selectedProfile = selectedProfileName ? getProfileForName(selectedProfileName) : null;
 
   const visibleItems = useMemo(() => {
     const lowered = query.trim().toLowerCase();
-    return inquiryItems
+    const roomFiltered = items
       .filter((item) => {
         if (activeRoom === "hall") return item.kind === "paper" || item.kind === "thought";
         if (activeRoom === "office") return item.saved || item.room === "office";
@@ -90,13 +129,21 @@ export function SymposiumV0() {
         return true;
       })
       .filter((item) => {
+        if (feedScope === "following") return item.author === profile.name || item.saved;
+        if (feedScope === "rooms") return matchesTopic(item, roomChip);
+        return true;
+      })
+      .filter((item) => {
         if (!lowered) return true;
-        return [item.title, item.author, item.status, item.excerpt, ...item.tags]
-          .join(" ")
-          .toLowerCase()
-          .includes(lowered);
+        return searchableText(item).includes(lowered);
       });
-  }, [activeRoom, query]);
+
+    if (feedScope === "suggested") {
+      return [...roomFiltered].sort((a, b) => metricScore(b.metrics.signal) - metricScore(a.metrics.signal));
+    }
+
+    return roomFiltered;
+  }, [activeRoom, feedScope, items, query, roomChip]);
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("symposium-theme") as Theme | null;
@@ -151,6 +198,73 @@ export function SymposiumV0() {
     setNotebookOpen(false);
     setSelectedProfileName(null);
     setTabletOpen(true);
+  };
+
+  const createPost = ({
+    title,
+    body,
+    kind
+  }: {
+    title: string;
+    body: string;
+    kind: InquiryItem["kind"];
+  }) => {
+    if (activeRoom === "hall") return;
+
+    const newItem: InquiryItem = {
+      id: `local-${Date.now()}`,
+      kind,
+      room: activeRoom,
+      title,
+      author: profile.name,
+      affiliation: "Science Rebirth",
+      date: "Just now",
+      status: kind === "paper" ? "Draft" : "New",
+      metrics: { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" },
+      gatheringReason: "A new working post added in this session.",
+      excerpt: body,
+      body,
+      tags: [activeRoomData.name.toLowerCase(), kind],
+      signals: [
+        { label: "Status", value: kind === "paper" ? "Draft" : "New" },
+        { label: "Critiques", value: "0" },
+        { label: "Forks", value: "0" },
+        { label: "Next action", value: "Invite critique" }
+      ],
+      claims: [body],
+      objections: [],
+      evidence: [],
+      tests: [],
+      forks: [],
+      comments: [],
+      saved: activeRoom === "office"
+    };
+
+    setItems((current) => [newItem, ...current]);
+    setSelectedItemId(newItem.id);
+  };
+
+  const addComment = (itemId: string, body: string, stance: string) => {
+    const comment: InquiryComment = {
+      author: profile.name,
+      stance,
+      body
+    };
+
+    setItems((current) =>
+      current.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              metrics: {
+                ...item.metrics,
+                critiques: String(countComments(item.comments) + 1)
+              },
+              comments: [...item.comments, comment]
+            }
+          : item
+      )
+    );
   };
 
   const currentContext = selectedItem
@@ -211,26 +325,39 @@ export function SymposiumV0() {
         </nav>
       </header>
 
-      <aside className="world-rail" aria-label="Rooms">
-        {rooms.map((room) => {
-          const Icon = room.icon;
-          return (
-            <button
-              key={room.id}
-              className={`rail-button ${activeRoom === room.id ? "active" : ""}`}
-              type="button"
-              onClick={() => enterRoom(room.id)}
-              title={room.name}
-            >
-              <Icon size={18} />
-              <span>{room.shortName}</span>
-            </button>
-          );
-        })}
-      </aside>
+      {activeRoom !== "hall" && !selectedProfile ? (
+        <aside className="world-rail" aria-label="Rooms">
+          {rooms.map((room) => {
+            const Icon = room.icon;
+            return (
+              <button
+                key={room.id}
+                className={`rail-button ${activeRoom === room.id ? "active" : ""}`}
+                type="button"
+                onClick={() => enterRoom(room.id)}
+                title={room.name}
+              >
+                <Icon size={18} />
+                <span>{room.shortName}</span>
+              </button>
+            );
+          })}
+        </aside>
+      ) : null}
 
       <section className="stage">
-        {activeRoom === "hall" ? (
+        {selectedProfile ? (
+          <ProfileView
+            person={selectedProfile}
+            items={items}
+            onBack={() => setSelectedProfileName(null)}
+            onSelect={(id) => {
+              setSelectedProfileName(null);
+              setSelectedItemId(id);
+            }}
+            onOpenProfile={openProfile}
+          />
+        ) : activeRoom === "hall" ? (
           <HallView onEnter={enterRoom} />
         ) : selectedItem ? (
           <DetailView
@@ -240,6 +367,7 @@ export function SymposiumV0() {
             onOpenTablet={openTablet}
             onOpenNotebook={openNotebook}
             onOpenProfile={openProfile}
+            onAddComment={addComment}
           />
         ) : (
           <RoomView
@@ -253,6 +381,7 @@ export function SymposiumV0() {
             onQuery={setQuery}
             onSelect={setSelectedItemId}
             onOpenProfile={openProfile}
+            onCreatePost={createPost}
           />
         )}
       </section>
@@ -277,11 +406,7 @@ export function SymposiumV0() {
         <span>AI Tablet</span>
       </button>
 
-      <MovementPad room={activeRoomData} />
-
-      {selectedProfile ? (
-        <ProfilePanel profile={selectedProfile} onClose={() => setSelectedProfileName(null)} />
-      ) : null}
+      {activeRoom !== "hall" && !selectedProfile ? <MovementPad room={activeRoomData} /> : null}
 
       {notebookOpen ? (
         <NotebookPanel
@@ -322,8 +447,7 @@ function EntrySequence({ theme }: { theme: Theme }) {
         ))}
       </div>
       <div className="entry-copy">
-        <p>SYMPOSIUM</p>
-        <span>Approaching the hall</span>
+        <p>Welcome to the Symposium</p>
       </div>
     </main>
   );
@@ -376,27 +500,6 @@ function HallView({ onEnter }: { onEnter: (roomId: RoomId) => void }) {
           );
         })}
       </section>
-
-      <aside className="hall-orientation">
-        <p className="eyebrow">Main hall</p>
-        <h1>Choose a room from the floor.</h1>
-        <p>
-          Office sits to the left, the Amphitheater is farther down that same side,
-          the Library is up the short stair at the end, and the public Symposium
-          room opens on the right.
-        </p>
-        <div className="hall-room-list">
-          {doorIds.map((roomId) => {
-            const room = getRoom(roomId);
-            return (
-              <button key={room.id} type="button" onClick={() => onEnter(room.id)}>
-                <span>{room.name}</span>
-                <small>{room.feedLabel}</small>
-              </button>
-            );
-          })}
-        </div>
-      </aside>
     </div>
   );
 }
@@ -411,7 +514,8 @@ function RoomView({
   onRoomChip,
   onQuery,
   onSelect,
-  onOpenProfile
+  onOpenProfile,
+  onCreatePost
 }: {
   room: Room;
   items: InquiryItem[];
@@ -423,6 +527,7 @@ function RoomView({
   onQuery: (query: string) => void;
   onSelect: (id: string) => void;
   onOpenProfile: (name: string) => void;
+  onCreatePost: (draft: { title: string; body: string; kind: InquiryItem["kind"] }) => void;
 }) {
   const RoomIcon = room.icon;
 
@@ -481,17 +586,82 @@ function RoomView({
 
       {room.id === "office" ? <OfficeFolders /> : null}
 
+      <PostComposer room={room} onCreatePost={onCreatePost} />
+
       <section className="feed-stream" aria-label={`${room.name} feed`}>
-        {items.map((item) => (
-          <FeedPost
-            key={item.id}
-            item={item}
-            onSelect={onSelect}
-            onOpenProfile={onOpenProfile}
-          />
-        ))}
+        {items.length ? (
+          items.map((item) => (
+            <FeedPost
+              key={item.id}
+              item={item}
+              onSelect={onSelect}
+              onOpenProfile={onOpenProfile}
+            />
+          ))
+        ) : (
+          <div className="empty-feed">
+            <strong>No work in this slice yet.</strong>
+            <span>Try another room, topic, or search.</span>
+          </div>
+        )}
       </section>
     </div>
+  );
+}
+
+function PostComposer({
+  room,
+  onCreatePost
+}: {
+  room: Room;
+  onCreatePost: (draft: { title: string; body: string; kind: InquiryItem["kind"] }) => void;
+}) {
+  const defaultKind: InquiryItem["kind"] =
+    room.id === "library" ? "paper" : room.id === "office" ? "draft" : "thought";
+  const allowedKinds = room.includes.length ? room.includes : [defaultKind];
+  const [kind, setKind] = useState<InquiryItem["kind"]>(defaultKind);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+
+  useEffect(() => {
+    setKind(defaultKind);
+  }, [defaultKind]);
+
+  const submitPost = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const cleanTitle = title.trim();
+    const cleanBody = body.trim();
+    if (!cleanTitle || !cleanBody) return;
+
+    onCreatePost({ title: cleanTitle, body: cleanBody, kind });
+    setTitle("");
+    setBody("");
+    setKind(defaultKind);
+  };
+
+  return (
+    <form className="post-composer" onSubmit={submitPost}>
+      <div className="composer-topline">
+        <select value={kind} onChange={(event) => setKind(event.target.value as InquiryItem["kind"])}>
+          {allowedKinds.map((option) => (
+            <option key={option} value={option}>
+              {kindLabels[option]}
+            </option>
+          ))}
+        </select>
+        <button type="submit">Post</button>
+      </div>
+      <input
+        value={title}
+        onChange={(event) => setTitle(event.target.value)}
+        placeholder="Title"
+      />
+      <textarea
+        value={body}
+        onChange={(event) => setBody(event.target.value)}
+        placeholder="Claim, note, question, or paper sketch"
+      />
+    </form>
   );
 }
 
@@ -598,11 +768,11 @@ function SocialActions({
   commentCount: number;
 }) {
   const actions = [
-    { label: "Endorse", value: item.metrics.endorsements, icon: ThumbsUp },
-    { label: "Discuss", value: commentCount, icon: MessageCircle },
-    { label: "Reshare", value: item.metrics.reshares, icon: Repeat2 },
+    { label: "Signal", value: item.metrics.signal, icon: Sparkles },
+    { label: "Critique", value: String(commentCount), icon: MessageCircle },
+    { label: "Fork", value: item.metrics.forks, icon: GitFork },
     { label: "Save", value: item.metrics.saves, icon: Bookmark },
-    { label: "Views", value: item.metrics.views, icon: Eye }
+    { label: "Reads", value: item.metrics.reads, icon: Eye }
   ];
 
   return (
@@ -617,7 +787,8 @@ function SocialActions({
             onClick={(event) => event.stopPropagation()}
           >
             <Icon size={16} />
-            <span>{action.value}</span>
+            <span className="metric-label">{action.label}</span>
+            <strong>{action.value}</strong>
           </button>
         );
       })}
@@ -631,7 +802,8 @@ function DetailView({
   onBack,
   onOpenTablet,
   onOpenNotebook,
-  onOpenProfile
+  onOpenProfile,
+  onAddComment
 }: {
   item: InquiryItem;
   room: Room;
@@ -639,6 +811,7 @@ function DetailView({
   onOpenTablet: () => void;
   onOpenNotebook: () => void;
   onOpenProfile: (name: string) => void;
+  onAddComment: (itemId: string, body: string, stance: string) => void;
 }) {
   return (
     <article className="detail-layout">
@@ -673,6 +846,7 @@ function DetailView({
 
         <section className="comments-section">
           <h2>Discussion</h2>
+          <CommentComposer itemId={item.id} onAddComment={onAddComment} />
           <CommentThread comments={item.comments} onOpenProfile={onOpenProfile} />
         </section>
       </section>
@@ -700,6 +874,47 @@ function DetailView({
         </section>
       </aside>
     </article>
+  );
+}
+
+function CommentComposer({
+  itemId,
+  onAddComment
+}: {
+  itemId: string;
+  onAddComment: (itemId: string, body: string, stance: string) => void;
+}) {
+  const [stance, setStance] = useState("Comment");
+  const [body, setBody] = useState("");
+
+  const submitComment = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const cleanBody = body.trim();
+    if (!cleanBody) return;
+
+    onAddComment(itemId, cleanBody, stance);
+    setBody("");
+    setStance("Comment");
+  };
+
+  return (
+    <form className="comment-composer" onSubmit={submitComment}>
+      <div>
+        <select value={stance} onChange={(event) => setStance(event.target.value)}>
+          <option>Comment</option>
+          <option>Objection</option>
+          <option>Endorsement with reason</option>
+          <option>Question</option>
+          <option>Test proposal</option>
+        </select>
+        <button type="submit">Add comment</button>
+      </div>
+      <textarea
+        value={body}
+        onChange={(event) => setBody(event.target.value)}
+        placeholder="Add a critique, question, test, or reasoned response"
+      />
+    </form>
   );
 }
 
@@ -820,38 +1035,104 @@ function TabletPanel({
   );
 }
 
-function ProfilePanel({
-  profile: person,
-  onClose
+function ProfileView({
+  person,
+  items,
+  onBack,
+  onSelect,
+  onOpenProfile
 }: {
-  profile: ResearchProfile;
-  onClose: () => void;
+  person: ResearchProfile;
+  items: InquiryItem[];
+  onBack: () => void;
+  onSelect: (id: string) => void;
+  onOpenProfile: (name: string) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<ProfileTab>("all");
+  const authored = items.filter((item) => item.author === person.name);
+  const papers = authored.filter((item) => item.kind === "paper");
+  const thoughts = authored.filter((item) => item.kind === "thought" || item.kind === "note");
+  const reshares = items.filter((item) => item.author !== person.name && item.saved).slice(0, 4);
+  const signals = items
+    .filter(
+      (item) =>
+        item.author !== person.name &&
+        person.fields.some((field) => searchableText(item).includes(field.toLowerCase()))
+    )
+    .slice(0, 4);
+
+  const tabItems: Record<ProfileTab, InquiryItem[]> = {
+    all: authored,
+    papers,
+    thoughts,
+    reshares,
+    signals
+  };
+
+  const tabs: Array<{ id: ProfileTab; label: string }> = [
+    { id: "all", label: "All" },
+    { id: "papers", label: "Papers" },
+    { id: "thoughts", label: "Thoughts" },
+    { id: "reshares", label: "Reshares" },
+    { id: "signals", label: "Signals" }
+  ];
+
   return (
-    <aside className="profile-panel">
-      <PanelHeader icon={<UserRound size={18} />} title="Profile" onClose={onClose} />
-      <div className="profile-heading">
+    <article className="profile-page">
+      <button className="back-button" type="button" onClick={onBack}>
+        <ArrowLeft size={17} />
+        Back
+      </button>
+
+      <section className="profile-hero">
         <span className="avatar large">{initial(person.name)}</span>
-        <span>
-          <h2>{person.name}</h2>
-          <small>{person.handle}</small>
-        </span>
-      </div>
-      <p>
-        {person.role} · {person.location}
-      </p>
-      <p>{person.bio}</p>
-      <div className="profile-fields">
-        {person.fields.map((field) => (
-          <span key={field}>{field}</span>
+        <div>
+          <h1>{person.name}</h1>
+          <p>{person.handle}</p>
+          <p>
+            {person.role} · {person.location}
+          </p>
+          <p>{person.bio}</p>
+          <div className="profile-fields">
+            {person.fields.map((field) => (
+              <span key={field}>{field}</span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="profile-tabs" aria-label="Profile sections">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={activeTab === tab.id ? "active" : ""}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+            <span>{tabItems[tab.id].length}</span>
+          </button>
         ))}
-      </div>
-      <div className="profile-proof">
-        {person.proof.map((proof) => (
-          <strong key={proof}>{proof}</strong>
-        ))}
-      </div>
-    </aside>
+      </section>
+
+      <section className="feed-stream profile-stream" aria-label={`${person.name} profile feed`}>
+        {tabItems[activeTab].length ? (
+          tabItems[activeTab].map((item) => (
+            <FeedPost
+              key={item.id}
+              item={item}
+              onSelect={onSelect}
+              onOpenProfile={onOpenProfile}
+            />
+          ))
+        ) : (
+          <div className="empty-feed">
+            <strong>No items here yet.</strong>
+            <span>This section will fill as the profile has more activity.</span>
+          </div>
+        )}
+      </section>
+    </article>
   );
 }
 
