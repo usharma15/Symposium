@@ -60,6 +60,9 @@ export type InquiryItem = {
   forks: string[];
   comments: InquiryComment[];
   saved?: boolean;
+  savedBy?: string[];
+  signaledBy?: string[];
+  forkedBy?: string[];
 };
 
 export type Room = {
@@ -79,6 +82,7 @@ export type Room = {
 export type ResearchProfile = {
   name: string;
   handle: string;
+  email?: string;
   role: string;
   location: string;
   bio: string;

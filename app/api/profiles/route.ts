@@ -19,6 +19,7 @@ export async function POST(request: Request) {
   const input: CreateProfileInput = {
     name: String(body.name ?? "").trim(),
     handle: String(body.handle ?? "").trim(),
+    email: String(body.email ?? "").trim(),
     role: String(body.role ?? "").trim(),
     location: String(body.location ?? "").trim(),
     bio: String(body.bio ?? "").trim(),

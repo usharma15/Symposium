@@ -145,6 +145,85 @@ button {
   letter-spacing: 0;
 }
 
+.entry-auth {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(28px, 7vw, 78px);
+  z-index: 3;
+  display: grid;
+  gap: 12px;
+  width: min(440px, calc(100vw - 36px));
+  padding: 16px;
+  border: 1px solid rgba(255, 253, 245, 0.26);
+  border-radius: var(--radius);
+  background: rgba(12, 20, 22, 0.78);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.36);
+  color: #fffdf5;
+  transform: translateX(-50%);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.auth-tabs button,
+.entry-auth-form button,
+.entry-auth-form input {
+  min-height: 42px;
+  border: 1px solid rgba(255, 253, 245, 0.22);
+  border-radius: var(--radius);
+}
+
+.auth-tabs button,
+.entry-auth-form button {
+  background: rgba(255, 253, 245, 0.1);
+  color: #fffdf5;
+  font-weight: 800;
+}
+
+.auth-tabs button.active,
+.entry-auth-form button[type="submit"] {
+  background: #fffdf5;
+  color: #14201f;
+}
+
+.entry-auth-form {
+  display: grid;
+  gap: 9px;
+}
+
+.entry-auth-form input {
+  width: 100%;
+  min-width: 0;
+  padding: 0 11px;
+  outline: 0;
+  background: rgba(255, 253, 245, 0.12);
+  color: #fffdf5;
+}
+
+.entry-auth-form input::placeholder {
+  color: rgba(255, 253, 245, 0.72);
+}
+
+.otp-line,
+.auth-error {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.otp-line {
+  color: #fffdf5;
+  font-weight: 820;
+}
+
+.auth-error {
+  color: #ffd2c7;
+}
+
 @keyframes stairApproach {
   0% {
     filter: saturate(0.92);
@@ -914,29 +993,29 @@ button {
 
 .feed-stream {
   display: grid;
+  gap: 12px;
   max-width: 760px;
   width: 100%;
   margin: 0 auto;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
-  box-shadow: var(--shadow);
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
 }
 
 .feed-post {
   display: block;
   min-height: 212px;
   padding: 16px;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-  box-shadow: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--small-shadow);
   text-align: left;
 }
 
 .feed-post:last-child {
-  border-bottom: 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .empty-feed {
@@ -993,7 +1072,7 @@ button {
 .card-topline {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
 }
 
@@ -1002,11 +1081,6 @@ button {
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-}
-
-.card-topline span:last-child {
-  color: var(--bronze);
-  font-weight: 780;
 }
 
 .feed-post h2 {
@@ -1020,10 +1094,6 @@ button {
   margin: 10px 0 12px;
   color: var(--muted);
   line-height: 1.55;
-}
-
-.tag-row {
-  align-content: start;
 }
 
 .tag-row span,
@@ -1580,7 +1650,7 @@ button {
 
 .account-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 8px;
 }
 

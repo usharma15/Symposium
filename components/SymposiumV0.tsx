@@ -38,6 +38,18 @@ import type { CreateProfileInput, PostAction } from "@/lib/dataStore";
 
 type Theme = "day" | "night";
 type ProfileTab = "all" | "papers" | "thoughts" | "reshares" | "signals";
+type EntryMode = "loading" | "approach" | "auth" | "complete";
+
+type AuthRecord = {
+  handle: string;
+  identifier: string;
+  password: string;
+};
+
+type LocalSnapshot = {
+  profiles: Record<string, ResearchProfile>;
+  items: InquiryItem[];
+};
 
 const kindLabels: Record<InquiryItem["kind"], string> = {
   paper: "Paper",
@@ -90,6 +102,75 @@ const metricScore = (value: string) => {
   return Number.parseFloat(normalized) * multiplier || 0;
 };
 
+const formatMetric = (value: number) => {
+  if (value >= 1000) return `${Number(value / 1000).toFixed(value >= 10000 ? 1 : 0)}k`;
+  return String(Math.max(0, value));
+};
+
+const incrementMetric = (value: string, amount: number) => formatMetric(metricScore(value) + amount);
+
+const cleanHandle = (handle: string) => {
+  const trimmed = handle.trim().toLowerCase();
+  const withAt = trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
+  return withAt.replace(/[^@a-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^@_/, "@").replace(/_$/, "");
+};
+
+const handleFromName = (name: string) =>
+  cleanHandle(name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""));
+
+const clientId = (prefix: string) =>
+  `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+const hasHandle = (handles: string[] | undefined, handle: string) => (handles ?? []).includes(handle);
+
+const isSavedBy = (item: InquiryItem, handle: string) =>
+  hasHandle(item.savedBy, handle) || (Boolean(item.saved) && handle === profile.handle);
+
+const toggleHandle = (handles: string[] | undefined, handle: string) => {
+  const current = new Set(handles ?? []);
+  if (current.has(handle)) {
+    current.delete(handle);
+    return { handles: [...current], delta: -1 };
+  }
+  current.add(handle);
+  return { handles: [...current], delta: 1 };
+};
+
+const mutateItemForActor = (item: InquiryItem, action: PostAction, actorHandle: string): InquiryItem => {
+  if (action === "save") {
+    const next = toggleHandle(item.savedBy ?? (item.saved ? [profile.handle] : []), actorHandle);
+    return {
+      ...item,
+      savedBy: next.handles,
+      saved: next.handles.length > 0,
+      metrics: { ...item.metrics, saves: incrementMetric(item.metrics.saves, next.delta) }
+    };
+  }
+
+  if (action === "signal") {
+    const next = toggleHandle(item.signaledBy, actorHandle);
+    return {
+      ...item,
+      signaledBy: next.handles,
+      metrics: { ...item.metrics, signal: incrementMetric(item.metrics.signal, next.delta) }
+    };
+  }
+
+  if (action === "fork") {
+    const next = toggleHandle(item.forkedBy, actorHandle);
+    return {
+      ...item,
+      forkedBy: next.handles,
+      metrics: { ...item.metrics, forks: incrementMetric(item.metrics.forks, next.delta) }
+    };
+  }
+
+  return {
+    ...item,
+    metrics: { ...item.metrics, reads: incrementMetric(item.metrics.reads, 1) }
+  };
+};
+
 const initial = (name: string) =>
   name
     .split(" ")
@@ -100,7 +181,8 @@ const initial = (name: string) =>
 
 export function SymposiumV0() {
   const [theme, setTheme] = useState<Theme>("day");
-  const [entryComplete, setEntryComplete] = useState<boolean | null>(null);
+  const [entryMode, setEntryMode] = useState<EntryMode>("loading");
+  const [signedIn, setSignedIn] = useState(false);
   const [activeRoom, setActiveRoom] = useState<RoomId>("hall");
   const [items, setItems] = useState<InquiryItem[]>(inquiryItems);
   const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
@@ -114,6 +196,7 @@ export function SymposiumV0() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState("Loading live data");
+  const [authError, setAuthError] = useState("");
   const [noteText, setNoteText] = useState(
     "First note: make the thing feel alive without pretending the whole world is built yet."
   );
@@ -131,14 +214,14 @@ export function SymposiumV0() {
     const roomFiltered = items
       .filter((item) => {
         if (activeRoom === "hall") return item.kind === "paper" || item.kind === "thought";
-        if (activeRoom === "office") return item.saved || item.room === "office";
+        if (activeRoom === "office") return isSavedBy(item, currentProfile.handle) || item.room === "office";
         if (activeRoom === "symposium") return item.kind === "paper" || item.kind === "thought";
         if (activeRoom === "library") return item.kind === "paper";
         if (activeRoom === "amphitheater") return item.kind === "thought" || item.kind === "note";
         return true;
       })
       .filter((item) => {
-        if (feedScope === "following") return item.authorHandle === currentProfile.handle || item.author === currentProfile.name || item.saved;
+        if (feedScope === "following") return item.authorHandle === currentProfile.handle || item.author === currentProfile.name || isSavedBy(item, currentProfile.handle);
         if (feedScope === "rooms") return matchesTopic(item, roomChip);
         return true;
       })
@@ -154,6 +237,37 @@ export function SymposiumV0() {
     return roomFiltered;
   }, [activeRoom, currentProfile.handle, currentProfile.name, feedScope, items, query, roomChip]);
 
+  const readLocalSnapshot = (): LocalSnapshot | null => {
+    try {
+      const raw = window.localStorage.getItem("symposium-local-snapshot");
+      return raw ? (JSON.parse(raw) as LocalSnapshot) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const persistLocalSnapshot = (
+    nextItems = items,
+    nextProfiles = profiles,
+    nextProfile = currentProfile
+  ) => {
+    window.localStorage.setItem(
+      "symposium-local-snapshot",
+      JSON.stringify({ items: nextItems, profiles: nextProfiles })
+    );
+    window.localStorage.setItem("symposium-profile-handle", nextProfile.handle);
+  };
+
+  const mergeSnapshot = (remote: LocalSnapshot, local: LocalSnapshot | null): LocalSnapshot => {
+    if (!local) return remote;
+    const itemMap = new Map(remote.items.map((item) => [item.id, item]));
+    local.items.forEach((item) => itemMap.set(item.id, item));
+    return {
+      profiles: { ...remote.profiles, ...local.profiles },
+      items: [...itemMap.values()]
+    };
+  };
+
   const refreshData = async (preferredHandle = currentProfile.handle) => {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load Symposium data.");
@@ -162,15 +276,16 @@ export function SymposiumV0() {
       profiles: Record<string, ResearchProfile>;
       defaultProfile: ResearchProfile;
     };
-    const loadedProfiles = Object.keys(data.profiles).length
-      ? data.profiles
+    const merged = mergeSnapshot({ items: data.items, profiles: data.profiles }, readLocalSnapshot());
+    const loadedProfiles = Object.keys(merged.profiles).length
+      ? merged.profiles
       : { [data.defaultProfile.handle]: data.defaultProfile };
     const nextProfile = loadedProfiles[preferredHandle] ?? loadedProfiles[data.defaultProfile.handle] ?? data.defaultProfile;
 
-    setItems(data.items);
+    setItems(merged.items);
     setProfiles(loadedProfiles);
     setCurrentProfile(nextProfile);
-    window.localStorage.setItem("symposium-profile-handle", nextProfile.handle);
+    persistLocalSnapshot(merged.items, loadedProfiles, nextProfile);
     setSyncStatus("Live data connected");
   };
 
@@ -178,30 +293,40 @@ export function SymposiumV0() {
     const storedTheme = window.localStorage.getItem("symposium-theme") as Theme | null;
     const storedNote = window.localStorage.getItem("symposium-notebook");
     const storedProfileHandle = window.localStorage.getItem("symposium-profile-handle");
+    const signedHandle = window.localStorage.getItem("symposium-auth-handle");
     const hasEntered = window.sessionStorage.getItem("symposium-entry-complete") === "true";
 
     if (storedTheme === "day" || storedTheme === "night") setTheme(storedTheme);
     if (storedNote) setNoteText(storedNote);
-    setEntryComplete(hasEntered);
+    setSignedIn(Boolean(signedHandle));
+    setEntryMode(hasEntered && signedHandle ? "complete" : "approach");
 
-    refreshData(storedProfileHandle ?? undefined).catch(() => {
-      setProfiles({ [profile.handle]: profile });
-      setCurrentProfile(profile);
+    refreshData(signedHandle ?? storedProfileHandle ?? undefined).catch(() => {
+      const local = readLocalSnapshot();
+      const fallbackProfiles = local?.profiles ?? { [profile.handle]: profile };
+      const fallbackProfile = fallbackProfiles[signedHandle ?? storedProfileHandle ?? profile.handle] ?? profile;
+      setProfiles(fallbackProfiles);
+      setItems(local?.items ?? inquiryItems);
+      setCurrentProfile(fallbackProfile);
       setSyncStatus("Using seed data");
     });
   }, []);
 
   useEffect(() => {
-    if (entryComplete !== false) return undefined;
+    if (entryMode !== "approach") return undefined;
 
     const timer = window.setTimeout(() => {
-      window.sessionStorage.setItem("symposium-entry-complete", "true");
-      setEntryComplete(true);
-      setActiveRoom("hall");
+      if (signedIn) {
+        window.sessionStorage.setItem("symposium-entry-complete", "true");
+        setEntryMode("complete");
+        setActiveRoom("hall");
+      } else {
+        setEntryMode("auth");
+      }
     }, 5000);
 
     return () => window.clearTimeout(timer);
-  }, [entryComplete]);
+  }, [entryMode, signedIn]);
 
   useEffect(() => {
     window.localStorage.setItem("symposium-theme", theme);
@@ -263,13 +388,37 @@ export function SymposiumV0() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title, body, kind, room: activeRoom, authorHandle: currentProfile.handle })
     });
-    if (!response.ok) {
-      setSyncStatus("Post failed");
-      return;
-    }
-
-    const data = (await response.json()) as { item: InquiryItem };
-    setItems((current) => [data.item, ...current.filter((item) => item.id !== data.item.id)]);
+    const fallbackItem: InquiryItem = {
+      id: clientId("post"),
+      kind,
+      room: activeRoom,
+      title,
+      author: currentProfile.name,
+      authorHandle: currentProfile.handle,
+      affiliation: currentProfile.location,
+      date: "Just now",
+      status: "New",
+      metrics: { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" },
+      gatheringReason: "",
+      excerpt: body,
+      body,
+      tags: [],
+      signals: [],
+      claims: [],
+      objections: [],
+      evidence: [],
+      tests: [],
+      forks: [],
+      comments: [],
+      saved: activeRoom === "office",
+      savedBy: activeRoom === "office" ? [currentProfile.handle] : [],
+      signaledBy: [],
+      forkedBy: []
+    };
+    const data = response.ok ? ((await response.json()) as { item: InquiryItem }) : { item: fallbackItem };
+    const nextItems = [data.item, ...items.filter((item) => item.id !== data.item.id)];
+    setItems(nextItems);
+    persistLocalSnapshot(nextItems, profiles);
     setSelectedItemId(data.item.id);
     setSyncStatus("Post saved");
   };
@@ -282,13 +431,63 @@ export function SymposiumV0() {
       body: JSON.stringify({ body, stance, parentId: parentId ?? null, authorHandle: currentProfile.handle })
     });
     if (!response.ok) {
-      setSyncStatus("Comment failed");
+      const comment: InquiryComment = {
+        id: clientId("comment"),
+        parentId: parentId ?? null,
+        author: currentProfile.name,
+        authorHandle: currentProfile.handle,
+        stance: "Comment",
+        body,
+        createdAt: "Just now",
+        replies: []
+      };
+      const addToTree = (comments: InquiryComment[]): InquiryComment[] => {
+        if (!comment.parentId) return [...comments, comment];
+        return comments.map((current) =>
+          current.id === comment.parentId
+            ? { ...current, replies: [...(current.replies ?? []), comment] }
+            : { ...current, replies: addToTree(current.replies ?? []) }
+        );
+      };
+      const nextItems = items.map((item) =>
+        item.id === itemId ? { ...item, comments: addToTree(item.comments) } : item
+      );
+      setItems(nextItems);
+      persistLocalSnapshot(nextItems, profiles);
+      setSelectedItemId(itemId);
+      setSyncStatus(parentId ? "Reply saved locally" : "Comment saved locally");
       return;
     }
 
     await refreshData(currentProfile.handle);
     setSelectedItemId(itemId);
     setSyncStatus(parentId ? "Reply saved" : "Comment saved");
+  };
+
+  const authRecords = (): AuthRecord[] => {
+    try {
+      return JSON.parse(window.localStorage.getItem("symposium-auth-records") ?? "[]") as AuthRecord[];
+    } catch {
+      return [];
+    }
+  };
+
+  const persistAuthRecords = (records: AuthRecord[]) => {
+    window.localStorage.setItem("symposium-auth-records", JSON.stringify(records));
+  };
+
+  const completeSignIn = (person: ResearchProfile) => {
+    const nextProfiles = { ...profiles, [person.handle]: person };
+    setProfiles(nextProfiles);
+    setCurrentProfile(person);
+    setSignedIn(true);
+    setAccountOpen(false);
+    setEntryMode("complete");
+    setActiveRoom("hall");
+    window.sessionStorage.setItem("symposium-entry-complete", "true");
+    window.localStorage.setItem("symposium-auth-handle", person.handle);
+    window.localStorage.setItem("symposium-profile-handle", person.handle);
+    persistLocalSnapshot(items, nextProfiles, person);
   };
 
   const saveProfile = async (input: CreateProfileInput) => {
@@ -298,34 +497,92 @@ export function SymposiumV0() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input)
     });
-    if (!response.ok) {
-      setSyncStatus("Profile save failed");
-      return;
-    }
-
-    const data = (await response.json()) as { profile: ResearchProfile };
-    setProfiles((current) => ({ ...current, [data.profile.handle]: data.profile }));
+    const fallbackProfile: ResearchProfile = {
+      name: input.name.trim(),
+      handle: cleanHandle(input.handle),
+      email: input.email?.trim().toLowerCase() || undefined,
+      role: input.role.trim() || "Symposium participant",
+      location: input.location.trim() || "Public rooms",
+      bio: input.bio.trim() || "A participant in the current inquiry thread.",
+      fields: input.fields.map((field) => field.trim()).filter(Boolean)
+    };
+    const data = response.ok ? ((await response.json()) as { profile: ResearchProfile }) : { profile: fallbackProfile };
+    const nextProfiles = { ...profiles, [data.profile.handle]: data.profile };
+    setProfiles(nextProfiles);
     setCurrentProfile(data.profile);
-    window.localStorage.setItem("symposium-profile-handle", data.profile.handle);
+    persistLocalSnapshot(items, nextProfiles, data.profile);
     setSyncStatus("Profile saved");
+    return data.profile;
   };
 
   const switchProfile = (person: ResearchProfile) => {
     setCurrentProfile(person);
     window.localStorage.setItem("symposium-profile-handle", person.handle);
+    window.localStorage.setItem("symposium-auth-handle", person.handle);
+    persistLocalSnapshot(items, profiles, person);
     setSyncStatus(`Posting as ${person.name}`);
+  };
+
+  const createAccount = async (input: CreateProfileInput, password: string) => {
+    const person = await saveProfile(input);
+    if (!person) return false;
+    const identifier = person.email ?? person.handle;
+    const records = authRecords().filter((record) => record.handle !== person.handle);
+    persistAuthRecords([...records, { handle: person.handle, identifier: identifier.toLowerCase(), password }]);
+    completeSignIn(person);
+    setAuthError("");
+    return true;
+  };
+
+  const signIn = (identifier: string, password: string) => {
+    const lowered = identifier.trim().toLowerCase();
+    const record = authRecords().find(
+      (entry) =>
+        (entry.identifier === lowered || entry.handle.toLowerCase() === lowered || entry.handle.toLowerCase() === cleanHandle(lowered)) &&
+        entry.password === password
+    );
+    if (!record) {
+      setAuthError("No matching account in this browser yet.");
+      return false;
+    }
+    const person = profiles[record.handle] ?? readLocalSnapshot()?.profiles[record.handle];
+    if (!person) {
+      setAuthError("That account exists locally, but its profile is missing.");
+      return false;
+    }
+    completeSignIn(person);
+    setAuthError("");
+    return true;
+  };
+
+  const signOut = () => {
+    window.localStorage.removeItem("symposium-auth-handle");
+    window.sessionStorage.removeItem("symposium-entry-complete");
+    setSignedIn(false);
+    setAccountOpen(false);
+    setAuthError("");
+    setEntryMode("auth");
   };
 
   const applyAction = async (itemId: string, action: PostAction) => {
     const response = await fetch(`/api/posts/${itemId}/actions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action })
+      body: JSON.stringify({ action, actorHandle: currentProfile.handle })
     });
-    if (!response.ok) return;
+    if (response.ok) {
+      const data = (await response.json()) as { item: InquiryItem };
+      const updatedItems = items.map((item) => (item.id === itemId ? data.item : item));
+      setItems(updatedItems);
+      persistLocalSnapshot(updatedItems, profiles);
+      return;
+    }
 
-    const data = (await response.json()) as { item: InquiryItem };
-    setItems((current) => current.map((item) => (item.id === itemId ? data.item : item)));
+    const nextItems = items.map((item) =>
+      item.id === itemId ? mutateItemForActor(item, action, currentProfile.handle) : item
+    );
+    setItems(nextItems);
+    persistLocalSnapshot(nextItems, profiles);
   };
 
   const openPost = (id: string) => {
@@ -337,8 +594,16 @@ export function SymposiumV0() {
     ? `${selectedItem.title}: ${selectedItem.gatheringReason}`
     : `${activeRoomData.name}: ${activeRoomData.description}`;
 
-  if (entryComplete !== true) {
-    return <EntrySequence theme={theme} />;
+  if (entryMode !== "complete") {
+    return (
+      <EntrySequence
+        theme={theme}
+        mode={entryMode}
+        authError={authError}
+        onCreateAccount={createAccount}
+        onSignIn={signIn}
+      />
+    );
   }
 
   return (
@@ -427,6 +692,7 @@ export function SymposiumV0() {
             }}
             onOpenProfile={openProfile}
             onAction={applyAction}
+            actorHandle={currentProfile.handle}
           />
         ) : activeRoom === "hall" ? (
           <HallView onEnter={enterRoom} />
@@ -440,6 +706,7 @@ export function SymposiumV0() {
             onOpenProfile={openProfile}
             onAddComment={addComment}
             onAction={applyAction}
+            actorHandle={currentProfile.handle}
           />
         ) : (
           <RoomView
@@ -455,6 +722,7 @@ export function SymposiumV0() {
             onOpenProfile={openProfile}
             onCreatePost={createPost}
             onAction={applyAction}
+            actorHandle={currentProfile.handle}
           />
         )}
       </section>
@@ -501,19 +769,30 @@ export function SymposiumV0() {
 
       {accountOpen ? (
         <AccountPanel
-          profiles={profileList}
           currentProfile={currentProfile}
           onClose={() => setAccountOpen(false)}
           onSave={saveProfile}
-          onSwitch={switchProfile}
           onViewProfile={(name) => openProfile(name)}
+          onSignOut={signOut}
         />
       ) : null}
     </main>
   );
 }
 
-function EntrySequence({ theme }: { theme: Theme }) {
+function EntrySequence({
+  theme,
+  mode,
+  authError,
+  onCreateAccount,
+  onSignIn
+}: {
+  theme: Theme;
+  mode: EntryMode;
+  authError: string;
+  onCreateAccount: (input: CreateProfileInput, password: string) => Promise<boolean>;
+  onSignIn: (identifier: string, password: string) => boolean;
+}) {
   return (
     <main className={`entry-sequence ${theme}`} aria-label="Approaching Symposium">
       <Image
@@ -533,7 +812,133 @@ function EntrySequence({ theme }: { theme: Theme }) {
       <div className="entry-copy">
         <p>Welcome to the Symposium</p>
       </div>
+      {mode === "auth" ? (
+        <EntryAuthPanel authError={authError} onCreateAccount={onCreateAccount} onSignIn={onSignIn} />
+      ) : null}
     </main>
+  );
+}
+
+function EntryAuthPanel({
+  authError,
+  onCreateAccount,
+  onSignIn
+}: {
+  authError: string;
+  onCreateAccount: (input: CreateProfileInput, password: string) => Promise<boolean>;
+  onSignIn: (identifier: string, password: string) => boolean;
+}) {
+  const [mode, setMode] = useState<"signin" | "create">("signin");
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [otpIssued, setOtpIssued] = useState("");
+  const [localError, setLocalError] = useState("");
+
+  const issueOtp = () => {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    setOtpIssued(code);
+    setLocalError("");
+  };
+
+  const submitSignIn = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!identifier.trim() || !password) {
+      setLocalError("Enter your email or username and password.");
+      return;
+    }
+    onSignIn(identifier, password);
+  };
+
+  const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!name.trim() || !email.trim() || !username.trim() || !newPassword) {
+      setLocalError("Name, email, username, and password are required.");
+      return;
+    }
+    if (!otpIssued) {
+      issueOtp();
+      setLocalError("Enter the OTP shown here to finish account creation.");
+      return;
+    }
+    if (otp.trim() !== otpIssued) {
+      setLocalError("That OTP does not match.");
+      return;
+    }
+
+    await onCreateAccount(
+      {
+        name,
+        handle: cleanHandle(username),
+        email,
+        role: "Symposium participant",
+        location: "Public rooms",
+        bio: "A participant in the current inquiry thread.",
+        fields: ["Inquiry"]
+      },
+      newPassword
+    );
+  };
+
+  const continueWithGoogle = async () => {
+    const googleEmail = email.trim() || "google.user@symposium.local";
+    const googleName = name.trim() || googleEmail.split("@")[0].replace(/[._-]+/g, " ");
+    await onCreateAccount(
+      {
+        name: googleName.replace(/\b\w/g, (letter) => letter.toUpperCase()),
+        handle: handleFromName(googleName),
+        email: googleEmail,
+        role: "Symposium participant",
+        location: "Public rooms",
+        bio: "A participant in the current inquiry thread.",
+        fields: ["Inquiry"]
+      },
+      "google"
+    );
+  };
+
+  return (
+    <section className="entry-auth" aria-label="Symposium sign in">
+      <div className="auth-tabs">
+        <button type="button" className={mode === "signin" ? "active" : ""} onClick={() => setMode("signin")}>
+          Sign in
+        </button>
+        <button type="button" className={mode === "create" ? "active" : ""} onClick={() => setMode("create")}>
+          Create account
+        </button>
+      </div>
+
+      {mode === "signin" ? (
+        <form className="entry-auth-form" onSubmit={submitSignIn}>
+          <input value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="Email or username" />
+          <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" />
+          <button type="submit">Enter</button>
+        </form>
+      ) : (
+        <form className="entry-auth-form" onSubmit={submitCreate}>
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" />
+          <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" />
+          <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" />
+          <input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="Password" type="password" />
+          {otpIssued ? (
+            <>
+              <p className="otp-line">OTP: {otpIssued}</p>
+              <input value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="Enter OTP" />
+            </>
+          ) : null}
+          <button type="submit">{otpIssued ? "Create account" : "Send OTP"}</button>
+          <button type="button" onClick={continueWithGoogle}>
+            Continue with Google
+          </button>
+        </form>
+      )}
+
+      {localError || authError ? <p className="auth-error">{localError || authError}</p> : null}
+    </section>
   );
 }
 
@@ -600,7 +1005,8 @@ function RoomView({
   onSelect,
   onOpenProfile,
   onCreatePost,
-  onAction
+  onAction,
+  actorHandle
 }: {
   room: Room;
   items: InquiryItem[];
@@ -614,6 +1020,7 @@ function RoomView({
   onOpenProfile: (name: string) => void;
   onCreatePost: (draft: { title: string; body: string; kind: InquiryItem["kind"] }) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  actorHandle: string;
 }) {
   const RoomIcon = room.icon;
 
@@ -683,6 +1090,7 @@ function RoomView({
               onSelect={onSelect}
               onOpenProfile={onOpenProfile}
               onAction={onAction}
+              actorHandle={actorHandle}
             />
           ))
         ) : (
@@ -773,12 +1181,14 @@ function FeedPost({
   item,
   onSelect,
   onOpenProfile,
-  onAction
+  onAction,
+  actorHandle
 }: {
   item: InquiryItem;
   onSelect: (id: string) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  actorHandle: string;
 }) {
   const openPost = () => onSelect(item.id);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -805,16 +1215,10 @@ function FeedPost({
       <div className="post-body">
         <div className="card-topline">
           <span>{kindLabels[item.kind]}</span>
-          <span>{item.status}</span>
         </div>
         <h2>{item.title}</h2>
         <p>{item.excerpt}</p>
-        <div className="tag-row">
-          {item.tags.slice(0, 4).map((tag) => (
-            <span key={tag}>{tag}</span>
-          ))}
-        </div>
-        <SocialActions item={item} commentCount={countComments(item.comments)} onAction={onAction} />
+        <SocialActions item={item} commentCount={countComments(item.comments)} onAction={onAction} actorHandle={actorHandle} />
       </div>
     </article>
   );
@@ -852,17 +1256,22 @@ function PostAuthor({
 function SocialActions({
   item,
   commentCount,
-  onAction
+  onAction,
+  actorHandle
 }: {
   item: InquiryItem;
   commentCount: number;
   onAction: (itemId: string, action: PostAction) => void;
+  actorHandle: string;
 }) {
+  const savedByActor = isSavedBy(item, actorHandle);
+  const signaledByActor = hasHandle(item.signaledBy, actorHandle);
+  const forkedByActor = hasHandle(item.forkedBy, actorHandle);
   const actions = [
-    { label: "Signal", value: item.metrics.signal, icon: Sparkles, action: "signal" as PostAction },
+    { label: signaledByActor ? "Signaled" : "Signal", value: item.metrics.signal, icon: Sparkles, action: "signal" as PostAction },
     { label: "Critique", value: String(commentCount), icon: MessageCircle, action: null },
-    { label: "Fork", value: item.metrics.forks, icon: GitFork, action: "fork" as PostAction },
-    { label: item.saved ? "Saved" : "Save", value: item.metrics.saves, icon: Bookmark, action: "save" as PostAction },
+    { label: forkedByActor ? "Forked" : "Fork", value: item.metrics.forks, icon: GitFork, action: "fork" as PostAction },
+    { label: savedByActor ? "Saved" : "Save", value: item.metrics.saves, icon: Bookmark, action: "save" as PostAction },
     { label: "Reads", value: item.metrics.reads, icon: Eye, action: null }
   ];
 
@@ -898,7 +1307,8 @@ function DetailView({
   onOpenNotebook,
   onOpenProfile,
   onAddComment,
-  onAction
+  onAction,
+  actorHandle
 }: {
   item: InquiryItem;
   room: Room;
@@ -908,6 +1318,7 @@ function DetailView({
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  actorHandle: string;
 }) {
   return (
     <article className="detail-layout">
@@ -917,9 +1328,7 @@ function DetailView({
       </button>
 
       <section className="detail-main">
-        <p className="eyebrow">
-          {kindLabels[item.kind]} · {item.status}
-        </p>
+        <p className="eyebrow">{kindLabels[item.kind]}</p>
         <h1>{item.title}</h1>
         <button className="detail-byline-button" type="button" onClick={() => onOpenProfile(item.author)}>
           <span className="avatar">{initial(item.author)}</span>
@@ -930,15 +1339,8 @@ function DetailView({
             </small>
           </span>
         </button>
-        <p className="gathering-reason">{item.gatheringReason}</p>
         <p className="detail-body">{item.body}</p>
-        <SocialActions item={item} commentCount={countComments(item.comments)} onAction={onAction} />
-
-        <DetailSection title="Claims" items={item.claims} />
-        <DetailSection title="Objections" items={item.objections} />
-        <DetailSection title="Evidence" items={item.evidence} />
-        <DetailSection title="Tests" items={item.tests} />
-        <DetailSection title="Forks" items={item.forks} />
+        <SocialActions item={item} commentCount={countComments(item.comments)} onAction={onAction} actorHandle={actorHandle} />
 
         <section className="comments-section">
           <h2>Discussion</h2>
@@ -984,7 +1386,6 @@ function CommentComposer({
   parentId?: string | null;
   compact?: boolean;
 }) {
-  const [stance, setStance] = useState("Comment");
   const [body, setBody] = useState("");
 
   const submitComment = (event: FormEvent<HTMLFormElement>) => {
@@ -992,21 +1393,13 @@ function CommentComposer({
     const cleanBody = body.trim();
     if (!cleanBody) return;
 
-    onAddComment(itemId, cleanBody, stance, parentId ?? null);
+    onAddComment(itemId, cleanBody, "Comment", parentId ?? null);
     setBody("");
-    setStance("Comment");
   };
 
   return (
     <form className={`comment-composer ${compact ? "compact" : ""}`} onSubmit={submitComment}>
       <div>
-        <select value={stance} onChange={(event) => setStance(event.target.value)}>
-          <option>Comment</option>
-          <option>Objection</option>
-          <option>Endorsement with reason</option>
-          <option>Question</option>
-          <option>Test proposal</option>
-        </select>
         <button type="submit">Add comment</button>
       </div>
         <textarea
@@ -1015,19 +1408,6 @@ function CommentComposer({
         placeholder={compact ? "Write a reply" : "Add a critique, question, test, or reasoned response"}
       />
     </form>
-  );
-}
-
-function DetailSection({ title, items }: { title: string; items: string[] }) {
-  return (
-    <section className="detail-section">
-      <h2>{title}</h2>
-      <ul>
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-    </section>
   );
 }
 
@@ -1081,7 +1461,6 @@ function CommentNode({
         <span className="avatar small">{initial(comment.author)}</span>
         <span>
           <strong>{comment.author}</strong>
-          <small>{comment.stance}</small>
         </span>
       </button>
       <p>{comment.body}</p>
@@ -1192,7 +1571,8 @@ function ProfileView({
   onBack,
   onSelect,
   onOpenProfile,
-  onAction
+  onAction,
+  actorHandle
 }: {
   person: ResearchProfile;
   items: InquiryItem[];
@@ -1200,19 +1580,14 @@ function ProfileView({
   onSelect: (id: string) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  actorHandle: string;
 }) {
   const [activeTab, setActiveTab] = useState<ProfileTab>("all");
   const authored = items.filter((item) => item.author === person.name);
   const papers = authored.filter((item) => item.kind === "paper");
   const thoughts = authored.filter((item) => item.kind === "thought" || item.kind === "note");
-  const reshares = items.filter((item) => item.author !== person.name && item.saved).slice(0, 4);
-  const signals = items
-    .filter(
-      (item) =>
-        item.author !== person.name &&
-        person.fields.some((field) => searchableText(item).includes(field.toLowerCase()))
-    )
-    .slice(0, 4);
+  const reshares = items.filter((item) => item.author !== person.name && isSavedBy(item, person.handle));
+  const signals = items.filter((item) => item.author !== person.name && hasHandle(item.signaledBy, person.handle));
 
   const tabItems: Record<ProfileTab, InquiryItem[]> = {
     all: authored,
@@ -1277,6 +1652,7 @@ function ProfileView({
               onSelect={onSelect}
               onOpenProfile={onOpenProfile}
               onAction={onAction}
+              actorHandle={actorHandle}
             />
           ))
         ) : (
@@ -1291,22 +1667,21 @@ function ProfileView({
 }
 
 function AccountPanel({
-  profiles,
   currentProfile,
   onClose,
   onSave,
-  onSwitch,
-  onViewProfile
+  onViewProfile,
+  onSignOut
 }: {
-  profiles: ResearchProfile[];
   currentProfile: ResearchProfile;
   onClose: () => void;
   onSave: (input: CreateProfileInput) => void;
-  onSwitch: (person: ResearchProfile) => void;
   onViewProfile: (name: string) => void;
+  onSignOut: () => void;
 }) {
   const [name, setName] = useState(currentProfile.name);
   const [handle, setHandle] = useState(currentProfile.handle);
+  const [email, setEmail] = useState(currentProfile.email ?? "");
   const [role, setRole] = useState(currentProfile.role);
   const [location, setLocation] = useState(currentProfile.location);
   const [bio, setBio] = useState(currentProfile.bio);
@@ -1315,6 +1690,7 @@ function AccountPanel({
   useEffect(() => {
     setName(currentProfile.name);
     setHandle(currentProfile.handle);
+    setEmail(currentProfile.email ?? "");
     setRole(currentProfile.role);
     setLocation(currentProfile.location);
     setBio(currentProfile.bio);
@@ -1332,6 +1708,7 @@ function AccountPanel({
     onSave({
       name: cleanName,
       handle: cleanHandle,
+      email,
       role,
       location,
       bio,
@@ -1361,6 +1738,10 @@ function AccountPanel({
           <input value={handle} onChange={(event) => setHandle(event.target.value)} />
         </label>
         <label>
+          Email
+          <input value={email} onChange={(event) => setEmail(event.target.value)} />
+        </label>
+        <label>
           Role
           <input value={role} onChange={(event) => setRole(event.target.value)} />
         </label>
@@ -1381,26 +1762,11 @@ function AccountPanel({
           <button type="button" onClick={() => onViewProfile(currentProfile.name)}>
             View profile
           </button>
+          <button type="button" onClick={onSignOut}>
+            Sign out
+          </button>
         </div>
       </form>
-
-      <section className="account-switcher" aria-label="Switch profile">
-        <h2>Use another profile</h2>
-        {profiles.map((person) => (
-          <button
-            key={person.handle}
-            type="button"
-            className={person.handle === currentProfile.handle ? "active" : ""}
-            onClick={() => onSwitch(person)}
-          >
-            <span className="avatar small">{initial(person.name)}</span>
-            <span>
-              <strong>{person.name}</strong>
-              <small>{person.handle}</small>
-            </span>
-          </button>
-        ))}
-      </section>
     </aside>
   );
 }

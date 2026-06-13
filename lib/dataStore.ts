@@ -21,6 +21,7 @@ type AppData = {
 export type CreateProfileInput = {
   name: string;
   handle: string;
+  email?: string;
   role: string;
   location: string;
   bio: string;
@@ -73,10 +74,24 @@ const newId = (prefix: string) =>
 const normalizeProfile = (input: CreateProfileInput): ResearchProfile => ({
   name: input.name.trim(),
   handle: cleanHandle(input.handle),
+  email: input.email?.trim().toLowerCase() || undefined,
   role: input.role.trim() || "Symposium participant",
   location: input.location.trim() || "Public rooms",
   bio: input.bio.trim() || "A participant in the current inquiry thread.",
   fields: input.fields.map((field) => field.trim()).filter(Boolean).slice(0, 8)
+});
+
+const normalizeItem = (item: InquiryItem): InquiryItem => ({
+  ...item,
+  savedBy: item.savedBy ?? (item.saved ? [defaultProfile.handle] : []),
+  signaledBy: item.signaledBy ?? [],
+  forkedBy: item.forkedBy ?? [],
+  saved: Boolean(item.saved)
+});
+
+const normalizeData = (data: AppData): AppData => ({
+  profiles: data.profiles,
+  items: data.items.map(normalizeItem)
 });
 
 const seedData = (): AppData => {
@@ -87,7 +102,7 @@ const seedData = (): AppData => {
   return {
     profiles,
     items: inquiryItems.map((item, itemIndex) => ({
-      ...item,
+      ...normalizeItem(item),
       authorHandle: handleFromName(item.author),
       comments: normalizeComments(item.comments, item.id, itemIndex)
     }))
@@ -147,6 +162,7 @@ const ensureSchema = async () => {
       await db.query(`
         CREATE TABLE IF NOT EXISTS profiles (
           handle TEXT PRIMARY KEY,
+          email TEXT,
           name TEXT NOT NULL,
           role TEXT NOT NULL,
           location TEXT NOT NULL,
@@ -178,6 +194,9 @@ const ensureSchema = async () => {
           tests JSONB NOT NULL,
           forks JSONB NOT NULL,
           saved BOOLEAN DEFAULT false,
+          saved_by JSONB DEFAULT '[]'::jsonb,
+          signaled_by JSONB DEFAULT '[]'::jsonb,
+          forked_by JSONB DEFAULT '[]'::jsonb,
           created_at TIMESTAMPTZ DEFAULT now()
         );
 
@@ -191,6 +210,13 @@ const ensureSchema = async () => {
           body TEXT NOT NULL,
           created_at TIMESTAMPTZ DEFAULT now()
         );
+      `);
+
+      await db.query(`
+        ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email TEXT;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS saved_by JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS signaled_by JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS forked_by JSONB DEFAULT '[]'::jsonb;
       `);
 
       const { rows } = await db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM items");
@@ -220,12 +246,12 @@ const seedPostgres = async () => {
       `INSERT INTO items (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved
+        tests, forks, saved, saved_by, signaled_by, forked_by
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21
+        $19, $20, $21, $22, $23, $24
       )
       ON CONFLICT (id) DO NOTHING`,
       [
@@ -249,7 +275,10 @@ const seedPostgres = async () => {
         JSON.stringify(item.evidence),
         JSON.stringify(item.tests),
         JSON.stringify(item.forks),
-        Boolean(item.saved)
+        Boolean(item.saved),
+        JSON.stringify(item.savedBy ?? []),
+        JSON.stringify(item.signaledBy ?? []),
+        JSON.stringify(item.forkedBy ?? [])
       ]
     );
     await insertCommentTree(item.id, item.comments);
@@ -281,7 +310,7 @@ const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => 
 const readLocal = async (): Promise<AppData> => {
   try {
     const raw = await readFile(localDataPath, "utf8");
-    return JSON.parse(raw) as AppData;
+    return normalizeData(JSON.parse(raw) as AppData);
   } catch {
     const seed = seedData();
     await writeLocal(seed);
@@ -327,6 +356,7 @@ const loadPostgres = async (): Promise<AppData> => {
   const [profileResult, itemResult, commentResult] = await Promise.all([
     db.query<{
       handle: string;
+      email: string | null;
       name: string;
       role: string;
       location: string;
@@ -355,6 +385,9 @@ const loadPostgres = async (): Promise<AppData> => {
       tests: string[];
       forks: string[];
       saved: boolean;
+      saved_by: string[];
+      signaled_by: string[];
+      forked_by: string[];
     }>("SELECT * FROM items ORDER BY created_at DESC"),
     db.query<{
       id: string;
@@ -375,6 +408,7 @@ const loadPostgres = async (): Promise<AppData> => {
         {
           name: person.name,
           handle: person.handle,
+          email: person.email ?? undefined,
           role: person.role,
           location: person.location,
           bio: person.bio,
@@ -404,7 +438,10 @@ const loadPostgres = async (): Promise<AppData> => {
       tests: item.tests,
       forks: item.forks,
       comments: commentsFromRows(commentResult.rows, item.id),
-      saved: item.saved
+      saved: item.saved,
+      savedBy: item.saved_by?.length ? item.saved_by : item.saved ? [defaultProfile.handle] : [],
+      signaledBy: item.signaled_by ?? [],
+      forkedBy: item.forked_by ?? []
     }))
   };
 };
@@ -417,16 +454,25 @@ export const upsertProfile = async (input: CreateProfileInput) => {
   if (usePostgres) {
     await ensureSchema();
     await getPool().query(
-      `INSERT INTO profiles (handle, name, role, location, bio, fields)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO profiles (handle, email, name, role, location, bio, fields)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (handle) DO UPDATE SET
+         email = EXCLUDED.email,
          name = EXCLUDED.name,
          role = EXCLUDED.role,
          location = EXCLUDED.location,
          bio = EXCLUDED.bio,
          fields = EXCLUDED.fields,
          updated_at = now()`,
-      [person.handle, person.name, person.role, person.location, person.bio, JSON.stringify(person.fields)]
+      [
+        person.handle,
+        person.email ?? null,
+        person.name,
+        person.role,
+        person.location,
+        person.bio,
+        JSON.stringify(person.fields)
+      ]
     );
     return person;
   }
@@ -468,7 +514,10 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     tests: [],
     forks: [],
     comments: [],
-    saved: input.room === "office"
+    saved: input.room === "office",
+    savedBy: input.room === "office" ? [author.handle] : [],
+    signaledBy: [],
+    forkedBy: []
   };
 
   if (usePostgres) {
@@ -477,12 +526,12 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
       `INSERT INTO items (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved
+        tests, forks, saved, saved_by, signaled_by, forked_by
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21
+        $19, $20, $21, $22, $23, $24
       )`,
       [
         item.id,
@@ -505,7 +554,10 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
         JSON.stringify(item.evidence),
         JSON.stringify(item.tests),
         JSON.stringify(item.forks),
-        item.saved
+        item.saved,
+        JSON.stringify(item.savedBy),
+        JSON.stringify(item.signaledBy),
+        JSON.stringify(item.forkedBy)
       ]
     );
     return item;
@@ -583,29 +635,64 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
   return comment;
 };
 
-export const applyPostAction = async (itemId: string, action: PostAction) => {
+const toggleHandle = (handles: string[] | undefined, handle: string) => {
+  const current = new Set(handles ?? []);
+  if (current.has(handle)) {
+    current.delete(handle);
+    return { handles: [...current], delta: -1 };
+  }
+  current.add(handle);
+  return { handles: [...current], delta: 1 };
+};
+
+export const applyPostAction = async (itemId: string, action: PostAction, actorHandle = defaultProfile.handle) => {
   const mutate = (item: InquiryItem): InquiryItem => {
     if (action === "save") {
-      const saved = !item.saved;
+      const next = toggleHandle(item.savedBy, actorHandle);
       return {
         ...item,
-        saved,
+        savedBy: next.handles,
+        saved: next.handles.length > 0,
         metrics: {
           ...item.metrics,
-          saves: incrementMetric(item.metrics.saves, saved ? 1 : -1)
+          saves: incrementMetric(item.metrics.saves, next.delta)
         }
       };
     }
 
-    const metricKey = action === "fork" ? "forks" : action === "read" ? "reads" : "signal";
-    const nextMetric = incrementMetric(item.metrics[metricKey], 1);
+    if (action === "signal") {
+      const next = toggleHandle(item.signaledBy, actorHandle);
+      return {
+        ...item,
+        signaledBy: next.handles,
+        metrics: {
+          ...item.metrics,
+          signal: incrementMetric(item.metrics.signal, next.delta)
+        }
+      };
+    }
+
+    if (action === "fork") {
+      const next = toggleHandle(item.forkedBy, actorHandle);
+      const nextForks = incrementMetric(item.metrics.forks, next.delta);
+      return {
+        ...item,
+        forkedBy: next.handles,
+        metrics: {
+          ...item.metrics,
+          forks: nextForks
+        },
+        signals: updateSignalValue(item.signals, "Forks", nextForks)
+      };
+    }
+
+    const nextMetric = incrementMetric(item.metrics.reads, 1);
     return {
       ...item,
       metrics: {
         ...item.metrics,
-        [metricKey]: nextMetric
-      },
-      signals: metricKey === "forks" ? updateSignalValue(item.signals, "Forks", nextMetric) : item.signals
+        reads: nextMetric
+      }
     };
   };
 
@@ -614,11 +701,25 @@ export const applyPostAction = async (itemId: string, action: PostAction) => {
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing) return null;
     const updated = mutate(existing);
-    await getPool().query("UPDATE items SET metrics = $2, saved = $3 WHERE id = $1", [
-      itemId,
-      JSON.stringify(updated.metrics),
-      Boolean(updated.saved)
-    ]);
+    await getPool().query(
+      `UPDATE items
+       SET metrics = $2,
+           saved = $3,
+           saved_by = $4,
+           signaled_by = $5,
+           forked_by = $6,
+           signals = $7
+       WHERE id = $1`,
+      [
+        itemId,
+        JSON.stringify(updated.metrics),
+        Boolean(updated.saved),
+        JSON.stringify(updated.savedBy ?? []),
+        JSON.stringify(updated.signaledBy ?? []),
+        JSON.stringify(updated.forkedBy ?? []),
+        JSON.stringify(updated.signals)
+      ]
+    );
     return updated;
   }
 
