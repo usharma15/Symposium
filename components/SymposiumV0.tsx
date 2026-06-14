@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
   Bookmark,
@@ -57,6 +57,14 @@ const kindLabels: Record<InquiryItem["kind"], string> = {
   draft: "Draft",
   note: "Note",
   code: "Code"
+};
+
+const roomRenders: Record<RoomId, string> = {
+  hall: "/symposium-renders/main-hall-2.png",
+  office: "/symposium-renders/office.png",
+  symposium: "/symposium-renders/symposium.png",
+  library: "/symposium-renders/library-1.png",
+  amphitheater: "/symposium-renders/amphitheatre-2.png"
 };
 
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
@@ -607,7 +615,11 @@ export function SymposiumV0() {
   }
 
   return (
-    <main className={`symposium-shell ${theme}`} data-room={activeRoom}>
+    <main
+      className={`symposium-shell ${theme}`}
+      data-room={activeRoom}
+      style={{ "--room-bg": `url(${roomRenders[activeRoom]})` } as CSSProperties}
+    >
       <div className="ambient-layer" aria-hidden="true" />
 
       <header className="topbar">
@@ -722,6 +734,8 @@ export function SymposiumV0() {
             onOpenProfile={openProfile}
             onCreatePost={createPost}
             onAction={applyAction}
+            onEnter={enterRoom}
+            onOpenNotebook={openNotebook}
             actorHandle={currentProfile.handle}
           />
         )}
@@ -746,8 +760,6 @@ export function SymposiumV0() {
         <BrainCircuit size={18} />
         <span>AI Tablet</span>
       </button>
-
-      {activeRoom !== "hall" && !selectedProfile ? <MovementPad room={activeRoomData} /> : null}
 
       {notebookOpen ? (
         <NotebookPanel
@@ -796,7 +808,7 @@ function EntrySequence({
   return (
     <main className={`entry-sequence ${theme}`} aria-label="Approaching Symposium">
       <Image
-        src="/symposium-arrival.jpg"
+        src="/symposium-renders/entrance.png"
         alt="Greco-futurist Symposium building above the Aegean sea"
         fill
         priority
@@ -953,19 +965,14 @@ function HallView({ onEnter }: { onEnter: (roomId: RoomId) => void }) {
   return (
     <div className="hall-layout">
       <section className="hall-world" aria-label="Main hall">
-        <div className="hall-vault" aria-hidden="true" />
-        <div className="hall-floor" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
-        </div>
-        <div className="library-stair" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </div>
+        <Image
+          src={roomRenders.hall}
+          alt="The main hall of Symposium with doors to the office, amphitheatre, library, and symposium room"
+          fill
+          priority
+          sizes="(max-width: 900px) 100vw, 1500px"
+          className="hall-render-image"
+        />
         {doorIds.map((roomId) => {
           const room = getRoom(roomId);
           const Icon = room.icon;
@@ -1006,6 +1013,8 @@ function RoomView({
   onOpenProfile,
   onCreatePost,
   onAction,
+  onEnter,
+  onOpenNotebook,
   actorHandle
 }: {
   room: Room;
@@ -1020,23 +1029,13 @@ function RoomView({
   onOpenProfile: (name: string) => void;
   onCreatePost: (draft: { title: string; body: string; kind: InquiryItem["kind"] }) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  onEnter: (roomId: RoomId) => void;
+  onOpenNotebook: () => void;
   actorHandle: string;
 }) {
-  const RoomIcon = room.icon;
-
   return (
     <div className="room-layout">
-      <section className="room-header">
-        <div>
-          <p className="eyebrow">{room.eyebrow}</p>
-          <h1>{room.title}</h1>
-          <p>{room.description}</p>
-        </div>
-        <div className="room-seal">
-          <RoomIcon size={28} />
-          <span>{room.feedLabel}</span>
-        </div>
-      </section>
+      <RoomRender room={room} onEnter={onEnter} onOpenNotebook={onOpenNotebook} />
 
       <section className="feed-toolbar" aria-label="Feed controls">
         <div className="segmented">
@@ -1101,6 +1100,64 @@ function RoomView({
         )}
       </section>
     </div>
+  );
+}
+
+function RoomRender({
+  room,
+  onEnter,
+  onOpenNotebook
+}: {
+  room: Room;
+  onEnter: (roomId: RoomId) => void;
+  onOpenNotebook: () => void;
+}) {
+  const RoomIcon = room.icon;
+  const isOffice = room.id === "office";
+
+  return (
+    <section
+      className={`room-render room-render-${room.id}`}
+      aria-label={`${room.name} rendered room`}
+      style={{ backgroundImage: `url(${roomRenders[room.id]})` }}
+    >
+      <div className="room-render-content">
+        <p className="eyebrow">{room.eyebrow}</p>
+        <h1>{room.name}</h1>
+        <p>{room.description}</p>
+      </div>
+      <div className="room-seal">
+        <RoomIcon size={28} />
+        <span>{room.feedLabel}</span>
+      </div>
+      <div className="room-hotspots" aria-label={`${room.name} movement points`}>
+        <button
+          className="render-hotspot render-hotspot-exit"
+          type="button"
+          onClick={() => onEnter("hall")}
+        >
+          Main Hall
+        </button>
+        {isOffice ? (
+          <>
+            <button
+              className="render-hotspot render-hotspot-notes"
+              type="button"
+              onClick={onOpenNotebook}
+            >
+              Notes
+            </button>
+            <button
+              className="render-hotspot render-hotspot-saved"
+              type="button"
+              onClick={() => onEnter("office")}
+            >
+              Saved for later
+            </button>
+          </>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -1790,17 +1847,5 @@ function PanelHeader({
         <X size={17} />
       </button>
     </header>
-  );
-}
-
-function MovementPad({ room }: { room: Room }) {
-  return (
-    <aside className="movement-pad" aria-label="Movement concept">
-      <span className="movement-ring">
-        <span />
-      </span>
-      <strong>{room.name}</strong>
-      <small>{room.ambient}</small>
-    </aside>
   );
 }
