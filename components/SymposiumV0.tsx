@@ -7,14 +7,15 @@ import {
   Bookmark,
   BrainCircuit,
   Eye,
-  GitFork,
   MessageCircle,
   Moon,
   NotebookPen,
+  Repeat2,
   Search,
   Send,
   Sparkles,
   Sun,
+  ThumbsUp,
   UserRound,
   X
 } from "lucide-react";
@@ -36,7 +37,7 @@ import {
 import type { CreateProfileInput, PostAction } from "@/lib/dataStore";
 
 type Theme = "day" | "night";
-type ProfileTab = "all" | "papers" | "thoughts" | "reshares" | "signals";
+type ProfileTab = "all" | "papers" | "thoughts" | "reshares" | "likes" | "saved";
 type EntryMode = "loading" | "approach" | "auth" | "complete";
 
 type AuthRecord = {
@@ -48,6 +49,13 @@ type AuthRecord = {
 type LocalSnapshot = {
   profiles: Record<string, ResearchProfile>;
   items: InquiryItem[];
+};
+
+type PostDraft = {
+  title: string;
+  body: string;
+  kind: InquiryItem["kind"];
+  room?: Exclude<RoomId, "hall">;
 };
 
 const kindLabels: Record<InquiryItem["kind"], string> = {
@@ -200,6 +208,7 @@ export function SymposiumV0() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [tabletOpen, setTabletOpen] = useState(false);
   const [notebookOpen, setNotebookOpen] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState("Loading live data");
@@ -349,17 +358,21 @@ export function SymposiumV0() {
     setQuery("");
     setSelectedProfileName(null);
     setAccountOpen(false);
+    window.scrollTo({ top: 0, behavior: "auto" });
   };
 
   const openProfile = (name: string) => {
     setTabletOpen(false);
     setNotebookOpen(false);
+    setComposerOpen(false);
     setAccountOpen(false);
     setSelectedProfileName(name);
+    window.scrollTo({ top: 0, behavior: "auto" });
   };
 
   const openNotebook = () => {
     setTabletOpen(false);
+    setComposerOpen(false);
     setAccountOpen(false);
     setSelectedProfileName(null);
     setNotebookOpen(true);
@@ -367,6 +380,7 @@ export function SymposiumV0() {
 
   const openTablet = () => {
     setNotebookOpen(false);
+    setComposerOpen(false);
     setAccountOpen(false);
     setSelectedProfileName(null);
     setTabletOpen(true);
@@ -375,30 +389,29 @@ export function SymposiumV0() {
   const openAccount = () => {
     setTabletOpen(false);
     setNotebookOpen(false);
+    setComposerOpen(false);
     setSelectedProfileName(null);
     setAccountOpen(true);
   };
 
-  const createPost = async ({
-    title,
-    body,
-    kind
-  }: {
-    title: string;
-    body: string;
-    kind: InquiryItem["kind"];
-  }) => {
-    if (activeRoom === "hall") return;
+  const routePostRoom = (kind: InquiryItem["kind"], requestedRoom?: Exclude<RoomId, "hall">): Exclude<RoomId, "hall"> => {
+    if (kind === "paper") return requestedRoom === "library" ? "library" : "symposium";
+    if (kind === "thought" || kind === "note") return requestedRoom === "amphitheater" ? "amphitheater" : "symposium";
+    return "office";
+  };
+
+  const createPost = async ({ title, body, kind, room }: PostDraft) => {
+    const routedRoom = routePostRoom(kind, room ?? (activeRoom === "hall" ? undefined : activeRoom));
     setSyncStatus("Posting");
     const response = await fetch("/api/posts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, body, kind, room: activeRoom, authorHandle: currentProfile.handle })
+      body: JSON.stringify({ title, body, kind, room: routedRoom, authorHandle: currentProfile.handle })
     });
     const fallbackItem: InquiryItem = {
       id: clientId("post"),
       kind,
-      room: activeRoom,
+      room: routedRoom,
       title,
       author: currentProfile.name,
       authorHandle: currentProfile.handle,
@@ -417,8 +430,8 @@ export function SymposiumV0() {
       tests: [],
       forks: [],
       comments: [],
-      saved: activeRoom === "office",
-      savedBy: activeRoom === "office" ? [currentProfile.handle] : [],
+      saved: routedRoom === "office",
+      savedBy: routedRoom === "office" ? [currentProfile.handle] : [],
       signaledBy: [],
       forkedBy: []
     };
@@ -427,6 +440,8 @@ export function SymposiumV0() {
     setItems(nextItems);
     persistLocalSnapshot(nextItems, profiles);
     setSelectedItemId(data.item.id);
+    setActiveRoom(data.item.room);
+    setComposerOpen(false);
     setSyncStatus("Post saved");
   };
 
@@ -594,6 +609,7 @@ export function SymposiumV0() {
 
   const openPost = (id: string) => {
     setSelectedItemId(id);
+    window.scrollTo({ top: 0, behavior: "auto" });
     void applyAction(id, "read");
   };
 
@@ -695,13 +711,26 @@ export function SymposiumV0() {
             onQuery={setQuery}
             onSelect={openPost}
             onOpenProfile={openProfile}
-            onCreatePost={createPost}
             onAction={applyAction}
             onOpenNotebook={openNotebook}
             actorHandle={currentProfile.handle}
           />
         )}
       </section>
+
+      <button
+        className="new-post-launcher"
+        type="button"
+        onClick={() => {
+          setNotebookOpen(false);
+          setTabletOpen(false);
+          setAccountOpen(false);
+          setComposerOpen(true);
+        }}
+      >
+        <NotebookPen size={18} />
+        <span>New post</span>
+      </button>
 
       <button
         className="pocket pocket-left"
@@ -738,6 +767,14 @@ export function SymposiumV0() {
           selectedItem={selectedItem}
           room={activeRoomData}
           onClose={() => setTabletOpen(false)}
+        />
+      ) : null}
+
+      {composerOpen ? (
+        <PostComposerModal
+          activeRoom={activeRoom}
+          onClose={() => setComposerOpen(false)}
+          onCreatePost={createPost}
         />
       ) : null}
 
@@ -957,7 +994,6 @@ function RoomView({
   onQuery,
   onSelect,
   onOpenProfile,
-  onCreatePost,
   onAction,
   onOpenNotebook,
   actorHandle
@@ -972,7 +1008,6 @@ function RoomView({
   onQuery: (query: string) => void;
   onSelect: (id: string) => void;
   onOpenProfile: (name: string) => void;
-  onCreatePost: (draft: { title: string; body: string; kind: InquiryItem["kind"] }) => void;
   onAction: (itemId: string, action: PostAction) => void;
   onOpenNotebook: () => void;
   actorHandle: string;
@@ -1025,8 +1060,6 @@ function RoomView({
 
         {room.id === "office" ? <OfficeFolders /> : null}
       </section>
-
-      <PostComposer room={room} onCreatePost={onCreatePost} />
 
       <section className="feed-stream" aria-label={`${room.name} feed`}>
         {items.length ? (
@@ -1090,16 +1123,28 @@ function RoomRender({
   );
 }
 
-function PostComposer({
-  room,
+const postKindOptions: InquiryItem["kind"][] = ["thought", "paper", "note", "draft", "code"];
+
+const routedRoomForKind = (
+  kind: InquiryItem["kind"],
+  activeRoom: RoomId
+): Exclude<RoomId, "hall"> => {
+  if (kind === "paper") return activeRoom === "library" ? "library" : "symposium";
+  if (kind === "thought" || kind === "note") return activeRoom === "amphitheater" ? "amphitheater" : "symposium";
+  return "office";
+};
+
+function PostComposerModal({
+  activeRoom,
+  onClose,
   onCreatePost
 }: {
-  room: Room;
-  onCreatePost: (draft: { title: string; body: string; kind: InquiryItem["kind"] }) => void;
+  activeRoom: RoomId;
+  onClose: () => void;
+  onCreatePost: (draft: PostDraft) => void;
 }) {
   const defaultKind: InquiryItem["kind"] =
-    room.id === "library" ? "paper" : room.id === "office" ? "draft" : "thought";
-  const allowedKinds = room.includes.length ? room.includes : [defaultKind];
+    activeRoom === "library" ? "paper" : activeRoom === "office" ? "draft" : "thought";
   const [kind, setKind] = useState<InquiryItem["kind"]>(defaultKind);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -1108,41 +1153,54 @@ function PostComposer({
     setKind(defaultKind);
   }, [defaultKind]);
 
+  const destination = routedRoomForKind(kind, activeRoom);
+
   const submitPost = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const cleanTitle = title.trim();
     const cleanBody = body.trim();
     if (!cleanTitle || !cleanBody) return;
 
-    onCreatePost({ title: cleanTitle, body: cleanBody, kind });
+    onCreatePost({ title: cleanTitle, body: cleanBody, kind, room: destination });
     setTitle("");
     setBody("");
     setKind(defaultKind);
   };
 
   return (
-    <form className="post-composer" onSubmit={submitPost}>
-      <div className="composer-topline">
-        <select value={kind} onChange={(event) => setKind(event.target.value as InquiryItem["kind"])}>
-          {allowedKinds.map((option) => (
-            <option key={option} value={option}>
-              {kindLabels[option]}
-            </option>
-          ))}
-        </select>
-        <button type="submit">Post</button>
-      </div>
-      <input
-        value={title}
-        onChange={(event) => setTitle(event.target.value)}
-        placeholder="Title"
-      />
-      <textarea
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
-        placeholder="Claim, note, question, or paper sketch"
-      />
-    </form>
+    <div className="composer-modal-backdrop" role="presentation" onClick={onClose}>
+      <form className="post-composer post-composer-modal" onSubmit={submitPost} onClick={(event) => event.stopPropagation()}>
+        <div className="composer-modal-head">
+          <div>
+            <span>New post</span>
+            <strong>{getRoom(destination).name}</strong>
+          </div>
+          <button type="button" title="Close" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </div>
+        <div className="composer-topline">
+          <select value={kind} onChange={(event) => setKind(event.target.value as InquiryItem["kind"])}>
+            {postKindOptions.map((option) => (
+              <option key={option} value={option}>
+                {kindLabels[option]}
+              </option>
+            ))}
+          </select>
+          <button type="submit">Post</button>
+        </div>
+        <input
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder="Title"
+        />
+        <textarea
+          value={body}
+          onChange={(event) => setBody(event.target.value)}
+          placeholder="Write the thing itself"
+        />
+      </form>
+    </div>
   );
 }
 
@@ -1252,11 +1310,11 @@ function SocialActions({
   const signaledByActor = hasHandle(item.signaledBy, actorHandle);
   const forkedByActor = hasHandle(item.forkedBy, actorHandle);
   const actions = [
-    { label: signaledByActor ? "Signaled" : "Signal", value: item.metrics.signal, icon: Sparkles, action: "signal" as PostAction },
-    { label: "Critique", value: String(commentCount), icon: MessageCircle, action: null },
-    { label: forkedByActor ? "Forked" : "Fork", value: item.metrics.forks, icon: GitFork, action: "fork" as PostAction },
-    { label: savedByActor ? "Saved" : "Save", value: item.metrics.saves, icon: Bookmark, action: "save" as PostAction },
-    { label: "Reads", value: item.metrics.reads, icon: Eye, action: null }
+    { label: "Likes", active: signaledByActor, value: item.metrics.signal, icon: ThumbsUp, action: "signal" as PostAction },
+    { label: "Comments", value: String(commentCount), icon: MessageCircle, action: null },
+    { label: "Reshares", active: forkedByActor, value: item.metrics.forks, icon: Repeat2, action: "fork" as PostAction },
+    { label: "Saves", active: savedByActor, value: item.metrics.saves, icon: Bookmark, action: "save" as PostAction },
+    { label: "Views", value: item.metrics.reads, icon: Eye, action: null }
   ];
 
   return (
@@ -1268,6 +1326,7 @@ function SocialActions({
             key={action.label}
             type="button"
             title={action.label}
+            className={action.active ? "active" : ""}
             onClick={(event) => {
               event.stopPropagation();
               if (action.action) onAction(item.id, action.action);
@@ -1570,15 +1629,17 @@ function ProfileView({
   const authored = items.filter((item) => item.author === person.name);
   const papers = authored.filter((item) => item.kind === "paper");
   const thoughts = authored.filter((item) => item.kind === "thought" || item.kind === "note");
-  const reshares = items.filter((item) => item.author !== person.name && isSavedBy(item, person.handle));
-  const signals = items.filter((item) => item.author !== person.name && hasHandle(item.signaledBy, person.handle));
+  const reshares = items.filter((item) => item.author !== person.name && hasHandle(item.forkedBy, person.handle));
+  const likes = items.filter((item) => item.author !== person.name && hasHandle(item.signaledBy, person.handle));
+  const saved = items.filter((item) => item.author !== person.name && isSavedBy(item, person.handle));
 
   const tabItems: Record<ProfileTab, InquiryItem[]> = {
     all: authored,
     papers,
     thoughts,
     reshares,
-    signals
+    likes,
+    saved
   };
 
   const tabs: Array<{ id: ProfileTab; label: string }> = [
@@ -1586,7 +1647,8 @@ function ProfileView({
     { id: "papers", label: "Papers" },
     { id: "thoughts", label: "Thoughts" },
     { id: "reshares", label: "Reshares" },
-    { id: "signals", label: "Signals" }
+    { id: "likes", label: "Likes" },
+    { id: "saved", label: "Saved" }
   ];
 
   return (
@@ -1610,21 +1672,20 @@ function ProfileView({
               <span key={field}>{field}</span>
             ))}
           </div>
+          <div className="profile-metrics" aria-label={`${person.name} activity totals`}>
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={activeTab === tab.id ? "active" : ""}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                <strong>{tabItems[tab.id].length}</strong>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
-      </section>
-
-      <section className="profile-tabs" aria-label="Profile sections">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={activeTab === tab.id ? "active" : ""}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-            <span>{tabItems[tab.id].length}</span>
-          </button>
-        ))}
       </section>
 
       <section className="feed-stream profile-stream" aria-label={`${person.name} profile feed`}>
