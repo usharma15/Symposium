@@ -349,7 +349,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   pointer-events: none;
 }
 
@@ -459,8 +459,9 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 11px;
-  min-width: 206px;
-  width: fit-content;
+  min-width: 0;
+  width: max-content;
+  max-width: max-content;
   padding: 9px 12px 9px 9px;
   border-radius: var(--radius);
   text-align: left;
@@ -2179,9 +2180,7 @@ button {
 }
 
 .view-nav {
-  position: fixed;
-  top: 10px;
-  left: 232px;
+  position: static;
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
@@ -3257,10 +3256,6 @@ button {
     padding: 88px 14px 104px;
   }
 
-  .view-nav {
-    left: 182px;
-  }
-
   .room-layout {
     grid-template-columns: minmax(0, 1fr);
     width: 100%;
@@ -3351,7 +3346,7 @@ button {
 
 @media (max-width: 640px) {
   .topbar {
-    align-items: flex-start;
+    align-items: center;
   }
 
   .brand {
