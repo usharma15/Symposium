@@ -346,7 +346,7 @@ button {
   top: 16px;
   left: 24px;
   right: 24px;
-  --brand-nav-slot: 170px;
+  --brand-nav-slot: 144px;
   display: grid;
   align-items: center;
   grid-template-columns: var(--brand-nav-slot) auto minmax(0, 1fr);
@@ -466,7 +466,7 @@ button {
   width: var(--brand-nav-slot);
   max-width: var(--brand-nav-slot);
   min-height: 58px;
-  padding: 9px 12px 9px 9px;
+  padding: 9px 11px;
   border-radius: var(--radius);
   text-align: left;
 }
@@ -515,8 +515,8 @@ button {
 }
 
 .brand strong {
-  font-size: 0.96rem;
-  letter-spacing: 0.1em;
+  font-size: 0.92rem;
+  letter-spacing: 0.09em;
 }
 
 .brand small,
@@ -2472,7 +2472,7 @@ button {
 .feed-toolbar {
   grid-column: 1;
   position: fixed;
-  left: max(18px, calc((100vw - 1420px) / 2));
+  left: 24px;
   top: 104px;
   z-index: 8;
   display: grid;
@@ -2689,20 +2689,6 @@ button {
 .post-kind-thought,
 .post-kind-note {
   background: rgba(255, 253, 245, 0.48);
-}
-
-.post-kind-thought::after,
-.post-kind-note::after {
-  content: "";
-  position: absolute;
-  left: 28px;
-  bottom: -9px;
-  width: 18px;
-  height: 18px;
-  border-right: 1px solid rgba(255, 253, 245, 0.34);
-  border-bottom: 1px solid rgba(255, 253, 245, 0.34);
-  background: rgba(255, 253, 245, 0.48);
-  transform: rotate(45deg);
 }
 
 .feed-post h2 {
