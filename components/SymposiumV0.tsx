@@ -290,8 +290,10 @@ export function SymposiumV0() {
     profileList.find((person) => person.name === nameOrHandle || person.handle === nameOrHandle) ??
     getProfileForName(nameOrHandle);
   const selectedProfile = selectedProfileName ? findProfile(selectedProfileName) : null;
-  const getRecency = (item: InquiryItem) => activityRecency[item.id] ?? relativeDateScore(item.date);
-  const sortByRecency = (nextItems: InquiryItem[]) => [...nextItems].sort((a, b) => getRecency(b) - getRecency(a));
+  const getPublishedRecency = (item: InquiryItem) => relativeDateScore(item.date);
+  const getActivityRecency = (item: InquiryItem) => activityRecency[item.id] ?? getPublishedRecency(item);
+  const sortByPublishedRecency = (nextItems: InquiryItem[]) =>
+    [...nextItems].sort((a, b) => getPublishedRecency(b) - getPublishedRecency(a));
 
   const visibleItems = useMemo(() => {
     const roomFiltered = items
@@ -315,8 +317,8 @@ export function SymposiumV0() {
         return true;
       });
 
-    return sortByRecency(roomFiltered);
-  }, [activeRoom, activityRecency, currentProfile.handle, currentProfile.name, feedScope, items, officeMode, roomChip]);
+    return sortByPublishedRecency(roomFiltered);
+  }, [activeRoom, currentProfile.handle, currentProfile.name, feedScope, items, officeMode, roomChip]);
 
   const readLocalSnapshot = (): LocalSnapshot | null => {
     try {
@@ -496,6 +498,10 @@ export function SymposiumV0() {
       selectedProfileName: null,
       officeMode: roomId === "office" ? mode : "desk"
     });
+  };
+
+  const toggleOfficeMode = (mode: Exclude<OfficeMode, "desk">) => {
+    enterRoom("office", activeRoom === "office" && officeMode === mode ? "desk" : mode);
   };
 
   const openProfile = (name: string) => {
@@ -786,9 +792,9 @@ export function SymposiumV0() {
     const term = searchQuery.trim().toLowerCase();
     if (!term) return { titleMatches: [] as InquiryItem[], contentMatches: [] as InquiryItem[], profileMatches: [] as ResearchProfile[] };
 
-    const titleMatches = sortByRecency(items.filter((item) => item.title.toLowerCase().includes(term)));
+    const titleMatches = sortByPublishedRecency(items.filter((item) => item.title.toLowerCase().includes(term)));
     const titleIds = new Set(titleMatches.map((item) => item.id));
-    const contentMatches = sortByRecency(
+    const contentMatches = sortByPublishedRecency(
       items.filter((item) => !titleIds.has(item.id) && searchableText(item).includes(term))
     );
     const profileMatches = profileList
@@ -801,7 +807,7 @@ export function SymposiumV0() {
       .slice(0, 8);
 
     return { titleMatches, contentMatches, profileMatches };
-  }, [items, profileList, searchQuery, sortByRecency]);
+  }, [items, profileList, searchQuery]);
 
   if (entryMode !== "complete") {
     return (
@@ -819,6 +825,7 @@ export function SymposiumV0() {
     <main
       className={`symposium-shell ${theme}`}
       data-room={activeRoom}
+      data-view={selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
       style={{ "--room-bg": `url(${roomRenders[activeRoom]})` } as CSSProperties}
     >
       <div className="ambient-layer" aria-hidden="true" />
@@ -865,9 +872,9 @@ export function SymposiumV0() {
         {syncStatus}
       </div>
 
-      <button className="search-launcher" type="button" onClick={openSearch}>
+      <button className="search-launcher bottom-action bottom-action-search" type="button" onClick={openSearch}>
         <Search size={17} />
-        <span>Search Symposium</span>
+        <span>Search</span>
       </button>
 
       <section className="stage">
@@ -881,15 +888,7 @@ export function SymposiumV0() {
             onAction={applyAction}
             onOpenSettings={() => setSettingsOpen(true)}
             actorHandle={currentProfile.handle}
-            getRecency={getRecency}
-          />
-        ) : activeRoom === "hall" ? (
-          <HallView onEnter={enterRoom} />
-        ) : activeRoom === "office" && officeMode === "desk" ? (
-          <OfficeDeskView
-            room={activeRoomData}
-            onOpenSaved={() => enterRoom("office", "saved")}
-            onOpenNotes={() => enterRoom("office", "notes")}
+            getRecency={getActivityRecency}
           />
         ) : selectedItem ? (
           <DetailView
@@ -900,6 +899,14 @@ export function SymposiumV0() {
             onAddComment={addComment}
             onAction={applyAction}
             actorHandle={currentProfile.handle}
+          />
+        ) : activeRoom === "hall" ? (
+          <HallView onEnter={enterRoom} />
+        ) : activeRoom === "office" && officeMode === "desk" ? (
+          <OfficeDeskView
+            room={activeRoomData}
+            onOpenSaved={() => toggleOfficeMode("saved")}
+            onOpenNotes={() => toggleOfficeMode("notes")}
           />
         ) : (
           <RoomView
@@ -913,14 +920,15 @@ export function SymposiumV0() {
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
-            onOpenNotebook={openNotebook}
+            onOpenNotes={() => toggleOfficeMode("notes")}
+            onOpenSaved={() => toggleOfficeMode("saved")}
             actorHandle={currentProfile.handle}
           />
         )}
       </section>
 
       <button
-        className="new-post-launcher"
+        className="new-post-launcher bottom-action bottom-action-new"
         type="button"
         onClick={() => {
           setNotebookOpen(false);
@@ -935,7 +943,7 @@ export function SymposiumV0() {
       </button>
 
       <button
-        className="pocket pocket-left"
+        className="pocket pocket-left bottom-action bottom-action-notebook"
         type="button"
         title="Notebook"
         onClick={openNotebook}
@@ -945,7 +953,7 @@ export function SymposiumV0() {
       </button>
 
       <button
-        className="pocket pocket-right"
+        className="pocket pocket-right bottom-action bottom-action-tablet"
         type="button"
         title="AI tablet"
         onClick={openTablet}
@@ -1255,7 +1263,8 @@ function RoomView({
   onSelect,
   onOpenProfile,
   onAction,
-  onOpenNotebook,
+  onOpenNotes,
+  onOpenSaved,
   actorHandle
 }: {
   room: Room;
@@ -1268,12 +1277,13 @@ function RoomView({
   onSelect: (id: string) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
-  onOpenNotebook: () => void;
+  onOpenNotes: () => void;
+  onOpenSaved: () => void;
   actorHandle: string;
 }) {
   return (
     <div className="room-layout">
-      <RoomRender room={room} onOpenNotebook={onOpenNotebook} />
+      <RoomRender room={room} onOpenNotebook={onOpenNotes} onOpenSaved={onOpenSaved} />
 
       <section className="feed-toolbar" aria-label="Feed controls">
         <div className="room-mini-title">
@@ -1484,9 +1494,6 @@ function FeedPost({
         onClickStop={(event) => event.stopPropagation()}
       />
       <div className="post-body">
-        <div className="card-topline">
-          <span>{kindLabels[item.kind]}</span>
-        </div>
         <h2>{item.title}</h2>
         <p>{item.excerpt}</p>
         <SocialActions item={item} commentCount={countComments(item.comments)} onAction={onAction} actorHandle={actorHandle} />
