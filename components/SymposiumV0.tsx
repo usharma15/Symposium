@@ -4,9 +4,12 @@ import Image from "next/image";
 import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
+  ArrowRight,
   Bookmark,
   BrainCircuit,
   Eye,
+  Home,
+  Image as ImageIcon,
   MessageCircle,
   Moon,
   NotebookPen,
@@ -14,6 +17,7 @@ import {
   Search,
   Send,
   Sparkles,
+  Settings,
   Sun,
   ThumbsUp,
   UserRound,
@@ -23,7 +27,6 @@ import {
   feedScopes,
   getProfileForName,
   inquiryItems,
-  libraryFolders,
   profile,
   roomChips,
   rooms,
@@ -39,6 +42,15 @@ import type { CreateProfileInput, PostAction } from "@/lib/dataStore";
 type Theme = "day" | "night";
 type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
 type EntryMode = "loading" | "approach" | "auth" | "complete";
+type OfficeMode = "desk" | "saved" | "notes";
+
+type ViewSnapshot = {
+  activeRoom: RoomId;
+  selectedItemId: string | null;
+  selectedProfileName: string | null;
+  officeMode: OfficeMode;
+  scrollY: number;
+};
 
 type AuthRecord = {
   handle: string;
@@ -55,6 +67,14 @@ type PostDraft = {
   title: string;
   body: string;
   kind: Extract<InquiryItem["kind"], "paper" | "thought">;
+};
+
+type ProfileSettingsDraft = {
+  avatarUrl?: string;
+  name: string;
+  bio: string;
+  likesPublic: boolean;
+  resharesPublic: boolean;
 };
 
 const kindLabels: Record<InquiryItem["kind"], string> = {
@@ -86,6 +106,16 @@ const topicTerms: Record<string, string[]> = {
   "Tools And Instruments": ["tool", "tools", "code", "instrument", "runner", "notebook"]
 };
 
+const commentSearchText = (comments: InquiryComment[]): string =>
+  comments
+    .flatMap((comment) => [
+      comment.author,
+      comment.stance,
+      comment.body,
+      commentSearchText(comment.replies ?? [])
+    ])
+    .join(" ");
+
 const searchableText = (item: InquiryItem) =>
   [
     item.title,
@@ -99,7 +129,8 @@ const searchableText = (item: InquiryItem) =>
     ...item.objections,
     ...item.evidence,
     ...item.tests,
-    ...item.forks
+    ...item.forks,
+    commentSearchText(item.comments)
   ]
     .join(" ")
     .toLowerCase();
@@ -169,6 +200,7 @@ const commentTreeHasAuthor = (comments: InquiryComment[], person: ResearchProfil
 const uniqueItemsById = (items: InquiryItem[]) => [...new Map(items.map((item) => [item.id, item])).values()];
 
 const inferredLikesPublic = (person: ResearchProfile) => person.likesPublic ?? person.handle.length % 5 !== 0;
+const inferredResharesPublic = (person: ResearchProfile) => person.resharesPublic ?? person.handle.length % 4 !== 0;
 
 const toggleHandle = (handles: string[] | undefined, handle: string) => {
   const current = new Set(handles ?? []);
@@ -233,14 +265,17 @@ export function SymposiumV0() {
   const [currentProfile, setCurrentProfile] = useState<ResearchProfile>(profile);
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
   const [roomChip, setRoomChip] = useState(roomChips[0]);
-  const [query, setQuery] = useState("");
+  const [officeMode, setOfficeMode] = useState<OfficeMode>("desk");
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [tabletOpen, setTabletOpen] = useState(false);
   const [notebookOpen, setNotebookOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(null);
-  const [returnProfileName, setReturnProfileName] = useState<string | null>(null);
+  const [viewHistory, setViewHistory] = useState<ViewSnapshot[]>([]);
+  const [viewFuture, setViewFuture] = useState<ViewSnapshot[]>([]);
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState("Loading live data");
   const [authError, setAuthError] = useState("");
@@ -259,11 +294,16 @@ export function SymposiumV0() {
   const sortByRecency = (nextItems: InquiryItem[]) => [...nextItems].sort((a, b) => getRecency(b) - getRecency(a));
 
   const visibleItems = useMemo(() => {
-    const lowered = query.trim().toLowerCase();
     const roomFiltered = items
       .filter((item) => {
         if (activeRoom === "hall") return item.kind === "paper" || item.kind === "thought";
-        if (activeRoom === "office") return isSavedBy(item, currentProfile.handle) || item.room === "office";
+        if (activeRoom === "office") {
+          if (officeMode === "saved") return isSavedBy(item, currentProfile.handle);
+          if (officeMode === "notes") {
+            return item.authorHandle === currentProfile.handle || item.author === currentProfile.name || item.room === "office";
+          }
+          return false;
+        }
         if (activeRoom === "symposium") return item.kind === "paper" || item.kind === "thought";
         if (activeRoom === "library") return item.kind === "paper";
         if (activeRoom === "amphitheater") return item.kind === "thought" || item.kind === "note";
@@ -273,14 +313,10 @@ export function SymposiumV0() {
         if (feedScope === "following") return item.authorHandle === currentProfile.handle || item.author === currentProfile.name || isSavedBy(item, currentProfile.handle);
         if (feedScope === "rooms") return matchesTopic(item, roomChip);
         return true;
-      })
-      .filter((item) => {
-        if (!lowered) return true;
-        return searchableText(item).includes(lowered);
       });
 
     return sortByRecency(roomFiltered);
-  }, [activeRoom, activityRecency, currentProfile.handle, currentProfile.name, feedScope, items, query, roomChip]);
+  }, [activeRoom, activityRecency, currentProfile.handle, currentProfile.name, feedScope, items, officeMode, roomChip]);
 
   const readLocalSnapshot = (): LocalSnapshot | null => {
     try {
@@ -394,54 +430,105 @@ export function SymposiumV0() {
     });
   };
 
-  const enterRoom = (roomId: RoomId) => {
-    setActiveRoom(roomId);
-    setSelectedItemId(null);
-    setQuery("");
-    setSelectedProfileName(null);
-    setReturnProfileName(null);
-    setAccountOpen(false);
-    window.scrollTo({ top: 0, behavior: "auto" });
-  };
+  const snapshotView = (): ViewSnapshot => ({
+    activeRoom,
+    selectedItemId,
+    selectedProfileName,
+    officeMode,
+    scrollY: window.scrollY
+  });
 
-  const openProfile = (name: string) => {
+  const restoreView = (snapshot: ViewSnapshot) => {
+    setActiveRoom(snapshot.activeRoom);
+    setSelectedItemId(snapshot.selectedItemId);
+    setSelectedProfileName(snapshot.selectedProfileName);
+    setOfficeMode(snapshot.officeMode);
     setTabletOpen(false);
     setNotebookOpen(false);
     setComposerOpen(false);
-    setAccountOpen(false);
-    setReturnProfileName(null);
-    setSelectedProfileName(name);
-    window.scrollTo({ top: 0, behavior: "auto" });
+    setSettingsOpen(false);
+    setSearchOpen(false);
+    window.setTimeout(() => window.scrollTo({ top: snapshot.scrollY, behavior: "auto" }), 0);
+  };
+
+  const navigateView = (
+    next: Partial<Omit<ViewSnapshot, "scrollY">>,
+    scrollY = 0
+  ) => {
+    setViewHistory((history) => [...history, snapshotView()]);
+    setViewFuture([]);
+    if (next.activeRoom !== undefined) setActiveRoom(next.activeRoom);
+    if (next.selectedItemId !== undefined) setSelectedItemId(next.selectedItemId);
+    if (next.selectedProfileName !== undefined) setSelectedProfileName(next.selectedProfileName);
+    if (next.officeMode !== undefined) setOfficeMode(next.officeMode);
+    setTabletOpen(false);
+    setNotebookOpen(false);
+    setComposerOpen(false);
+    setSettingsOpen(false);
+    setSearchOpen(false);
+    window.setTimeout(() => window.scrollTo({ top: scrollY, behavior: "auto" }), 0);
+  };
+
+  const goBack = () => {
+    setViewHistory((history) => {
+      if (!history.length) return history;
+      const previous = history[history.length - 1];
+      setViewFuture((future) => [snapshotView(), ...future]);
+      restoreView(previous);
+      return history.slice(0, -1);
+    });
+  };
+
+  const goForward = () => {
+    setViewFuture((future) => {
+      if (!future.length) return future;
+      const next = future[0];
+      setViewHistory((history) => [...history, snapshotView()]);
+      restoreView(next);
+      return future.slice(1);
+    });
+  };
+
+  const enterRoom = (roomId: RoomId, mode: OfficeMode = roomId === "office" ? "desk" : officeMode) => {
+    navigateView({
+      activeRoom: roomId,
+      selectedItemId: null,
+      selectedProfileName: null,
+      officeMode: roomId === "office" ? mode : "desk"
+    });
+  };
+
+  const openProfile = (name: string) => {
+    navigateView({ selectedProfileName: name, selectedItemId: null });
   };
 
   const openNotebook = () => {
     setTabletOpen(false);
     setComposerOpen(false);
-    setAccountOpen(false);
-    setSelectedProfileName(null);
+    setSettingsOpen(false);
     setNotebookOpen(true);
   };
 
   const openTablet = () => {
     setNotebookOpen(false);
     setComposerOpen(false);
-    setAccountOpen(false);
-    setSelectedProfileName(null);
+    setSettingsOpen(false);
     setTabletOpen(true);
   };
 
-  const openAccount = () => {
+  const openSearch = () => {
     setTabletOpen(false);
     setNotebookOpen(false);
     setComposerOpen(false);
-    setSelectedProfileName(null);
-    setAccountOpen(true);
+    setSettingsOpen(false);
+    setSearchOpen(true);
   };
 
-  const routePostRoom = (): Exclude<RoomId, "hall"> => "symposium";
+  const routePostRoom = (kind: PostDraft["kind"]): Exclude<RoomId, "hall" | "office"> =>
+    kind === "paper" ? "library" : "amphitheater";
 
   const createPost = async ({ title, body, kind }: PostDraft) => {
-    const routedRoom = routePostRoom();
+    const routedRoom = routePostRoom(kind);
     setSyncStatus("Posting");
     const response = await fetch("/api/posts", {
       method: "POST",
@@ -470,8 +557,8 @@ export function SymposiumV0() {
       tests: [],
       forks: [],
       comments: [],
-      saved: routedRoom === "office",
-      savedBy: routedRoom === "office" ? [currentProfile.handle] : [],
+      saved: false,
+      savedBy: [],
       signaledBy: [],
       forkedBy: []
     };
@@ -480,8 +567,12 @@ export function SymposiumV0() {
     touchActivity(data.item.id);
     setItems(nextItems);
     persistLocalSnapshot(nextItems, profiles);
-    setSelectedItemId(data.item.id);
-    setActiveRoom(data.item.room);
+    navigateView({
+      activeRoom: data.item.room,
+      selectedItemId: data.item.id,
+      selectedProfileName: null,
+      officeMode: "desk"
+    });
     setComposerOpen(false);
     setSyncStatus("Post saved");
   };
@@ -546,9 +637,14 @@ export function SymposiumV0() {
     setProfiles(nextProfiles);
     setCurrentProfile(person);
     setSignedIn(true);
-    setAccountOpen(false);
+    setSettingsOpen(false);
     setEntryMode("complete");
     setActiveRoom("hall");
+    setOfficeMode("desk");
+    setSelectedItemId(null);
+    setSelectedProfileName(null);
+    setViewHistory([]);
+    setViewFuture([]);
     window.sessionStorage.setItem("symposium-entry-complete", "true");
     window.localStorage.setItem("symposium-auth-handle", person.handle);
     window.localStorage.setItem("symposium-profile-handle", person.handle);
@@ -578,6 +674,32 @@ export function SymposiumV0() {
     persistLocalSnapshot(items, nextProfiles, data.profile);
     setSyncStatus("Profile saved");
     return data.profile;
+  };
+
+  const saveProfileSettings = (draft: ProfileSettingsDraft) => {
+    const cleanName = draft.name.trim() || currentProfile.name;
+    const updatedProfile: ResearchProfile = {
+      ...currentProfile,
+      name: cleanName,
+      avatarUrl: draft.avatarUrl?.trim() || undefined,
+      bio: draft.bio.trim() || currentProfile.bio,
+      likesPublic: draft.likesPublic,
+      resharesPublic: draft.resharesPublic
+    };
+    const nextProfiles = { ...profiles, [updatedProfile.handle]: updatedProfile };
+    const nextItems = items.map((item) =>
+      item.authorHandle === updatedProfile.handle ? { ...item, author: updatedProfile.name } : item
+    );
+
+    setCurrentProfile(updatedProfile);
+    setProfiles(nextProfiles);
+    setItems(nextItems);
+    if (selectedProfileName === currentProfile.name || selectedProfileName === currentProfile.handle) {
+      setSelectedProfileName(updatedProfile.name);
+    }
+    persistLocalSnapshot(nextItems, nextProfiles, updatedProfile);
+    setSettingsOpen(false);
+    setSyncStatus("Profile settings saved");
   };
 
   const switchProfile = (person: ResearchProfile) => {
@@ -624,7 +746,7 @@ export function SymposiumV0() {
     window.localStorage.removeItem("symposium-auth-handle");
     window.sessionStorage.removeItem("symposium-entry-complete");
     setSignedIn(false);
-    setAccountOpen(false);
+    setSettingsOpen(false);
     setAuthError("");
     setEntryMode("auth");
   };
@@ -651,21 +773,35 @@ export function SymposiumV0() {
     persistLocalSnapshot(nextItems, profiles);
   };
 
-  const openPost = (id: string, fromProfileName?: string | null) => {
-    if (fromProfileName) {
-      setReturnProfileName(fromProfileName);
-      setSelectedProfileName(null);
-    } else {
-      setReturnProfileName(null);
-    }
-    setSelectedItemId(id);
-    window.scrollTo({ top: 0, behavior: "auto" });
+  const openPost = (id: string) => {
+    navigateView({ selectedItemId: id, selectedProfileName: null });
     void applyAction(id, "read");
   };
 
   const currentContext = selectedItem
     ? `${selectedItem.title}: ${selectedItem.gatheringReason}`
     : `${activeRoomData.name}: ${activeRoomData.description}`;
+
+  const searchResults = useMemo(() => {
+    const term = searchQuery.trim().toLowerCase();
+    if (!term) return { titleMatches: [] as InquiryItem[], contentMatches: [] as InquiryItem[], profileMatches: [] as ResearchProfile[] };
+
+    const titleMatches = sortByRecency(items.filter((item) => item.title.toLowerCase().includes(term)));
+    const titleIds = new Set(titleMatches.map((item) => item.id));
+    const contentMatches = sortByRecency(
+      items.filter((item) => !titleIds.has(item.id) && searchableText(item).includes(term))
+    );
+    const profileMatches = profileList
+      .filter((person) =>
+        [person.name, person.handle, person.role, person.location, person.bio, ...person.fields]
+          .join(" ")
+          .toLowerCase()
+          .includes(term)
+      )
+      .slice(0, 8);
+
+    return { titleMatches, contentMatches, profileMatches };
+  }, [items, profileList, searchQuery, sortByRecency]);
 
   if (entryMode !== "complete") {
     return (
@@ -696,6 +832,14 @@ export function SymposiumV0() {
           </span>
         </button>
 
+        <ViewNav
+          canGoBack={viewHistory.length > 0}
+          canGoForward={viewFuture.length > 0}
+          onBack={goBack}
+          onForward={goForward}
+          onHome={() => enterRoom("hall")}
+        />
+
         <nav className="topbar-actions" aria-label="Primary controls">
           <button
             className="icon-button"
@@ -708,8 +852,8 @@ export function SymposiumV0() {
           <button
             className="profile-button"
             type="button"
-            title="Account"
-            onClick={openAccount}
+            title="Open your profile"
+            onClick={() => openProfile(currentProfile.name)}
           >
             <UserRound size={18} />
             <span>{currentProfile.name}</span>
@@ -721,33 +865,37 @@ export function SymposiumV0() {
         {syncStatus}
       </div>
 
+      <button className="search-launcher" type="button" onClick={openSearch}>
+        <Search size={17} />
+        <span>Search Symposium</span>
+      </button>
+
       <section className="stage">
         {selectedProfile ? (
           <ProfileView
             person={selectedProfile}
             items={items}
-            onBack={() => setSelectedProfileName(null)}
-            onSelect={(id) => openPost(id, selectedProfile.name)}
+            isOwnProfile={selectedProfile.handle === currentProfile.handle}
+            onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
+            onOpenSettings={() => setSettingsOpen(true)}
             actorHandle={currentProfile.handle}
             getRecency={getRecency}
           />
         ) : activeRoom === "hall" ? (
           <HallView onEnter={enterRoom} />
+        ) : activeRoom === "office" && officeMode === "desk" ? (
+          <OfficeDeskView
+            room={activeRoomData}
+            onOpenSaved={() => enterRoom("office", "saved")}
+            onOpenNotes={() => enterRoom("office", "notes")}
+          />
         ) : selectedItem ? (
           <DetailView
             item={selectedItem}
             room={activeRoomData}
-            onBack={() => {
-              setSelectedItemId(null);
-              if (returnProfileName) {
-                setSelectedProfileName(returnProfileName);
-                setReturnProfileName(null);
-              }
-            }}
-            onOpenTablet={openTablet}
-            onOpenNotebook={openNotebook}
+            onBack={goBack}
             onOpenProfile={openProfile}
             onAddComment={addComment}
             onAction={applyAction}
@@ -757,12 +905,11 @@ export function SymposiumV0() {
           <RoomView
             room={activeRoomData}
             items={visibleItems}
+            officeMode={activeRoom === "office" ? officeMode : undefined}
             feedScope={feedScope}
             roomChip={roomChip}
-            query={query}
             onFeedScope={setFeedScope}
             onRoomChip={setRoomChip}
-            onQuery={setQuery}
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
@@ -778,7 +925,8 @@ export function SymposiumV0() {
         onClick={() => {
           setNotebookOpen(false);
           setTabletOpen(false);
-          setAccountOpen(false);
+          setSettingsOpen(false);
+          setSearchOpen(false);
           setComposerOpen(true);
         }}
       >
@@ -831,12 +979,28 @@ export function SymposiumV0() {
         />
       ) : null}
 
-      {accountOpen ? (
-        <AccountPanel
+      {searchOpen ? (
+        <SearchModal
+          query={searchQuery}
+          setQuery={setSearchQuery}
+          results={searchResults}
+          onClose={() => setSearchOpen(false)}
+          onOpenPost={(id) => {
+            setSearchOpen(false);
+            openPost(id);
+          }}
+          onOpenProfile={(name) => {
+            setSearchOpen(false);
+            openProfile(name);
+          }}
+        />
+      ) : null}
+
+      {settingsOpen ? (
+        <ProfileSettingsModal
           currentProfile={currentProfile}
-          onClose={() => setAccountOpen(false)}
-          onSave={saveProfile}
-          onViewProfile={(name) => openProfile(name)}
+          onClose={() => setSettingsOpen(false)}
+          onSave={saveProfileSettings}
           onSignOut={signOut}
         />
       ) : null}
@@ -1036,15 +1200,58 @@ function HallView({ onEnter }: { onEnter: (roomId: RoomId) => void }) {
   );
 }
 
+function ViewNav({
+  canGoBack,
+  canGoForward,
+  onBack,
+  onForward,
+  onHome
+}: {
+  canGoBack: boolean;
+  canGoForward: boolean;
+  onBack: () => void;
+  onForward: () => void;
+  onHome: () => void;
+}) {
+  return (
+    <nav className="view-nav" aria-label="View history">
+      <button type="button" title="Back" disabled={!canGoBack} onClick={onBack}>
+        <ArrowLeft size={17} />
+      </button>
+      <button type="button" title="Forward" disabled={!canGoForward} onClick={onForward}>
+        <ArrowRight size={17} />
+      </button>
+      <button type="button" title="Main hall" onClick={onHome}>
+        <Home size={17} />
+      </button>
+    </nav>
+  );
+}
+
+function OfficeDeskView({
+  room,
+  onOpenSaved,
+  onOpenNotes
+}: {
+  room: Room;
+  onOpenSaved: () => void;
+  onOpenNotes: () => void;
+}) {
+  return (
+    <div className="office-desk-view">
+      <RoomRender room={room} onOpenNotebook={onOpenNotes} onOpenSaved={onOpenSaved} />
+    </div>
+  );
+}
+
 function RoomView({
   room,
   items,
+  officeMode,
   feedScope,
   roomChip,
-  query,
   onFeedScope,
   onRoomChip,
-  onQuery,
   onSelect,
   onOpenProfile,
   onAction,
@@ -1053,12 +1260,11 @@ function RoomView({
 }: {
   room: Room;
   items: InquiryItem[];
+  officeMode?: OfficeMode;
   feedScope: FeedScope;
   roomChip: string;
-  query: string;
   onFeedScope: (scope: FeedScope) => void;
   onRoomChip: (chip: string) => void;
-  onQuery: (query: string) => void;
   onSelect: (id: string) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
@@ -1072,18 +1278,15 @@ function RoomView({
       <section className="feed-toolbar" aria-label="Feed controls">
         <div className="room-mini-title">
           <p className="eyebrow">{room.eyebrow}</p>
-          <h1>{room.name}</h1>
-          <p>{room.description}</p>
+          <h1>{officeMode === "saved" ? "Saved for later" : officeMode === "notes" ? "Notes" : room.name}</h1>
+          <p>
+            {officeMode === "saved"
+              ? "Work you marked for return."
+              : officeMode === "notes"
+                ? "Your desk notes and authored fragments."
+                : room.description}
+          </p>
         </div>
-
-        <label className="search-box">
-          <Search size={17} />
-          <input
-            value={query}
-            onChange={(event) => onQuery(event.target.value)}
-            placeholder="Search"
-          />
-        </label>
 
         <div className="segmented">
           {feedScopes.map((scope) => (
@@ -1111,7 +1314,11 @@ function RoomView({
           </label>
         ) : null}
 
-        {room.id === "office" ? <OfficeFolders /> : null}
+        {room.id === "office" ? (
+          <div className="office-feed-note">
+            {officeMode === "saved" ? "Saved items are sorted by your latest action." : "Notes are local for now."}
+          </div>
+        ) : null}
       </section>
 
       <section className="feed-stream" aria-label={`${room.name} feed`}>
@@ -1139,10 +1346,12 @@ function RoomView({
 
 function RoomRender({
   room,
-  onOpenNotebook
+  onOpenNotebook,
+  onOpenSaved
 }: {
   room: Room;
   onOpenNotebook: () => void;
+  onOpenSaved?: () => void;
 }) {
   const isOffice = room.id === "office";
 
@@ -1165,6 +1374,7 @@ function RoomRender({
             <button
               className="office-hotspot office-hotspot-saved"
               type="button"
+              onClick={onOpenSaved}
               aria-label="Saved for later"
             >
               <span>Saved for later</span>
@@ -1235,21 +1445,6 @@ function PostComposerModal({
         />
       </form>
     </div>
-  );
-}
-
-function OfficeFolders() {
-  return (
-    <label className="office-folder-select">
-      <span>Desk view</span>
-      <select defaultValue={libraryFolders[0].label}>
-        {libraryFolders.map((folder) => (
-          <option key={folder.label} value={folder.label}>
-            {folder.label} · {folder.count}
-          </option>
-        ))}
-      </select>
-    </label>
   );
 }
 
@@ -1380,8 +1575,6 @@ function DetailView({
   item,
   room,
   onBack,
-  onOpenTablet,
-  onOpenNotebook,
   onOpenProfile,
   onAddComment,
   onAction,
@@ -1390,15 +1583,17 @@ function DetailView({
   item: InquiryItem;
   room: Room;
   onBack: () => void;
-  onOpenTablet: () => void;
-  onOpenNotebook: () => void;
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onAction: (itemId: string, action: PostAction) => void;
   actorHandle: string;
 }) {
+  const isPaper = item.kind === "paper";
+  const doiSlug = item.id.replace(/[^a-z0-9]+/gi, ".").replace(/\.+/g, ".").replace(/\.$/, "");
+  const codeSlug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 44);
+
   return (
-    <article className="detail-layout">
+    <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}`}>
       <button className="back-button" type="button" onClick={onBack}>
         <ArrowLeft size={17} />
         Back to {room.feedLabel}
@@ -1426,28 +1621,30 @@ function DetailView({
         </section>
       </section>
 
-      <aside className="detail-side">
-        <section className="signal-panel">
-          <h2>Signal Panel</h2>
-          {item.signals.map((signal) => (
-            <div key={signal.label}>
-              <span>{signal.label}</span>
-              <strong>{signal.value}</strong>
+      {isPaper ? (
+        <aside className="paper-side">
+          <section>
+            <h2>Paper</h2>
+            <div>
+              <span>Collaborators</span>
+              <strong>{item.author}</strong>
+              <small>Independent reviewers pending</small>
             </div>
-          ))}
-        </section>
-
-        <section className="side-actions">
-          <button type="button" onClick={onOpenNotebook}>
-            <NotebookPen size={17} />
-            Add to notebook
-          </button>
-          <button type="button" onClick={onOpenTablet}>
-            <BrainCircuit size={17} />
-            Ask tablet
-          </button>
-        </section>
-      </aside>
+            <div>
+              <span>DOI</span>
+              <strong>10.0000/symposium.{doiSlug}</strong>
+            </div>
+            <div>
+              <span>Code base</span>
+              <strong>github.com/symposium-labs/{codeSlug || "paper"}</strong>
+            </div>
+            <div>
+              <span>Status</span>
+              <strong>{item.status}</strong>
+            </div>
+          </section>
+        </aside>
+      ) : null}
     </article>
   );
 }
@@ -1645,19 +1842,21 @@ function TabletPanel({
 function ProfileView({
   person,
   items,
-  onBack,
+  isOwnProfile,
   onSelect,
   onOpenProfile,
   onAction,
+  onOpenSettings,
   actorHandle,
   getRecency
 }: {
   person: ResearchProfile;
   items: InquiryItem[];
-  onBack: () => void;
+  isOwnProfile: boolean;
   onSelect: (id: string) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  onOpenSettings: () => void;
   actorHandle: string;
   getRecency: (item: InquiryItem) => number;
 }) {
@@ -1665,12 +1864,15 @@ function ProfileView({
   const byRecency = (nextItems: InquiryItem[]) => [...nextItems].sort((a, b) => getRecency(b) - getRecency(a));
   const isAuthor = (item: InquiryItem) => item.authorHandle === person.handle || item.author === person.name;
   const canShowLikes = actorHandle === person.handle || inferredLikesPublic(person);
+  const canShowReshares = actorHandle === person.handle || inferredResharesPublic(person);
   const canShowSaved = actorHandle === person.handle;
   const authored = byRecency(items.filter(isAuthor));
   const papers = authored.filter((item) => item.kind === "paper");
   const thoughts = authored.filter((item) => item.kind === "thought" || item.kind === "note");
   const comments = byRecency(items.filter((item) => !isAuthor(item) && commentTreeHasAuthor(item.comments, person)));
-  const reshares = byRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.forkedBy, person.handle)));
+  const reshares = canShowReshares
+    ? byRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.forkedBy, person.handle)))
+    : [];
   const likes = canShowLikes
     ? byRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.signaledBy, person.handle)))
     : [];
@@ -1692,7 +1894,7 @@ function ProfileView({
     { id: "papers", label: "Papers" },
     { id: "thoughts", label: "Thoughts" },
     { id: "comments", label: "Comments" },
-    { id: "reshares", label: "Reshares" },
+    ...(canShowReshares ? [{ id: "reshares" as const, label: "Reshares" }] : []),
     ...(canShowLikes ? [{ id: "likes" as const, label: "Likes" }] : []),
     ...(canShowSaved ? [{ id: "saved" as const, label: "Saved" }] : [])
   ];
@@ -1703,14 +1905,17 @@ function ProfileView({
 
   return (
     <article className="profile-page">
-      <button className="back-button" type="button" onClick={onBack}>
-        <ArrowLeft size={17} />
-        Back
-      </button>
-
       <section className="profile-hero">
-        <span className="avatar large">{initial(person.name)}</span>
+        <span className="avatar large profile-avatar">
+          {person.avatarUrl ? <img src={person.avatarUrl} alt="" /> : initial(person.name)}
+        </span>
         <div>
+          {isOwnProfile ? (
+            <button className="profile-settings-button" type="button" onClick={onOpenSettings}>
+              <Settings size={17} />
+              <span>Settings</span>
+            </button>
+          ) : null}
           <h1>{person.name}</h1>
           <p>{person.handle}</p>
           <p>
@@ -1761,108 +1966,191 @@ function ProfileView({
   );
 }
 
-function AccountPanel({
+function SearchModal({
+  query,
+  setQuery,
+  results,
+  onClose,
+  onOpenPost,
+  onOpenProfile
+}: {
+  query: string;
+  setQuery: (query: string) => void;
+  results: {
+    titleMatches: InquiryItem[];
+    contentMatches: InquiryItem[];
+    profileMatches: ResearchProfile[];
+  };
+  onClose: () => void;
+  onOpenPost: (id: string) => void;
+  onOpenProfile: (name: string) => void;
+}) {
+  const hasQuery = query.trim().length > 0;
+  const hasResults =
+    results.titleMatches.length || results.contentMatches.length || results.profileMatches.length;
+
+  return (
+    <div className="modal-backdrop search-backdrop" role="presentation" onClick={onClose}>
+      <section className="search-modal" aria-label="Search Symposium" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <label>
+            <Search size={18} />
+            <input
+              value={query}
+              autoFocus
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search posts, comments, people"
+            />
+          </label>
+          <button type="button" title="Close" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </header>
+
+        <div className="search-results">
+          {!hasQuery ? (
+            <p>Start typing to search across titles, bodies, comments, and profiles.</p>
+          ) : hasResults ? (
+            <>
+              {results.titleMatches.length ? (
+                <SearchResultGroup title="Title matches" items={results.titleMatches} onOpenPost={onOpenPost} />
+              ) : null}
+              {results.contentMatches.length ? (
+                <SearchResultGroup title="Content and comments" items={results.contentMatches} onOpenPost={onOpenPost} />
+              ) : null}
+              {results.profileMatches.length ? (
+                <section className="search-group">
+                  <h2>People</h2>
+                  {results.profileMatches.map((person) => (
+                    <button key={person.handle} type="button" onClick={() => onOpenProfile(person.name)}>
+                      <span className="avatar small">{initial(person.name)}</span>
+                      <span>
+                        <strong>{person.name}</strong>
+                        <small>{person.role}</small>
+                      </span>
+                    </button>
+                  ))}
+                </section>
+              ) : null}
+            </>
+          ) : (
+            <p>No results yet.</p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SearchResultGroup({
+  title,
+  items,
+  onOpenPost
+}: {
+  title: string;
+  items: InquiryItem[];
+  onOpenPost: (id: string) => void;
+}) {
+  return (
+    <section className="search-group">
+      <h2>{title}</h2>
+      {items.slice(0, 8).map((item) => (
+        <button key={item.id} type="button" onClick={() => onOpenPost(item.id)}>
+          <span>{kindLabels[item.kind]}</span>
+          <strong>{item.title}</strong>
+          <small>
+            {item.author} · {item.date}
+          </small>
+        </button>
+      ))}
+    </section>
+  );
+}
+
+function ProfileSettingsModal({
   currentProfile,
   onClose,
   onSave,
-  onViewProfile,
   onSignOut
 }: {
   currentProfile: ResearchProfile;
   onClose: () => void;
-  onSave: (input: CreateProfileInput) => void;
-  onViewProfile: (name: string) => void;
+  onSave: (draft: ProfileSettingsDraft) => void;
   onSignOut: () => void;
 }) {
+  const [avatarUrl, setAvatarUrl] = useState(currentProfile.avatarUrl ?? "");
   const [name, setName] = useState(currentProfile.name);
-  const [handle, setHandle] = useState(currentProfile.handle);
-  const [email, setEmail] = useState(currentProfile.email ?? "");
-  const [role, setRole] = useState(currentProfile.role);
-  const [location, setLocation] = useState(currentProfile.location);
   const [bio, setBio] = useState(currentProfile.bio);
-  const [fields, setFields] = useState(currentProfile.fields.join(", "));
+  const [likesPublic, setLikesPublic] = useState(inferredLikesPublic(currentProfile));
+  const [resharesPublic, setResharesPublic] = useState(inferredResharesPublic(currentProfile));
 
   useEffect(() => {
+    setAvatarUrl(currentProfile.avatarUrl ?? "");
     setName(currentProfile.name);
-    setHandle(currentProfile.handle);
-    setEmail(currentProfile.email ?? "");
-    setRole(currentProfile.role);
-    setLocation(currentProfile.location);
     setBio(currentProfile.bio);
-    setFields(currentProfile.fields.join(", "));
+    setLikesPublic(inferredLikesPublic(currentProfile));
+    setResharesPublic(inferredResharesPublic(currentProfile));
   }, [currentProfile]);
 
   const submitProfile = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const cleanName = name.trim();
-    const cleanHandle =
-      handle.trim() ||
-      `@${cleanName.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`;
-    if (!cleanName || !cleanHandle) return;
-
-    onSave({
-      name: cleanName,
-      handle: cleanHandle,
-      email,
-      role,
-      location,
-      bio,
-      fields: fields.split(",")
-    });
+    onSave({ avatarUrl, name, bio, likesPublic, resharesPublic });
   };
 
   return (
-    <aside className="side-panel account-panel">
-      <PanelHeader icon={<UserRound size={18} />} title="Account" onClose={onClose} />
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <form className="profile-settings-modal" onSubmit={submitProfile} onClick={(event) => event.stopPropagation()}>
+        <header>
+          <span>
+            <Settings size={18} />
+            Profile settings
+          </span>
+          <button type="button" title="Close" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </header>
 
-      <section className="account-current">
-        <span className="avatar">{initial(currentProfile.name)}</span>
-        <div>
-          <strong>{currentProfile.name}</strong>
-          <small>{currentProfile.handle}</small>
-        </div>
-      </section>
+        <section className="settings-preview">
+          <span className="avatar large profile-avatar">
+            {avatarUrl ? <img src={avatarUrl} alt="" /> : initial(name || currentProfile.name)}
+          </span>
+          <div>
+            <strong>{name || currentProfile.name}</strong>
+            <small>{currentProfile.handle}</small>
+          </div>
+        </section>
 
-      <form className="account-form" onSubmit={submitProfile}>
+        <label>
+          Profile photo URL
+          <span>
+            <ImageIcon size={15} />
+            <input value={avatarUrl} onChange={(event) => setAvatarUrl(event.target.value)} placeholder="https://..." />
+          </span>
+        </label>
         <label>
           Name
           <input value={name} onChange={(event) => setName(event.target.value)} />
         </label>
         <label>
-          Handle
-          <input value={handle} onChange={(event) => setHandle(event.target.value)} />
-        </label>
-        <label>
-          Email
-          <input value={email} onChange={(event) => setEmail(event.target.value)} />
-        </label>
-        <label>
-          Role
-          <input value={role} onChange={(event) => setRole(event.target.value)} />
-        </label>
-        <label>
-          Location
-          <input value={location} onChange={(event) => setLocation(event.target.value)} />
-        </label>
-        <label>
           Bio
           <textarea value={bio} onChange={(event) => setBio(event.target.value)} />
         </label>
-        <label>
-          Fields
-          <input value={fields} onChange={(event) => setFields(event.target.value)} />
+        <label className="setting-toggle">
+          <input type="checkbox" checked={likesPublic} onChange={(event) => setLikesPublic(event.target.checked)} />
+          Share likes on profile
         </label>
-        <div className="account-actions">
-          <button type="submit">Save profile</button>
-          <button type="button" onClick={() => onViewProfile(currentProfile.name)}>
-            View profile
-          </button>
+        <label className="setting-toggle">
+          <input type="checkbox" checked={resharesPublic} onChange={(event) => setResharesPublic(event.target.checked)} />
+          Share reshares on profile
+        </label>
+        <div className="settings-actions">
+          <button type="submit">Save settings</button>
           <button type="button" onClick={onSignOut}>
             Sign out
           </button>
         </div>
       </form>
-    </aside>
+    </div>
   );
 }
 
