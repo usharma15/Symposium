@@ -854,10 +854,10 @@ export function SymposiumV0() {
 
       <header className="topbar">
         <button className="brand" type="button" onClick={() => enterRoom("hall")}>
-          {activeRoom === "hall" ? <span className="brand-glyph">S</span> : <ArrowLeft size={18} />}
+          {activeRoom !== "hall" && <ArrowLeft size={18} />}
           <span>
             <strong>{activeRoom === "hall" ? "SYMPOSIUM" : "Exit"}</strong>
-            <small>{activeRoom === "hall" ? activeRoomData.location : "Main hall"}</small>
+            {activeRoom !== "hall" && <small>Main hall</small>}
           </span>
         </button>
 

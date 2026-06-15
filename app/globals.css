@@ -346,7 +346,7 @@ button {
   top: 16px;
   left: 24px;
   right: 24px;
-  --brand-nav-slot: 190px;
+  --brand-nav-slot: 170px;
   display: grid;
   align-items: center;
   grid-template-columns: var(--brand-nav-slot) auto minmax(0, 1fr);
@@ -463,7 +463,7 @@ button {
   align-items: center;
   gap: 11px;
   min-width: 0;
-  width: max-content;
+  width: var(--brand-nav-slot);
   max-width: var(--brand-nav-slot);
   min-height: 58px;
   padding: 9px 12px 9px 9px;
@@ -515,8 +515,8 @@ button {
 }
 
 .brand strong {
-  font-size: 0.92rem;
-  letter-spacing: 0.08em;
+  font-size: 0.96rem;
+  letter-spacing: 0.1em;
 }
 
 .brand small,
@@ -1968,7 +1968,7 @@ button {
 
 @media (max-width: 760px) {
   .topbar {
-    --brand-nav-slot: 178px;
+    --brand-nav-slot: 154px;
     top: 10px;
     left: 14px;
     right: 14px;
@@ -2370,7 +2370,7 @@ button {
   gap: 18px 22px;
   align-items: start;
   justify-content: center;
-  width: min(1420px, calc(100vw - 48px));
+  width: calc(100vw - 48px);
   min-height: calc(100vh - 220px);
   margin: 0 auto;
 }
@@ -3072,7 +3072,7 @@ button {
 
 .detail-layout.paper-detail {
   display: grid;
-  width: min(1360px, calc(100vw - 48px));
+  width: calc(100vw - 48px);
   grid-template-columns: minmax(220px, 1fr) minmax(0, 800px) minmax(280px, 1fr);
   column-gap: 28px;
   row-gap: 16px;
@@ -3090,8 +3090,8 @@ button {
 
 .paper-detail > .paper-side {
   grid-column: 3;
-  justify-self: start;
-  width: min(320px, calc(100vw - 48px));
+  justify-self: end;
+  width: min(320px, 100%);
 }
 
 .paper-side {
