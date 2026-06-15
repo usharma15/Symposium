@@ -344,9 +344,9 @@ button {
   position: fixed;
   z-index: 30;
   top: 16px;
-  left: 16px;
-  right: 16px;
-  --brand-nav-slot: 282px;
+  left: 24px;
+  right: 24px;
+  --brand-nav-slot: 206px;
   display: grid;
   align-items: center;
   grid-template-columns: var(--brand-nav-slot) auto minmax(0, 1fr);
@@ -465,6 +465,7 @@ button {
   min-width: 0;
   width: max-content;
   max-width: max-content;
+  min-height: 58px;
   padding: 9px 12px 9px 9px;
   border-radius: var(--radius);
   text-align: left;
@@ -1969,8 +1970,8 @@ button {
   .topbar {
     --brand-nav-slot: 182px;
     top: 10px;
-    left: 10px;
-    right: 10px;
+    left: 12px;
+    right: 12px;
   }
 
   .brand {
