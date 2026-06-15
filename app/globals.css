@@ -346,7 +346,7 @@ button {
   top: 16px;
   left: 24px;
   right: 24px;
-  --brand-nav-slot: 206px;
+  --brand-nav-slot: 190px;
   display: grid;
   align-items: center;
   grid-template-columns: var(--brand-nav-slot) auto minmax(0, 1fr);
@@ -464,7 +464,7 @@ button {
   gap: 11px;
   min-width: 0;
   width: max-content;
-  max-width: max-content;
+  max-width: var(--brand-nav-slot);
   min-height: 58px;
   padding: 9px 12px 9px 9px;
   border-radius: var(--radius);
@@ -561,7 +561,7 @@ button {
   position: fixed;
   z-index: 29;
   top: 70px;
-  right: 16px;
+  right: 24px;
   min-height: 30px;
   border-radius: var(--radius);
   padding: 7px 10px;
@@ -1968,10 +1968,10 @@ button {
 
 @media (max-width: 760px) {
   .topbar {
-    --brand-nav-slot: 182px;
+    --brand-nav-slot: 178px;
     top: 10px;
-    left: 12px;
-    right: 12px;
+    left: 14px;
+    right: 14px;
   }
 
   .brand {
@@ -2734,15 +2734,15 @@ button {
 
 .social-actions {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(5, minmax(86px, 1fr));
+  gap: clamp(4px, 0.8vw, 10px);
   width: 100%;
 }
 
 .social-actions button {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   gap: 7px;
   min-width: 0;
   padding: 0 4px;
