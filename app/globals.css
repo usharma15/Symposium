@@ -327,6 +327,14 @@ button {
   opacity: 0.18;
 }
 
+.symposium-shell[data-room="hall"][data-view="hall"]::before {
+  background:
+    linear-gradient(180deg, rgba(8, 12, 11, 0.1), rgba(8, 12, 11, 0.18)),
+    #141612;
+  opacity: 1;
+  filter: none;
+}
+
 .ambient-layer {
   position: fixed;
   inset: 0;
@@ -2241,12 +2249,20 @@ button {
 
 .hall-world {
   position: fixed;
-  inset: 0;
+  left: 50%;
+  top: 50%;
+  width: min(100vw, 232.73vh);
+  height: min(100vh, 42.97vw);
+  min-height: 0;
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: transparent;
+  background-image: var(--room-bg);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
   box-shadow: none;
+  transform: translate(-50%, -50%);
 }
 
 .hall-world::after,
@@ -2330,34 +2346,34 @@ button {
 }
 
 .hall-door-office {
-  left: 2.5%;
-  top: 30%;
-  width: 9.2%;
-  height: 50.8%;
-  clip-path: polygon(0 5%, 95% 0, 100% 100%, 6% 96%);
+  left: 0.6%;
+  top: 23.4%;
+  width: 10.5%;
+  height: 56.8%;
+  clip-path: polygon(4% 8%, 94% 0, 100% 100%, 0 96%);
 }
 
 .hall-door-amphitheater {
-  left: 14.3%;
-  top: 20.8%;
-  width: 19%;
-  height: 47.8%;
-  clip-path: polygon(0 0, 100% 22%, 98% 100%, 4% 89%);
+  left: 14%;
+  top: 19.4%;
+  width: 19.8%;
+  height: 47.4%;
+  clip-path: polygon(0 0, 100% 21%, 98% 100%, 3% 92%);
 }
 
 .hall-door-funding {
-  left: 33.8%;
-  top: 35.4%;
-  width: 7.4%;
-  height: 29.5%;
-  clip-path: polygon(0 0, 100% 2%, 96% 100%, 3% 99%);
+  left: 33.1%;
+  top: 34.5%;
+  width: 8%;
+  height: 31.2%;
+  clip-path: polygon(0 0, 100% 1%, 97% 100%, 2% 99%);
 }
 
 .hall-door-library {
   left: 50%;
-  top: 22.8%;
-  width: 15.2%;
-  height: 32.3%;
+  top: 21.7%;
+  width: 15.7%;
+  height: 33.8%;
   transform: translateX(-50%);
   clip-path: polygon(2% 0, 98% 0, 100% 100%, 0 100%);
 }
@@ -2368,27 +2384,27 @@ button {
 }
 
 .hall-door-symposium {
-  right: 7%;
-  top: 18.2%;
-  width: 21.2%;
-  height: 55%;
-  clip-path: polygon(100% 0, 100% 99%, 5% 89%, 0 43%);
+  right: 7.2%;
+  top: 18.8%;
+  width: 21%;
+  height: 55.8%;
+  clip-path: polygon(100% 0, 100% 99%, 4% 89%, 0 41%);
 }
 
 .hall-door-communities {
-  left: 59.2%;
-  top: 35.2%;
-  width: 8.1%;
-  height: 30.5%;
-  clip-path: polygon(0 2%, 100% 0, 97% 100%, 3% 98%);
+  left: 59.7%;
+  top: 34.4%;
+  width: 8.5%;
+  height: 31.8%;
+  clip-path: polygon(0 1%, 100% 0, 98% 100%, 2% 98%);
 }
 
 .hall-door-opportunities {
-  right: 1.7%;
-  top: 37.5%;
-  width: 5.2%;
-  height: 28.4%;
-  clip-path: polygon(10% 0, 100% 7%, 93% 100%, 0 94%);
+  right: 0.8%;
+  top: 35.5%;
+  width: 6.4%;
+  height: 31.7%;
+  clip-path: polygon(8% 0, 100% 5%, 96% 100%, 0 95%);
 }
 
 .room-layout {
