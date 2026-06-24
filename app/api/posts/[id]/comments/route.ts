@@ -1,4 +1,5 @@
 import { addComment, type CreateCommentInput } from "@/lib/dataStore";
+import { jsonError, readJson } from "@/lib/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +10,12 @@ type Context = {
 
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
-  const body = (await request.json()) as Partial<CreateCommentInput> & { authorHandle?: string };
+  const body = await readJson<Partial<CreateCommentInput> & { authorHandle?: string }>(request);
+
+  if (!body) {
+    return jsonError("Invalid JSON body.", 400);
+  }
+
   const input: CreateCommentInput = {
     body: String(body.body ?? "").trim(),
     stance: String(body.stance ?? "Comment").trim(),
@@ -17,7 +23,7 @@ export async function POST(request: Request, context: Context) {
   };
 
   if (!input.body) {
-    return Response.json({ error: "Comment body is required." }, { status: 400 });
+    return jsonError("Comment body is required.", 400);
   }
 
   const comment = await addComment(id, input, String(body.authorHandle ?? ""));

@@ -1,4 +1,5 @@
 import { getSnapshot, upsertProfile, type CreateProfileInput } from "@/lib/dataStore";
+import { jsonError, readJson } from "@/lib/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,12 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as Partial<CreateProfileInput>;
+  const body = await readJson<Partial<CreateProfileInput>>(request);
+
+  if (!body) {
+    return jsonError("Invalid JSON body.", 400);
+  }
+
   const input: CreateProfileInput = {
     name: String(body.name ?? "").trim(),
     handle: String(body.handle ?? "").trim(),
@@ -27,7 +33,7 @@ export async function POST(request: Request) {
   };
 
   if (!input.name || !input.handle) {
-    return Response.json({ error: "Name and handle are required." }, { status: 400 });
+    return jsonError("Name and handle are required.", 400);
   }
 
   const profile = await upsertProfile(input);

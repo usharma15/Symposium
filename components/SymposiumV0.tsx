@@ -38,6 +38,15 @@ import {
   type RoomId
 } from "@/lib/mockData";
 import type { CreateProfileInput, PostAction } from "@/lib/dataStore";
+import {
+  cleanHandle,
+  countComments,
+  hasHandle,
+  isSavedBy,
+  mutateItemForActor,
+  normalizeSearchPhrase,
+  relativeDateScore
+} from "@/lib/symposiumCore";
 
 type Theme = "day" | "night";
 type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
@@ -98,9 +107,6 @@ const roomRenders: Record<RoomId, string> = {
 
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
 
-const countComments = (comments: InquiryComment[]): number =>
-  comments.reduce((total, comment) => total + 1 + countComments(comment.replies ?? []), 0);
-
 const topicTerms: Record<string, string[]> = {
   "Frontier Physics": ["physics", "hidden", "oscillator", "law", "apparatus"],
   "AI Metascience": ["ai", "agent", "agents", "metascience", "benchmark", "simulation"],
@@ -159,31 +165,10 @@ const searchableContentText = (item: InquiryItem) =>
     .join(" ")
     .toLowerCase();
 
-const normalizeSearchPhrase = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
-
 const matchesTopic = (item: InquiryItem, chip: string) => {
   const terms = topicTerms[chip] ?? [];
   const text = searchableText(item);
   return terms.some((term) => text.includes(term));
-};
-
-const metricScore = (value: string) => {
-  const normalized = value.toLowerCase().replace(/,/g, "");
-  const multiplier = normalized.endsWith("k") ? 1000 : 1;
-  return Number.parseFloat(normalized) * multiplier || 0;
-};
-
-const formatMetric = (value: number) => {
-  if (value >= 1000) return `${Number(value / 1000).toFixed(value >= 10000 ? 1 : 0)}k`;
-  return String(Math.max(0, value));
-};
-
-const incrementMetric = (value: string, amount: number) => formatMetric(metricScore(value) + amount);
-
-const cleanHandle = (handle: string) => {
-  const trimmed = handle.trim().toLowerCase();
-  const withAt = trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
-  return withAt.replace(/[^@a-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^@_/, "@").replace(/_$/, "");
 };
 
 const handleFromName = (name: string) =>
@@ -191,29 +176,6 @@ const handleFromName = (name: string) =>
 
 const clientId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-
-const hasHandle = (handles: string[] | undefined, handle: string) => (handles ?? []).includes(handle);
-
-const isSavedBy = (item: InquiryItem, handle: string) =>
-  hasHandle(item.savedBy, handle) || (Boolean(item.saved) && handle === profile.handle);
-
-const relativeDateScore = (label: string) => {
-  const normalized = label.trim().toLowerCase();
-  const now = Date.now();
-  if (!normalized || normalized === "just now" || normalized === "live now") return now - 10 * 60 * 1000;
-  if (normalized === "today") return now - 60 * 60 * 1000;
-
-  const minutes = normalized.match(/^(\d+)m ago$/);
-  if (minutes) return now - Number(minutes[1]) * 60 * 1000;
-
-  const hours = normalized.match(/^(\d+)h ago$/);
-  if (hours) return now - Number(hours[1]) * 60 * 60 * 1000;
-
-  if (normalized === "yesterday") return now - 24 * 60 * 60 * 1000;
-
-  const parsed = Date.parse(`${label} ${new Date().getFullYear()}`);
-  return Number.isNaN(parsed) ? 0 : parsed;
-};
 
 const commentTreeHasAuthor = (comments: InquiryComment[], person: ResearchProfile): boolean =>
   comments.some(
@@ -227,51 +189,6 @@ const uniqueItemsById = (items: InquiryItem[]) => [...new Map(items.map((item) =
 
 const inferredLikesPublic = (person: ResearchProfile) => person.likesPublic ?? person.handle.length % 5 !== 0;
 const inferredResharesPublic = (person: ResearchProfile) => person.resharesPublic ?? person.handle.length % 4 !== 0;
-
-const toggleHandle = (handles: string[] | undefined, handle: string) => {
-  const current = new Set(handles ?? []);
-  if (current.has(handle)) {
-    current.delete(handle);
-    return { handles: [...current], delta: -1 };
-  }
-  current.add(handle);
-  return { handles: [...current], delta: 1 };
-};
-
-const mutateItemForActor = (item: InquiryItem, action: PostAction, actorHandle: string): InquiryItem => {
-  if (action === "save") {
-    const next = toggleHandle(item.savedBy ?? (item.saved ? [profile.handle] : []), actorHandle);
-    return {
-      ...item,
-      savedBy: next.handles,
-      saved: next.handles.length > 0,
-      metrics: { ...item.metrics, saves: incrementMetric(item.metrics.saves, next.delta) }
-    };
-  }
-
-  if (action === "signal") {
-    const next = toggleHandle(item.signaledBy, actorHandle);
-    return {
-      ...item,
-      signaledBy: next.handles,
-      metrics: { ...item.metrics, signal: incrementMetric(item.metrics.signal, next.delta) }
-    };
-  }
-
-  if (action === "fork") {
-    const next = toggleHandle(item.forkedBy, actorHandle);
-    return {
-      ...item,
-      forkedBy: next.handles,
-      metrics: { ...item.metrics, forks: incrementMetric(item.metrics.forks, next.delta) }
-    };
-  }
-
-  return {
-    ...item,
-    metrics: { ...item.metrics, reads: incrementMetric(item.metrics.reads, 1) }
-  };
-};
 
 const initial = (name: string) =>
   name
@@ -326,7 +243,7 @@ export function SymposiumV0() {
       .filter((item) => {
         if (activeRoom === "hall") return item.kind === "paper" || item.kind === "thought";
         if (activeRoom === "office") {
-          if (officeMode === "saved") return isSavedBy(item, currentProfile.handle);
+          if (officeMode === "saved") return isSavedBy(item, currentProfile.handle, profile.handle);
           if (officeMode === "notes") {
             return item.authorHandle === currentProfile.handle || item.author === currentProfile.name || item.room === "office";
           }
@@ -341,7 +258,7 @@ export function SymposiumV0() {
         return true;
       })
       .filter((item) => {
-        if (feedScope === "following") return item.authorHandle === currentProfile.handle || item.author === currentProfile.name || isSavedBy(item, currentProfile.handle);
+        if (feedScope === "following") return item.authorHandle === currentProfile.handle || item.author === currentProfile.name || isSavedBy(item, currentProfile.handle, profile.handle);
         if (feedScope === "rooms") return matchesTopic(item, roomChip);
         return true;
       });
@@ -802,7 +719,7 @@ export function SymposiumV0() {
     }
 
     const nextItems = items.map((item) =>
-      item.id === itemId ? mutateItemForActor(item, action, currentProfile.handle) : item
+      item.id === itemId ? mutateItemForActor(item, action, currentProfile.handle, profile.handle) : item
     );
     setItems(nextItems);
     persistLocalSnapshot(nextItems, profiles);
@@ -1576,7 +1493,7 @@ function SocialActions({
   onAction: (itemId: string, action: PostAction) => void;
   actorHandle: string;
 }) {
-  const savedByActor = isSavedBy(item, actorHandle);
+  const savedByActor = isSavedBy(item, actorHandle, profile.handle);
   const signaledByActor = hasHandle(item.signaledBy, actorHandle);
   const forkedByActor = hasHandle(item.forkedBy, actorHandle);
   const actions = [
@@ -1917,7 +1834,7 @@ function ProfileView({
   const likes = canShowLikes
     ? byRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.signaledBy, person.handle)))
     : [];
-  const saved = canShowSaved ? byRecency(items.filter((item) => !isAuthor(item) && isSavedBy(item, person.handle))) : [];
+  const saved = canShowSaved ? byRecency(items.filter((item) => !isAuthor(item) && isSavedBy(item, person.handle, profile.handle))) : [];
   const allActivity = byRecency(uniqueItemsById([...authored, ...comments, ...reshares, ...likes, ...saved]));
 
   const tabItems: Record<ProfileTab, InquiryItem[]> = {

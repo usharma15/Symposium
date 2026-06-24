@@ -1,11 +1,10 @@
 import { createPost, getSnapshot, type CreatePostInput } from "@/lib/dataStore";
 import type { ContentKind, RoomId } from "@/lib/mockData";
+import { jsonError, readJson } from "@/lib/api";
+import { contentKinds, postRooms } from "@/lib/symposiumCore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const contentKinds: ContentKind[] = ["paper", "thought", "draft", "note", "code"];
-const postRooms: Array<Exclude<RoomId, "hall">> = ["office", "symposium", "library", "amphitheater"];
 
 export async function GET() {
   const snapshot = await getSnapshot();
@@ -13,7 +12,12 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as Partial<CreatePostInput> & { authorHandle?: string };
+  const body = await readJson<Partial<CreatePostInput> & { authorHandle?: string }>(request);
+
+  if (!body) {
+    return jsonError("Invalid JSON body.", 400);
+  }
+
   const kind = String(body.kind ?? "");
   const room = String(body.room ?? "");
   const input: CreatePostInput = {
@@ -26,7 +30,7 @@ export async function POST(request: Request) {
   };
 
   if (!input.title || !input.body) {
-    return Response.json({ error: "Title and body are required." }, { status: 400 });
+    return jsonError("Title and body are required.", 400);
   }
 
   const item = await createPost(input, String(body.authorHandle ?? ""));

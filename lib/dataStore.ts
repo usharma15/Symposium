@@ -12,6 +12,14 @@ import {
   type ResearchProfile,
   type RoomId
 } from "@/lib/mockData";
+import {
+  cleanHandle,
+  incrementMetric,
+  metricNumber,
+  mutateItemForActor,
+  updateSignalValue,
+  type PostAction
+} from "@/lib/symposiumCore";
 
 type AppData = {
   profiles: Record<string, ResearchProfile>;
@@ -41,7 +49,7 @@ export type CreateCommentInput = {
   parentId?: string | null;
 };
 
-export type PostAction = "signal" | "save" | "fork" | "read";
+export type { PostAction };
 
 const localDataPath = process.env.VERCEL
   ? path.join("/tmp", "symposium.json")
@@ -52,12 +60,6 @@ const usePostgres = Boolean(databaseUrl);
 let pool: Pool | null = null;
 let schemaReady: Promise<void> | null = null;
 let seedReady: Promise<void> | null = null;
-
-const cleanHandle = (handle: string) => {
-  const trimmed = handle.trim().toLowerCase();
-  const withAt = trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
-  return withAt.replace(/[^@a-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^@_/, "@").replace(/_$/, "");
-};
 
 const handleFromName = (name: string) => getProfileForName(name).handle;
 
@@ -140,22 +142,6 @@ const normalizeComments = (
       replies: normalizeComments(comment.replies ?? [], itemId, itemIndex, id)
     };
   });
-
-const metricNumber = (value: string) => {
-  const normalized = value.toLowerCase().replace(/,/g, "");
-  const multiplier = normalized.endsWith("k") ? 1000 : 1;
-  return Math.round((Number.parseFloat(normalized) || 0) * multiplier);
-};
-
-const formatMetric = (value: number) => {
-  if (value >= 1000) return `${Number(value / 1000).toFixed(value >= 10000 ? 1 : 0)}k`;
-  return String(Math.max(0, value));
-};
-
-const incrementMetric = (value: string, amount: number) => formatMetric(metricNumber(value) + amount);
-
-const updateSignalValue = (signals: InquiryItem["signals"], label: string, value: string) =>
-  signals.map((signal) => (signal.label === label ? { ...signal, value } : signal));
 
 const getPool = () => {
   if (!databaseUrl) throw new Error("No database URL configured.");
@@ -345,23 +331,29 @@ const writeLocal = async (data: AppData) => {
   await writeFile(localDataPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
 };
 
-const commentsFromRows = (
-  rows: Array<{
-    id: string;
-    item_id: string;
-    parent_id: string | null;
-    author_handle: string;
-    author_name: string;
-    stance: string;
-    body: string;
-    created_at: string;
-  }>,
-  itemId: string,
-  parentId: string | null = null
-): InquiryComment[] =>
-  rows
-    .filter((row) => row.item_id === itemId && row.parent_id === parentId)
-    .map((row) => ({
+type CommentRow = {
+  id: string;
+  item_id: string;
+  parent_id: string | null;
+  author_handle: string;
+  author_name: string;
+  stance: string;
+  body: string;
+  created_at: string;
+};
+
+const commentTreesFromRows = (rows: CommentRow[]) => {
+  const byItemAndParent = new Map<string, Map<string, CommentRow[]>>();
+
+  for (const row of rows) {
+    const parentKey = row.parent_id ?? "root";
+    const byParent = byItemAndParent.get(row.item_id) ?? new Map<string, CommentRow[]>();
+    byParent.set(parentKey, [...(byParent.get(parentKey) ?? []), row]);
+    byItemAndParent.set(row.item_id, byParent);
+  }
+
+  const buildTree = (byParent: Map<string, CommentRow[]>, parentId: string | null = null): InquiryComment[] =>
+    (byParent.get(parentId ?? "root") ?? []).map((row) => ({
       id: row.id,
       parentId: row.parent_id,
       author: row.author_name,
@@ -369,8 +361,13 @@ const commentsFromRows = (
       stance: row.stance,
       body: row.body,
       createdAt: row.created_at,
-      replies: commentsFromRows(rows, itemId, row.id)
+      replies: buildTree(byParent, row.id)
     }));
+
+  return new Map(
+    [...byItemAndParent.entries()].map(([itemId, byParent]) => [itemId, buildTree(byParent)])
+  );
+};
 
 const loadPostgres = async (): Promise<AppData> => {
   await ensureSchema();
@@ -412,17 +409,9 @@ const loadPostgres = async (): Promise<AppData> => {
       signaled_by: string[];
       forked_by: string[];
     }>("SELECT * FROM items ORDER BY created_at DESC"),
-    db.query<{
-      id: string;
-      item_id: string;
-      parent_id: string | null;
-      author_handle: string;
-      author_name: string;
-      stance: string;
-      body: string;
-      created_at: string;
-    }>("SELECT * FROM comments ORDER BY created_at ASC")
+    db.query<CommentRow>("SELECT * FROM comments ORDER BY created_at ASC")
   ]);
+  const commentsByItem = commentTreesFromRows(commentResult.rows);
 
   return {
     profiles: Object.fromEntries(
@@ -460,7 +449,7 @@ const loadPostgres = async (): Promise<AppData> => {
       evidence: item.evidence,
       tests: item.tests,
       forks: item.forks,
-      comments: commentsFromRows(commentResult.rows, item.id),
+      comments: commentsByItem.get(item.id) ?? [],
       saved: item.saved,
       savedBy: item.saved_by?.length ? item.saved_by : item.saved ? [defaultProfile.handle] : [],
       signaledBy: item.signaled_by ?? [],
@@ -646,84 +635,27 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
   const local = await readLocal();
   local.items = local.items.map((item) =>
     item.id === itemId
-      ? {
-          ...item,
-          metrics: { ...item.metrics, critiques: incrementMetric(item.metrics.critiques, 1) },
-          signals: updateSignalValue(item.signals, "Critiques", incrementMetric(item.metrics.critiques, 1)),
-          comments: addToTree(item.comments)
-        }
+      ? (() => {
+          const nextCritiques = incrementMetric(item.metrics.critiques, 1);
+          return {
+            ...item,
+            metrics: { ...item.metrics, critiques: nextCritiques },
+            signals: updateSignalValue(item.signals, "Critiques", nextCritiques),
+            comments: addToTree(item.comments)
+          };
+        })()
       : item
   );
   await writeLocal(local);
   return comment;
 };
 
-const toggleHandle = (handles: string[] | undefined, handle: string) => {
-  const current = new Set(handles ?? []);
-  if (current.has(handle)) {
-    current.delete(handle);
-    return { handles: [...current], delta: -1 };
-  }
-  current.add(handle);
-  return { handles: [...current], delta: 1 };
-};
-
 export const applyPostAction = async (itemId: string, action: PostAction, actorHandle = defaultProfile.handle) => {
-  const mutate = (item: InquiryItem): InquiryItem => {
-    if (action === "save") {
-      const next = toggleHandle(item.savedBy, actorHandle);
-      return {
-        ...item,
-        savedBy: next.handles,
-        saved: next.handles.length > 0,
-        metrics: {
-          ...item.metrics,
-          saves: incrementMetric(item.metrics.saves, next.delta)
-        }
-      };
-    }
-
-    if (action === "signal") {
-      const next = toggleHandle(item.signaledBy, actorHandle);
-      return {
-        ...item,
-        signaledBy: next.handles,
-        metrics: {
-          ...item.metrics,
-          signal: incrementMetric(item.metrics.signal, next.delta)
-        }
-      };
-    }
-
-    if (action === "fork") {
-      const next = toggleHandle(item.forkedBy, actorHandle);
-      const nextForks = incrementMetric(item.metrics.forks, next.delta);
-      return {
-        ...item,
-        forkedBy: next.handles,
-        metrics: {
-          ...item.metrics,
-          forks: nextForks
-        },
-        signals: updateSignalValue(item.signals, "Forks", nextForks)
-      };
-    }
-
-    const nextMetric = incrementMetric(item.metrics.reads, 1);
-    return {
-      ...item,
-      metrics: {
-        ...item.metrics,
-        reads: nextMetric
-      }
-    };
-  };
-
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing) return null;
-    const updated = mutate(existing);
+    const updated = mutateItemForActor(existing, action, actorHandle, defaultProfile.handle);
     await getPool().query(
       `UPDATE items
        SET metrics = $2,
@@ -750,7 +682,7 @@ export const applyPostAction = async (itemId: string, action: PostAction, actorH
   let updated: InquiryItem | null = null;
   local.items = local.items.map((item) => {
     if (item.id !== itemId) return item;
-    updated = mutate(item);
+    updated = mutateItemForActor(item, action, actorHandle, defaultProfile.handle);
     return updated;
   });
   await writeLocal(local);
