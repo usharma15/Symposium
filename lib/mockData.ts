@@ -100,6 +100,23 @@ export type ResearchProfile = {
   fields: string[];
 };
 
+export type ResearchCommunity = {
+  id: string;
+  name: string;
+  field: string;
+  summary: string;
+  visibility: "public" | "private";
+  online: number;
+  memberHandles: string[];
+  keywords: string[];
+  seedCounts: {
+    papers: number;
+    thoughts: number;
+    opportunities: number;
+  };
+  callStatus: "quiet" | "voice live" | "video live";
+};
+
 export const rooms: Room[] = [
   {
     id: "hall",
@@ -1061,6 +1078,66 @@ const generatedBlueprints: Array<{
     tags: ["communities", "discovery", "interface", "events"]
   },
   {
+    room: "library",
+    kind: "paper",
+    status: "Community paper",
+    title: "Frontier Physics Bench field map",
+    excerpt: "A shared map of hidden-law tasks, apparatus constraints, and unresolved anomaly work.",
+    body:
+      "The Frontier Physics Bench is collecting papers that separate romance from reality contact: what apparatus is required, what predictions would matter, and what would count as a failed path.",
+    tags: ["frontier physics", "hidden law", "apparatus", "community"]
+  },
+  {
+    room: "library",
+    kind: "paper",
+    status: "Source packet",
+    title: "Source Packet Workshop review scaffold",
+    excerpt: "A private workshop format for evidence packets that can still publish useful paper artifacts.",
+    body:
+      "The scaffold asks every synthesis to carry claims, missing sources, uncertainty, quotes, and explicit failure cases. The workshop can be private, but the paper artifact remains discoverable in the library.",
+    tags: ["source packet", "synthesis", "review", "evidence spine", "community"]
+  },
+  {
+    room: "amphitheater",
+    kind: "thought",
+    status: "Public community thought",
+    title: "Replication Commons needs a failure etiquette",
+    excerpt: "A negative result should feel like a contribution, not a confession.",
+    body:
+      "Public communities around replication need manners that make failed attempts inspectable without making people perform humiliation. The work is the packet, the critique, and the repair.",
+    tags: ["replication", "negative results", "failure", "community"]
+  },
+  {
+    room: "opportunities",
+    kind: "note",
+    status: "Open community call",
+    title: "Rogue Youth Labs seeks summer cell advisors",
+    excerpt: "Need older critics who can protect weird work while demanding visible artifacts.",
+    body:
+      "The call is for advisors who can help a youth-lab cell produce public artifacts, failed-attempt logs, and sharp critique responses over a short summer cycle.",
+    tags: ["rogue youth labs", "opportunities", "advisor", "residency", "community"]
+  },
+  {
+    room: "opportunities",
+    kind: "draft",
+    status: "Bounty sketch",
+    title: "Open Problems Garden bounty board",
+    excerpt: "Small bounties for converting vague research wishes into concrete challenge packets.",
+    body:
+      "The board rewards useful problem framing: constraints, source packets, evaluation criteria, and a first failed attempt. It is meant to feed opportunities without turning everything into credential theater.",
+    tags: ["open problems", "opportunities", "bounty", "challenge", "community"]
+  },
+  {
+    room: "communities",
+    kind: "note",
+    status: "Private room note",
+    title: "Patronage Design Desk call memo",
+    excerpt: "A private community note on what evidence should unlock the next tranche.",
+    body:
+      "Private communities can hold calls and internal notes without making every thought public. Papers still travel to the library; private thoughts stay in the community context.",
+    tags: ["patronage", "private", "grant", "community", "call"]
+  },
+  {
     room: "opportunities",
     kind: "note",
     status: "Open call",
@@ -1083,6 +1160,153 @@ const generatedBlueprints: Array<{
 ];
 
 const participantHandles = [profile.handle, ...generatedPublicProfiles.map((person) => person.handle)];
+
+export const researchCommunities: ResearchCommunity[] = [
+  {
+    id: "frontier-physics-bench",
+    name: "Frontier Physics Bench",
+    field: "Hidden laws, instruments, anomaly work",
+    summary: "Readers and builders testing weird physical claims against apparatus, toy worlds, and hard prediction.",
+    visibility: "public",
+    online: 38,
+    memberHandles: [profile.handle, "@jonas_vale", "@anika_rao", "@niko_varga", "@orion_patel", "@ruth_bell"],
+    keywords: ["frontier physics", "physics", "hidden law", "oscillator", "apparatus", "toy worlds"],
+    seedCounts: { papers: 22, thoughts: 31, opportunities: 6 },
+    callStatus: "voice live"
+  },
+  {
+    id: "ai-metascience-lab",
+    name: "AI Metascience Lab",
+    field: "Agent benchmarks, source packets, evaluation",
+    summary: "A public workroom for cheap exploration, expensive truth, critique engines, and benchmark design.",
+    visibility: "public",
+    online: 52,
+    memberHandles: [profile.handle, "@mira_sato", "@leahk", "@priya_menon", "@maeve_chen", "@dario_silva"],
+    keywords: ["AI metascience", "AI agents", "benchmark", "source packet", "rediscovery", "critique"],
+    seedCounts: { papers: 34, thoughts: 45, opportunities: 9 },
+    callStatus: "video live"
+  },
+  {
+    id: "replication-commons",
+    name: "Replication Commons",
+    field: "Negative results, methods, repair logs",
+    summary: "People turning failed attempts into visible packets instead of letting them disappear.",
+    visibility: "public",
+    online: 27,
+    memberHandles: [profile.handle, "@n_arvind", "@ruth_bell", "@owen_markham", "@greta_holm"],
+    keywords: ["replication", "negative results", "methods", "failure", "denominator"],
+    seedCounts: { papers: 28, thoughts: 21, opportunities: 7 },
+    callStatus: "quiet"
+  },
+  {
+    id: "rogue-youth-labs",
+    name: "Rogue Youth Labs",
+    field: "Selection, mentorship, proof-of-work",
+    summary: "A practical group for young builders, strange serious projects, advisors, and public artifacts.",
+    visibility: "public",
+    online: 44,
+    memberHandles: [profile.handle, "@miqbal", "@salma_idris", "@vikram_bedi", "@talia_finch", "@jalen_brooks"],
+    keywords: ["rogue youth labs", "youth labs", "proof-of-work", "selection", "residency"],
+    seedCounts: { papers: 19, thoughts: 39, opportunities: 14 },
+    callStatus: "voice live"
+  },
+  {
+    id: "history-of-discovery-circle",
+    name: "History of Discovery Circle",
+    field: "Archives, anomalies, prepared minds",
+    summary: "Historical readers looking for the real machinery behind discovery stories and dead anomaly trails.",
+    visibility: "public",
+    online: 21,
+    memberHandles: [profile.handle, "@e_voss", "@rahulm", "@helena_park", "@felix_moreau"],
+    keywords: ["history of discovery", "history", "discovery", "anomaly", "archive", "prepared minds"],
+    seedCounts: { papers: 25, thoughts: 18, opportunities: 5 },
+    callStatus: "quiet"
+  },
+  {
+    id: "tools-instruments-guild",
+    name: "Tools and Instruments Guild",
+    field: "Interfaces, notebooks, code, apparatus",
+    summary: "Builders making the instruments that let research work travel, repeat, and get inspected.",
+    visibility: "public",
+    online: 33,
+    memberHandles: [profile.handle, "@jules", "@lina_ortega", "@soren_li", "@milo_hart"],
+    keywords: ["tools", "instruments", "code", "notebook", "runner", "apparatus"],
+    seedCounts: { papers: 18, thoughts: 24, opportunities: 8 },
+    callStatus: "video live"
+  },
+  {
+    id: "patronage-design-desk",
+    name: "Patronage Design Desk",
+    field: "Civic backing, grants, serious incentives",
+    summary: "A mixed group shaping bounties, grants, donations, and second-tranche evidence for live work.",
+    visibility: "private",
+    online: 16,
+    memberHandles: [profile.handle, "@jonas_vale", "@sana_morel", "@idris_bellamy"],
+    keywords: ["patronage", "funding", "grant", "civic", "private", "bounty", "investor"],
+    seedCounts: { papers: 13, thoughts: 10, opportunities: 18 },
+    callStatus: "quiet"
+  },
+  {
+    id: "open-problems-garden",
+    name: "Open Problems Garden",
+    field: "Problems, calls, challenge design",
+    summary: "A discovery surface for problems worth joining before they become formal programs.",
+    visibility: "public",
+    online: 29,
+    memberHandles: ["@sofia_klein", "@eli_navarro", "@clara_weiss", "@quinn_reyes", "@rhea_sands"],
+    keywords: ["open problems", "opportunities", "call", "challenge", "roles", "fellowship"],
+    seedCounts: { papers: 11, thoughts: 16, opportunities: 23 },
+    callStatus: "voice live"
+  },
+  {
+    id: "field-methods-exchange",
+    name: "Field Methods Exchange",
+    field: "Observation, interviews, data contact",
+    summary: "A public exchange for getting claims out of the room and into better evidence contact.",
+    visibility: "public",
+    online: 18,
+    memberHandles: ["@clara_weiss", "@mateo_ibarra", "@noor_al_khatib", "@ines_duarte"],
+    keywords: ["field methods", "interviews", "observation", "data", "evidence"],
+    seedCounts: { papers: 15, thoughts: 14, opportunities: 4 },
+    callStatus: "quiet"
+  },
+  {
+    id: "source-packet-workshop",
+    name: "Source Packet Workshop",
+    field: "Evidence packets, synthesis, review",
+    summary: "A private workshop for source-packet review, missing evidence, and summaries that carry their spine.",
+    visibility: "private",
+    online: 12,
+    memberHandles: ["@mira_sato", "@leahk", "@n_arvind", "@priya_menon"],
+    keywords: ["source packets", "source packet", "synthesis", "review", "evidence spine"],
+    seedCounts: { papers: 17, thoughts: 8, opportunities: 5 },
+    callStatus: "video live"
+  },
+  {
+    id: "toy-world-agents",
+    name: "Toy World Agents",
+    field: "Simulation, scoring, hidden worlds",
+    summary: "Benchmark hackers building toy worlds where claims must survive held-out prediction.",
+    visibility: "public",
+    online: 31,
+    memberHandles: ["@niko_varga", "@maeve_chen", "@dario_silva", "@tomasz_zielinski"],
+    keywords: ["toy worlds", "simulation", "hidden laws", "oscillator", "agents", "scoring"],
+    seedCounts: { papers: 26, thoughts: 22, opportunities: 6 },
+    callStatus: "voice live"
+  },
+  {
+    id: "campus-events-board",
+    name: "Campus Events Board",
+    field: "Calls, seminars, live sessions",
+    summary: "The shared board for live calls, conferences, office hours, and near-term gathering points.",
+    visibility: "public",
+    online: 47,
+    memberHandles: ["@yara_mensah", "@arun_sen", "@june_park", "@pavel_idris"],
+    keywords: ["events", "calls", "conference", "seminar", "live session"],
+    seedCounts: { papers: 7, thoughts: 19, opportunities: 21 },
+    callStatus: "video live"
+  }
+];
 
 const pickHandles = (seed: number, count: number) =>
   Array.from({ length: Math.min(count, participantHandles.length) }, (_, offset) => {

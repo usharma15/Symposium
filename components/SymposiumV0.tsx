@@ -28,11 +28,13 @@ import {
   getProfileForName,
   inquiryItems,
   profile,
+  researchCommunities,
   roomChips,
   rooms,
   type FeedScope,
   type InquiryComment,
   type InquiryItem,
+  type ResearchCommunity,
   type ResearchProfile,
   type Room,
   type RoomId
@@ -60,6 +62,7 @@ type ViewSnapshot = {
   selectedProfileName: string | null;
   officeMode: OfficeMode;
   patronageMode: PatronageMode;
+  selectedCommunityId: string | null;
   scrollY: number;
 };
 
@@ -103,7 +106,7 @@ const roomRenders: Record<RoomId, string> = {
   library: "/symposium-renders/library-1.png",
   amphitheater: "/symposium-renders/amphitheatre-2.png",
   funding: "/symposium-renders/patronage.png",
-  communities: "/symposium-renders/main-hall-new.png",
+  communities: "/symposium-renders/communities.png",
   opportunities: "/symposium-renders/main-hall-new.png"
 };
 
@@ -111,6 +114,11 @@ const patronageRenders: Record<PatronageMode, string> = {
   lobby: "/symposium-renders/patronage.png",
   civic: "/symposium-renders/patronage-civic.png",
   private: "/symposium-renders/patronage-private.png"
+};
+
+const communityRenders = {
+  directory: "/symposium-renders/communities.png",
+  selected: "/symposium-renders/community-selected.png"
 };
 
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
@@ -193,6 +201,39 @@ const matchesPatronageMode = (item: InquiryItem, mode: PatronageMode) => {
   });
 };
 
+const matchesCommunity = (item: InquiryItem, community: ResearchCommunity) => {
+  const text = searchableText(item);
+  return community.keywords.some((keyword) => text.includes(normalizeSearchPhrase(keyword)));
+};
+
+const getCommunityItems = (items: InquiryItem[], community: ResearchCommunity) =>
+  items.filter((item) => matchesCommunity(item, community));
+
+const getCommunityStats = (items: InquiryItem[], community: ResearchCommunity) => {
+  const communityItems = getCommunityItems(items, community);
+  const papers = communityItems.filter((item) => item.kind === "paper").length;
+  const thoughts = communityItems.filter((item) => item.kind === "thought" || item.kind === "note").length;
+  const opportunities = communityItems.filter((item) => item.room === "opportunities").length;
+
+  return {
+    papers: Math.max(papers, community.seedCounts.papers),
+    thoughts: Math.max(thoughts, community.seedCounts.thoughts),
+    opportunities: Math.max(opportunities, community.seedCounts.opportunities)
+  };
+};
+
+const communitySearchText = (community: ResearchCommunity) =>
+  normalizeSearchPhrase(
+    [
+      community.name,
+      community.field,
+      community.summary,
+      community.visibility,
+      community.callStatus,
+      ...community.keywords
+    ].join(" ")
+  );
+
 const handleFromName = (name: string) =>
   cleanHandle(name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""));
 
@@ -233,6 +274,9 @@ export function SymposiumV0() {
   const [officeMode, setOfficeMode] = useState<OfficeMode>("desk");
   const [patronageMode, setPatronageMode] = useState<PatronageMode>("lobby");
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
+  const [communitiesExpanded, setCommunitiesExpanded] = useState(false);
+  const [communityQuery, setCommunityQuery] = useState("");
   const [tabletOpen, setTabletOpen] = useState(false);
   const [notebookOpen, setNotebookOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -250,8 +294,15 @@ export function SymposiumV0() {
   );
 
   const activeRoomData = getRoom(activeRoom);
-  const activeRoomRender = activeRoom === "funding" ? patronageRenders[patronageMode] : roomRenders[activeRoom];
+  const activeRoomRender =
+    activeRoom === "funding"
+      ? patronageRenders[patronageMode]
+      : activeRoom === "communities" && selectedCommunityId
+        ? communityRenders.selected
+        : roomRenders[activeRoom];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+  const selectedCommunity =
+    selectedCommunityId ? researchCommunities.find((community) => community.id === selectedCommunityId) ?? null : null;
   const profileList = useMemo(() => Object.values(profiles), [profiles]);
   const findProfile = (nameOrHandle: string) =>
     profileList.find((person) => person.name === nameOrHandle || person.handle === nameOrHandle) ??
@@ -417,6 +468,7 @@ export function SymposiumV0() {
     selectedProfileName,
     officeMode,
     patronageMode,
+    selectedCommunityId,
     scrollY: window.scrollY
   });
 
@@ -426,6 +478,7 @@ export function SymposiumV0() {
     setSelectedProfileName(snapshot.selectedProfileName);
     setOfficeMode(snapshot.officeMode);
     setPatronageMode(snapshot.patronageMode);
+    setSelectedCommunityId(snapshot.selectedCommunityId);
     setTabletOpen(false);
     setNotebookOpen(false);
     setComposerOpen(false);
@@ -445,6 +498,7 @@ export function SymposiumV0() {
     if (next.selectedProfileName !== undefined) setSelectedProfileName(next.selectedProfileName);
     if (next.officeMode !== undefined) setOfficeMode(next.officeMode);
     if (next.patronageMode !== undefined) setPatronageMode(next.patronageMode);
+    if (next.selectedCommunityId !== undefined) setSelectedCommunityId(next.selectedCommunityId);
     setTabletOpen(false);
     setNotebookOpen(false);
     setComposerOpen(false);
@@ -479,7 +533,8 @@ export function SymposiumV0() {
       selectedItemId: null,
       selectedProfileName: null,
       officeMode: roomId === "office" ? mode : "desk",
-      patronageMode: roomId === "funding" ? "lobby" : patronageMode
+      patronageMode: roomId === "funding" ? "lobby" : patronageMode,
+      selectedCommunityId: null
     });
   };
 
@@ -493,7 +548,30 @@ export function SymposiumV0() {
       selectedItemId: null,
       selectedProfileName: null,
       officeMode: "desk",
-      patronageMode: mode
+      patronageMode: mode,
+      selectedCommunityId: null
+    });
+  };
+
+  const openCommunity = (communityId: string) => {
+    navigateView({
+      activeRoom: "communities",
+      selectedItemId: null,
+      selectedProfileName: null,
+      officeMode: "desk",
+      patronageMode: "lobby",
+      selectedCommunityId: communityId
+    });
+  };
+
+  const closeCommunity = () => {
+    navigateView({
+      activeRoom: "communities",
+      selectedItemId: null,
+      selectedProfileName: null,
+      officeMode: "desk",
+      patronageMode: "lobby",
+      selectedCommunityId: null
     });
   };
 
@@ -641,6 +719,7 @@ export function SymposiumV0() {
     setActiveRoom("hall");
     setOfficeMode("desk");
     setPatronageMode("lobby");
+    setSelectedCommunityId(null);
     setSelectedItemId(null);
     setSelectedProfileName(null);
     setViewHistory([]);
@@ -822,6 +901,7 @@ export function SymposiumV0() {
       className={`symposium-shell ${theme}`}
       data-room={activeRoom}
       data-patronage-mode={activeRoom === "funding" ? patronageMode : undefined}
+      data-community-selected={selectedCommunity ? "true" : undefined}
       data-view={selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
       style={{ "--room-bg": `url(${activeRoomRender})` } as CSSProperties}
     >
@@ -910,6 +990,28 @@ export function SymposiumV0() {
             room={activeRoomData}
             onOpenCivic={() => openPatronageMode("civic")}
             onOpenPrivate={() => openPatronageMode("private")}
+          />
+        ) : activeRoom === "communities" && selectedCommunity ? (
+          <SelectedCommunityView
+            community={selectedCommunity}
+            items={items}
+            currentProfile={currentProfile}
+            onBack={closeCommunity}
+            onSelect={openPost}
+            onOpenProfile={openProfile}
+            onAction={applyAction}
+            onDummyCall={(mode) => setSyncStatus(`${mode} call placeholder`)}
+          />
+        ) : activeRoom === "communities" ? (
+          <CommunitiesDirectoryView
+            communities={researchCommunities}
+            items={items}
+            currentProfile={currentProfile}
+            query={communityQuery}
+            onQuery={setCommunityQuery}
+            expanded={communitiesExpanded}
+            onExpanded={setCommunitiesExpanded}
+            onOpenCommunity={openCommunity}
           />
         ) : (
           <RoomView
@@ -1281,6 +1383,260 @@ function PatronageLobbyView({
     </div>
   );
 }
+
+function CommunitiesDirectoryView({
+  communities,
+  items,
+  currentProfile,
+  query,
+  onQuery,
+  expanded,
+  onExpanded,
+  onOpenCommunity
+}: {
+  communities: ResearchCommunity[];
+  items: InquiryItem[];
+  currentProfile: ResearchProfile;
+  query: string;
+  onQuery: (query: string) => void;
+  expanded: boolean;
+  onExpanded: (expanded: boolean) => void;
+  onOpenCommunity: (communityId: string) => void;
+}) {
+  const term = normalizeSearchPhrase(query);
+  const matches = (community: ResearchCommunity) => !term || communitySearchText(community).includes(term);
+  const myCommunities = communities.filter((community) => community.memberHandles.includes(currentProfile.handle) && matches(community));
+  const discoverCommunities = communities
+    .filter((community) => !community.memberHandles.includes(currentProfile.handle) && matches(community))
+    .sort((a, b) => b.online - a.online);
+  const visibleMyCommunities = expanded ? myCommunities : myCommunities.slice(0, 6);
+  const visibleDiscover = term ? discoverCommunities.slice(0, 6) : discoverCommunities.slice(0, 3);
+
+  return (
+    <section className="communities-layout" aria-label="Communities">
+      <div className="communities-panel">
+        <header className="communities-header">
+          <p className="eyebrow">Campus threshold</p>
+          <h1>Communities</h1>
+          <p>Find the groups around shared work, live calls, and public artifacts.</p>
+          <label className="communities-search">
+            <Search size={18} />
+            <input
+              value={query}
+              onChange={(event) => onQuery(event.target.value)}
+              placeholder="Search communities"
+              aria-label="Search communities"
+            />
+          </label>
+        </header>
+
+        <CommunityLayer
+          title="Your communities"
+          communities={visibleMyCommunities}
+          items={items}
+          expanded={expanded}
+          total={myCommunities.length}
+          onToggle={() => onExpanded(!expanded)}
+          onOpenCommunity={onOpenCommunity}
+          emptyText="Join communities to keep them here."
+          scrollable={expanded}
+        />
+
+        {!expanded ? (
+          <CommunityLayer
+            title="Discover"
+            communities={visibleDiscover}
+            items={items}
+            total={discoverCommunities.length}
+            onOpenCommunity={onOpenCommunity}
+            emptyText="No community matches yet."
+          />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function CommunityLayer({
+  title,
+  communities,
+  items,
+  total,
+  expanded,
+  scrollable = false,
+  onToggle,
+  onOpenCommunity,
+  emptyText
+}: {
+  title: string;
+  communities: ResearchCommunity[];
+  items: InquiryItem[];
+  total: number;
+  expanded?: boolean;
+  scrollable?: boolean;
+  onToggle?: () => void;
+  onOpenCommunity: (communityId: string) => void;
+  emptyText: string;
+}) {
+  return (
+    <section className="community-layer">
+      <header>
+        <button type="button" onClick={onToggle ?? (() => undefined)} disabled={!onToggle}>
+          <ArrowRight size={16} className={expanded ? "expanded" : ""} />
+          <span>{title}</span>
+          <small>{total}</small>
+        </button>
+      </header>
+      {communities.length ? (
+        <div className={`community-grid ${scrollable ? "scrollable" : ""}`}>
+          {communities.map((community) => (
+            <CommunityCard
+              key={community.id}
+              community={community}
+              stats={getCommunityStats(items, community)}
+              onOpenCommunity={onOpenCommunity}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="community-empty">{emptyText}</p>
+      )}
+    </section>
+  );
+}
+
+function CommunityCard({
+  community,
+  stats,
+  onOpenCommunity
+}: {
+  community: ResearchCommunity;
+  stats: ReturnType<typeof getCommunityStats>;
+  onOpenCommunity: (communityId: string) => void;
+}) {
+  return (
+    <button
+      className={`community-card community-card-${community.visibility}`}
+      type="button"
+      onClick={() => onOpenCommunity(community.id)}
+    >
+      <span className="community-card-topline">
+        <strong>{community.name}</strong>
+        <small>{community.visibility}</small>
+      </span>
+      <span className="community-field">{community.field}</span>
+      <span className="community-summary">{community.summary}</span>
+      <span className="community-stats">
+        <small>{community.online} online</small>
+        <small>{stats.papers} papers</small>
+        <small>{stats.thoughts} thoughts</small>
+        <small>{stats.opportunities} opportunities</small>
+      </span>
+    </button>
+  );
+}
+
+function SelectedCommunityView({
+  community,
+  items,
+  currentProfile,
+  onBack,
+  onSelect,
+  onOpenProfile,
+  onAction,
+  onDummyCall
+}: {
+  community: ResearchCommunity;
+  items: InquiryItem[];
+  currentProfile: ResearchProfile;
+  onBack: () => void;
+  onSelect: (id: string) => void;
+  onOpenProfile: (name: string) => void;
+  onAction: (itemId: string, action: PostAction) => void;
+  onDummyCall: (mode: "Voice" | "Video") => void;
+}) {
+  const stats = getCommunityStats(items, community);
+  const isMember = community.memberHandles.includes(currentProfile.handle);
+  const relatedItems = sortCommunityItems(getCommunityItems(items, community));
+  const publicNote =
+    community.visibility === "public"
+      ? "Public thoughts and opportunities from this community can surface in the other rooms."
+      : "Private thoughts stay here; papers still travel into the Library.";
+
+  return (
+    <section className="selected-community-layout" aria-label={community.name}>
+      <div className="selected-community-panel">
+        <button className="community-back" type="button" onClick={onBack}>
+          <ArrowLeft size={17} />
+          Communities
+        </button>
+        <header className="selected-community-header">
+          <p className="eyebrow">{community.visibility} community</p>
+          <h1>{community.name}</h1>
+          <p>{community.summary}</p>
+          <span>{community.field}</span>
+        </header>
+
+        <div className="selected-community-stats" aria-label={`${community.name} activity`}>
+          <span>
+            <strong>{community.online}</strong>
+            online
+          </span>
+          <span>
+            <strong>{stats.papers}</strong>
+            papers shared
+          </span>
+          <span>
+            <strong>{stats.thoughts}</strong>
+            thoughts shared
+          </span>
+          <span>
+            <strong>{stats.opportunities}</strong>
+            opportunities
+          </span>
+        </div>
+
+        <section className="community-call-panel" aria-label="Community calls">
+          <div>
+            <strong>Group call</strong>
+            <span>{isMember ? community.callStatus : "members only"}</span>
+          </div>
+          <button type="button" disabled={!isMember} onClick={() => onDummyCall("Voice")}>
+            Voice
+          </button>
+          <button type="button" disabled={!isMember} onClick={() => onDummyCall("Video")}>
+            Video
+          </button>
+        </section>
+
+        <p className="community-rule-note">{publicNote}</p>
+      </div>
+
+      <section className="selected-community-work" aria-label={`${community.name} shared work`}>
+        {relatedItems.length ? (
+          relatedItems.slice(0, 8).map((item) => (
+            <FeedPost
+              key={item.id}
+              item={item}
+              onSelect={onSelect}
+              onOpenProfile={onOpenProfile}
+              onAction={onAction}
+              actorHandle={currentProfile.handle}
+            />
+          ))
+        ) : (
+          <div className="empty-feed">
+            <strong>No shared work yet.</strong>
+            <span>This community will fill as linked papers, thoughts, and opportunities appear.</span>
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+const sortCommunityItems = (items: InquiryItem[]) =>
+  [...items].sort((a, b) => relativeDateScore(b.date) - relativeDateScore(a.date));
 
 function RoomView({
   room,
