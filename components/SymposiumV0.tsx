@@ -100,14 +100,14 @@ const kindLabels: Record<InquiryItem["kind"], string> = {
 };
 
 const roomRenders: Record<RoomId, string> = {
-  hall: "/symposium-renders/main-hall-new.png",
+  hall: "/symposium-renders/main-hall-updated.png",
   office: "/symposium-renders/office.png",
   symposium: "/symposium-renders/symposium.png",
   library: "/symposium-renders/library-1.png",
   amphitheater: "/symposium-renders/amphitheatre-2.png",
   funding: "/symposium-renders/patronage.png",
   communities: "/symposium-renders/communities.png",
-  opportunities: "/symposium-renders/main-hall-new.png"
+  opportunities: "/symposium-renders/opportunities.png"
 };
 
 const patronageRenders: Record<PatronageMode, string> = {
@@ -299,6 +299,7 @@ export function SymposiumV0() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [messagesOpen, setMessagesOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(null);
   const [viewHistory, setViewHistory] = useState<ViewSnapshot[]>([]);
@@ -501,6 +502,7 @@ export function SymposiumV0() {
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
+    setMessagesOpen(false);
     window.setTimeout(() => window.scrollTo({ top: snapshot.scrollY, behavior: "auto" }), 0);
   };
 
@@ -521,6 +523,7 @@ export function SymposiumV0() {
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
+    setMessagesOpen(false);
     window.setTimeout(() => window.scrollTo({ top: scrollY, behavior: "auto" }), 0);
   };
 
@@ -600,6 +603,8 @@ export function SymposiumV0() {
     setTabletOpen(false);
     setComposerOpen(false);
     setSettingsOpen(false);
+    setSearchOpen(false);
+    setMessagesOpen(false);
     setNotebookOpen(true);
   };
 
@@ -607,6 +612,8 @@ export function SymposiumV0() {
     setNotebookOpen(false);
     setComposerOpen(false);
     setSettingsOpen(false);
+    setSearchOpen(false);
+    setMessagesOpen(false);
     setTabletOpen(true);
   };
 
@@ -615,6 +622,7 @@ export function SymposiumV0() {
     setNotebookOpen(false);
     setComposerOpen(false);
     setSettingsOpen(false);
+    setMessagesOpen(false);
     setSearchOpen(true);
   };
 
@@ -956,6 +964,21 @@ export function SymposiumV0() {
             {theme === "day" ? <Moon size={18} /> : <Sun size={18} />}
           </button>
           <button
+            className="icon-button"
+            type="button"
+            title="Messages"
+            onClick={() => {
+              setNotebookOpen(false);
+              setTabletOpen(false);
+              setComposerOpen(false);
+              setSettingsOpen(false);
+              setSearchOpen(false);
+              setMessagesOpen(true);
+            }}
+          >
+            <MessageCircle size={18} />
+          </button>
+          <button
             className="profile-button"
             type="button"
             title="Open your profile"
@@ -985,7 +1008,14 @@ export function SymposiumV0() {
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={() => {
+              setNotebookOpen(false);
+              setTabletOpen(false);
+              setComposerOpen(false);
+              setSearchOpen(false);
+              setMessagesOpen(false);
+              setSettingsOpen(true);
+            }}
             actorHandle={currentProfile.handle}
             getRecency={getActivityRecency}
           />
@@ -1064,6 +1094,7 @@ export function SymposiumV0() {
           setTabletOpen(false);
           setSettingsOpen(false);
           setSearchOpen(false);
+          setMessagesOpen(false);
           setComposerOpen(true);
         }}
       >
@@ -1108,6 +1139,8 @@ export function SymposiumV0() {
           onClose={() => setTabletOpen(false)}
         />
       ) : null}
+
+      {messagesOpen ? <MessagesModal onClose={() => setMessagesOpen(false)} /> : null}
 
       {composerOpen ? (
         <PostComposerModal
@@ -1438,21 +1471,21 @@ function CommunitiesDirectoryView({
 
   return (
     <section className="communities-layout" aria-label="Communities">
+      <aside className="communities-context">
+        <p className="eyebrow">Campus threshold</p>
+        <h1>Communities</h1>
+        <p>Find the groups around shared work, live calls, and public artifacts.</p>
+      </aside>
       <div className="communities-panel">
-        <header className="communities-header">
-          <p className="eyebrow">Campus threshold</p>
-          <h1>Communities</h1>
-          <p>Find the groups around shared work, live calls, and public artifacts.</p>
-          <label className="communities-search">
-            <Search size={18} />
-            <input
-              value={query}
-              onChange={(event) => onQuery(event.target.value)}
-              placeholder="Search communities"
-              aria-label="Search communities"
-            />
-          </label>
-        </header>
+        <label className="communities-search">
+          <Search size={18} />
+          <input
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+            placeholder="Search communities"
+            aria-label="Search communities"
+          />
+        </label>
 
         <CommunityLayer
           title="Your communities"
@@ -1463,7 +1496,6 @@ function CommunitiesDirectoryView({
           onToggle={canExpandMyCommunities ? () => onExpanded(!expanded) : undefined}
           onOpenCommunity={onOpenCommunity}
           emptyText="Join communities to keep them here."
-          scrollable={expanded}
         />
 
         <CommunityLayer
@@ -1473,8 +1505,6 @@ function CommunitiesDirectoryView({
           total={discoverCommunities.length}
           onOpenCommunity={onOpenCommunity}
           emptyText="No community matches yet."
-          scrollable
-          discover
         />
       </div>
     </section>
@@ -1487,8 +1517,6 @@ function CommunityLayer({
   items,
   total,
   expanded,
-  scrollable = false,
-  discover = false,
   onToggle,
   onOpenCommunity,
   emptyText
@@ -1498,8 +1526,6 @@ function CommunityLayer({
   items: InquiryItem[];
   total: number;
   expanded?: boolean;
-  scrollable?: boolean;
-  discover?: boolean;
   onToggle?: () => void;
   onOpenCommunity: (communityId: string) => void;
   emptyText: string;
@@ -1514,7 +1540,7 @@ function CommunityLayer({
         </button>
       </header>
       {communities.length ? (
-        <div className={`community-grid ${scrollable ? "scrollable" : ""} ${discover ? "discover-scroll" : ""}`}>
+        <div className="community-grid">
           {communities.map((community) => (
             <CommunityCard
               key={community.id}
@@ -2523,6 +2549,66 @@ function SearchResultGroup({
         </button>
       ))}
     </section>
+  );
+}
+
+function MessagesModal({ onClose }: { onClose: () => void }) {
+  const threads = [
+    {
+      name: "AI Metascience Lab",
+      type: "Group",
+      preview: "Mira shared the benchmark notes for tomorrow's review.",
+      time: "12m"
+    },
+    {
+      name: "Niko Varga",
+      type: "Direct",
+      preview: "Can you look over the hidden-law task stub?",
+      time: "31m"
+    },
+    {
+      name: "Campus Events Board",
+      type: "Group",
+      preview: "Office hours moved to the civic patronage table.",
+      time: "1h"
+    },
+    {
+      name: "Salma Idris",
+      type: "Direct",
+      preview: "The youth-lab call notes are ready when you are.",
+      time: "3h"
+    }
+  ];
+
+  return (
+    <div className="modal-backdrop messages-backdrop" role="presentation" onClick={onClose}>
+      <section className="messages-modal" aria-label="Messages" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <span>
+            <MessageCircle size={18} />
+            Messages
+          </span>
+          <button type="button" title="Close" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </header>
+
+        <div className="message-list">
+          {threads.map((thread) => (
+            <button className="message-thread" type="button" key={`${thread.type}-${thread.name}`}>
+              <span className="avatar small">{initial(thread.name)}</span>
+              <span>
+                <strong>{thread.name}</strong>
+                <small>
+                  {thread.type} · {thread.time}
+                </small>
+                <em>{thread.preview}</em>
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 }
 
