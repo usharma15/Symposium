@@ -74,6 +74,12 @@ button {
     linear-gradient(90deg, rgba(6, 13, 15, 0.5), transparent 36%, rgba(6, 13, 15, 0.3));
 }
 
+.entry-sequence.night .entry-veil {
+  background:
+    linear-gradient(0deg, rgba(3, 8, 13, 0.58), rgba(3, 8, 13, 0.1) 44%),
+    linear-gradient(90deg, rgba(3, 8, 13, 0.42), transparent 38%, rgba(3, 8, 13, 0.24));
+}
+
 .entry-stair-lines {
   position: absolute;
   inset: auto 0 0;
@@ -301,30 +307,140 @@ button {
 
 .symposium-shell.night {
   color-scheme: dark;
-  --bg: #0f171d;
-  --ink: #eef6f1;
-  --muted: #a9bbb7;
-  --panel: rgba(18, 27, 33, 0.78);
-  --panel-strong: rgba(18, 27, 33, 0.94);
-  --line: rgba(216, 236, 230, 0.16);
-  --line-strong: rgba(216, 236, 230, 0.28);
-  --marble: #1d2a30;
-  --bronze: #d99b58;
-  --aqua: #72cfda;
-  --wine: #d87487;
-  --olive: #adbc73;
-  --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
-  --small-shadow: 0 12px 34px rgba(0, 0, 0, 0.24);
+  --bg: #080d11;
+  --ink: #f5efe2;
+  --muted: rgba(229, 219, 199, 0.74);
+  --panel: rgba(15, 19, 22, 0.68);
+  --panel-strong: rgba(24, 25, 25, 0.9);
+  --line: rgba(229, 186, 112, 0.2);
+  --line-strong: rgba(248, 211, 149, 0.44);
+  --marble: #141a1d;
+  --bronze: #e0a75f;
+  --aqua: #83cbd1;
+  --wine: #d99090;
+  --olive: #b7c27c;
+  --shadow: 0 30px 90px rgba(0, 0, 0, 0.54);
+  --small-shadow: 0 16px 42px rgba(0, 0, 0, 0.36);
   background:
-    linear-gradient(135deg, rgba(13, 22, 27, 0.98), rgba(21, 31, 35, 0.96)),
-    #0f171d;
+    radial-gradient(circle at 50% 0%, rgba(61, 88, 107, 0.2), transparent 42%),
+    linear-gradient(135deg, #071016, #11100d 62%, #090807);
 }
 
 .symposium-shell.night::before {
   background:
-    linear-gradient(180deg, rgba(13, 22, 27, 0.84), rgba(15, 23, 29, 0.95)),
+    linear-gradient(180deg, rgba(5, 11, 16, 0.78), rgba(10, 12, 12, 0.94)),
     var(--room-bg);
-  opacity: 0.18;
+  opacity: 0.22;
+}
+
+.symposium-shell.night .brand,
+.symposium-shell.night .icon-button,
+.symposium-shell.night .profile-button,
+.symposium-shell.night .bottom-action,
+.symposium-shell.night .movement-pad,
+.symposium-shell.night .feed-toolbar,
+.symposium-shell.night .feed-post,
+.symposium-shell.night .detail-main,
+.symposium-shell.night .detail-side,
+.symposium-shell.night .paper-side,
+.symposium-shell.night .post-composer,
+.symposium-shell.night .profile-hero,
+.symposium-shell.night .profile-tabs,
+.symposium-shell.night .communities-panel,
+.symposium-shell.night .communities-context,
+.symposium-shell.night .communities-search,
+.symposium-shell.night .selected-community-panel,
+.symposium-shell.night .selected-community-work,
+.symposium-shell.night .search-modal,
+.symposium-shell.night .profile-settings-modal,
+.symposium-shell.night .messages-modal {
+  border-color: var(--line);
+  background: linear-gradient(135deg, rgba(28, 30, 29, 0.78), rgba(13, 17, 20, 0.62));
+  color: var(--ink);
+  box-shadow: var(--small-shadow);
+}
+
+.symposium-shell.night .feed-post,
+.symposium-shell.night .detail-main,
+.symposium-shell.night .selected-community-work .feed-post {
+  background:
+    linear-gradient(90deg, rgba(224, 167, 95, 0.06) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(28, 30, 29, 0.86), rgba(13, 17, 20, 0.74));
+  background-size: 38px 100%, auto;
+}
+
+.symposium-shell.night .room-header,
+.symposium-shell.night .communities-context,
+.symposium-shell.night .selected-community-panel,
+.symposium-shell.night .paper-side {
+  background:
+    linear-gradient(135deg, rgba(31, 29, 25, 0.82), rgba(9, 14, 18, 0.66)),
+    rgba(13, 17, 20, 0.72);
+}
+
+.symposium-shell.night .search-modal header,
+.symposium-shell.night .profile-settings-modal header,
+.symposium-shell.night .messages-modal header,
+.symposium-shell.night .search-modal header label,
+.symposium-shell.night .search-modal header button,
+.symposium-shell.night .profile-settings-modal header button,
+.symposium-shell.night .messages-modal header button,
+.symposium-shell.night .community-card,
+.symposium-shell.night .office-folder-select select,
+.symposium-shell.night input,
+.symposium-shell.night textarea,
+.symposium-shell.night select {
+  border-color: var(--line);
+  background: rgba(9, 13, 15, 0.62);
+  color: var(--ink);
+}
+
+.symposium-shell.night .community-card {
+  background:
+    linear-gradient(135deg, rgba(42, 34, 25, 0.88), rgba(15, 19, 22, 0.76)),
+    rgba(15, 19, 22, 0.72);
+}
+
+.symposium-shell.night .community-card-private {
+  background:
+    linear-gradient(135deg, rgba(47, 35, 24, 0.92), rgba(20, 19, 19, 0.8)),
+    rgba(15, 19, 22, 0.72);
+}
+
+.symposium-shell.night .card-topline,
+.symposium-shell.night .detail-byline,
+.symposium-shell.night .card-footer,
+.symposium-shell.night .feed-post p,
+.symposium-shell.night .detail-body,
+.symposium-shell.night .comment p,
+.symposium-shell.night .communities-context p,
+.symposium-shell.night .selected-community-header p,
+.symposium-shell.night .panel-context,
+.symposium-shell.night .paper-side span,
+.symposium-shell.night .paper-side small {
+  color: var(--muted);
+}
+
+.symposium-shell.night .eyebrow,
+.symposium-shell.night .communities-context .eyebrow,
+.symposium-shell.night .selected-community-header .eyebrow,
+.symposium-shell.night .card-topline span:first-child,
+.symposium-shell.night .paper-side h2 {
+  color: var(--aqua);
+}
+
+.symposium-shell.night .social-actions button:hover,
+.symposium-shell.night .profile-tabs button.active,
+.symposium-shell.night .chip-row button.active,
+.symposium-shell.night .community-card:hover,
+.symposium-shell.night .community-card:focus-visible {
+  border-color: var(--line-strong);
+  background: rgba(38, 34, 27, 0.9);
+}
+
+.symposium-shell.night input::placeholder,
+.symposium-shell.night textarea::placeholder {
+  color: rgba(229, 219, 199, 0.54);
 }
 
 .symposium-shell[data-room="hall"][data-view="hall"]::before {
@@ -1021,7 +1137,7 @@ button {
 
 .symposium-shell.night .room-header {
   background:
-    linear-gradient(135deg, rgba(22, 34, 41, 0.96), rgba(21, 44, 49, 0.52)),
+    linear-gradient(135deg, rgba(31, 29, 25, 0.82), rgba(9, 14, 18, 0.66)),
     var(--panel);
 }
 

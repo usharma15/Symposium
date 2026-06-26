@@ -99,30 +99,68 @@ const kindLabels: Record<InquiryItem["kind"], string> = {
   code: "Code"
 };
 
-const roomRenders: Record<RoomId, string> = {
-  hall: "/symposium-renders/main-hall-updated.png",
-  office: "/symposium-renders/office.png",
-  symposium: "/symposium-renders/symposium.png",
-  library: "/symposium-renders/library-1.png",
-  amphitheater: "/symposium-renders/amphitheatre-2.png",
-  funding: "/symposium-renders/patronage.png",
-  communities: "/symposium-renders/communities.png",
-  opportunities: "/symposium-renders/opportunities.png"
+const entranceRenders: Record<Theme, string> = {
+  day: "/symposium-renders/entrance.png",
+  night: "/symposium-renders/entrance-night.png"
 };
 
-const patronageRenders: Record<PatronageMode, string> = {
-  lobby: "/symposium-renders/patronage.png",
-  civic: "/symposium-renders/patronage-civic.png",
-  private: "/symposium-renders/patronage-private.png"
+const roomRenders: Record<Theme, Record<RoomId, string>> = {
+  day: {
+    hall: "/symposium-renders/main-hall-updated.png",
+    office: "/symposium-renders/office.png",
+    symposium: "/symposium-renders/symposium.png",
+    library: "/symposium-renders/library-1.png",
+    amphitheater: "/symposium-renders/amphitheatre-2.png",
+    funding: "/symposium-renders/patronage.png",
+    communities: "/symposium-renders/communities.png",
+    opportunities: "/symposium-renders/opportunities.png"
+  },
+  night: {
+    hall: "/symposium-renders/main-hall-night.png",
+    office: "/symposium-renders/office-night.png",
+    symposium: "/symposium-renders/symposium-night.png",
+    library: "/symposium-renders/library-night.png",
+    amphitheater: "/symposium-renders/amphitheatre-night.png",
+    funding: "/symposium-renders/patronage-night.png",
+    communities: "/symposium-renders/communities-night.png",
+    opportunities: "/symposium-renders/opportunities-night.png"
+  }
 };
 
-const communityRenders = {
-  directory: "/symposium-renders/communities.png",
-  selected: "/symposium-renders/community-selected.png"
+const patronageRenders: Record<Theme, Record<PatronageMode, string>> = {
+  day: {
+    lobby: "/symposium-renders/patronage.png",
+    civic: "/symposium-renders/patronage-civic.png",
+    private: "/symposium-renders/patronage-private.png"
+  },
+  night: {
+    lobby: "/symposium-renders/patronage-night.png",
+    civic: "/symposium-renders/patronage-civic-night.png",
+    private: "/symposium-renders/patronage-private-night.png"
+  }
+};
+
+const communityRenders: Record<Theme, { directory: string; selected: string }> = {
+  day: {
+    directory: "/symposium-renders/communities.png",
+    selected: "/symposium-renders/community-selected.png"
+  },
+  night: {
+    directory: "/symposium-renders/communities-night.png",
+    selected: "/symposium-renders/community-selected-night.png"
+  }
 };
 
 const preloadRenders = Array.from(
-  new Set([...Object.values(roomRenders), ...Object.values(patronageRenders), ...Object.values(communityRenders)])
+  new Set([
+    ...Object.values(entranceRenders),
+    ...Object.values(roomRenders.day),
+    ...Object.values(roomRenders.night),
+    ...Object.values(patronageRenders.day),
+    ...Object.values(patronageRenders.night),
+    ...Object.values(communityRenders.day),
+    ...Object.values(communityRenders.night)
+  ])
 );
 
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
@@ -312,12 +350,15 @@ export function SymposiumV0() {
   );
 
   const activeRoomData = getRoom(activeRoom);
+  const themedRoomRenders = roomRenders[theme];
+  const themedPatronageRenders = patronageRenders[theme];
+  const themedCommunityRenders = communityRenders[theme];
   const activeRoomRender =
     activeRoom === "funding"
-      ? patronageRenders[patronageMode]
+      ? themedPatronageRenders[patronageMode]
       : activeRoom === "communities" && selectedCommunityId
-        ? communityRenders.selected
-        : roomRenders[activeRoom];
+        ? themedCommunityRenders.selected
+        : themedRoomRenders[activeRoom];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
   const selectedCommunity =
     selectedCommunityId ? researchCommunities.find((community) => community.id === selectedCommunityId) ?? null : null;
@@ -427,7 +468,11 @@ export function SymposiumV0() {
     const signedHandle = window.localStorage.getItem("symposium-auth-handle");
     const hasEntered = window.sessionStorage.getItem("symposium-entry-complete") === "true";
 
-    if (storedTheme === "day" || storedTheme === "night") setTheme(storedTheme);
+    if (storedTheme === "day" || storedTheme === "night") {
+      setTheme(storedTheme);
+    } else if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
+      setTheme("night");
+    }
     if (storedNote) setNoteText(storedNote);
     try {
       setActivityRecency(JSON.parse(window.localStorage.getItem("symposium-activity-recency") ?? "{}") as Record<string, number>);
@@ -913,6 +958,7 @@ export function SymposiumV0() {
     return (
       <EntrySequence
         theme={theme}
+        entranceRender={entranceRenders[theme]}
         mode={entryMode}
         authError={authError}
         onCreateAccount={createAccount}
@@ -1180,12 +1226,14 @@ export function SymposiumV0() {
 
 function EntrySequence({
   theme,
+  entranceRender,
   mode,
   authError,
   onCreateAccount,
   onSignIn
 }: {
   theme: Theme;
+  entranceRender: string;
   mode: EntryMode;
   authError: string;
   onCreateAccount: (input: CreateProfileInput, password: string) => Promise<boolean>;
@@ -1194,7 +1242,7 @@ function EntrySequence({
   return (
     <main className={`entry-sequence ${theme}`} aria-label="Approaching Symposium">
       <Image
-        src="/symposium-renders/entrance.png"
+        src={entranceRender}
         alt="Greco-futurist Symposium building above the Aegean sea"
         fill
         priority
