@@ -81,11 +81,7 @@ button {
 }
 
 .entry-stair-lines {
-  position: absolute;
-  inset: auto 0 0;
-  height: 48vh;
-  perspective: 760px;
-  pointer-events: none;
+  display: none;
 }
 
 .entry-stair-lines span {
@@ -363,10 +359,7 @@ button {
 .symposium-shell.night .feed-post,
 .symposium-shell.night .detail-main,
 .symposium-shell.night .selected-community-work .feed-post {
-  background:
-    linear-gradient(90deg, rgba(224, 167, 95, 0.06) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(28, 30, 29, 0.86), rgba(13, 17, 20, 0.74));
-  background-size: 38px 100%, auto;
+  background: linear-gradient(180deg, rgba(28, 30, 29, 0.86), rgba(13, 17, 20, 0.74));
 }
 
 .symposium-shell.night .room-header,
@@ -2284,6 +2277,14 @@ button {
     linear-gradient(180deg, rgba(7, 13, 12, 0.2), rgba(7, 13, 12, 0.14) 54%, rgba(7, 13, 12, 0.4));
 }
 
+.symposium-shell.night[data-room="office"]::after,
+.symposium-shell.night[data-room="amphitheater"]::after,
+.symposium-shell.night[data-room="funding"]::after {
+  background:
+    linear-gradient(90deg, rgba(3, 8, 13, 0.3), rgba(3, 8, 13, 0.04) 42%, rgba(3, 8, 13, 0.12)),
+    linear-gradient(180deg, rgba(3, 8, 13, 0.12), rgba(3, 8, 13, 0.05) 52%, rgba(3, 8, 13, 0.24));
+}
+
 .ambient-layer {
   display: none;
 }
@@ -2723,7 +2724,7 @@ button {
 .communities-layout {
   position: relative;
   z-index: 5;
-  width: min(840px, calc(100vw - 520px));
+  width: min(760px, calc(100vw - 520px));
   min-height: calc(100vh - 220px);
   margin: 28px auto 96px;
 }
@@ -2981,7 +2982,7 @@ button {
 
 .selected-community-layout {
   display: block;
-  width: min(840px, calc(100vw - 520px));
+  width: min(760px, calc(100vw - 520px));
   margin: 28px auto 0;
 }
 
