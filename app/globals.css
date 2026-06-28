@@ -2306,6 +2306,34 @@ button {
   background: transparent;
 }
 
+.symposium-shell.night[data-room="communities"]::before {
+  background: var(--room-bg) center center / cover no-repeat;
+  opacity: 1;
+  filter: brightness(1.32) saturate(1.08) contrast(1.04);
+}
+
+.symposium-shell.night[data-room="communities"] .communities-panel {
+  background: rgba(7, 11, 12, 0.22);
+  box-shadow: 0 26px 76px rgba(0, 0, 0, 0.18);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.symposium-shell.night[data-room="communities"] .community-card,
+.symposium-shell.night[data-room="communities"] .selected-community-work .feed-post {
+  background:
+    linear-gradient(180deg, rgba(24, 25, 23, 0.7), rgba(11, 15, 17, 0.5)),
+    rgba(10, 14, 16, 0.48);
+}
+
+.symposium-shell.night[data-room="communities"] .community-field,
+.symposium-shell.night[data-room="communities"] .community-summary,
+.symposium-shell.night[data-room="communities"] .community-stats small,
+.symposium-shell.night[data-room="communities"] .community-call-panel div span,
+.symposium-shell.night[data-room="communities"] .selected-community-header > span {
+  color: var(--muted);
+}
+
 .ambient-layer {
   display: none;
 }
