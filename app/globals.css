@@ -2289,6 +2289,7 @@ button {
 .symposium-shell.night[data-room="symposium"]::before,
 .symposium-shell.night[data-room="amphitheater"]::before,
 .symposium-shell.night[data-room="funding"]::before,
+.symposium-shell.night[data-room="communities"]::before,
 .symposium-shell.night[data-room="opportunities"]::before {
   background: var(--room-bg) center center / cover no-repeat;
   opacity: 1;
@@ -2300,6 +2301,7 @@ button {
 .symposium-shell.night[data-room="symposium"]::after,
 .symposium-shell.night[data-room="amphitheater"]::after,
 .symposium-shell.night[data-room="funding"]::after,
+.symposium-shell.night[data-room="communities"]::after,
 .symposium-shell.night[data-room="opportunities"]::after {
   background: transparent;
 }
