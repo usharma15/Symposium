@@ -2083,6 +2083,7 @@ function SocialActions({
     <div className="social-actions" aria-label="Post actions">
       {actions.map((action) => {
         const Icon = action.icon;
+        const fillActiveIcon = action.active && (action.label === "Likes" || action.label === "Saves");
         return (
           <button
             key={action.label}
@@ -2094,7 +2095,7 @@ function SocialActions({
               if (action.action) onAction(item.id, action.action);
             }}
           >
-            <Icon size={16} />
+            <Icon size={16} fill={fillActiveIcon ? "currentColor" : "none"} />
             <span className="metric-label">{action.label}</span>
             <strong>{action.value}</strong>
           </button>

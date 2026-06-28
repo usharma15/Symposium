@@ -3686,6 +3686,148 @@ button {
   line-height: 1.35;
 }
 
+.symposium-shell.night .community-layer > header button,
+.symposium-shell.night .community-card-topline strong,
+.symposium-shell.night .selected-community-header h1,
+.symposium-shell.night .community-call-panel div strong {
+  color: #fff8ea;
+}
+
+.symposium-shell.night .community-layer > header small {
+  border: 1px solid rgba(131, 203, 209, 0.22);
+  background: rgba(131, 203, 209, 0.14);
+  color: #9adfe3;
+}
+
+.symposium-shell.night .community-card-topline small {
+  border-color: rgba(131, 203, 209, 0.32);
+  background: rgba(10, 16, 18, 0.38);
+  color: #8edce1;
+}
+
+.symposium-shell.night .community-field,
+.symposium-shell.night .selected-community-header > span,
+.symposium-shell.night .community-call-panel div span {
+  color: rgba(246, 234, 212, 0.78);
+}
+
+.symposium-shell.night .community-summary,
+.symposium-shell.night .communities-context p,
+.symposium-shell.night .selected-community-header p {
+  color: rgba(246, 234, 212, 0.82);
+}
+
+.symposium-shell.night .community-stats small {
+  border-color: rgba(255, 253, 245, 0.2);
+  background: rgba(245, 239, 226, 0.74);
+  color: rgba(17, 25, 26, 0.88);
+}
+
+.symposium-shell.night .community-empty {
+  border-color: rgba(255, 253, 245, 0.18);
+  background: rgba(12, 17, 19, 0.6);
+  color: rgba(246, 234, 212, 0.76);
+}
+
+.symposium-shell.night .community-back {
+  border-color: rgba(255, 253, 245, 0.22);
+  background: rgba(245, 239, 226, 0.16);
+  color: #fff8ea;
+}
+
+.symposium-shell.night .community-call-panel {
+  border-color: rgba(255, 253, 245, 0.22);
+  background: rgba(245, 239, 226, 0.14);
+}
+
+.symposium-shell.night .community-call-panel button {
+  border-color: rgba(255, 253, 245, 0.34);
+  background: rgba(245, 239, 226, 0.84);
+  color: #11191a;
+}
+
+.symposium-shell.night .community-call-panel button:disabled {
+  border-color: rgba(255, 253, 245, 0.16);
+  background: rgba(245, 239, 226, 0.14);
+  color: rgba(246, 234, 212, 0.52);
+  opacity: 1;
+}
+
+.symposium-shell.night .feed-post,
+.symposium-shell.night .selected-community-work .feed-post {
+  background:
+    linear-gradient(180deg, rgba(30, 32, 30, 0.9), rgba(13, 17, 20, 0.78)),
+    rgba(13, 17, 20, 0.78);
+}
+
+.symposium-shell.night .post-kind-paper,
+.symposium-shell.night .post-kind-draft,
+.symposium-shell.night .post-kind-code,
+.symposium-shell.night .post-kind-thought,
+.symposium-shell.night .post-kind-note {
+  background:
+    linear-gradient(180deg, rgba(32, 32, 29, 0.9), rgba(13, 17, 20, 0.78)),
+    rgba(13, 17, 20, 0.78);
+}
+
+.symposium-shell.night .feed-post p,
+.symposium-shell.night .post-author small,
+.symposium-shell.night .metric-label,
+.symposium-shell.night .social-actions {
+  color: rgba(246, 234, 212, 0.74);
+}
+
+.symposium-shell.night .social-actions button {
+  color: rgba(246, 234, 212, 0.72);
+}
+
+.symposium-shell.night .social-actions strong {
+  color: rgba(255, 248, 234, 0.86);
+}
+
+.symposium-shell.night .social-actions button.active,
+.symposium-shell.night .social-actions button.active .metric-label,
+.symposium-shell.night .social-actions button.active strong {
+  color: #83cbd1;
+}
+
+.symposium-shell.night .messages-modal {
+  border-color: rgba(255, 253, 245, 0.22);
+  background:
+    linear-gradient(180deg, rgba(28, 30, 29, 0.95), rgba(13, 17, 20, 0.9)),
+    rgba(13, 17, 20, 0.92);
+  color: #fff8ea;
+}
+
+.symposium-shell.night .messages-modal header {
+  border-bottom-color: rgba(255, 253, 245, 0.16);
+  background: rgba(16, 20, 21, 0.88);
+}
+
+.symposium-shell.night .messages-modal header span,
+.symposium-shell.night .message-thread strong {
+  color: #fff8ea;
+}
+
+.symposium-shell.night .messages-modal header button {
+  border-color: rgba(255, 253, 245, 0.18);
+  background: rgba(245, 239, 226, 0.12);
+  color: #fff8ea;
+}
+
+.symposium-shell.night .message-thread {
+  border-color: rgba(255, 253, 245, 0.18);
+  background:
+    linear-gradient(135deg, rgba(245, 239, 226, 0.16), rgba(245, 239, 226, 0.08)),
+    rgba(12, 17, 19, 0.72);
+  color: #fff8ea;
+}
+
+.symposium-shell.night .message-thread small,
+.symposium-shell.night .message-thread em {
+  color: rgba(246, 234, 212, 0.76);
+}
+
 .search-results {
   display: grid;
   gap: 16px;
