@@ -3955,6 +3955,49 @@ button {
   overflow-wrap: anywhere;
 }
 
+.symposium-shell.night .back-button {
+  border-color: rgba(255, 253, 245, 0.24);
+  background:
+    linear-gradient(135deg, rgba(245, 239, 226, 0.18), rgba(245, 239, 226, 0.08)),
+    rgba(12, 17, 19, 0.78);
+  color: #fff8ea;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.34);
+}
+
+.symposium-shell.night .back-button:hover,
+.symposium-shell.night .back-button:focus-visible {
+  border-color: rgba(131, 203, 209, 0.42);
+  background:
+    linear-gradient(135deg, rgba(131, 203, 209, 0.16), rgba(245, 239, 226, 0.1)),
+    rgba(15, 20, 22, 0.86);
+}
+
+.symposium-shell.night .paper-side section {
+  border-color: rgba(255, 253, 245, 0.22);
+  background:
+    linear-gradient(180deg, rgba(28, 30, 29, 0.92), rgba(13, 17, 20, 0.82)),
+    rgba(13, 17, 20, 0.84);
+  color: #fff8ea;
+  box-shadow: 0 22px 62px rgba(0, 0, 0, 0.38);
+}
+
+.symposium-shell.night .paper-side h2 {
+  color: #83cbd1;
+}
+
+.symposium-shell.night .paper-side div {
+  border-top-color: rgba(255, 253, 245, 0.16);
+}
+
+.symposium-shell.night .paper-side span,
+.symposium-shell.night .paper-side small {
+  color: rgba(246, 234, 212, 0.76);
+}
+
+.symposium-shell.night .paper-side strong {
+  color: #fff8ea;
+}
+
 .profile-hero {
   position: relative;
 }

@@ -607,7 +607,7 @@ export function SymposiumV0() {
     enterRoom("office", activeRoom === "office" && officeMode === mode ? "desk" : mode);
   };
 
-  const openPatronageMode = (mode: Exclude<PatronageMode, "lobby">) => {
+  const openPatronageMode = (mode: PatronageMode) => {
     navigateView({
       activeRoom: "funding",
       selectedItemId: null,
@@ -1738,7 +1738,7 @@ function RoomView({
   roomChip: string;
   onFeedScope: (scope: FeedScope) => void;
   onRoomChip: (chip: string) => void;
-  onPatronageMode: (mode: Exclude<PatronageMode, "lobby">) => void;
+  onPatronageMode: (mode: PatronageMode) => void;
   onSelect: (id: string) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
@@ -1772,6 +1772,13 @@ function RoomView({
       <RoomRender room={room} onOpenNotebook={onOpenNotes} onOpenSaved={onOpenSaved} />
 
       <section className="feed-toolbar" aria-label="Feed controls">
+        {room.id === "funding" && patronageMode !== "lobby" ? (
+          <button className="community-back patronage-back" type="button" onClick={() => onPatronageMode("lobby")}>
+            <ArrowLeft size={16} />
+            Patronage
+          </button>
+        ) : null}
+
         <div className="room-mini-title">
           <p className="eyebrow">{room.eyebrow}</p>
           <h1>{roomTitle}</h1>
