@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { SignInButton, SignUpButton, useAuth, useUser } from "@clerk/nextjs";
 import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
@@ -39,9 +40,8 @@ import {
   type Room,
   type RoomId
 } from "@/lib/mockData";
-import type { CreateProfileInput, PostAction } from "@/lib/dataStore";
+import type { PostAction } from "@/lib/dataStore";
 import {
-  cleanHandle,
   countComments,
   hasHandle,
   isSavedBy,
@@ -66,12 +66,6 @@ type ViewSnapshot = {
   scrollY: number;
 };
 
-type AuthRecord = {
-  handle: string;
-  identifier: string;
-  password: string;
-};
-
 type LocalSnapshot = {
   profiles: Record<string, ResearchProfile>;
   items: InquiryItem[];
@@ -89,6 +83,14 @@ type ProfileSettingsDraft = {
   bio: string;
   likesPublic: boolean;
   resharesPublic: boolean;
+};
+
+type SymposiumAuthState = {
+  clerkEnabled: boolean;
+  authLoaded: boolean;
+  isSignedIn: boolean;
+  userId: string | null;
+  signOut: () => Promise<void>;
 };
 
 const kindLabels: Record<InquiryItem["kind"], string> = {
@@ -276,9 +278,6 @@ const communitySearchText = (community: ResearchCommunity) =>
     ].join(" ")
   );
 
-const handleFromName = (name: string) =>
-  cleanHandle(name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""));
-
 const clientId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -316,7 +315,40 @@ const initial = (name: string) =>
     .slice(0, 2)
     .toUpperCase();
 
-export function SymposiumV0() {
+const localPreviewAuth: SymposiumAuthState = {
+  clerkEnabled: false,
+  authLoaded: true,
+  isSignedIn: false,
+  userId: null,
+  signOut: async () => undefined
+};
+
+export function SymposiumV0({ clerkEnabled = false }: { clerkEnabled?: boolean }) {
+  if (clerkEnabled) return <ClerkSymposiumV0 />;
+  return <SymposiumExperience auth={localPreviewAuth} />;
+}
+
+function ClerkSymposiumV0() {
+  const { isLoaded: authLoaded, isSignedIn, signOut: clerkSignOut } = useAuth();
+  const { user } = useUser();
+
+  return (
+    <SymposiumExperience
+      auth={{
+        clerkEnabled: true,
+        authLoaded,
+        isSignedIn: Boolean(isSignedIn),
+        userId: user?.id ?? null,
+        signOut: async () => {
+          await clerkSignOut();
+        }
+      }}
+    />
+  );
+}
+
+function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
+  const { authLoaded, clerkEnabled, isSignedIn, userId } = auth;
   const [theme, setTheme] = useState<Theme>("day");
   const [entryMode, setEntryMode] = useState<EntryMode>("loading");
   const [signedIn, setSignedIn] = useState(false);
@@ -345,6 +377,7 @@ export function SymposiumV0() {
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState("Loading live data");
   const [authError, setAuthError] = useState("");
+  const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState(
     "First note: make the thing feel alive without pretending the whole world is built yet."
   );
@@ -430,16 +463,6 @@ export function SymposiumV0() {
     window.localStorage.setItem("symposium-profile-handle", nextProfile.handle);
   };
 
-  const mergeSnapshot = (remote: LocalSnapshot, local: LocalSnapshot | null): LocalSnapshot => {
-    if (!local) return remote;
-    const itemMap = new Map(remote.items.map((item) => [item.id, item]));
-    local.items.forEach((item) => itemMap.set(item.id, item));
-    return {
-      profiles: { ...remote.profiles, ...local.profiles },
-      items: [...itemMap.values()]
-    };
-  };
-
   const refreshData = async (preferredHandle = currentProfile.handle) => {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load Symposium data.");
@@ -448,16 +471,15 @@ export function SymposiumV0() {
       profiles: Record<string, ResearchProfile>;
       defaultProfile: ResearchProfile;
     };
-    const merged = mergeSnapshot({ items: data.items, profiles: data.profiles }, readLocalSnapshot());
-    const loadedProfiles = Object.keys(merged.profiles).length
-      ? merged.profiles
+    const loadedProfiles = Object.keys(data.profiles).length
+      ? data.profiles
       : { [data.defaultProfile.handle]: data.defaultProfile };
     const nextProfile = loadedProfiles[preferredHandle] ?? loadedProfiles[data.defaultProfile.handle] ?? data.defaultProfile;
 
-    setItems(merged.items);
+    setItems(data.items);
     setProfiles(loadedProfiles);
     setCurrentProfile(nextProfile);
-    persistLocalSnapshot(merged.items, loadedProfiles, nextProfile);
+    persistLocalSnapshot(data.items, loadedProfiles, nextProfile);
     setSyncStatus("Live data connected");
   };
 
@@ -465,8 +487,6 @@ export function SymposiumV0() {
     const storedTheme = window.localStorage.getItem("symposium-theme") as Theme | null;
     const storedNote = window.localStorage.getItem("symposium-notebook");
     const storedProfileHandle = window.localStorage.getItem("symposium-profile-handle");
-    const signedHandle = window.localStorage.getItem("symposium-auth-handle");
-    const hasEntered = window.sessionStorage.getItem("symposium-entry-complete") === "true";
 
     if (storedTheme === "day" || storedTheme === "night") {
       setTheme(storedTheme);
@@ -479,13 +499,12 @@ export function SymposiumV0() {
     } catch {
       setActivityRecency({});
     }
-    setSignedIn(Boolean(signedHandle));
-    setEntryMode(hasEntered && signedHandle ? "complete" : "approach");
+    setEntryMode("approach");
 
-    refreshData(signedHandle ?? storedProfileHandle ?? undefined).catch(() => {
+    refreshData(storedProfileHandle ?? undefined).catch(() => {
       const local = readLocalSnapshot();
       const fallbackProfiles = local?.profiles ?? { [profile.handle]: profile };
-      const fallbackProfile = fallbackProfiles[signedHandle ?? storedProfileHandle ?? profile.handle] ?? profile;
+      const fallbackProfile = fallbackProfiles[storedProfileHandle ?? profile.handle] ?? profile;
       setProfiles(fallbackProfiles);
       setItems(local?.items ?? inquiryItems);
       setCurrentProfile(fallbackProfile);
@@ -494,7 +513,7 @@ export function SymposiumV0() {
   }, []);
 
   useEffect(() => {
-    if (entryMode !== "approach") return undefined;
+    if (entryMode !== "approach" || !authLoaded || (Boolean(isSignedIn) && !signedIn)) return undefined;
 
     const timer = window.setTimeout(() => {
       if (signedIn) {
@@ -507,7 +526,73 @@ export function SymposiumV0() {
     }, 5000);
 
     return () => window.clearTimeout(timer);
-  }, [entryMode, signedIn]);
+  }, [authLoaded, entryMode, isSignedIn, signedIn]);
+
+  useEffect(() => {
+    if (!clerkEnabled) return;
+    if (!authLoaded) return;
+
+    if (!isSignedIn) {
+      setSignedIn(false);
+      setSyncedClerkUserId(null);
+      window.localStorage.removeItem("symposium-auth-handle");
+      window.localStorage.removeItem("symposium-auth-records");
+      if (entryMode === "complete") {
+        window.sessionStorage.removeItem("symposium-entry-complete");
+        setEntryMode("auth");
+      }
+      return;
+    }
+
+    if (!userId || syncedClerkUserId === userId) return;
+
+    let cancelled = false;
+
+    const syncAccount = async () => {
+      setSyncStatus("Syncing account");
+      setAuthError("");
+      const response = await fetch("/api/auth/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not sync your Symposium account.");
+      }
+
+      const data = (await response.json()) as { profile: ResearchProfile };
+      if (cancelled) return;
+
+      const nextProfiles = { ...profiles, [data.profile.handle]: data.profile };
+      setProfiles(nextProfiles);
+      setCurrentProfile(data.profile);
+      setSignedIn(true);
+      setSyncedClerkUserId(userId);
+      setEntryMode("complete");
+      setActiveRoom("hall");
+      setOfficeMode("desk");
+      setPatronageMode("lobby");
+      setSelectedCommunityId(null);
+      setSelectedItemId(null);
+      setSelectedProfileName(null);
+      setViewHistory([]);
+      setViewFuture([]);
+      window.sessionStorage.setItem("symposium-entry-complete", "true");
+      window.localStorage.setItem("symposium-profile-handle", data.profile.handle);
+      await refreshData(data.profile.handle);
+      setSyncStatus("Signed in");
+    };
+
+    syncAccount().catch((error) => {
+      if (cancelled) return;
+      setAuthError(error instanceof Error ? error.message : "Could not sync your account.");
+      setSyncStatus("Account sync failed");
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoaded, clerkEnabled, entryMode, isSignedIn, profiles, syncedClerkUserId, userId]);
 
   useEffect(() => {
     window.localStorage.setItem("symposium-theme", theme);
@@ -767,24 +852,15 @@ export function SymposiumV0() {
     setSyncStatus(parentId ? "Reply saved" : "Comment saved");
   };
 
-  const authRecords = (): AuthRecord[] => {
-    try {
-      return JSON.parse(window.localStorage.getItem("symposium-auth-records") ?? "[]") as AuthRecord[];
-    } catch {
-      return [];
-    }
-  };
+  const enterLocalPreview = () => {
+    const fallbackProfiles = Object.keys(profiles).length ? profiles : { [profile.handle]: profile };
+    const previewProfile =
+      fallbackProfiles[currentProfile.handle] ?? fallbackProfiles[profile.handle] ?? currentProfile ?? profile;
 
-  const persistAuthRecords = (records: AuthRecord[]) => {
-    window.localStorage.setItem("symposium-auth-records", JSON.stringify(records));
-  };
-
-  const completeSignIn = (person: ResearchProfile) => {
-    const nextProfiles = { ...profiles, [person.handle]: person };
-    setProfiles(nextProfiles);
-    setCurrentProfile(person);
+    setProfiles(fallbackProfiles);
+    setCurrentProfile(previewProfile);
     setSignedIn(true);
-    setSettingsOpen(false);
+    setAuthError("");
     setEntryMode("complete");
     setActiveRoom("hall");
     setOfficeMode("desk");
@@ -795,37 +871,12 @@ export function SymposiumV0() {
     setViewHistory([]);
     setViewFuture([]);
     window.sessionStorage.setItem("symposium-entry-complete", "true");
-    window.localStorage.setItem("symposium-auth-handle", person.handle);
-    window.localStorage.setItem("symposium-profile-handle", person.handle);
-    persistLocalSnapshot(items, nextProfiles, person);
+    window.localStorage.setItem("symposium-profile-handle", previewProfile.handle);
+    persistLocalSnapshot(items, fallbackProfiles, previewProfile);
+    setSyncStatus("Local preview");
   };
 
-  const saveProfile = async (input: CreateProfileInput) => {
-    setSyncStatus("Saving profile");
-    const response = await fetch("/api/profiles", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input)
-    });
-    const fallbackProfile: ResearchProfile = {
-      name: input.name.trim(),
-      handle: cleanHandle(input.handle),
-      email: input.email?.trim().toLowerCase() || undefined,
-      role: input.role.trim() || "Symposium participant",
-      location: input.location.trim() || "Public rooms",
-      bio: input.bio.trim() || "A participant in the current inquiry thread.",
-      fields: input.fields.map((field) => field.trim()).filter(Boolean)
-    };
-    const data = response.ok ? ((await response.json()) as { profile: ResearchProfile }) : { profile: fallbackProfile };
-    const nextProfiles = { ...profiles, [data.profile.handle]: data.profile };
-    setProfiles(nextProfiles);
-    setCurrentProfile(data.profile);
-    persistLocalSnapshot(items, nextProfiles, data.profile);
-    setSyncStatus("Profile saved");
-    return data.profile;
-  };
-
-  const saveProfileSettings = (draft: ProfileSettingsDraft) => {
+  const saveProfileSettings = async (draft: ProfileSettingsDraft) => {
     const cleanName = draft.name.trim() || currentProfile.name;
     const updatedProfile: ResearchProfile = {
       ...currentProfile,
@@ -848,53 +899,46 @@ export function SymposiumV0() {
     }
     persistLocalSnapshot(nextItems, nextProfiles, updatedProfile);
     setSettingsOpen(false);
-    setSyncStatus("Profile settings saved");
-  };
+    setSyncStatus("Saving profile settings");
 
-  const switchProfile = (person: ResearchProfile) => {
-    setCurrentProfile(person);
-    window.localStorage.setItem("symposium-profile-handle", person.handle);
-    window.localStorage.setItem("symposium-auth-handle", person.handle);
-    persistLocalSnapshot(items, profiles, person);
-    setSyncStatus(`Posting as ${person.name}`);
-  };
+    const response = await fetch("/api/profiles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: updatedProfile.name,
+        handle: updatedProfile.handle,
+        email: updatedProfile.email,
+        role: updatedProfile.role,
+        location: updatedProfile.location,
+        bio: updatedProfile.bio,
+        fields: updatedProfile.fields
+      })
+    });
 
-  const createAccount = async (input: CreateProfileInput, password: string) => {
-    const person = await saveProfile(input);
-    if (!person) return false;
-    const identifier = person.email ?? person.handle;
-    const records = authRecords().filter((record) => record.handle !== person.handle);
-    persistAuthRecords([...records, { handle: person.handle, identifier: identifier.toLowerCase(), password }]);
-    completeSignIn(person);
-    setAuthError("");
-    return true;
-  };
-
-  const signIn = (identifier: string, password: string) => {
-    const lowered = identifier.trim().toLowerCase();
-    const record = authRecords().find(
-      (entry) =>
-        (entry.identifier === lowered || entry.handle.toLowerCase() === lowered || entry.handle.toLowerCase() === cleanHandle(lowered)) &&
-        entry.password === password
-    );
-    if (!record) {
-      setAuthError("No matching account in this browser yet.");
-      return false;
+    if (response.ok) {
+      const data = (await response.json()) as { profile: ResearchProfile };
+      const committedProfile = { ...updatedProfile, ...data.profile };
+      const committedProfiles = { ...nextProfiles, [committedProfile.handle]: committedProfile };
+      const committedItems = nextItems.map((item) =>
+        item.authorHandle === committedProfile.handle ? { ...item, author: committedProfile.name } : item
+      );
+      setCurrentProfile(committedProfile);
+      setProfiles(committedProfiles);
+      setItems(committedItems);
+      persistLocalSnapshot(committedItems, committedProfiles, committedProfile);
+      setSyncStatus("Profile settings saved");
+    } else {
+      setSyncStatus("Profile saved locally");
     }
-    const person = profiles[record.handle] ?? readLocalSnapshot()?.profiles[record.handle];
-    if (!person) {
-      setAuthError("That account exists locally, but its profile is missing.");
-      return false;
-    }
-    completeSignIn(person);
-    setAuthError("");
-    return true;
   };
 
-  const signOut = () => {
+  const signOut = async () => {
+    await auth.signOut().catch(() => undefined);
     window.localStorage.removeItem("symposium-auth-handle");
+    window.localStorage.removeItem("symposium-auth-records");
     window.sessionStorage.removeItem("symposium-entry-complete");
     setSignedIn(false);
+    setSyncedClerkUserId(null);
     setSettingsOpen(false);
     setAuthError("");
     setEntryMode("auth");
@@ -961,8 +1005,9 @@ export function SymposiumV0() {
         entranceRender={entranceRenders[theme]}
         mode={entryMode}
         authError={authError}
-        onCreateAccount={createAccount}
-        onSignIn={signIn}
+        authLoaded={authLoaded}
+        clerkEnabled={clerkEnabled}
+        onLocalPreview={enterLocalPreview}
       />
     );
   }
@@ -1229,15 +1274,17 @@ function EntrySequence({
   entranceRender,
   mode,
   authError,
-  onCreateAccount,
-  onSignIn
+  authLoaded,
+  clerkEnabled,
+  onLocalPreview
 }: {
   theme: Theme;
   entranceRender: string;
   mode: EntryMode;
   authError: string;
-  onCreateAccount: (input: CreateProfileInput, password: string) => Promise<boolean>;
-  onSignIn: (identifier: string, password: string) => boolean;
+  authLoaded: boolean;
+  clerkEnabled: boolean;
+  onLocalPreview: () => void;
 }) {
   return (
     <main className={`entry-sequence ${theme}`} aria-label="Approaching Symposium">
@@ -1259,7 +1306,12 @@ function EntrySequence({
         <p>Welcome to the Symposium</p>
       </div>
       {mode === "auth" ? (
-        <EntryAuthPanel authError={authError} onCreateAccount={onCreateAccount} onSignIn={onSignIn} />
+        <EntryAuthPanel
+          authError={authError}
+          authLoaded={authLoaded}
+          clerkEnabled={clerkEnabled}
+          onLocalPreview={onLocalPreview}
+        />
       ) : null}
     </main>
   );
@@ -1267,123 +1319,39 @@ function EntrySequence({
 
 function EntryAuthPanel({
   authError,
-  onCreateAccount,
-  onSignIn
+  authLoaded,
+  clerkEnabled,
+  onLocalPreview
 }: {
   authError: string;
-  onCreateAccount: (input: CreateProfileInput, password: string) => Promise<boolean>;
-  onSignIn: (identifier: string, password: string) => boolean;
+  authLoaded: boolean;
+  clerkEnabled: boolean;
+  onLocalPreview: () => void;
 }) {
-  const [mode, setMode] = useState<"signin" | "create">("signin");
-  const [identifier, setIdentifier] = useState("");
-  const [password, setPassword] = useState("");
-  const [email, setEmail] = useState("");
-  const [name, setName] = useState("");
-  const [username, setUsername] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [otp, setOtp] = useState("");
-  const [otpIssued, setOtpIssued] = useState("");
-  const [localError, setLocalError] = useState("");
-
-  const issueOtp = () => {
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    setOtpIssued(code);
-    setLocalError("");
-  };
-
-  const submitSignIn = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!identifier.trim() || !password) {
-      setLocalError("Enter your email or username and password.");
-      return;
-    }
-    onSignIn(identifier, password);
-  };
-
-  const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!name.trim() || !email.trim() || !username.trim() || !newPassword) {
-      setLocalError("Name, email, username, and password are required.");
-      return;
-    }
-    if (!otpIssued) {
-      issueOtp();
-      setLocalError("Enter the OTP shown here to finish account creation.");
-      return;
-    }
-    if (otp.trim() !== otpIssued) {
-      setLocalError("That OTP does not match.");
-      return;
-    }
-
-    await onCreateAccount(
-      {
-        name,
-        handle: cleanHandle(username),
-        email,
-        role: "Symposium participant",
-        location: "Public rooms",
-        bio: "A participant in the current inquiry thread.",
-        fields: ["Inquiry"]
-      },
-      newPassword
-    );
-  };
-
-  const continueWithGoogle = async () => {
-    const googleEmail = email.trim() || "google.user@symposium.local";
-    const googleName = name.trim() || googleEmail.split("@")[0].replace(/[._-]+/g, " ");
-    await onCreateAccount(
-      {
-        name: googleName.replace(/\b\w/g, (letter) => letter.toUpperCase()),
-        handle: handleFromName(googleName),
-        email: googleEmail,
-        role: "Symposium participant",
-        location: "Public rooms",
-        bio: "A participant in the current inquiry thread.",
-        fields: ["Inquiry"]
-      },
-      "google"
-    );
-  };
-
   return (
     <section className="entry-auth" aria-label="Symposium sign in">
-      <div className="auth-tabs">
-        <button type="button" className={mode === "signin" ? "active" : ""} onClick={() => setMode("signin")}>
-          Sign in
-        </button>
-        <button type="button" className={mode === "create" ? "active" : ""} onClick={() => setMode("create")}>
-          Create account
-        </button>
-      </div>
-
-      {mode === "signin" ? (
-        <form className="entry-auth-form" onSubmit={submitSignIn}>
-          <input value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="Email or username" />
-          <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" />
-          <button type="submit">Enter</button>
-        </form>
+      {clerkEnabled ? (
+        <div className="entry-auth-form clerk-auth-actions">
+          <SignInButton mode="modal">
+            <button type="button" disabled={!authLoaded}>
+              Sign in
+            </button>
+          </SignInButton>
+          <SignUpButton mode="modal">
+            <button type="button" disabled={!authLoaded}>
+              Create account
+            </button>
+          </SignUpButton>
+        </div>
       ) : (
-        <form className="entry-auth-form" onSubmit={submitCreate}>
-          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" />
-          <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" />
-          <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" />
-          <input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="Password" type="password" />
-          {otpIssued ? (
-            <>
-              <p className="otp-line">OTP: {otpIssued}</p>
-              <input value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="Enter OTP" />
-            </>
-          ) : null}
-          <button type="submit">{otpIssued ? "Create account" : "Send OTP"}</button>
-          <button type="button" onClick={continueWithGoogle}>
-            Continue with Google
+        <div className="entry-auth-form">
+          <button type="button" onClick={onLocalPreview} disabled={!authLoaded}>
+            Enter local preview
           </button>
-        </form>
+        </div>
       )}
 
-      {localError || authError ? <p className="auth-error">{localError || authError}</p> : null}
+      {authError ? <p className="auth-error">{authError}</p> : null}
     </section>
   );
 }

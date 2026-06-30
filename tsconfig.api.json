@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "paths": {
+      "@/*": ["./*"],
+      "@symposium/contracts": ["./packages/contracts/src/index.ts"]
+    }
+  },
+  "include": [
+    "apps/api/**/*.ts",
+    "packages/**/*.ts",
+    "lib/mockData.ts",
+    "lib/symposiumCore.ts",
+    "drizzle.config.ts"
+  ],
+  "exclude": ["node_modules", ".next"]
+}

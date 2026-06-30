@@ -1,5 +1,6 @@
 import { applyPostAction, type PostAction } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
+import { proxyLiveBackend } from "@/lib/liveBackendClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +24,13 @@ export async function POST(request: Request, context: Context) {
   if (!actions.includes(action as PostAction)) {
     return jsonError("Unknown post action.", 400);
   }
+
+  const live = await proxyLiveBackend(`/v1/posts/${id}/actions`, {
+    method: "POST",
+    body,
+    actorHandle: body.actorHandle ? String(body.actorHandle) : undefined
+  });
+  if (live) return live;
 
   const item = await applyPostAction(id, action as PostAction, String(body.actorHandle ?? ""));
 

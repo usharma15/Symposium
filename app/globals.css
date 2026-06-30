@@ -198,6 +198,20 @@ button {
   gap: 9px;
 }
 
+.clerk-auth-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
+.clerk-auth-actions button:first-of-type {
+  background: #fffdf5;
+  color: #14201f;
+}
+
+.entry-auth-form button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .entry-auth-form input {
   width: 100%;
   min-width: 0;

@@ -1,12 +1,16 @@
 import { createPost, getSnapshot, type CreatePostInput } from "@/lib/dataStore";
 import type { ContentKind, RoomId } from "@/lib/mockData";
 import { jsonError, readJson } from "@/lib/api";
+import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { contentKinds, postRooms } from "@/lib/symposiumCore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const live = await proxyLiveBackend("/v1/posts");
+  if (live) return live;
+
   const snapshot = await getSnapshot();
   return Response.json({ items: snapshot.items });
 }
@@ -32,6 +36,13 @@ export async function POST(request: Request) {
   if (!input.title || !input.body) {
     return jsonError("Title and body are required.", 400);
   }
+
+  const live = await proxyLiveBackend("/v1/posts", {
+    method: "POST",
+    body: { ...input, authorHandle: body.authorHandle },
+    actorHandle: body.authorHandle ? String(body.authorHandle) : undefined
+  });
+  if (live) return live;
 
   const item = await createPost(input, String(body.authorHandle ?? ""));
   return Response.json({ item });

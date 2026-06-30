@@ -1,0 +1,139 @@
+import { z } from "zod";
+import {
+  assistantMessageInputSchema,
+  callIdInputSchema,
+  confirmAttachmentInputSchema,
+  createAttachmentUploadInputSchema,
+  createCommentInputSchema,
+  createCommunityCallInputSchema,
+  createOpportunityInputSchema,
+  createPostInputSchema,
+  createProfileInputSchema,
+  followProfileInputSchema,
+  joinCommunityInputSchema,
+  markNotificationInputSchema,
+  postActionInputSchema,
+  publishNoteInputSchema,
+  saveNoteBlockInputSchema,
+  searchInputSchema,
+  sendMessageInputSchema,
+  unfollowProfileInputSchema
+} from "../../../packages/contracts/src";
+import {
+  addComment,
+  askAssistant,
+  applyPostAction,
+  confirmAttachment,
+  createAttachmentUpload,
+  createCommunityCall,
+  createOpportunity,
+  createPost,
+  endCommunityCall,
+  followProfile,
+  getCommunity,
+  getInitialState,
+  getWorkspace,
+  joinCommunityCall,
+  joinOrRequestCommunity,
+  listCommunityCalls,
+  listCommunities,
+  listConversations,
+  listFollowing,
+  listNotifications,
+  listOpportunities,
+  markNotificationRead,
+  publishNote,
+  saveNoteBlock,
+  search,
+  sendMessage,
+  syncUser,
+  unfollowProfile,
+  upsertProfile
+} from "./repository/liveRepository";
+import { authedProcedure, publicProcedure, router } from "./trpc";
+
+export const appRouter = router({
+  auth: router({
+    syncUser: authedProcedure.mutation(({ ctx, input }) => syncUser(input, ctx.actor))
+  }),
+  bootstrap: router({
+    getInitialState: publicProcedure.query(() => getInitialState())
+  }),
+  profiles: router({
+    getMe: authedProcedure.query(async ({ ctx }) => {
+      const snapshot = await getInitialState();
+      return ctx.actor.handle ? snapshot.profiles[ctx.actor.handle] ?? null : null;
+    }),
+    update: authedProcedure.input(createProfileInputSchema).mutation(({ ctx, input }) => upsertProfile(input, ctx.actor)),
+    follow: authedProcedure.input(followProfileInputSchema).mutation(({ ctx, input }) => followProfile(input, ctx.actor)),
+    unfollow: authedProcedure.input(unfollowProfileInputSchema).mutation(({ ctx, input }) => unfollowProfile(input, ctx.actor)),
+    following: authedProcedure.query(({ ctx }) => listFollowing(ctx.actor))
+  }),
+  posts: router({
+    getFeed: publicProcedure
+      .input(z.object({ room: z.string().optional(), limit: z.number().int().positive().max(100).default(50) }).optional())
+      .query(async ({ input }) => {
+        const snapshot = await getInitialState();
+        const items = input?.room ? snapshot.items.filter((item) => item.room === input.room) : snapshot.items;
+        return items.slice(0, input?.limit ?? 50);
+      }),
+    getDetail: publicProcedure.input(z.object({ id: z.string() })).query(async ({ input }) => {
+      const snapshot = await getInitialState();
+      return snapshot.items.find((item) => item.id === input.id) ?? null;
+    }),
+    create: authedProcedure.input(createPostInputSchema).mutation(({ ctx, input }) => createPost(input, ctx.actor)),
+    react: authedProcedure.input(z.object({ postId: z.string() }).merge(postActionInputSchema)).mutation(({ ctx, input }) =>
+      applyPostAction(input.postId, input, ctx.actor)
+    ),
+    save: authedProcedure.input(z.object({ postId: z.string(), actorHandle: z.string().optional() })).mutation(({ ctx, input }) =>
+      applyPostAction(input.postId, { action: "save", actorHandle: input.actorHandle }, ctx.actor)
+    )
+  }),
+  comments: router({
+    list: publicProcedure.input(z.object({ postId: z.string() })).query(async ({ input }) => {
+      const snapshot = await getInitialState();
+      return snapshot.items.find((item) => item.id === input.postId)?.comments ?? [];
+    }),
+    create: authedProcedure.input(z.object({ postId: z.string() }).merge(createCommentInputSchema)).mutation(({ ctx, input }) =>
+      addComment(input.postId, input, ctx.actor)
+    )
+  }),
+  communities: router({
+    list: publicProcedure.query(() => listCommunities()),
+    get: publicProcedure.input(z.object({ communityId: z.string() })).query(({ input }) => getCommunity(input.communityId)),
+    joinOrRequest: authedProcedure.input(joinCommunityInputSchema).mutation(({ ctx, input }) => joinOrRequestCommunity(input, ctx.actor)),
+    listCalls: publicProcedure.input(z.object({ communityId: z.string() })).query(({ input }) => listCommunityCalls(input.communityId)),
+    createCall: authedProcedure.input(createCommunityCallInputSchema).mutation(({ ctx, input }) => createCommunityCall(input, ctx.actor)),
+    joinCall: authedProcedure.input(callIdInputSchema).mutation(({ ctx, input }) => joinCommunityCall(input, ctx.actor)),
+    endCall: authedProcedure.input(callIdInputSchema).mutation(({ ctx, input }) => endCommunityCall(input, ctx.actor))
+  }),
+  attachments: router({
+    createUpload: authedProcedure.input(createAttachmentUploadInputSchema).mutation(({ ctx, input }) => createAttachmentUpload(input, ctx.actor)),
+    confirmUpload: authedProcedure.input(confirmAttachmentInputSchema).mutation(({ ctx, input }) => confirmAttachment(input, ctx.actor))
+  }),
+  opportunities: router({
+    list: publicProcedure.input(createOpportunityInputSchema.partial().optional()).query(({ input }) => listOpportunities(input)),
+    create: authedProcedure.input(createOpportunityInputSchema).mutation(({ ctx, input }) => createOpportunity(input, ctx.actor))
+  }),
+  search: router({
+    query: publicProcedure.input(searchInputSchema).query(({ input }) => search(input))
+  }),
+  notifications: router({
+    list: authedProcedure.query(({ ctx }) => listNotifications(ctx.actor)),
+    markRead: authedProcedure.input(markNotificationInputSchema).mutation(({ ctx, input }) => markNotificationRead(input, ctx.actor))
+  }),
+  messages: router({
+    listConversations: authedProcedure.query(({ ctx }) => listConversations(ctx.actor)),
+    send: authedProcedure.input(sendMessageInputSchema).mutation(({ ctx, input }) => sendMessage(input, ctx.actor))
+  }),
+  notes: router({
+    getWorkspace: authedProcedure.query(({ ctx }) => getWorkspace(ctx.actor)),
+    saveBlock: authedProcedure.input(saveNoteBlockInputSchema).mutation(({ ctx, input }) => saveNoteBlock(input, ctx.actor)),
+    publish: authedProcedure.input(publishNoteInputSchema).mutation(({ ctx, input }) => publishNote(input, ctx.actor))
+  }),
+  assistant: router({
+    ask: authedProcedure.input(assistantMessageInputSchema).mutation(({ ctx, input }) => askAssistant(input, ctx.actor))
+  })
+});
+
+export type AppRouter = typeof appRouter;

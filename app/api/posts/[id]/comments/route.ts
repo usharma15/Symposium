@@ -1,5 +1,6 @@
 import { addComment, type CreateCommentInput } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
+import { proxyLiveBackend } from "@/lib/liveBackendClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,13 @@ export async function POST(request: Request, context: Context) {
   if (!input.body) {
     return jsonError("Comment body is required.", 400);
   }
+
+  const live = await proxyLiveBackend(`/v1/posts/${id}/comments`, {
+    method: "POST",
+    body: { ...input, authorHandle: body.authorHandle },
+    actorHandle: body.authorHandle ? String(body.authorHandle) : undefined
+  });
+  if (live) return live;
 
   const comment = await addComment(id, input, String(body.authorHandle ?? ""));
   return Response.json({ comment });

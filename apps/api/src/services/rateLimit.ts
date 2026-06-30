@@ -1,0 +1,46 @@
+import { TRPCError } from "@trpc/server";
+import type { FastifyRequest } from "fastify";
+import type { Actor } from "./auth";
+import { getRedis } from "./redis";
+
+type MemoryBucket = {
+  count: number;
+  resetAt: number;
+};
+
+const memoryBuckets = new Map<string, MemoryBucket>();
+
+const clientIp = (request: FastifyRequest) =>
+  request.ip || String(request.headers["x-forwarded-for"] ?? "unknown").split(",")[0]?.trim() || "unknown";
+
+export const rateLimit = async (
+  request: FastifyRequest,
+  actor: Actor,
+  scope: string,
+  limit: number,
+  windowSeconds: number
+) => {
+  const key = `rate:${scope}:${actor.handle ?? actor.clerkUserId ?? clientIp(request)}`;
+  const redis = getRedis();
+
+  if (redis) {
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, windowSeconds);
+    if (count > limit) {
+      throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Rate limit exceeded." });
+    }
+    return;
+  }
+
+  const now = Date.now();
+  const current = memoryBuckets.get(key);
+  if (!current || current.resetAt <= now) {
+    memoryBuckets.set(key, { count: 1, resetAt: now + windowSeconds * 1000 });
+    return;
+  }
+
+  current.count += 1;
+  if (current.count > limit) {
+    throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Rate limit exceeded." });
+  }
+};

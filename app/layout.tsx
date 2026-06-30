@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 const metadataBase = new URL(
@@ -30,9 +31,21 @@ export default function RootLayout({
 }: Readonly<{
   children: ReactNode;
 }>) {
-  return (
+  const clerkPublishableKey =
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY
+      ? process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+      : undefined;
+  const body = (
     <html lang="en">
       <body>{children}</body>
     </html>
+  );
+
+  if (!clerkPublishableKey) return body;
+
+  return (
+    <ClerkProvider publishableKey={clerkPublishableKey}>
+      {body}
+    </ClerkProvider>
   );
 }
