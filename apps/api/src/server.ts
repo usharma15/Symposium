@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { fileURLToPath } from "node:url";
+import { ZodError } from "zod";
 import { bootstrapResponseSchema } from "../../../packages/contracts/src";
 import { env, webOrigins } from "./config/env";
 import { assertDeploymentEnv } from "./config/preflight";
@@ -54,9 +55,16 @@ const withWriteActor = async (request: FastifyRequest) => {
   return actor;
 };
 
-const sendError = (app: FastifyInstance, reply: FastifyReply, error: unknown) => {
-  app.log.error(error);
+const logRouteError = (app: FastifyInstance, error: unknown, status: number) => {
+  if (status >= 500) {
+    app.log.error(error);
+    return;
+  }
 
+  app.log.warn(error);
+};
+
+const sendError = (app: FastifyInstance, reply: FastifyReply, error: unknown) => {
   if (error instanceof TRPCError) {
     const statusByCode: Partial<Record<typeof error.code, number>> = {
       BAD_REQUEST: 400,
@@ -68,11 +76,20 @@ const sendError = (app: FastifyInstance, reply: FastifyReply, error: unknown) =>
       TOO_MANY_REQUESTS: 429
     };
 
-    return reply.status(statusByCode[error.code] ?? 500).send({ error: error.message });
+    const status = statusByCode[error.code] ?? 500;
+    logRouteError(app, error, status);
+    return reply.status(status).send({ error: error.message });
+  }
+
+  if (error instanceof ZodError) {
+    app.log.warn({ issues: error.issues }, "Invalid request payload");
+    return reply.status(400).send({ error: "Invalid request payload.", issues: error.issues });
   }
 
   const message = error instanceof Error ? error.message : "Unknown backend error.";
-  return reply.status(message.includes("required") ? 400 : 500).send({ error: message });
+  const status = message.includes("required") ? 400 : 500;
+  logRouteError(app, error, status);
+  return reply.status(status).send({ error: message });
 };
 
 export const buildApp = async () => {

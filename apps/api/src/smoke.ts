@@ -58,6 +58,17 @@ const main = async () => {
     throw new Error(`/v1/opportunities failed with ${opportunities.status}: ${JSON.stringify(opportunities.body)}`);
   }
 
+  const invalidOpportunityFilter = await readJson<{ error?: string; issues?: unknown[] }>(
+    "/v1/opportunities?status=invalid"
+  );
+  if (invalidOpportunityFilter.status !== 400 || invalidOpportunityFilter.body.error !== "Invalid request payload.") {
+    throw new Error(
+      `/v1/opportunities validation returned ${invalidOpportunityFilter.status}: ${JSON.stringify(
+        invalidOpportunityFilter.body
+      )}`
+    );
+  }
+
   console.log(
     JSON.stringify(
       {
