@@ -1,0 +1,105 @@
+import type { FastifyInstance } from "fastify";
+import { withWriteActor } from "../http/actors";
+import { sendError } from "../http/errors";
+import {
+  askAssistant,
+  createOpportunity,
+  getWorkspace,
+  listConversations,
+  listNotifications,
+  listOpportunities,
+  publishNote,
+  saveNoteBlock,
+  sendMessage
+} from "../repository/liveRepository";
+
+export const registerWorkspaceRoutes = (app: FastifyInstance) => {
+  app.get("/v1/opportunities", async (request, reply) => {
+    try {
+      const opportunities = await listOpportunities(request.query);
+      return reply.send({ opportunities });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/opportunities", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const opportunity = await createOpportunity(request.body, actor);
+      return reply.send({ opportunity });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/conversations", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const conversations = await listConversations(actor);
+      return reply.send({ conversations });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/messages", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const message = await sendMessage(request.body, actor);
+      return reply.send({ message });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/notifications", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const notifications = await listNotifications(actor);
+      return reply.send({ notifications });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/workspace", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const workspace = await getWorkspace(actor);
+      return reply.send(workspace);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/notes/blocks", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const block = await saveNoteBlock(request.body, actor);
+      return reply.send({ block });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/notes/publish", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const publication = await publishNote(request.body, actor);
+      return reply.send(publication);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/assistant/messages", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const response = await askAssistant(request.body, actor);
+      return reply.send(response);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+};

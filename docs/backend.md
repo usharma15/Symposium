@@ -122,6 +122,14 @@ By default this checks `http://localhost:4000`. It verifies liveness, readiness,
 SYMPOSIUM_SMOKE_URL=https://your-render-api.onrender.com npm run api:smoke
 ```
 
+For a deeper write-path smoke against local dev mode, or against a live API when `SYMPOSIUM_SMOKE_TOKEN` contains a valid Clerk session token:
+
+```bash
+npm run api:smoke:writes
+```
+
+This creates verification posts, comments, post actions, community calls, opportunities, note blocks, note publications, and assistant messages. Use it only against environments where test writes are acceptable.
+
 `/healthz` is a cheap process liveness check. `/readyz` is the safer deployment-readiness check: it reports whether the live provider boundary is configured without returning secret values. In strict live mode it expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash, R2, and the reserved owner handle binding. The AI tablet provider is reported separately because the fallback response is valid until model execution policy is finalized.
 
 ## Database

@@ -7,6 +7,7 @@
     "api:dev": "tsx watch apps/api/src/server.ts",
     "api:preflight": "tsx apps/api/src/config/preflight.ts",
     "api:smoke": "tsx apps/api/src/smoke.ts",
+    "api:smoke:writes": "tsx apps/api/src/smokeWrites.ts",
     "api:start": "tsx apps/api/src/server.ts",
     "api:typecheck": "tsc --noEmit -p tsconfig.api.json",
     "build": "next build",
