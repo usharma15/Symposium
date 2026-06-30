@@ -2,7 +2,7 @@ services:
   - type: web
     name: symposium-api
     env: node
-    plan: starter
+    plan: free
     buildCommand: npm ci && npm run deploy:api:check
     startCommand: npm run api:start
     healthCheckPath: /healthz
@@ -24,7 +24,7 @@ services:
       - key: SYMPOSIUM_OWNER_CLERK_USER_ID
         sync: false
       - key: SYMPOSIUM_OWNER_HANDLE
-        value: "@usharma"
+        value: "@udayan"
       - key: DATABASE_URL
         sync: false
       - key: CLERK_SECRET_KEY
