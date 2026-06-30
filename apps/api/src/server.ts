@@ -7,6 +7,7 @@ import { assertDeploymentEnv } from "./config/preflight";
 import { ensureDatabase } from "./db/migrate";
 import { attachRealtime } from "./realtime";
 import { appRouter } from "./router";
+import { registerAttachmentRoutes } from "./routes/attachmentRoutes";
 import { registerCommunityRoutes } from "./routes/communityRoutes";
 import { registerPostRoutes } from "./routes/postRoutes";
 import { registerProfileRoutes } from "./routes/profileRoutes";
@@ -38,6 +39,7 @@ export const buildApp = async () => {
   registerProfileRoutes(app);
   registerPostRoutes(app);
   registerCommunityRoutes(app);
+  registerAttachmentRoutes(app);
   registerWorkspaceRoutes(app);
 
   attachRealtime(app);

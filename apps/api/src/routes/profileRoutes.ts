@@ -5,6 +5,7 @@ import {
   followProfile,
   getInitialState,
   listFollowing,
+  listProfileFollows,
   syncUser,
   unfollowProfile,
   upsertProfile
@@ -45,6 +46,15 @@ export const registerProfileRoutes = (app: FastifyInstance) => {
     try {
       const actor = await withWriteActor(request);
       const follows = await listFollowing(actor);
+      return reply.send(follows);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: HandleParams }>("/v1/profiles/:handle/follows", async (request, reply) => {
+    try {
+      const follows = await listProfileFollows(request.params.handle);
       return reply.send(follows);
     } catch (error) {
       return sendError(app, reply, error);

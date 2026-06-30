@@ -11,6 +11,12 @@ const asFields = (value: unknown) => {
   return [];
 };
 
+const asOptionalString = (value: unknown) => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+};
+
 export async function GET() {
   const live = await proxyLiveBackend("/v1/profiles");
   if (live) return live;
@@ -30,9 +36,12 @@ export async function POST(request: Request) {
     name: String(body.name ?? "").trim(),
     handle: String(body.handle ?? "").trim(),
     email: String(body.email ?? "").trim(),
+    avatarUrl: asOptionalString(body.avatarUrl),
+    likesPublic: typeof body.likesPublic === "boolean" ? body.likesPublic : undefined,
+    resharesPublic: typeof body.resharesPublic === "boolean" ? body.resharesPublic : undefined,
     role: String(body.role ?? "").trim(),
     location: String(body.location ?? "").trim(),
-    bio: String(body.bio ?? "").trim(),
+    bio: String(body.bio ?? "").trim().slice(0, 200),
     fields: asFields(body.fields)
   };
 

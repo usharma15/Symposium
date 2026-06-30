@@ -51,9 +51,12 @@ export const createProfileInputSchema = z.object({
   name: z.string().trim().min(1),
   handle: z.string().trim().min(1),
   email: z.string().trim().email().optional().or(z.literal("")),
+  avatarUrl: z.string().trim().url().optional().or(z.literal("")),
+  likesPublic: z.boolean().optional(),
+  resharesPublic: z.boolean().optional(),
   role: z.string().trim().default("Symposium participant"),
   location: z.string().trim().default("Public rooms"),
-  bio: z.string().trim().default("A participant in the current inquiry thread."),
+  bio: z.string().trim().max(200).default("A participant in the current inquiry thread."),
   fields: z.array(z.string()).default([])
 });
 

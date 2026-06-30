@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { SignInButton, SignUpButton, useAuth, useUser } from "@clerk/nextjs";
-import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -10,7 +10,6 @@ import {
   BrainCircuit,
   Eye,
   Home,
-  Image as ImageIcon,
   MessageCircle,
   Moon,
   NotebookPen,
@@ -83,6 +82,11 @@ type ProfileFollowResponse = {
   followers?: ProfileFollowRecord[];
 };
 
+type ProfileSocialLists = {
+  following: string[];
+  followers: string[];
+};
+
 type PostDraft = {
   title: string;
   body: string;
@@ -95,6 +99,12 @@ type ProfileSettingsDraft = {
   bio: string;
   likesPublic: boolean;
   resharesPublic: boolean;
+};
+
+type AttachmentUploadResponse = {
+  attachmentId?: string;
+  uploadUrl?: string;
+  publicUrl?: string | null;
 };
 
 type SymposiumAuthState = {
@@ -369,6 +379,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
   const [currentProfile, setCurrentProfile] = useState<ResearchProfile>(profile);
   const [followingHandles, setFollowingHandles] = useState<string[]>([]);
+  const [profileSocialLists, setProfileSocialLists] = useState<Record<string, ProfileSocialLists>>({});
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
   const [roomChip, setRoomChip] = useState(roomChips[0]);
   const [officeMode, setOfficeMode] = useState<OfficeMode>("desk");
@@ -503,6 +514,25 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     );
   };
 
+  const applySocialLists = (handle: string, lists: ProfileSocialLists) => {
+    setProfileSocialLists((current) => ({
+      ...current,
+      [handle]: {
+        following: Array.from(new Set(lists.following.map(cleanHandle).filter(Boolean))),
+        followers: Array.from(new Set(lists.followers.map(cleanHandle).filter(Boolean)))
+      }
+    }));
+  };
+
+  const socialListsFromResponse = (data: ProfileFollowResponse): ProfileSocialLists => ({
+    following: Array.from(
+      new Set((data.following ?? []).map((follow) => cleanHandle(String(follow.followingHandle ?? ""))).filter(Boolean))
+    ),
+    followers: Array.from(
+      new Set((data.followers ?? []).map((follow) => cleanHandle(String(follow.followerHandle ?? ""))).filter(Boolean))
+    )
+  });
+
   const refreshData = async (preferredHandle = currentProfile.handle) => {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load Symposium data.");
@@ -531,12 +561,23 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     if (!response.ok) return;
 
     const data = (await response.json()) as ProfileFollowResponse;
-    const remoteHandles = Array.from(
-      new Set((data.following ?? []).map((follow) => cleanHandle(String(follow.followingHandle ?? ""))).filter(Boolean))
-    );
+    const lists = socialListsFromResponse(data);
+    const remoteHandles = lists.following;
 
     setFollowingHandles(remoteHandles);
+    applySocialLists(actorHandle, lists);
     persistLocalFollowing(actorHandle, remoteHandles);
+  };
+
+  const refreshProfileFollows = async (handle: string) => {
+    const normalizedHandle = cleanHandle(handle);
+    if (!normalizedHandle) return;
+
+    const response = await fetch(`/api/profiles/${encodeURIComponent(normalizedHandle)}/follows`, { cache: "no-store" });
+    if (!response.ok) return;
+
+    const data = (await response.json()) as ProfileFollowResponse;
+    applySocialLists(normalizedHandle, socialListsFromResponse(data));
   };
 
   useEffect(() => {
@@ -574,6 +615,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     let cancelled = false;
     const cached = readLocalFollowing(currentProfile.handle);
     setFollowingHandles(cached);
+    applySocialLists(currentProfile.handle, {
+      following: cached,
+      followers: profileSocialLists[currentProfile.handle]?.followers ?? []
+    });
 
     refreshFollowing(currentProfile.handle).catch(() => {
       if (!cancelled) setFollowingHandles(cached);
@@ -583,6 +628,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       cancelled = true;
     };
   }, [currentProfile.handle, signedIn]);
+
+  useEffect(() => {
+    if (!selectedProfile?.handle) return;
+    void refreshProfileFollows(selectedProfile.handle);
+  }, [selectedProfile?.handle]);
 
   useEffect(() => {
     if (entryMode !== "approach" || !authLoaded || (Boolean(isSignedIn) && !signedIn)) return undefined;
@@ -948,13 +998,87 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setSyncStatus("Local preview");
   };
 
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result ?? "")));
+      reader.addEventListener("error", () => reject(new Error("Could not read this image.")));
+      reader.readAsDataURL(file);
+    });
+
+  const uploadProfileAvatar = async (file: File) => {
+    const allowedImageTypes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/avif"]);
+
+    if (!allowedImageTypes.has(file.type)) {
+      throw new Error("Choose a PNG, JPG, JPEG, WEBP, GIF, or AVIF image.");
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      throw new Error("Profile photos must be 5 MB or smaller.");
+    }
+
+    setSyncStatus("Preparing profile photo");
+    const uploadResponse = await fetch("/api/attachments/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actorHandle: currentProfile.handle,
+        fileName: file.name,
+        contentType: file.type,
+        byteSize: file.size,
+        ownerType: "profile",
+        ownerId: currentProfile.handle
+      })
+    });
+
+    if (!uploadResponse.ok) {
+      setSyncStatus("Profile photo previewed locally");
+      return readFileAsDataUrl(file);
+    }
+
+    const upload = (await uploadResponse.json()) as AttachmentUploadResponse;
+
+    if (!upload.uploadUrl || !upload.publicUrl || !upload.attachmentId) {
+      setSyncStatus("Profile photo previewed locally");
+      return readFileAsDataUrl(file);
+    }
+
+    setSyncStatus("Uploading profile photo");
+    const putResponse = await fetch(upload.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": file.type },
+      body: file
+    });
+
+    if (!putResponse.ok) {
+      throw new Error("Could not upload the profile photo.");
+    }
+
+    const confirmResponse = await fetch("/api/attachments/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actorHandle: currentProfile.handle,
+        attachmentId: upload.attachmentId,
+        byteSize: file.size
+      })
+    });
+
+    if (!confirmResponse.ok) {
+      throw new Error("Could not confirm the profile photo upload.");
+    }
+
+    setSyncStatus("Profile photo ready");
+    return upload.publicUrl;
+  };
+
   const saveProfileSettings = async (draft: ProfileSettingsDraft) => {
     const cleanName = draft.name.trim() || currentProfile.name;
     const updatedProfile: ResearchProfile = {
       ...currentProfile,
       name: cleanName,
       avatarUrl: draft.avatarUrl?.trim() || undefined,
-      bio: draft.bio.trim() || currentProfile.bio,
+      bio: (draft.bio.trim() || currentProfile.bio).slice(0, 200),
       likesPublic: draft.likesPublic,
       resharesPublic: draft.resharesPublic
     };
@@ -980,6 +1104,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         name: updatedProfile.name,
         handle: updatedProfile.handle,
         email: updatedProfile.email,
+        avatarUrl: updatedProfile.avatarUrl,
+        likesPublic: updatedProfile.likesPublic,
+        resharesPublic: updatedProfile.resharesPublic,
         role: updatedProfile.role,
         location: updatedProfile.location,
         bio: updatedProfile.bio,
@@ -1013,8 +1140,15 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const nextHandles = wasFollowing
       ? previousHandles.filter((handle) => handle !== normalizedTarget)
       : Array.from(new Set([...previousHandles, normalizedTarget]));
+    const currentSocial = profileSocialLists[currentProfile.handle] ?? { following: previousHandles, followers: [] };
+    const targetSocial = profileSocialLists[normalizedTarget] ?? { following: [], followers: [] };
+    const nextTargetFollowers = wasFollowing
+      ? targetSocial.followers.filter((handle) => handle !== currentProfile.handle)
+      : Array.from(new Set([...targetSocial.followers, currentProfile.handle]));
 
     setFollowingHandles(nextHandles);
+    applySocialLists(currentProfile.handle, { ...currentSocial, following: nextHandles });
+    applySocialLists(normalizedTarget, { ...targetSocial, followers: nextTargetFollowers });
     persistLocalFollowing(currentProfile.handle, nextHandles);
     setSyncStatus(wasFollowing ? "Unfollowing profile" : "Following profile");
 
@@ -1027,9 +1161,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
       if (!response.ok) throw new Error("Follow action failed.");
       setSyncStatus(wasFollowing ? "Profile unfollowed" : "Following profile");
-      await refreshFollowing(currentProfile.handle);
     } catch {
       setFollowingHandles(previousHandles);
+      applySocialLists(currentProfile.handle, { ...currentSocial, following: previousHandles });
+      applySocialLists(normalizedTarget, { ...targetSocial });
       persistLocalFollowing(currentProfile.handle, previousHandles);
       setSyncStatus("Follow could not sync");
     }
@@ -1213,6 +1348,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             }}
             onToggleFollow={toggleFollow}
             actorHandle={currentProfile.handle}
+            profiles={profiles}
+            socialLists={profileSocialLists[selectedProfile.handle] ?? { following: [], followers: [] }}
             getRecency={getActivityRecency}
           />
         ) : selectedItem ? (
@@ -1367,6 +1504,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
           currentProfile={currentProfile}
           onClose={() => setSettingsOpen(false)}
           onSave={saveProfileSettings}
+          onUploadAvatar={uploadProfileAvatar}
           onSignOut={signOut}
         />
       ) : null}
@@ -2464,6 +2602,8 @@ function ProfileView({
   onOpenSettings,
   onToggleFollow,
   actorHandle,
+  profiles,
+  socialLists,
   getRecency
 }: {
   person: ResearchProfile;
@@ -2476,9 +2616,12 @@ function ProfileView({
   onOpenSettings: () => void;
   onToggleFollow: (handle: string) => void;
   actorHandle: string;
+  profiles: Record<string, ResearchProfile>;
+  socialLists: ProfileSocialLists;
   getRecency: (item: InquiryItem) => number;
 }) {
   const [activeTab, setActiveTab] = useState<ProfileTab>("all");
+  const [activeSocialList, setActiveSocialList] = useState<"following" | "followers" | null>(null);
   const byRecency = (nextItems: InquiryItem[]) => [...nextItems].sort((a, b) => getRecency(b) - getRecency(a));
   const isAuthor = (item: InquiryItem) => item.authorHandle === person.handle || item.author === person.name;
   const canShowLikes = actorHandle === person.handle || inferredLikesPublic(person);
@@ -2544,15 +2687,17 @@ function ProfileView({
             </button>
           )}
           <h1>{person.name}</h1>
-          <p>{person.handle}</p>
-          <p>
-            {person.role} · {person.location}
-          </p>
-          <p>{person.bio}</p>
-          <div className="profile-fields">
-            {person.fields.map((field) => (
-              <span key={field}>{field}</span>
-            ))}
+          <p className="profile-handle">{person.handle}</p>
+          <p className="profile-bio">{person.bio.slice(0, 200)}</p>
+          <div className="profile-social-counts" aria-label={`${person.name} social graph`}>
+            <button type="button" onClick={() => setActiveSocialList("following")}>
+              <strong>{socialLists.following.length}</strong>
+              <span>Following</span>
+            </button>
+            <button type="button" onClick={() => setActiveSocialList("followers")}>
+              <strong>{socialLists.followers.length}</strong>
+              <span>Followers</span>
+            </button>
           </div>
           <div className="profile-metrics" aria-label={`${person.name} activity totals`}>
             {tabs.map((tab) => (
@@ -2589,7 +2734,67 @@ function ProfileView({
           </div>
         )}
       </section>
+
+      {activeSocialList ? (
+        <ProfileSocialListModal
+          title={activeSocialList === "following" ? "Following" : "Followers"}
+          handles={socialLists[activeSocialList]}
+          profiles={profiles}
+          onClose={() => setActiveSocialList(null)}
+          onOpenProfile={(handle) => {
+            setActiveSocialList(null);
+            onOpenProfile(handle);
+          }}
+        />
+      ) : null}
     </article>
+  );
+}
+
+function ProfileSocialListModal({
+  title,
+  handles,
+  profiles,
+  onClose,
+  onOpenProfile
+}: {
+  title: string;
+  handles: string[];
+  profiles: Record<string, ResearchProfile>;
+  onClose: () => void;
+  onOpenProfile: (handle: string) => void;
+}) {
+  return (
+    <div className="modal-backdrop social-list-backdrop" role="presentation" onClick={onClose}>
+      <section className="social-list-modal" aria-label={title} onClick={(event) => event.stopPropagation()}>
+        <header>
+          <strong>{title}</strong>
+          <button type="button" title="Close" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </header>
+        <div className="social-list-body">
+          {handles.length ? (
+            handles.map((handle) => {
+              const person = profiles[handle];
+              return (
+                <button type="button" key={handle} onClick={() => onOpenProfile(handle)}>
+                  <span className="avatar small">
+                    {person?.avatarUrl ? <img src={person.avatarUrl} alt="" /> : initial(person?.name ?? handle)}
+                  </span>
+                  <span>
+                    <strong>{person?.name ?? handle}</strong>
+                    <small>{handle}</small>
+                  </span>
+                </button>
+              );
+            })
+          ) : (
+            <p>No profiles here yet.</p>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2758,30 +2963,49 @@ function ProfileSettingsModal({
   currentProfile,
   onClose,
   onSave,
+  onUploadAvatar,
   onSignOut
 }: {
   currentProfile: ResearchProfile;
   onClose: () => void;
   onSave: (draft: ProfileSettingsDraft) => void;
+  onUploadAvatar: (file: File) => Promise<string>;
   onSignOut: () => void;
 }) {
   const [avatarUrl, setAvatarUrl] = useState(currentProfile.avatarUrl ?? "");
   const [name, setName] = useState(currentProfile.name);
-  const [bio, setBio] = useState(currentProfile.bio);
+  const [bio, setBio] = useState(currentProfile.bio.slice(0, 200));
   const [likesPublic, setLikesPublic] = useState(inferredLikesPublic(currentProfile));
   const [resharesPublic, setResharesPublic] = useState(inferredResharesPublic(currentProfile));
+  const [avatarUploadStatus, setAvatarUploadStatus] = useState("");
 
   useEffect(() => {
     setAvatarUrl(currentProfile.avatarUrl ?? "");
     setName(currentProfile.name);
-    setBio(currentProfile.bio);
+    setBio(currentProfile.bio.slice(0, 200));
     setLikesPublic(inferredLikesPublic(currentProfile));
     setResharesPublic(inferredResharesPublic(currentProfile));
+    setAvatarUploadStatus("");
   }, [currentProfile]);
 
   const submitProfile = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     onSave({ avatarUrl, name, bio, likesPublic, resharesPublic });
+  };
+
+  const uploadAvatar = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setAvatarUploadStatus("Uploading photo");
+    try {
+      const nextAvatarUrl = await onUploadAvatar(file);
+      setAvatarUrl(nextAvatarUrl);
+      setAvatarUploadStatus("Photo ready");
+    } catch (error) {
+      setAvatarUploadStatus(error instanceof Error ? error.message : "Could not upload this photo.");
+    }
   };
 
   return (
@@ -2798,29 +3022,32 @@ function ProfileSettingsModal({
         </header>
 
         <section className="settings-preview">
-          <span className="avatar large profile-avatar">
-            {avatarUrl ? <img src={avatarUrl} alt="" /> : initial(name || currentProfile.name)}
-          </span>
+          <label className="profile-photo-edit">
+            <span className="avatar large profile-avatar">
+              {avatarUrl ? <img src={avatarUrl} alt="" /> : initial(name || currentProfile.name)}
+              <span className="profile-photo-edit-overlay">Edit</span>
+            </span>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/avif"
+              onChange={uploadAvatar}
+            />
+          </label>
           <div>
             <strong>{name || currentProfile.name}</strong>
             <small>{currentProfile.handle}</small>
+            {avatarUploadStatus ? <em>{avatarUploadStatus}</em> : null}
           </div>
         </section>
 
-        <label>
-          Profile photo URL
-          <span>
-            <ImageIcon size={15} />
-            <input value={avatarUrl} onChange={(event) => setAvatarUrl(event.target.value)} placeholder="https://..." />
-          </span>
-        </label>
         <label>
           Name
           <input value={name} onChange={(event) => setName(event.target.value)} />
         </label>
         <label>
           Bio
-          <textarea value={bio} onChange={(event) => setBio(event.target.value)} />
+          <textarea value={bio} maxLength={200} onChange={(event) => setBio(event.target.value.slice(0, 200))} />
+          <small>{bio.length}/200</small>
         </label>
         <label className="setting-toggle">
           <input type="checkbox" checked={likesPublic} onChange={(event) => setLikesPublic(event.target.checked)} />

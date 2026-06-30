@@ -79,9 +79,12 @@ export const normalizeProfile = (input: CreateProfileInputContract): ResearchPro
   name: input.name.trim(),
   handle: cleanHandle(input.handle),
   email: input.email?.trim().toLowerCase() || undefined,
+  avatarUrl: input.avatarUrl?.trim() || undefined,
+  likesPublic: input.likesPublic ?? true,
+  resharesPublic: input.resharesPublic ?? true,
   role: input.role?.trim() || "Symposium participant",
   location: input.location?.trim() || "Public rooms",
-  bio: input.bio?.trim() || "A participant in the current inquiry thread.",
+  bio: (input.bio?.trim() || "A participant in the current inquiry thread.").slice(0, 200),
   fields: input.fields.map((field) => field.trim()).filter(Boolean).slice(0, 8)
 });
 

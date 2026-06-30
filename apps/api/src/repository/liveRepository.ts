@@ -475,6 +475,11 @@ export const unfollowProfile = async (rawInput: unknown, actor: Actor) => {
 
 export const listFollowing = async (actor: Actor) => {
   const handle = await ensureProfileHandle(actorHandle(actor));
+  return listProfileFollows(handle);
+};
+
+export const listProfileFollows = async (profileHandle: string) => {
+  const handle = await ensureProfileHandle(profileHandle);
   if (!hasDatabase()) return { following: [], followers: [] };
   await ensureLiveData();
 

@@ -30,6 +30,9 @@ export type CreateProfileInput = {
   name: string;
   handle: string;
   email?: string;
+  avatarUrl?: string;
+  likesPublic?: boolean;
+  resharesPublic?: boolean;
   role: string;
   location: string;
   bio: string;
@@ -78,9 +81,12 @@ const normalizeProfile = (input: CreateProfileInput): ResearchProfile => ({
   name: input.name.trim(),
   handle: cleanHandle(input.handle),
   email: input.email?.trim().toLowerCase() || undefined,
+  avatarUrl: input.avatarUrl?.trim() || undefined,
+  likesPublic: input.likesPublic ?? true,
+  resharesPublic: input.resharesPublic ?? true,
   role: input.role.trim() || "Symposium participant",
   location: input.location.trim() || "Public rooms",
-  bio: input.bio.trim() || "A participant in the current inquiry thread.",
+  bio: (input.bio.trim() || "A participant in the current inquiry thread.").slice(0, 200),
   fields: input.fields.map((field) => field.trim()).filter(Boolean).slice(0, 8)
 });
 
@@ -214,6 +220,9 @@ const ensureSchema = async () => {
 
       await db.query(`
         ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email TEXT;
+        ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+        ALTER TABLE profiles ADD COLUMN IF NOT EXISTS likes_public BOOLEAN DEFAULT true;
+        ALTER TABLE profiles ADD COLUMN IF NOT EXISTS reshares_public BOOLEAN DEFAULT true;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS saved_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS signaled_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS forked_by JSONB DEFAULT '[]'::jsonb;
@@ -377,12 +386,29 @@ const loadPostgres = async (): Promise<AppData> => {
     db.query<{
       handle: string;
       email: string | null;
+      avatar_url: string | null;
+      likes_public: boolean;
+      reshares_public: boolean;
       name: string;
       role: string;
       location: string;
       bio: string;
       fields: string[];
-    }>("SELECT handle, name, role, location, bio, fields FROM profiles ORDER BY created_at ASC"),
+    }>(
+      `SELECT
+        handle,
+        email,
+        avatar_url,
+        likes_public,
+        reshares_public,
+        name,
+        role,
+        location,
+        bio,
+        fields
+       FROM profiles
+       ORDER BY created_at ASC`
+    ),
     db.query<{
       id: string;
       kind: ContentKind;
@@ -421,6 +447,9 @@ const loadPostgres = async (): Promise<AppData> => {
           name: person.name,
           handle: person.handle,
           email: person.email ?? undefined,
+          avatarUrl: person.avatar_url ?? undefined,
+          likesPublic: person.likes_public ?? true,
+          resharesPublic: person.reshares_public ?? true,
           role: person.role,
           location: person.location,
           bio: person.bio,
@@ -466,10 +495,13 @@ export const upsertProfile = async (input: CreateProfileInput) => {
   if (usePostgres) {
     await ensureSchema();
     await getPool().query(
-      `INSERT INTO profiles (handle, email, name, role, location, bio, fields)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO profiles (handle, email, avatar_url, likes_public, reshares_public, name, role, location, bio, fields)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (handle) DO UPDATE SET
          email = EXCLUDED.email,
+         avatar_url = EXCLUDED.avatar_url,
+         likes_public = EXCLUDED.likes_public,
+         reshares_public = EXCLUDED.reshares_public,
          name = EXCLUDED.name,
          role = EXCLUDED.role,
          location = EXCLUDED.location,
@@ -479,6 +511,9 @@ export const upsertProfile = async (input: CreateProfileInput) => {
       [
         person.handle,
         person.email ?? null,
+        person.avatarUrl ?? null,
+        person.likesPublic ?? true,
+        person.resharesPublic ?? true,
         person.name,
         person.role,
         person.location,

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { TRPCError } from "@trpc/server";
 import {
   confirmAttachmentInputSchema,
   createAttachmentUploadInputSchema
@@ -10,8 +11,28 @@ import { emitEvent } from "../services/events";
 import { createObjectKey, createUploadUrl } from "../services/storage";
 import { actorHandle, ensureLiveData } from "./foundation";
 
+const allowedProfileImageTypes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/avif"]);
+const maxProfileImageBytes = 5 * 1024 * 1024;
+
 export const createAttachmentUpload = async (rawInput: unknown, actor: Actor) => {
   const input = createAttachmentUploadInputSchema.parse(rawInput);
+
+  if (input.ownerType === "profile") {
+    if (!allowedProfileImageTypes.has(input.contentType.toLowerCase())) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Choose a PNG, JPG, JPEG, WEBP, GIF, or AVIF image."
+      });
+    }
+
+    if (input.byteSize > maxProfileImageBytes) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Profile photos must be 5 MB or smaller."
+      });
+    }
+  }
+
   const handle = actorHandle(actor);
   const objectKey = createObjectKey(input.ownerType, input.fileName);
   const uploadUrl = await createUploadUrl(objectKey, input.contentType);
