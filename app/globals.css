@@ -4073,7 +4073,8 @@ button {
   object-fit: cover;
 }
 
-.profile-settings-button {
+.profile-settings-button,
+.profile-follow-button {
   position: absolute;
   top: 14px;
   right: 14px;
@@ -4089,9 +4090,22 @@ button {
   font-weight: 820;
 }
 
-.symposium-shell.night .profile-settings-button {
+.profile-follow-button.active {
+  border-color: rgba(34, 128, 138, 0.38);
+  background: rgba(224, 246, 244, 0.74);
+  color: #15565c;
+}
+
+.symposium-shell.night .profile-settings-button,
+.symposium-shell.night .profile-follow-button {
   border-color: rgba(248, 211, 149, 0.26);
   background: rgba(12, 18, 20, 0.74);
+  color: #fff8ea;
+}
+
+.symposium-shell.night .profile-follow-button.active {
+  border-color: rgba(131, 203, 209, 0.68);
+  background: rgba(23, 46, 50, 0.82);
   color: #fff8ea;
 }
 
@@ -4192,7 +4206,8 @@ button {
 }
 
 .symposium-shell.night .settings-actions button:hover,
-.symposium-shell.night .profile-settings-button:hover {
+.symposium-shell.night .profile-settings-button:hover,
+.symposium-shell.night .profile-follow-button:hover {
   border-color: var(--line-strong);
   background: rgba(29, 39, 40, 0.82);
 }

@@ -42,6 +42,7 @@ import {
 } from "@/lib/mockData";
 import type { PostAction } from "@/lib/dataStore";
 import {
+  cleanHandle,
   countComments,
   hasHandle,
   isSavedBy,
@@ -69,6 +70,17 @@ type ViewSnapshot = {
 type LocalSnapshot = {
   profiles: Record<string, ResearchProfile>;
   items: InquiryItem[];
+};
+
+type ProfileFollowRecord = {
+  followerHandle?: string;
+  followingHandle?: string;
+  status?: string;
+};
+
+type ProfileFollowResponse = {
+  following?: ProfileFollowRecord[];
+  followers?: ProfileFollowRecord[];
 };
 
 type PostDraft = {
@@ -356,6 +368,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [items, setItems] = useState<InquiryItem[]>(inquiryItems);
   const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
   const [currentProfile, setCurrentProfile] = useState<ResearchProfile>(profile);
+  const [followingHandles, setFollowingHandles] = useState<string[]>([]);
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
   const [roomChip, setRoomChip] = useState(roomChips[0]);
   const [officeMode, setOfficeMode] = useState<OfficeMode>("desk");
@@ -435,13 +448,20 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         return true;
       })
       .filter((item) => {
-        if (feedScope === "following") return item.authorHandle === currentProfile.handle || item.author === currentProfile.name || isSavedBy(item, currentProfile.handle, profile.handle);
+        if (feedScope === "following") {
+          return (
+            item.authorHandle === currentProfile.handle ||
+            item.author === currentProfile.name ||
+            Boolean(item.authorHandle && followingHandles.includes(item.authorHandle)) ||
+            isSavedBy(item, currentProfile.handle, profile.handle)
+          );
+        }
         if (feedScope === "rooms") return matchesTopic(item, roomChip);
         return true;
       });
 
     return sortByPublishedRecency(roomFiltered);
-  }, [activeRoom, currentProfile.handle, currentProfile.name, feedScope, items, officeMode, patronageMode, roomChip]);
+  }, [activeRoom, currentProfile.handle, currentProfile.name, feedScope, followingHandles, items, officeMode, patronageMode, roomChip]);
 
   const readLocalSnapshot = (): LocalSnapshot | null => {
     try {
@@ -464,6 +484,25 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     window.localStorage.setItem("symposium-profile-handle", nextProfile.handle);
   };
 
+  const followingStorageKey = (handle: string) => `symposium-following-${handle}`;
+
+  const readLocalFollowing = (handle: string) => {
+    try {
+      const raw = window.localStorage.getItem(followingStorageKey(handle));
+      const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+      return parsed.map(cleanHandle).filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+
+  const persistLocalFollowing = (handle: string, handles: string[]) => {
+    window.localStorage.setItem(
+      followingStorageKey(handle),
+      JSON.stringify(Array.from(new Set(handles.map(cleanHandle).filter(Boolean))))
+    );
+  };
+
   const refreshData = async (preferredHandle = currentProfile.handle) => {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load Symposium data.");
@@ -482,6 +521,22 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setCurrentProfile(nextProfile);
     persistLocalSnapshot(data.items, loadedProfiles, nextProfile);
     setSyncStatus("Live data connected");
+  };
+
+  const refreshFollowing = async (actorHandle = currentProfile.handle) => {
+    const cached = readLocalFollowing(actorHandle);
+    if (cached.length) setFollowingHandles(cached);
+
+    const response = await fetch("/api/follows", { cache: "no-store" });
+    if (!response.ok) return;
+
+    const data = (await response.json()) as ProfileFollowResponse;
+    const remoteHandles = Array.from(
+      new Set((data.following ?? []).map((follow) => cleanHandle(String(follow.followingHandle ?? ""))).filter(Boolean))
+    );
+
+    setFollowingHandles(remoteHandles);
+    persistLocalFollowing(actorHandle, remoteHandles);
   };
 
   useEffect(() => {
@@ -512,6 +567,22 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setSyncStatus("Using seed data");
     });
   }, []);
+
+  useEffect(() => {
+    if (!signedIn || !currentProfile.handle) return;
+
+    let cancelled = false;
+    const cached = readLocalFollowing(currentProfile.handle);
+    setFollowingHandles(cached);
+
+    refreshFollowing(currentProfile.handle).catch(() => {
+      if (!cancelled) setFollowingHandles(cached);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProfile.handle, signedIn]);
 
   useEffect(() => {
     if (entryMode !== "approach" || !authLoaded || (Boolean(isSignedIn) && !signedIn)) return undefined;
@@ -933,6 +1004,37 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     }
   };
 
+  const toggleFollow = async (targetHandle: string) => {
+    const normalizedTarget = cleanHandle(targetHandle);
+    if (!normalizedTarget || normalizedTarget === currentProfile.handle) return;
+
+    const wasFollowing = followingHandles.includes(normalizedTarget);
+    const previousHandles = followingHandles;
+    const nextHandles = wasFollowing
+      ? previousHandles.filter((handle) => handle !== normalizedTarget)
+      : Array.from(new Set([...previousHandles, normalizedTarget]));
+
+    setFollowingHandles(nextHandles);
+    persistLocalFollowing(currentProfile.handle, nextHandles);
+    setSyncStatus(wasFollowing ? "Unfollowing profile" : "Following profile");
+
+    try {
+      const response = await fetch(`/api/profiles/${encodeURIComponent(normalizedTarget)}/follow`, {
+        method: wasFollowing ? "DELETE" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorHandle: currentProfile.handle })
+      });
+
+      if (!response.ok) throw new Error("Follow action failed.");
+      setSyncStatus(wasFollowing ? "Profile unfollowed" : "Following profile");
+      await refreshFollowing(currentProfile.handle);
+    } catch {
+      setFollowingHandles(previousHandles);
+      persistLocalFollowing(currentProfile.handle, previousHandles);
+      setSyncStatus("Follow could not sync");
+    }
+  };
+
   const signOut = async () => {
     await auth.signOut().catch(() => undefined);
     window.localStorage.removeItem("symposium-auth-handle");
@@ -1097,6 +1199,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             person={selectedProfile}
             items={items}
             isOwnProfile={selectedProfile.handle === currentProfile.handle}
+            isFollowing={followingHandles.includes(selectedProfile.handle)}
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
@@ -1108,6 +1211,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
               setMessagesOpen(false);
               setSettingsOpen(true);
             }}
+            onToggleFollow={toggleFollow}
             actorHandle={currentProfile.handle}
             getRecency={getActivityRecency}
           />
@@ -2353,20 +2457,24 @@ function ProfileView({
   person,
   items,
   isOwnProfile,
+  isFollowing,
   onSelect,
   onOpenProfile,
   onAction,
   onOpenSettings,
+  onToggleFollow,
   actorHandle,
   getRecency
 }: {
   person: ResearchProfile;
   items: InquiryItem[];
   isOwnProfile: boolean;
+  isFollowing: boolean;
   onSelect: (id: string) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
   onOpenSettings: () => void;
+  onToggleFollow: (handle: string) => void;
   actorHandle: string;
   getRecency: (item: InquiryItem) => number;
 }) {
@@ -2425,7 +2533,16 @@ function ProfileView({
               <Settings size={17} />
               <span>Edit profile</span>
             </button>
-          ) : null}
+          ) : (
+            <button
+              className={`profile-follow-button ${isFollowing ? "active" : ""}`}
+              type="button"
+              onClick={() => onToggleFollow(person.handle)}
+            >
+              <UserRound size={17} />
+              <span>{isFollowing ? "Following" : "Follow"}</span>
+            </button>
+          )}
           <h1>{person.name}</h1>
           <p>{person.handle}</p>
           <p>
