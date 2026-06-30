@@ -397,7 +397,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     selectedCommunityId ? researchCommunities.find((community) => community.id === selectedCommunityId) ?? null : null;
   const profileList = useMemo(() => Object.values(profiles), [profiles]);
   const findProfile = (nameOrHandle: string) =>
-    profileList.find((person) => person.name === nameOrHandle || person.handle === nameOrHandle) ??
+    profileList.find((person) => person.handle === nameOrHandle) ??
+    profileList.find((person) => person.name === nameOrHandle) ??
     getProfileForName(nameOrHandle);
   const selectedProfile = selectedProfileName ? findProfile(selectedProfileName) : null;
   const getPublishedRecency = (item: InquiryItem) => relativeDateScore(item.date);
@@ -725,8 +726,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     });
   };
 
-  const openProfile = (name: string) => {
-    navigateView({ selectedProfileName: name, selectedItemId: null });
+  const openProfile = (profileKey: string) => {
+    navigateView({ selectedProfileName: profileKey, selectedItemId: null });
   };
 
   const openNotebook = () => {
@@ -895,7 +896,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setProfiles(nextProfiles);
     setItems(nextItems);
     if (selectedProfileName === currentProfile.name || selectedProfileName === currentProfile.handle) {
-      setSelectedProfileName(updatedProfile.name);
+      setSelectedProfileName(updatedProfile.handle);
     }
     persistLocalSnapshot(nextItems, nextProfiles, updatedProfile);
     setSettingsOpen(false);
@@ -1073,7 +1074,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             className="profile-button"
             type="button"
             title="Open your profile"
-            onClick={() => openProfile(currentProfile.name)}
+            onClick={() => openProfile(currentProfile.handle)}
           >
             <UserRound size={18} />
             <span>{currentProfile.name}</span>
@@ -2422,7 +2423,7 @@ function ProfileView({
           {isOwnProfile ? (
             <button className="profile-settings-button" type="button" onClick={onOpenSettings}>
               <Settings size={17} />
-              <span>Settings</span>
+              <span>Edit profile</span>
             </button>
           ) : null}
           <h1>{person.name}</h1>
