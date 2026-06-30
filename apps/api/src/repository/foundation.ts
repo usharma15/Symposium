@@ -178,6 +178,25 @@ const seedProfiles = () => {
     likesPublic: true,
     resharesPublic: true
   });
+
+  for (const community of researchCommunities) {
+    for (const rawHandle of community.memberHandles) {
+      const handle = cleanHandle(rawHandle);
+      if (people.has(handle)) continue;
+
+      people.set(handle, {
+        name: handle.replace(/^@/, "").replace(/_/g, " "),
+        handle,
+        likesPublic: true,
+        resharesPublic: true,
+        role: "Research community member",
+        location: community.name,
+        bio: `A seeded member of ${community.name}.`,
+        fields: [community.field]
+      });
+    }
+  }
+
   return [...people.values()];
 };
 
