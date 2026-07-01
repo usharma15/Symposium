@@ -3352,6 +3352,24 @@ button {
     rgba(222, 243, 248, 0.9);
 }
 
+.post-kind-paper:hover,
+.post-kind-draft:hover,
+.post-kind-code:hover {
+  border-color: rgba(168, 103, 50, 0.22);
+  background:
+    linear-gradient(90deg, rgba(168, 103, 50, 0.07) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 253, 245, 0.96), rgba(247, 238, 214, 0.84));
+  background-size: 28px 100%, auto;
+}
+
+.post-kind-thought:hover,
+.post-kind-note:hover {
+  border-color: rgba(34, 121, 134, 0.22);
+  background:
+    linear-gradient(180deg, rgba(230, 248, 252, 0.96), rgba(210, 237, 243, 0.92)),
+    rgba(222, 243, 248, 0.94);
+}
+
 .feed-post h2 {
   font-size: 1.02rem;
   overflow-wrap: anywhere;
@@ -3895,12 +3913,40 @@ button {
 
 .symposium-shell.night .post-kind-paper,
 .symposium-shell.night .post-kind-draft,
-.symposium-shell.night .post-kind-code,
+.symposium-shell.night .post-kind-code {
+  border-color: rgba(248, 211, 149, 0.22);
+  background:
+    linear-gradient(90deg, rgba(248, 211, 149, 0.04) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(39, 33, 24, 0.94), rgba(16, 18, 18, 0.86)),
+    rgba(17, 15, 13, 0.92);
+  background-size: 28px 100%, auto;
+}
+
 .symposium-shell.night .post-kind-thought,
 .symposium-shell.night .post-kind-note {
+  border-color: rgba(157, 238, 243, 0.2);
   background:
-    linear-gradient(180deg, rgba(32, 32, 29, 0.9), rgba(13, 17, 20, 0.78)),
-    rgba(13, 17, 20, 0.78);
+    linear-gradient(180deg, rgba(13, 33, 40, 0.94), rgba(8, 16, 20, 0.9)),
+    rgba(8, 18, 22, 0.94);
+}
+
+.symposium-shell.night .post-kind-paper:hover,
+.symposium-shell.night .post-kind-draft:hover,
+.symposium-shell.night .post-kind-code:hover {
+  border-color: rgba(248, 211, 149, 0.32);
+  background:
+    linear-gradient(90deg, rgba(248, 211, 149, 0.055) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(45, 38, 27, 0.96), rgba(19, 20, 18, 0.9)),
+    rgba(20, 18, 15, 0.94);
+  background-size: 28px 100%, auto;
+}
+
+.symposium-shell.night .post-kind-thought:hover,
+.symposium-shell.night .post-kind-note:hover {
+  border-color: rgba(157, 238, 243, 0.3);
+  background:
+    linear-gradient(180deg, rgba(15, 39, 47, 0.96), rgba(10, 19, 24, 0.93)),
+    rgba(9, 21, 26, 0.96);
 }
 
 .symposium-shell.night .feed-post p,
