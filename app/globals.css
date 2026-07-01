@@ -3347,7 +3347,9 @@ button {
 
 .post-kind-thought,
 .post-kind-note {
-  background: rgba(255, 253, 245, 0.48);
+  background:
+    linear-gradient(180deg, rgba(226, 246, 250, 0.92), rgba(205, 232, 238, 0.88)),
+    rgba(222, 243, 248, 0.9);
 }
 
 .feed-post h2 {
