@@ -4335,12 +4335,20 @@ button {
 
 .social-list-backdrop {
   z-index: 48;
+  background: rgba(5, 9, 9, 0.48);
 }
 
 .social-list-modal {
   width: min(390px, calc(100vw - 32px));
   max-height: min(560px, calc(100vh - 80px));
   overflow: hidden;
+  border: 1px solid rgba(20, 32, 31, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 253, 245, 0.94);
+  color: var(--ink);
+  box-shadow: 0 34px 90px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
 }
 
 .social-list-modal header {
@@ -4350,6 +4358,11 @@ button {
   min-height: 52px;
   border-bottom: 1px solid var(--line);
   padding: 0 14px 0 16px;
+}
+
+.social-list-modal header strong {
+  font-size: 1.02rem;
+  font-weight: 900;
 }
 
 .social-list-modal header button {
@@ -4397,6 +4410,33 @@ button {
 .social-list-body small,
 .social-list-body p {
   color: var(--muted);
+}
+
+.symposium-shell.night .social-list-backdrop {
+  background: rgba(3, 6, 7, 0.62);
+}
+
+.symposium-shell.night .social-list-modal {
+  border-color: rgba(248, 211, 149, 0.24);
+  background:
+    linear-gradient(180deg, rgba(18, 24, 25, 0.96), rgba(7, 11, 13, 0.94)),
+    rgba(8, 12, 14, 0.96);
+  color: #fff8ea;
+  box-shadow: 0 34px 96px rgba(0, 0, 0, 0.58);
+}
+
+.symposium-shell.night .social-list-modal header {
+  border-color: rgba(248, 211, 149, 0.18);
+}
+
+.symposium-shell.night .social-list-modal header button,
+.symposium-shell.night .social-list-body button {
+  color: #fff8ea;
+}
+
+.symposium-shell.night .social-list-body button:hover {
+  border-color: rgba(157, 238, 243, 0.28);
+  background: rgba(157, 238, 243, 0.09);
 }
 
 @media (max-width: 900px) {
