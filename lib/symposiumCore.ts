@@ -13,6 +13,7 @@ export const postRooms = [
 ] as const satisfies readonly Exclude<RoomId, "hall">[];
 
 export type PostAction = "signal" | "save" | "fork" | "read";
+export type CommentAction = PostAction;
 
 const legacyHandleAliases: Record<string, string> = {
   "@usharma": "@udayan"
@@ -182,7 +183,27 @@ export const relativeTimeLabel = (createdAt?: string, fallbackLabel = "") => {
   const elapsedDays = Math.floor(elapsedHours / 24);
   if (elapsedDays < 7) return `${elapsedDays}d ago`;
 
+  const elapsedWeeks = Math.floor(elapsedDays / 7);
+  if (elapsedWeeks < 52) return `${elapsedWeeks}w ago`;
+
+  const elapsedYears = Math.floor(elapsedDays / 365);
+  if (elapsedYears >= 1) return `${elapsedYears}y ago`;
+
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(parsed));
+};
+
+export const localDateTimeLabel = (createdAt?: string) => {
+  const parsed = createdAt ? Date.parse(createdAt) : Number.NaN;
+  if (Number.isNaN(parsed)) return "";
+
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date(parsed));
 };
 
 export const updateSignalValue = (signals: InquiryItem["signals"], label: string, value: string) =>

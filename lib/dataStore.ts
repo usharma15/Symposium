@@ -16,6 +16,7 @@ import {
   cleanHandle,
   incrementMetric,
   mutateItemForActor,
+  toggleHandle,
   updateSignalValue,
   type PostAction
 } from "@/lib/symposiumCore";
@@ -52,6 +53,14 @@ export type CreateCommentInput = {
 };
 
 export type { PostAction };
+export type CommentAction = PostAction;
+
+export type UpdatePostInput = {
+  title: string;
+  body: string;
+};
+
+const commentMetricsFallback = { signal: "0", forks: "0", saves: "0", reads: "0" };
 
 const localDataPath = process.env.VERCEL
   ? path.join("/tmp", "symposium.json")
@@ -68,6 +77,31 @@ const handleFromName = (name: string) => getProfileForName(name).handle;
 const newId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
+const seedItemById = new Map(inquiryItems.map((item) => [item.id, item]));
+const seedCommentById = new Map<string, InquiryComment>();
+for (const item of inquiryItems) {
+  const visit = (comments: InquiryComment[]) => {
+    for (const comment of comments) {
+      if (comment.id) seedCommentById.set(comment.id, comment);
+      visit(comment.replies ?? []);
+    }
+  };
+  visit(item.comments);
+}
+
+const legacyLiveSeedCreatedAt = (id?: string, offsetMinutes = 0) => {
+  const match = id?.match(/^live-(\d+)-/);
+  if (!match) return undefined;
+  const index = Number(match[1]);
+  if (!Number.isFinite(index)) return undefined;
+  return new Date(Date.UTC(2026, 5, 18, 12, 0, 0) - (index * 19 + offsetMinutes) * 60 * 1000).toISOString();
+};
+
+const stableSeedCreatedAt = (createdAt: string | undefined, fallback?: string) => {
+  if (createdAt && !Number.isNaN(Date.parse(createdAt))) return createdAt;
+  return fallback ?? createdAt;
+};
+
 const normalizeProfile = (input: CreateProfileInput): ResearchProfile => ({
   name: input.name.trim(),
   handle: cleanHandle(input.handle),
@@ -81,13 +115,35 @@ const normalizeProfile = (input: CreateProfileInput): ResearchProfile => ({
   fields: input.fields.map((field) => field.trim()).filter(Boolean).slice(0, 8)
 });
 
-const normalizeItem = (item: InquiryItem): InquiryItem => ({
-  ...item,
-  savedBy: item.savedBy ?? (item.saved ? [defaultProfile.handle] : []),
-  signaledBy: item.signaledBy ?? [],
-  forkedBy: item.forkedBy ?? [],
-  saved: Boolean(item.saved)
-});
+const normalizeCommentState = (comments: InquiryComment[]): InquiryComment[] =>
+  comments.map((comment) => {
+    const seedComment = comment.id ? seedCommentById.get(comment.id) : undefined;
+    return {
+      ...comment,
+      createdAt: stableSeedCreatedAt(
+        seedComment?.createdAt ?? comment.createdAt,
+        legacyLiveSeedCreatedAt(comment.id, 1)
+      ),
+      metrics: { ...commentMetricsFallback, ...(comment.metrics ?? {}) },
+      savedBy: comment.savedBy ?? [],
+      signaledBy: comment.signaledBy ?? [],
+      forkedBy: comment.forkedBy ?? [],
+      replies: normalizeCommentState(comment.replies ?? [])
+    };
+  });
+
+const normalizeItem = (item: InquiryItem): InquiryItem => {
+  const seedItem = seedItemById.get(item.id);
+  return {
+    ...item,
+    createdAt: stableSeedCreatedAt(seedItem?.createdAt ?? item.createdAt, legacyLiveSeedCreatedAt(item.id)),
+    savedBy: item.savedBy ?? (item.saved ? [defaultProfile.handle] : []),
+    signaledBy: item.signaledBy ?? [],
+    forkedBy: item.forkedBy ?? [],
+    saved: Boolean(item.saved),
+    comments: normalizeCommentState(item.comments ?? [])
+  };
+};
 
 const normalizeData = (data: AppData): AppData => ({
   profiles: data.profiles,
@@ -136,6 +192,10 @@ const normalizeComments = (
       parentId,
       authorHandle: comment.authorHandle ?? handleFromName(comment.author),
       createdAt: comment.createdAt ?? "Seeded",
+      metrics: { ...commentMetricsFallback, ...(comment.metrics ?? {}) },
+      savedBy: comment.savedBy ?? [],
+      signaledBy: comment.signaledBy ?? [],
+      forkedBy: comment.forkedBy ?? [],
       replies: normalizeComments(comment.replies ?? [], itemId, itemIndex, id)
     };
   });
@@ -194,6 +254,7 @@ const ensureSchema = async () => {
           saved_by JSONB DEFAULT '[]'::jsonb,
           signaled_by JSONB DEFAULT '[]'::jsonb,
           forked_by JSONB DEFAULT '[]'::jsonb,
+          edited_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ DEFAULT now()
         );
 
@@ -205,7 +266,12 @@ const ensureSchema = async () => {
           author_name TEXT NOT NULL,
           stance TEXT NOT NULL,
           body TEXT NOT NULL,
-          created_at TIMESTAMPTZ DEFAULT now()
+          metrics JSONB NOT NULL DEFAULT '{"signal":"0","forks":"0","saves":"0","reads":"0"}'::jsonb,
+          saved_by JSONB NOT NULL DEFAULT '[]'::jsonb,
+          signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb,
+          forked_by JSONB NOT NULL DEFAULT '[]'::jsonb,
+          created_at TIMESTAMPTZ DEFAULT now(),
+          updated_at TIMESTAMPTZ DEFAULT now()
         );
       `);
 
@@ -217,6 +283,12 @@ const ensureSchema = async () => {
         ALTER TABLE items ADD COLUMN IF NOT EXISTS saved_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS signaled_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS forked_by JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{"signal":"0","forks":"0","saves":"0","reads":"0"}'::jsonb;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS saved_by JSONB NOT NULL DEFAULT '[]'::jsonb;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS forked_by JSONB NOT NULL DEFAULT '[]'::jsonb;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
       `);
 
       const { rows } = await db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM items");
@@ -246,12 +318,12 @@ const seedPostgres = async () => {
       `INSERT INTO items (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by
+        tests, forks, saved, saved_by, signaled_by, forked_by, created_at
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24
+        $19, $20, $21, $22, $23, $24, $25
       )
       ON CONFLICT (id) DO NOTHING`,
       [
@@ -278,9 +350,16 @@ const seedPostgres = async () => {
         Boolean(item.saved),
         JSON.stringify(item.savedBy ?? []),
         JSON.stringify(item.signaledBy ?? []),
-        JSON.stringify(item.forkedBy ?? [])
+        JSON.stringify(item.forkedBy ?? []),
+        item.createdAt ?? null
       ]
     );
+    if (item.createdAt) {
+      await db.query(
+        "UPDATE items SET created_at = $2 WHERE id = $1 AND author_handle = $3",
+        [item.id, item.createdAt, item.authorHandle ?? handleFromName(item.author)]
+      );
+    }
     await insertCommentTree(item.id, item.comments);
   }
 };
@@ -296,8 +375,11 @@ const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => 
 
   for (const comment of comments) {
     await db.query(
-      `INSERT INTO comments (id, item_id, parent_id, author_handle, author_name, stance, body)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO comments (
+        id, item_id, parent_id, author_handle, author_name, stance, body,
+        metrics, saved_by, signaled_by, forked_by, created_at
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (id) DO NOTHING`,
       [
         comment.id ?? newId("comment"),
@@ -306,7 +388,12 @@ const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => 
         comment.authorHandle ?? handleFromName(comment.author),
         comment.author,
         comment.stance,
-        comment.body
+        comment.body,
+        JSON.stringify({ ...commentMetricsFallback, ...(comment.metrics ?? {}) }),
+        JSON.stringify(comment.savedBy ?? []),
+        JSON.stringify(comment.signaledBy ?? []),
+        JSON.stringify(comment.forkedBy ?? []),
+        stableSeedCreatedAt(comment.createdAt, legacyLiveSeedCreatedAt(comment.id, 1)) ?? new Date().toISOString()
       ]
     );
     await insertCommentTree(itemId, comment.replies ?? []);
@@ -339,7 +426,11 @@ type CommentRow = {
   author_name: string;
   stance: string;
   body: string;
-  created_at: string;
+  metrics: Pick<InquiryItem["metrics"], "signal" | "forks" | "saves" | "reads"> | null;
+  saved_by: string[] | null;
+  signaled_by: string[] | null;
+  forked_by: string[] | null;
+  created_at: string | null;
 };
 
 const commentTreesFromRows = (rows: CommentRow[]) => {
@@ -360,7 +451,11 @@ const commentTreesFromRows = (rows: CommentRow[]) => {
       authorHandle: row.author_handle,
       stance: row.stance,
       body: row.body,
-      createdAt: row.created_at,
+      metrics: { ...commentMetricsFallback, ...(row.metrics ?? {}) },
+      savedBy: row.saved_by ?? [],
+      signaledBy: row.signaled_by ?? [],
+      forkedBy: row.forked_by ?? [],
+      createdAt: row.created_at ?? undefined,
       replies: buildTree(byParent, row.id)
     }));
 
@@ -410,6 +505,7 @@ const loadPostgres = async (): Promise<AppData> => {
       affiliation: string;
       date_label: string;
       created_at: string;
+      edited_at: string | null;
       status: string;
       metrics: InquiryItem["metrics"];
       gathering_reason: string;
@@ -459,6 +555,7 @@ const loadPostgres = async (): Promise<AppData> => {
       affiliation: item.affiliation,
       date: item.date_label,
       createdAt: item.created_at ? new Date(item.created_at).toISOString() : undefined,
+      editedAt: item.edited_at ? new Date(item.edited_at).toISOString() : undefined,
       status: item.status,
       metrics: item.metrics,
       gatheringReason: item.gathering_reason,
@@ -635,6 +732,10 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     stance: input.stance.trim() || "Comment",
     body: input.body.trim(),
     createdAt: new Date().toISOString(),
+    metrics: { ...commentMetricsFallback },
+    savedBy: [],
+    signaledBy: [],
+    forkedBy: [],
     replies: []
   };
 
@@ -644,8 +745,11 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     const nextCritiques = incrementMetric(existing?.metrics.critiques ?? "0", 1);
     const nextSignals = updateSignalValue(existing?.signals ?? [], "Critiques", nextCritiques);
     await getPool().query(
-      `INSERT INTO comments (id, item_id, parent_id, author_handle, author_name, stance, body)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      `INSERT INTO comments (
+        id, item_id, parent_id, author_handle, author_name, stance, body,
+        metrics, saved_by, signaled_by, forked_by, created_at
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         comment.id,
         itemId,
@@ -653,7 +757,12 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
         comment.authorHandle,
         comment.author,
         comment.stance,
-        comment.body
+        comment.body,
+        JSON.stringify(comment.metrics),
+        JSON.stringify(comment.savedBy),
+        JSON.stringify(comment.signaledBy),
+        JSON.stringify(comment.forkedBy),
+        comment.createdAt
       ]
     );
     await getPool().query(
@@ -728,6 +837,188 @@ export const applyPostAction = async (itemId: string, action: PostAction, actorH
     updated = mutateItemForActor(item, action, actorHandle, defaultProfile.handle, active);
     return updated;
   });
+  await writeLocal(local);
+  return updated;
+};
+
+const canManagePost = (item: InquiryItem, actorHandle: string) =>
+  cleanHandle(item.authorHandle ?? item.author) === cleanHandle(actorHandle);
+
+const updatePostShape = (item: InquiryItem, input: UpdatePostInput, editedAt = new Date().toISOString()): InquiryItem => ({
+  ...item,
+  title: input.title.trim(),
+  body: input.body.trim(),
+  excerpt: input.body.trim(),
+  claims: [input.body.trim()],
+  editedAt
+});
+
+export const updatePost = async (itemId: string, input: UpdatePostInput, actorHandle = defaultProfile.handle) => {
+  const cleanInput = {
+    title: input.title.trim(),
+    body: input.body.trim()
+  };
+  if (!cleanInput.title || !cleanInput.body) return null;
+
+  if (usePostgres) {
+    const data = await getSnapshot();
+    const existing = data.items.find((item) => item.id === itemId);
+    if (!existing || !canManagePost(existing, actorHandle)) return null;
+
+    const updated = updatePostShape(existing, cleanInput);
+    await getPool().query(
+      `UPDATE items
+       SET title = $2,
+           body = $3,
+           excerpt = $3,
+           claims = $4,
+           edited_at = $5
+       WHERE id = $1`,
+      [itemId, updated.title, updated.body, JSON.stringify(updated.claims), updated.editedAt]
+    );
+    return updated;
+  }
+
+  const local = await readLocal();
+  let updated: InquiryItem | null = null;
+  local.items = local.items.map((item) => {
+    if (item.id !== itemId || !canManagePost(item, actorHandle)) return item;
+    updated = updatePostShape(item, cleanInput);
+    return updated;
+  });
+  if (!updated) return null;
+  await writeLocal(local);
+  return updated;
+};
+
+export const deletePost = async (itemId: string, actorHandle = defaultProfile.handle) => {
+  if (usePostgres) {
+    const data = await getSnapshot();
+    const existing = data.items.find((item) => item.id === itemId);
+    if (!existing || !canManagePost(existing, actorHandle)) return null;
+
+    await getPool().query("DELETE FROM items WHERE id = $1", [itemId]);
+    return { id: itemId };
+  }
+
+  const local = await readLocal();
+  const existing = local.items.find((item) => item.id === itemId);
+  if (!existing || !canManagePost(existing, actorHandle)) return null;
+  local.items = local.items.filter((item) => item.id !== itemId);
+  await writeLocal(local);
+  return { id: itemId };
+};
+
+const mutateCommentForActor = (
+  comment: InquiryComment,
+  action: CommentAction,
+  actorHandle: string,
+  active?: boolean
+): InquiryComment => {
+  const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
+
+  if (action === "save") {
+    const next = toggleHandle(comment.savedBy, actorHandle, active);
+    return {
+      ...comment,
+      savedBy: next.handles,
+      metrics: { ...metrics, saves: incrementMetric(metrics.saves, next.delta) }
+    };
+  }
+
+  if (action === "signal") {
+    const next = toggleHandle(comment.signaledBy, actorHandle, active);
+    return {
+      ...comment,
+      signaledBy: next.handles,
+      metrics: { ...metrics, signal: incrementMetric(metrics.signal, next.delta) }
+    };
+  }
+
+  if (action === "fork") {
+    const next = toggleHandle(comment.forkedBy, actorHandle, active);
+    return {
+      ...comment,
+      forkedBy: next.handles,
+      metrics: { ...metrics, forks: incrementMetric(metrics.forks, next.delta) }
+    };
+  }
+
+  return {
+    ...comment,
+    metrics: { ...metrics, reads: incrementMetric(metrics.reads, 1) }
+  };
+};
+
+const mapCommentTree = (
+  comments: InquiryComment[],
+  commentId: string,
+  mutate: (comment: InquiryComment) => InquiryComment
+): { comments: InquiryComment[]; updated: InquiryComment | null } => {
+  let updated: InquiryComment | null = null;
+  const nextComments = comments.map((comment) => {
+    if (comment.id === commentId) {
+      updated = mutate(comment);
+      return updated;
+    }
+    const child = mapCommentTree(comment.replies ?? [], commentId, mutate);
+    if (child.updated) updated = child.updated;
+    return child.updated ? { ...comment, replies: child.comments } : comment;
+  });
+
+  return { comments: nextComments, updated };
+};
+
+export const applyCommentAction = async (
+  itemId: string,
+  commentId: string,
+  action: CommentAction,
+  actorHandle = defaultProfile.handle,
+  active?: boolean
+) => {
+  if (usePostgres) {
+    const data = await getSnapshot();
+    const existing = data.items.find((item) => item.id === itemId);
+    if (!existing) return null;
+
+    const mapped = mapCommentTree(existing.comments, commentId, (comment) =>
+      mutateCommentForActor(comment, action, actorHandle, active)
+    );
+    if (!mapped.updated) return null;
+
+    await getPool().query(
+      `UPDATE comments
+       SET metrics = $3,
+           saved_by = $4,
+           signaled_by = $5,
+           forked_by = $6,
+           updated_at = now()
+       WHERE item_id = $1 AND id = $2`,
+      [
+        itemId,
+        commentId,
+        JSON.stringify(mapped.updated.metrics ?? commentMetricsFallback),
+        JSON.stringify(mapped.updated.savedBy ?? []),
+        JSON.stringify(mapped.updated.signaledBy ?? []),
+        JSON.stringify(mapped.updated.forkedBy ?? [])
+      ]
+    );
+
+    return { ...existing, comments: mapped.comments };
+  }
+
+  const local = await readLocal();
+  let updated: InquiryItem | null = null;
+  local.items = local.items.map((item) => {
+    if (item.id !== itemId) return item;
+    const mapped = mapCommentTree(item.comments, commentId, (comment) =>
+      mutateCommentForActor(comment, action, actorHandle, active)
+    );
+    if (!mapped.updated) return item;
+    updated = { ...item, comments: mapped.comments };
+    return updated;
+  });
+  if (!updated) return null;
   await writeLocal(local);
   return updated;
 };

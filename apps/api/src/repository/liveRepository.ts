@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import {
   authSyncInputSchema,
   callIdInputSchema,
+  commentActionInputSchema,
   createCommentInputSchema,
   createCommunityCallInputSchema,
   createPostInputSchema,
@@ -17,6 +18,7 @@ import {
   searchInputSchema,
   sendMessageInputSchema,
   unfollowProfileInputSchema,
+  updatePostInputSchema,
   type CommunityCallContract,
   type InquiryCommentContract,
   type InquiryItemContract,
@@ -29,6 +31,7 @@ import {
   cleanHandle,
   incrementMetric,
   mutateItemForActor,
+  toggleHandle,
   updateSignalValue
 } from "@/lib/symposiumCore";
 import { env } from "../config/env";
@@ -329,6 +332,73 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
   return item;
 };
 
+const commentMetricsFallback = { signal: "0", forks: "0", saves: "0", reads: "0" };
+
+const mutateCommentForActor = (
+  comment: InquiryCommentContract,
+  action: PostActionInputContract["action"],
+  handle: string,
+  active?: boolean
+): InquiryCommentContract => {
+  const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
+
+  if (action === "save") {
+    const next = toggleHandle(comment.savedBy, handle, active);
+    return {
+      ...comment,
+      savedBy: next.handles,
+      metrics: { ...metrics, saves: incrementMetric(metrics.saves, next.delta) }
+    };
+  }
+
+  if (action === "signal") {
+    const next = toggleHandle(comment.signaledBy, handle, active);
+    return {
+      ...comment,
+      signaledBy: next.handles,
+      metrics: { ...metrics, signal: incrementMetric(metrics.signal, next.delta) }
+    };
+  }
+
+  if (action === "fork") {
+    const next = toggleHandle(comment.forkedBy, handle, active);
+    return {
+      ...comment,
+      forkedBy: next.handles,
+      metrics: { ...metrics, forks: incrementMetric(metrics.forks, next.delta) }
+    };
+  }
+
+  return {
+    ...comment,
+    metrics: { ...metrics, reads: incrementMetric(metrics.reads, 1) }
+  };
+};
+
+const mapCommentTree = (
+  comments: InquiryCommentContract[],
+  commentId: string,
+  mutate: (comment: InquiryCommentContract) => InquiryCommentContract
+): { comments: InquiryCommentContract[]; updated?: InquiryCommentContract } => {
+  let updated: InquiryCommentContract | undefined;
+  const nextComments = comments.map((comment) => {
+    if (comment.id === commentId) {
+      updated = mutate(comment);
+      return updated;
+    }
+
+    const child = mapCommentTree(comment.replies ?? [], commentId, mutate);
+    if (child.updated) {
+      updated = child.updated;
+      return { ...comment, replies: child.comments };
+    }
+
+    return comment;
+  });
+
+  return { comments: nextComments, updated };
+};
+
 export const addComment = async (postId: string, rawInput: unknown, actor: Actor) => {
   const input = createCommentInputSchema.parse(rawInput);
   const snapshot = await getInitialState();
@@ -367,6 +437,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         affiliation,
         date_label AS "dateLabel",
         created_at AS "createdAt",
+        edited_at AS "editedAt",
         status,
         metrics,
         gathering_reason AS "gatheringReason",
@@ -420,6 +491,10 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         author_name AS "authorName",
         stance,
         body,
+        metrics,
+        saved_by AS "savedBy",
+        signaled_by AS "signaledBy",
+        forked_by AS "forkedBy",
         created_at AS "createdAt"
        FROM comments
        WHERE post_id = $1
@@ -480,6 +555,7 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
         affiliation,
         date_label AS "dateLabel",
         created_at AS "createdAt",
+        edited_at AS "editedAt",
         status,
         metrics,
         gathering_reason AS "gatheringReason",
@@ -514,6 +590,10 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
         author_name AS "authorName",
         stance,
         body,
+        metrics,
+        saved_by AS "savedBy",
+        signaled_by AS "signaledBy",
+        forked_by AS "forkedBy",
         created_at AS "createdAt"
        FROM comments
        WHERE post_id = $1
@@ -589,6 +669,229 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
   });
 
   return updated;
+};
+
+export const updatePost = async (postId: string, rawInput: unknown, actor: Actor) => {
+  const input = updatePostInputSchema.parse(rawInput);
+  const handle = actorHandle(actor, input.actorHandle);
+  const editedAt = new Date().toISOString();
+
+  if (!hasDatabase()) {
+    const snapshot = await getInitialState();
+    const existing = snapshot.items.find((item) => item.id === postId);
+    if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
+    }
+    return { ...existing, title: input.title, body: input.body, excerpt: input.body, claims: [input.body], editedAt };
+  }
+
+  await ensureLiveData();
+  const client = await getPool().connect();
+  let updated: InquiryItemContract;
+
+  try {
+    await client.query("BEGIN");
+    const postResult = await client.query<SnapshotRow>(
+      `SELECT
+        id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
+        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
+        claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy"
+       FROM posts
+       WHERE id = $1
+       FOR UPDATE`,
+      [postId]
+    );
+    const row = postResult.rows[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
+    }
+
+    await client.query(
+      `UPDATE posts
+       SET title = $2,
+           body = $3,
+           excerpt = $3,
+           claims = $4,
+           search_text = $5,
+           edited_at = $6,
+           updated_at = now()
+       WHERE id = $1`,
+      [
+        postId,
+        input.title,
+        input.body,
+        JSON.stringify([input.body]),
+        searchablePostText({ title: input.title, body: input.body, excerpt: input.body, authorName: row.authorName }),
+        editedAt
+      ]
+    );
+
+    const commentsResult = await client.query<CommentRow>(
+      `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
+        author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", created_at AS "createdAt"
+       FROM comments
+       WHERE post_id = $1
+       ORDER BY created_at ASC`,
+      [postId]
+    );
+    const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    updated = rowToItem(
+      { ...row, title: input.title, body: input.body, excerpt: input.body, claims: [input.body], editedAt },
+      commentsByPost.get(postId) ?? []
+    );
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  await emitEvent({
+    kind: "post.updated",
+    actorHandle: handle,
+    subjectType: "post",
+    subjectId: postId,
+    payload: { item: updated }
+  });
+
+  return updated;
+};
+
+export const deletePost = async (postId: string, actor: Actor) => {
+  const handle = actorHandle(actor);
+
+  if (!hasDatabase()) return { id: postId };
+
+  await ensureLiveData();
+  const client = await getPool().connect();
+
+  try {
+    await client.query("BEGIN");
+    const postResult = await client.query<{ authorHandle: string | null }>(
+      `SELECT author_handle AS "authorHandle" FROM posts WHERE id = $1 FOR UPDATE`,
+      [postId]
+    );
+    const row = postResult.rows[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this post." });
+    }
+    await client.query("DELETE FROM posts WHERE id = $1", [postId]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  await emitEvent({
+    kind: "post.deleted",
+    actorHandle: handle,
+    subjectType: "post",
+    subjectId: postId,
+    payload: { itemId: postId }
+  });
+
+  return { id: postId };
+};
+
+export const applyCommentAction = async (postId: string, commentId: string, rawInput: unknown, actor: Actor) => {
+  const input: PostActionInputContract = commentActionInputSchema.parse(rawInput);
+  const handle = actorHandle(actor, input.actorHandle);
+
+  if (!hasDatabase()) {
+    const snapshot = await getInitialState();
+    const existing = snapshot.items.find((item) => item.id === postId);
+    if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    const mapped = mapCommentTree(existing.comments, commentId, (comment) =>
+      mutateCommentForActor(comment, input.action, handle, input.active)
+    );
+    if (!mapped.updated) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
+    return { ...existing, comments: mapped.comments };
+  }
+
+  await ensureLiveData();
+  const client = await getPool().connect();
+  let updatedItem: InquiryItemContract;
+  let updatedComment: InquiryCommentContract | undefined;
+
+  try {
+    await client.query("BEGIN");
+    const postResult = await client.query<SnapshotRow>(
+      `SELECT
+        id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
+        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
+        claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy"
+       FROM posts
+       WHERE id = $1
+       FOR UPDATE`,
+      [postId]
+    );
+    const row = postResult.rows[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+
+    const commentsResult = await client.query<CommentRow>(
+      `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
+        author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", created_at AS "createdAt"
+       FROM comments
+       WHERE post_id = $1
+       ORDER BY created_at ASC`,
+      [postId]
+    );
+    const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    const mapped = mapCommentTree(commentsByPost.get(postId) ?? [], commentId, (comment) =>
+      mutateCommentForActor(comment, input.action, handle, input.active)
+    );
+    if (!mapped.updated) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
+    updatedComment = mapped.updated;
+
+    await client.query(
+      `UPDATE comments
+       SET metrics = $3,
+           saved_by = $4,
+           signaled_by = $5,
+           forked_by = $6,
+           updated_at = now()
+       WHERE post_id = $1 AND id = $2`,
+      [
+        postId,
+        commentId,
+        JSON.stringify(updatedComment.metrics ?? commentMetricsFallback),
+        JSON.stringify(updatedComment.savedBy ?? []),
+        JSON.stringify(updatedComment.signaledBy ?? []),
+        JSON.stringify(updatedComment.forkedBy ?? [])
+      ]
+    );
+
+    updatedItem = rowToItem(row, mapped.comments);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  await emitEvent({
+    kind: `comment.${input.action}`,
+    actorHandle: handle,
+    subjectType: "comment",
+    subjectId: commentId,
+    payload: { action: input.action, item: updatedItem, commentId }
+  });
+
+  return updatedItem;
 };
 
 export const followProfile = async (rawInput: unknown, actor: Actor) => {
@@ -909,7 +1212,7 @@ export const search = async (rawInput: unknown) => {
       `SELECT
         id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", status, metrics, gathering_reason AS "gatheringReason",
-        created_at AS "createdAt",
+        created_at AS "createdAt", edited_at AS "editedAt",
         excerpt, body, tags, signals, claims, objections, evidence, tests, forks, saved,
         saved_by AS "savedBy", signaled_by AS "signaledBy", forked_by AS "forkedBy"
        FROM posts

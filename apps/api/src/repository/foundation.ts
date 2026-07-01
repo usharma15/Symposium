@@ -29,6 +29,7 @@ export type SnapshotRow = Omit<InquiryItemContract, "author" | "date" | "comment
   authorName: string;
   dateLabel: string;
   createdAt?: Date | string | null;
+  editedAt?: Date | string | null;
   comments?: InquiryCommentContract[];
 };
 
@@ -40,6 +41,10 @@ export type CommentRow = {
   authorName: string;
   stance: string;
   body: string;
+  metrics?: unknown;
+  savedBy?: unknown;
+  signaledBy?: unknown;
+  forkedBy?: unknown;
   createdAt: Date | string;
 };
 
@@ -218,6 +223,10 @@ const normalizeComments = (
       parentId,
       authorHandle: comment.authorHandle ?? getProfileForName(comment.author).handle,
       createdAt: comment.createdAt ?? "Seeded",
+      metrics: comment.metrics ?? { signal: "0", forks: "0", saves: "0", reads: "0" },
+      savedBy: comment.savedBy ?? [],
+      signaledBy: comment.signaledBy ?? [],
+      forkedBy: comment.forkedBy ?? [],
       replies: normalizeComments(comment.replies ?? [], itemId, itemIndex, id)
     };
   });
@@ -454,11 +463,15 @@ export const commentTreesFromRows = (rows: CommentRow[]) => {
       id: row.id,
       parentId: row.parentId,
       author: row.authorName,
-      authorHandle: row.authorHandle ?? undefined,
-      stance: row.stance,
-      body: row.body,
-      createdAt: new Date(row.createdAt).toISOString(),
-      replies: buildTree(byParent, row.id)
+          authorHandle: row.authorHandle ?? undefined,
+          stance: row.stance,
+          body: row.body,
+          createdAt: new Date(row.createdAt).toISOString(),
+          metrics: json(row.metrics, { signal: "0", forks: "0", saves: "0", reads: "0" }),
+          savedBy: json(row.savedBy, []),
+          signaledBy: json(row.signaledBy, []),
+          forkedBy: json(row.forkedBy, []),
+          replies: buildTree(byParent, row.id)
     }));
 
   return new Map([...byPostAndParent.entries()].map(([postId, byParent]) => [postId, buildTree(byParent)]));
@@ -474,6 +487,7 @@ export const rowToItem = (row: SnapshotRow, comments: InquiryCommentContract[]):
   affiliation: row.affiliation,
   date: row.dateLabel,
   createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : undefined,
+  editedAt: row.editedAt ? new Date(row.editedAt).toISOString() : undefined,
   status: row.status,
   metrics: json(row.metrics, { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" }),
   gatheringReason: row.gatheringReason,
@@ -528,6 +542,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
         affiliation,
         date_label AS "dateLabel",
         created_at AS "createdAt",
+        edited_at AS "editedAt",
         status,
         metrics,
         gathering_reason AS "gatheringReason",
@@ -556,6 +571,10 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
         author_name AS "authorName",
         stance,
         body,
+        metrics,
+        saved_by AS "savedBy",
+        signaled_by AS "signaledBy",
+        forked_by AS "forkedBy",
         created_at AS "createdAt"
        FROM comments
        ORDER BY created_at ASC`

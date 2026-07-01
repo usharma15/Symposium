@@ -31,6 +31,10 @@ export type InquiryComment = {
   body: string;
   stance: string;
   createdAt?: string;
+  metrics?: Pick<InquiryMetrics, "signal" | "forks" | "saves" | "reads">;
+  savedBy?: string[];
+  signaledBy?: string[];
+  forkedBy?: string[];
   replies?: InquiryComment[];
 };
 
@@ -52,6 +56,7 @@ export type InquiryItem = {
   affiliation: string;
   date: string;
   createdAt?: string;
+  editedAt?: string;
   status: string;
   metrics: InquiryMetrics;
   gatheringReason: string;
@@ -1564,8 +1569,10 @@ const generatedInquiryItems: InquiryItem[] = Array.from({ length: 132 }, (_, ind
   };
 });
 
+const seedBaselineMs = Date.UTC(2026, 5, 20, 12, 0, 0);
+
 const seedIsoDate = (index: number, offsetMinutes = 0) =>
-  new Date(Date.now() - (index + 12 + offsetMinutes) * 60 * 1000).toISOString();
+  new Date(seedBaselineMs - (index * 17 + offsetMinutes) * 60 * 1000).toISOString();
 
 const stampSeedComments = (
   comments: InquiryComment[],

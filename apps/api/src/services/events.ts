@@ -62,6 +62,28 @@ export const listEventsSince = async (cursor?: string | null, limit = 50): Promi
 
   const parsed = parseEventCursor(cursor);
   const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 100);
+
+  if (!parsed) {
+    const latest = await getPool().query<EventRow>(
+      `SELECT
+         id::text,
+         kind,
+         actor_handle AS "actorHandle",
+         subject_type AS "subjectType",
+         subject_id AS "subjectId",
+         visibility,
+         payload,
+         created_at AS "createdAt"
+       FROM events
+       WHERE visibility = 'public'
+       ORDER BY created_at DESC, id DESC
+       LIMIT $1`,
+      [boundedLimit]
+    );
+
+    return latest.rows.reverse().map(rowToEvent);
+  }
+
   const result = await getPool().query<EventRow>(
     `SELECT
        id::text,
@@ -74,13 +96,10 @@ export const listEventsSince = async (cursor?: string | null, limit = 50): Promi
        created_at AS "createdAt"
      FROM events
      WHERE visibility = 'public'
-       AND (
-         $1::timestamptz IS NULL
-         OR (created_at, id::text) > ($1::timestamptz, $2::text)
-       )
+       AND (created_at, id::text) > ($1::timestamptz, $2::text)
      ORDER BY created_at ASC, id ASC
      LIMIT $3`,
-    [parsed?.createdAt ?? null, parsed?.id ?? "", boundedLimit]
+    [parsed.createdAt, parsed.id, boundedLimit]
   );
 
   return result.rows.map(rowToEvent);

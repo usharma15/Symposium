@@ -221,6 +221,7 @@ export const posts = pgTable(
     forkedBy: jsonb("forked_by").$type<string[]>().default(jsonArray).notNull(),
     visibility: text("visibility").default("public").notNull(),
     searchText: text("search_text").notNull(),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
@@ -268,6 +269,10 @@ export const comments = pgTable(
     authorName: text("author_name").notNull(),
     stance: text("stance").notNull(),
     body: text("body").notNull(),
+    metrics: jsonb("metrics").$type<Pick<InquiryItemContract["metrics"], "signal" | "forks" | "saves" | "reads">>().default(jsonObject).notNull(),
+    savedBy: jsonb("saved_by").$type<string[]>().default(jsonArray).notNull(),
+    signaledBy: jsonb("signaled_by").$type<string[]>().default(jsonArray).notNull(),
+    forkedBy: jsonb("forked_by").$type<string[]>().default(jsonArray).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },

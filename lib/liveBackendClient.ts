@@ -4,7 +4,7 @@ const backendUrl = process.env.SYMPOSIUM_API_URL?.replace(/\/$/, "");
 const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 
 type LiveBackendOptions = {
-  method?: "GET" | "POST" | "DELETE";
+  method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
   actorHandle?: string;
 };

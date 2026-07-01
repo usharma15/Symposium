@@ -67,6 +67,7 @@ export const inquiryMetricsSchema = z.object({
   saves: z.string(),
   reads: z.string()
 });
+export type InquiryMetricsContract = z.infer<typeof inquiryMetricsSchema>;
 
 export const inquirySignalSchema = z.object({
   label: z.string(),
@@ -81,6 +82,10 @@ export type InquiryCommentContract = {
   body: string;
   stance: string;
   createdAt?: string;
+  metrics?: Pick<InquiryMetricsContract, "signal" | "forks" | "saves" | "reads">;
+  savedBy?: string[];
+  signaledBy?: string[];
+  forkedBy?: string[];
   replies?: InquiryCommentContract[];
 };
 
@@ -93,6 +98,10 @@ export const inquiryCommentSchema: z.ZodType<InquiryCommentContract> = z.lazy(()
     body: z.string(),
     stance: z.string(),
     createdAt: z.string().optional(),
+    metrics: inquiryMetricsSchema.pick({ signal: true, forks: true, saves: true, reads: true }).optional(),
+    savedBy: z.array(z.string()).optional(),
+    signaledBy: z.array(z.string()).optional(),
+    forkedBy: z.array(z.string()).optional(),
     replies: z.array(inquiryCommentSchema).optional()
   })
 );
@@ -107,6 +116,7 @@ export const inquiryItemSchema = z.object({
   affiliation: z.string(),
   date: z.string(),
   createdAt: z.string().optional(),
+  editedAt: z.string().optional(),
   status: z.string(),
   metrics: inquiryMetricsSchema,
   gatheringReason: z.string(),
@@ -159,6 +169,12 @@ export const createPostInputSchema = z.object({
   authorHandle: z.string().optional()
 });
 
+export const updatePostInputSchema = z.object({
+  title: z.string().trim().min(1).max(240),
+  body: z.string().trim().min(1).max(20000),
+  actorHandle: z.string().optional()
+});
+
 export const createCommentInputSchema = z.object({
   body: z.string().trim().min(1).max(8000),
   stance: z.string().trim().min(1).default("Comment"),
@@ -171,6 +187,7 @@ export const postActionInputSchema = z.object({
   actorHandle: z.string().optional(),
   active: z.boolean().optional()
 });
+export const commentActionInputSchema = postActionInputSchema;
 
 export const joinCommunityInputSchema = z.object({
   communityId: z.string().min(1)

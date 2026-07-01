@@ -13,6 +13,7 @@ import {
   MessageCircle,
   Moon,
   NotebookPen,
+  Pencil,
   Repeat2,
   Search,
   Send,
@@ -20,6 +21,7 @@ import {
   Settings,
   Sun,
   ThumbsUp,
+  Trash2,
   UserRound,
   X
 } from "lucide-react";
@@ -39,18 +41,21 @@ import {
   type Room,
   type RoomId
 } from "@/lib/mockData";
-import type { PostAction } from "@/lib/dataStore";
+import type { CommentAction, PostAction } from "@/lib/dataStore";
 import {
   cleanHandle,
   countComments,
   formatMetric,
   hasHandle,
+  incrementMetric,
   itemTimestampScore,
   isSavedBy,
+  localDateTimeLabel,
   metricNumber,
   mutateItemForActor,
   normalizeSearchPhrase,
-  relativeTimeLabel
+  relativeTimeLabel,
+  toggleHandle
 } from "@/lib/symposiumCore";
 
 type Theme = "day" | "night";
@@ -123,6 +128,8 @@ type LiveEventPayload = {
   item?: unknown;
   follow?: ProfileFollowRecord;
   action?: PostAction;
+  itemId?: string;
+  commentId?: string;
 };
 
 type SymposiumLiveEvent = {
@@ -408,6 +415,145 @@ const inferredResharesPublic = (person: ResearchProfile) => person.resharesPubli
 
 const fallbackCommunityCount = 8;
 const commentReplyPageSize = 6;
+const commentMetricsFallback = { signal: "0", forks: "0", saves: "0", reads: "0" };
+const clientSeedItemById = new Map(inquiryItems.map((item) => [item.id, item]));
+const clientSeedCommentById = new Map<string, InquiryComment>();
+for (const item of inquiryItems) {
+  const visit = (comments: InquiryComment[]) => {
+    for (const comment of comments) {
+      if (comment.id) clientSeedCommentById.set(comment.id, comment);
+      visit(comment.replies ?? []);
+    }
+  };
+  visit(item.comments);
+}
+
+const legacyLiveSeedCreatedAt = (id?: string, offsetMinutes = 0) => {
+  const match = id?.match(/^live-(\d+)-/);
+  if (!match) return undefined;
+  const index = Number(match[1]);
+  if (!Number.isFinite(index)) return undefined;
+  return new Date(Date.UTC(2026, 5, 18, 12, 0, 0) - (index * 19 + offsetMinutes) * 60 * 1000).toISOString();
+};
+
+const stableSeedCreatedAt = (createdAt: string | undefined, fallback?: string) => {
+  if (createdAt && !Number.isNaN(Date.parse(createdAt))) return createdAt;
+  return fallback ?? createdAt;
+};
+
+const normalizeClientSeedCommentTimes = (comments: InquiryComment[]): InquiryComment[] =>
+  comments.map((comment) => ({
+    ...comment,
+    createdAt: stableSeedCreatedAt(
+      comment.id ? clientSeedCommentById.get(comment.id)?.createdAt ?? comment.createdAt : comment.createdAt,
+      legacyLiveSeedCreatedAt(comment.id, 1)
+    ),
+    replies: normalizeClientSeedCommentTimes(comment.replies ?? [])
+  }));
+
+const normalizeClientSeedTimes = (items: InquiryItem[]): InquiryItem[] =>
+  items.map((item) => {
+    const seedItem = clientSeedItemById.get(item.id);
+    return {
+      ...item,
+      createdAt: stableSeedCreatedAt(seedItem?.createdAt ?? item.createdAt, legacyLiveSeedCreatedAt(item.id)),
+      comments: normalizeClientSeedCommentTimes(item.comments ?? [])
+    };
+  });
+
+const commentActionActive = (comment: InquiryComment, action: CommentAction, handle: string) => {
+  if (action === "save") return hasHandle(comment.savedBy, handle);
+  if (action === "signal") return hasHandle(comment.signaledBy, handle);
+  if (action === "fork") return hasHandle(comment.forkedBy, handle);
+  return undefined;
+};
+
+const mutateCommentForActor = (
+  comment: InquiryComment,
+  action: CommentAction,
+  actorHandle: string,
+  active?: boolean
+): InquiryComment => {
+  const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
+
+  if (action === "save") {
+    const next = toggleHandle(comment.savedBy, actorHandle, active);
+    return {
+      ...comment,
+      savedBy: next.handles,
+      metrics: { ...metrics, saves: incrementMetric(metrics.saves, next.delta) }
+    };
+  }
+
+  if (action === "signal") {
+    const next = toggleHandle(comment.signaledBy, actorHandle, active);
+    return {
+      ...comment,
+      signaledBy: next.handles,
+      metrics: { ...metrics, signal: incrementMetric(metrics.signal, next.delta) }
+    };
+  }
+
+  if (action === "fork") {
+    const next = toggleHandle(comment.forkedBy, actorHandle, active);
+    return {
+      ...comment,
+      forkedBy: next.handles,
+      metrics: { ...metrics, forks: incrementMetric(metrics.forks, next.delta) }
+    };
+  }
+
+  return {
+    ...comment,
+    metrics: { ...metrics, reads: incrementMetric(metrics.reads, 1) }
+  };
+};
+
+const mapCommentTree = (
+  comments: InquiryComment[],
+  commentId: string,
+  mutate: (comment: InquiryComment) => InquiryComment
+): { comments: InquiryComment[]; updated: InquiryComment | null } => {
+  let updated: InquiryComment | null = null;
+  const nextComments = comments.map((comment) => {
+    if (comment.id === commentId) {
+      updated = mutate(comment);
+      return updated;
+    }
+
+    const child = mapCommentTree(comment.replies ?? [], commentId, mutate);
+    if (child.updated) updated = child.updated;
+    return child.updated ? { ...comment, replies: child.comments } : comment;
+  });
+
+  return { comments: nextComments, updated };
+};
+
+const getLinearReplyChain = (comments: InquiryComment[]) => {
+  const chain: InquiryComment[] = [];
+  let replies = comments;
+
+  while (replies.length === 1) {
+    const [comment] = replies;
+    chain.push(comment);
+    replies = comment.replies ?? [];
+  }
+
+  return chain;
+};
+
+const buildLinearReplySegment = (chain: InquiryComment[], start: number) => {
+  const segment = chain.slice(start, start + commentReplyPageSize).map((comment) => ({
+    ...comment,
+    replies: [] as InquiryComment[]
+  }));
+
+  for (let index = segment.length - 2; index >= 0; index -= 1) {
+    segment[index] = { ...segment[index], replies: [segment[index + 1]] };
+  }
+
+  return segment[0] ? [segment[0]] : [];
+};
 
 const communityMembershipIds = (communities: ResearchCommunity[], person: ResearchProfile) => {
   const explicit = communities.filter((community) => community.memberHandles.includes(person.handle));
@@ -490,6 +636,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(null);
   const [viewHistory, setViewHistory] = useState<ViewSnapshot[]>([]);
   const [viewFuture, setViewFuture] = useState<ViewSnapshot[]>([]);
+  const [profileActiveTabs, setProfileActiveTabs] = useState<Record<string, ProfileTab>>({});
+  const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState("Loading live data");
   const [authError, setAuthError] = useState("");
@@ -605,7 +753,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const readLocalSnapshot = (): LocalSnapshot | null => {
     try {
       const raw = window.localStorage.getItem("symposium-local-snapshot");
-      return raw ? (JSON.parse(raw) as LocalSnapshot) : null;
+      if (!raw) return null;
+      const snapshot = JSON.parse(raw) as LocalSnapshot;
+      return { ...snapshot, items: normalizeClientSeedTimes(snapshot.items ?? []) };
     } catch {
       return null;
     }
@@ -674,7 +824,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       : { [data.defaultProfile.handle]: data.defaultProfile };
     const nextProfile = loadedProfiles[preferredHandle] ?? loadedProfiles[data.defaultProfile.handle] ?? data.defaultProfile;
 
-    const loadedItems = sortByPublishedRecency(data.items);
+    const loadedItems = sortByPublishedRecency(normalizeClientSeedTimes(data.items));
     setItems(loadedItems);
     setProfiles(loadedProfiles);
     setCurrentProfile(nextProfile);
@@ -787,6 +937,15 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     if (event.cursor) liveEventCursorRef.current = event.cursor;
 
     const payload = event.payload ?? {};
+    if (event.kind === "post.deleted" && typeof payload.itemId === "string") {
+      const nextItems = itemsRef.current.filter((item) => item.id !== payload.itemId);
+      itemsRef.current = nextItems;
+      setItems(nextItems);
+      persistLocalSnapshot(nextItems, profilesRef.current, currentProfileRef.current);
+      setSelectedItemId((current) => (current === payload.itemId ? null : current));
+      return;
+    }
+
     if (payload.follow || event.kind === "profile.followed" || event.kind === "profile.unfollowed") {
       mergeLiveFollow(payload.follow, event.kind !== "profile.unfollowed");
     }
@@ -842,14 +1001,13 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       }, 2500);
     };
 
+    startPolling();
+
     if ("EventSource" in window) {
       const cursor = liveEventCursorRef.current;
       source = new EventSource(`/api/events/stream${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
       source.onopen = () => {
-        if (pollTimer) {
-          window.clearInterval(pollTimer);
-          pollTimer = null;
-        }
+        if (!closed) setSyncStatus((status) => (status === "Loading live data" ? "Live updates connected" : status));
       };
       source.addEventListener("symposium-ready", () => {
         if (!closed) setSyncStatus((status) => (status === "Loading live data" ? "Live updates connected" : status));
@@ -868,8 +1026,6 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
           startPolling();
         }
       };
-    } else {
-      startPolling();
     }
 
     return () => {
@@ -905,7 +1061,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       const local = readLocalSnapshot();
       const fallbackProfiles = local?.profiles ?? { [profile.handle]: profile };
       const fallbackProfile = fallbackProfiles[storedProfileHandle ?? profile.handle] ?? profile;
-      const fallbackItems = sortByPublishedRecency(local?.items ?? inquiryItems);
+      const fallbackItems = sortByPublishedRecency(normalizeClientSeedTimes(local?.items ?? inquiryItems));
       setProfiles(fallbackProfiles);
       setItems(fallbackItems);
       setCurrentProfile(fallbackProfile);
@@ -1076,7 +1232,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
   const navigateView = (
     next: Partial<Omit<ViewSnapshot, "scrollY">>,
-    scrollY = 0
+    scrollY: number | null = 0
   ) => {
     setViewHistory((history) => [...history, snapshotView()]);
     setViewFuture([]);
@@ -1093,7 +1249,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setSettingsOpen(false);
     setSearchOpen(false);
     setMessagesOpen(false);
-    window.setTimeout(() => window.scrollTo({ top: scrollY, behavior: "auto" }), 0);
+    if (scrollY !== null) {
+      window.setTimeout(() => window.scrollTo({ top: scrollY, behavior: "auto" }), 0);
+    }
   };
 
   const goBack = () => {
@@ -1585,8 +1743,136 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     }
   };
 
+  const applyCommentAction = async (itemId: string, commentId: string, action: CommentAction) => {
+    const actorHandle = currentProfile.handle;
+    const actionKey = `${itemId}:${commentId}:${action}:${actorHandle}`;
+    const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
+    actionVersionsRef.current[actionKey] = version;
+
+    const previousItems = itemsRef.current;
+    let actionApplied = false;
+    let desiredActive: boolean | undefined;
+    const optimisticItems = previousItems.map((item) => {
+      if (item.id !== itemId) return item;
+      const mapped = mapCommentTree(item.comments, commentId, (comment) =>
+        mutateCommentForActor(comment, action, actorHandle)
+      );
+      if (!mapped.updated) return item;
+      actionApplied = true;
+      desiredActive = commentActionActive(mapped.updated, action, actorHandle);
+      return { ...item, comments: mapped.comments };
+    });
+
+    if (!actionApplied) return;
+    actionDesiredStateRef.current[actionKey] = desiredActive;
+    itemsRef.current = optimisticItems;
+    setItems(optimisticItems);
+    persistLocalSnapshot(optimisticItems, profilesRef.current);
+
+    try {
+      const response = await fetch(`/api/posts/${itemId}/comments/${commentId}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, actorHandle, active: desiredActive })
+      });
+
+      if (!response.ok) throw new Error("Comment action failed.");
+
+      const data = (await response.json()) as { item: InquiryItem };
+      if (actionVersionsRef.current[actionKey] !== version) return;
+
+      const committedItems = itemsRef.current.map((item) => (item.id === itemId ? data.item : item));
+      itemsRef.current = committedItems;
+      setItems(committedItems);
+      persistLocalSnapshot(committedItems, profilesRef.current);
+      setSyncStatus("Comment action synced");
+    } catch {
+      if (actionVersionsRef.current[actionKey] !== version) return;
+      itemsRef.current = previousItems;
+      setItems(previousItems);
+      persistLocalSnapshot(previousItems, profilesRef.current);
+      setSyncStatus("Comment action could not sync");
+    }
+  };
+
+  const savePostEdit = async (itemId: string, draft: { title: string; body: string }) => {
+    const cleanTitle = draft.title.trim();
+    const cleanBody = draft.body.trim();
+    if (!cleanTitle || !cleanBody) return;
+
+    const previousItems = itemsRef.current;
+    const editedAt = new Date().toISOString();
+    const optimisticItems = previousItems.map((item) =>
+      item.id === itemId
+        ? { ...item, title: cleanTitle, body: cleanBody, excerpt: cleanBody, claims: [cleanBody], editedAt }
+        : item
+    );
+
+    itemsRef.current = optimisticItems;
+    setItems(optimisticItems);
+    persistLocalSnapshot(optimisticItems, profilesRef.current);
+    setEditingPost(null);
+    setSyncStatus("Saving post edit");
+
+    try {
+      const response = await fetch(`/api/posts/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: cleanTitle, body: cleanBody, actorHandle: currentProfile.handle })
+      });
+
+      if (!response.ok) throw new Error("Post edit failed.");
+
+      const data = (await response.json()) as { item: InquiryItem };
+      const committedItems = itemsRef.current.map((item) => (item.id === itemId ? data.item : item));
+      itemsRef.current = committedItems;
+      setItems(committedItems);
+      persistLocalSnapshot(committedItems, profilesRef.current);
+      setSyncStatus("Post edited");
+    } catch {
+      itemsRef.current = previousItems;
+      setItems(previousItems);
+      persistLocalSnapshot(previousItems, profilesRef.current);
+      setSyncStatus("Post edit could not sync");
+    }
+  };
+
+  const deletePost = async (itemId: string) => {
+    const item = itemsRef.current.find((current) => current.id === itemId);
+    if (!item || cleanHandle(item.authorHandle ?? item.author) !== currentProfile.handle) return;
+    if (!window.confirm(`Delete "${item.title}"?`)) return;
+
+    const previousItems = itemsRef.current;
+    const nextItems = previousItems.filter((current) => current.id !== itemId);
+    itemsRef.current = nextItems;
+    setItems(nextItems);
+    persistLocalSnapshot(nextItems, profilesRef.current);
+    setEditingPost(null);
+    setSelectedItemId((current) => (current === itemId ? null : current));
+    setSyncStatus("Deleting post");
+
+    try {
+      const response = await fetch(`/api/posts/${itemId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorHandle: currentProfile.handle })
+      });
+
+      if (!response.ok) throw new Error("Post delete failed.");
+      setSyncStatus("Post deleted");
+    } catch {
+      itemsRef.current = previousItems;
+      setItems(previousItems);
+      persistLocalSnapshot(previousItems, profilesRef.current);
+      setSyncStatus("Post delete could not sync");
+    }
+  };
+
   const openPost = (id: string, commentId?: string | null) => {
-    navigateView({ selectedItemId: id, selectedCommentId: commentId ?? null, selectedProfileName: null });
+    navigateView(
+      { selectedItemId: id, selectedCommentId: commentId ?? null, selectedProfileName: null },
+      commentId ? null : 0
+    );
     void applyAction(id, "read");
   };
 
@@ -1733,6 +2019,12 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             socialLists={profileSocialLists[selectedProfile.handle] ?? { following: [], followers: [] }}
             getProfileRecency={getProfileRecency}
             getProfileAllRecency={getProfileAllRecency}
+            activeTab={profileActiveTabs[selectedProfile.handle] ?? "all"}
+            onActiveTabChange={(tab) =>
+              setProfileActiveTabs((current) => ({ ...current, [selectedProfile.handle]: tab }))
+            }
+            onEditPost={setEditingPost}
+            onDeletePost={deletePost}
           />
         ) : selectedItem ? (
           <DetailView
@@ -1742,6 +2034,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onOpenProfile={openProfile}
             onAddComment={addComment}
             onAction={applyAction}
+            onCommentAction={applyCommentAction}
+            onEditPost={setEditingPost}
+            onDeletePost={deletePost}
             actorHandle={currentProfile.handle}
             profiles={profiles}
             selectedCommentId={selectedCommentId}
@@ -1770,6 +2065,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
+            onEditPost={setEditingPost}
+            onDeletePost={deletePost}
             onDummyCall={(mode) => setSyncStatus(`${mode} call placeholder`)}
           />
         ) : activeRoom === "communities" ? (
@@ -1797,6 +2094,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
+            onEditPost={setEditingPost}
+            onDeletePost={deletePost}
             onOpenNotes={() => toggleOfficeMode("notes")}
             onOpenSaved={() => toggleOfficeMode("saved")}
             actorHandle={currentProfile.handle}
@@ -1865,6 +2164,15 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         <PostComposerModal
           onClose={() => setComposerOpen(false)}
           onCreatePost={createPost}
+        />
+      ) : null}
+
+      {editingPost ? (
+        <PostEditModal
+          item={items.find((item) => item.id === editingPost.id) ?? editingPost}
+          onClose={() => setEditingPost(null)}
+          onSave={savePostEdit}
+          onDelete={deletePost}
         />
       ) : null}
 
@@ -2242,6 +2550,8 @@ function SelectedCommunityView({
   onSelect,
   onOpenProfile,
   onAction,
+  onEditPost,
+  onDeletePost,
   onDummyCall
 }: {
   community: ResearchCommunity;
@@ -2252,6 +2562,8 @@ function SelectedCommunityView({
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  onEditPost: (item: InquiryItem) => void;
+  onDeletePost: (itemId: string) => void;
   onDummyCall: (mode: "Voice" | "Video") => void;
 }) {
   const memberships = communityMembershipIds(researchCommunities, currentProfile);
@@ -2295,6 +2607,8 @@ function SelectedCommunityView({
               onSelect={onSelect}
               onOpenProfile={onOpenProfile}
               onAction={onAction}
+              onEditPost={onEditPost}
+              onDeletePost={onDeletePost}
               actorHandle={currentProfile.handle}
               profiles={profiles}
             />
@@ -2326,6 +2640,8 @@ function RoomView({
   onSelect,
   onOpenProfile,
   onAction,
+  onEditPost,
+  onDeletePost,
   onOpenNotes,
   onOpenSaved,
   actorHandle,
@@ -2343,6 +2659,8 @@ function RoomView({
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  onEditPost: (item: InquiryItem) => void;
+  onDeletePost: (itemId: string) => void;
   onOpenNotes: () => void;
   onOpenSaved: () => void;
   actorHandle: string;
@@ -2448,6 +2766,8 @@ function RoomView({
               onSelect={onSelect}
               onOpenProfile={onOpenProfile}
               onAction={onAction}
+              onEditPost={onEditPost}
+              onDeletePost={onDeletePost}
               actorHandle={actorHandle}
               profiles={profiles}
             />
@@ -2594,11 +2914,124 @@ function PostComposerModal({
   );
 }
 
+function PostEditModal({
+  item,
+  onClose,
+  onSave,
+  onDelete
+}: {
+  item: InquiryItem;
+  onClose: () => void;
+  onSave: (itemId: string, draft: { title: string; body: string }) => void;
+  onDelete: (itemId: string) => void;
+}) {
+  const [title, setTitle] = useState(item.title);
+  const [body, setBody] = useState(item.body);
+
+  useEffect(() => {
+    setTitle(item.title);
+    setBody(item.body);
+  }, [item]);
+
+  const submitEdit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    onSave(item.id, { title, body });
+  };
+
+  return (
+    <div className="composer-modal-backdrop" role="presentation" onClick={onClose}>
+      <form className="post-composer post-edit-modal" onSubmit={submitEdit} onClick={(event) => event.stopPropagation()}>
+        <div className="composer-modal-head">
+          <div>
+            <span>Edit post</span>
+            <strong>{kindLabels[item.kind]}</strong>
+          </div>
+          <button type="button" title="Close" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </div>
+        <div className="composer-topline">
+          <button className="danger-action" type="button" onClick={() => onDelete(item.id)}>
+            <Trash2 size={16} />
+            Delete
+          </button>
+          <button type="submit">Save</button>
+        </div>
+        <input
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder="Title"
+        />
+        <textarea
+          value={body}
+          onChange={(event) => setBody(event.target.value)}
+          placeholder="Write the thing itself"
+        />
+      </form>
+    </div>
+  );
+}
+
+function PostTimeFooter({ item }: { item: InquiryItem }) {
+  const created = localDateTimeLabel(item.createdAt);
+  const edited = localDateTimeLabel(item.editedAt);
+
+  if (!created && !edited) return null;
+
+  return (
+    <footer className="post-time-footer">
+      {created ? <span>Posted {created}</span> : null}
+      {edited ? <span>Edited {relativeTimeLabel(item.editedAt)} · {edited}</span> : null}
+    </footer>
+  );
+}
+
+function PostOwnerControls({
+  item,
+  actorHandle,
+  onEditPost,
+  onDeletePost
+}: {
+  item: InquiryItem;
+  actorHandle: string;
+  onEditPost: (item: InquiryItem) => void;
+  onDeletePost: (itemId: string) => void;
+}) {
+  if (cleanHandle(item.authorHandle ?? item.author) !== actorHandle) return null;
+
+  return (
+    <div className="post-owner-actions" aria-label="Post owner actions">
+      <button
+        type="button"
+        title="Edit post"
+        onClick={(event) => {
+          event.stopPropagation();
+          onEditPost(item);
+        }}
+      >
+        <Pencil size={16} />
+      </button>
+      <button
+        type="button"
+        title="Delete post"
+        onClick={(event) => {
+          event.stopPropagation();
+          onDeletePost(item.id);
+        }}
+      >
+        <Trash2 size={16} />
+      </button>
+    </div>
+  );
+}
+
 function FeedPost({
   item,
   onSelect,
   onOpenProfile,
   onAction,
+  onEditPost,
+  onDeletePost,
   actorHandle,
   profiles
 }: {
@@ -2606,6 +3039,8 @@ function FeedPost({
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  onEditPost: (item: InquiryItem) => void;
+  onDeletePost: (itemId: string) => void;
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
 }) {
@@ -2626,6 +3061,7 @@ function FeedPost({
       onClick={openPost}
       onKeyDown={onKeyDown}
     >
+      <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />
       <PostAuthor
         item={item}
         profiles={profiles}
@@ -2635,6 +3071,7 @@ function FeedPost({
       <div className="post-body">
         <h2>{item.title}</h2>
         <p>{item.excerpt}</p>
+        <PostTimeFooter item={item} />
         <SocialActions item={item} commentCount={countComments(item.comments)} onAction={onAction} actorHandle={actorHandle} />
       </div>
     </article>
@@ -2730,6 +3167,9 @@ function DetailView({
   onOpenProfile,
   onAddComment,
   onAction,
+  onCommentAction,
+  onEditPost,
+  onDeletePost,
   actorHandle,
   profiles,
   selectedCommentId
@@ -2740,6 +3180,9 @@ function DetailView({
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onEditPost: (item: InquiryItem) => void;
+  onDeletePost: (itemId: string) => void;
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
   selectedCommentId: string | null;
@@ -2758,6 +3201,7 @@ function DetailView({
       </button>
 
       <section className="detail-main">
+        <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />
         <p className="eyebrow">{kindLabels[item.kind]}</p>
         <h1>{item.title}</h1>
         <button className="detail-byline-button" type="button" onClick={() => onOpenProfile(authorProfile?.handle ?? item.authorHandle ?? item.author)}>
@@ -2770,6 +3214,7 @@ function DetailView({
           </span>
         </button>
         <p className="detail-body">{item.body}</p>
+        <PostTimeFooter item={item} />
         <SocialActions item={item} commentCount={countComments(item.comments)} onAction={onAction} actorHandle={actorHandle} />
 
         <section className="comments-section">
@@ -2782,6 +3227,8 @@ function DetailView({
             selectedCommentId={selectedCommentId}
             onOpenProfile={onOpenProfile}
             onAddComment={onAddComment}
+            onCommentAction={onCommentAction}
+            actorHandle={actorHandle}
           />
         </section>
       </section>
@@ -2857,6 +3304,8 @@ function CommentThread({
   selectedCommentId,
   onOpenProfile,
   onAddComment,
+  onCommentAction,
+  actorHandle,
   depth = 0
 }: {
   comments: InquiryComment[];
@@ -2865,6 +3314,8 @@ function CommentThread({
   selectedCommentId: string | null;
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
+  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  actorHandle: string;
   depth?: number;
 }) {
   return (
@@ -2878,6 +3329,8 @@ function CommentThread({
           selectedCommentId={selectedCommentId}
           onOpenProfile={onOpenProfile}
           onAddComment={onAddComment}
+          onCommentAction={onCommentAction}
+          actorHandle={actorHandle}
           depth={depth}
         />
       ))}
@@ -2892,6 +3345,8 @@ function CommentNode({
   selectedCommentId,
   onOpenProfile,
   onAddComment,
+  onCommentAction,
+  actorHandle,
   depth
 }: {
   comment: InquiryComment;
@@ -2900,16 +3355,21 @@ function CommentNode({
   selectedCommentId: string | null;
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
+  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  actorHandle: string;
   depth: number;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
   const replies = comment.replies ?? [];
+  const linearReplyChain = getLinearReplyChain(replies);
+  const useLinearWindow = linearReplyChain.length > commentReplyPageSize;
   const [replyPage, setReplyPage] = useState(() => {
     if (!selectedCommentId) return 0;
     const selectedReplyIndex = replies.findIndex((reply) => commentTreeHasId([reply], selectedCommentId));
     return selectedReplyIndex >= 0 ? Math.floor(selectedReplyIndex / commentReplyPageSize) : 0;
   });
   const nodeRef = useRef<HTMLElement | null>(null);
+  const replyWindowRef = useRef<HTMLDivElement | null>(null);
   const authorProfile = profileForHandle(profiles, comment.authorHandle ?? comment.author);
   const authorName = authorProfile?.name ?? comment.author;
   const highlighted = Boolean(selectedCommentId && comment.id === selectedCommentId);
@@ -2929,40 +3389,69 @@ function CommentNode({
     nodeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [highlighted]);
 
+  const changeReplyPage = (nextPage: number) => {
+    const top = replyWindowRef.current?.getBoundingClientRect().top;
+    setReplyPage(nextPage);
+    window.requestAnimationFrame(() => {
+      if (top === undefined || !replyWindowRef.current) return;
+      window.scrollBy({ top: replyWindowRef.current.getBoundingClientRect().top - top, behavior: "auto" });
+    });
+  };
+
   return (
     <article
       ref={nodeRef}
       id={comment.id ? `comment-${comment.id}` : undefined}
-      className={`comment ${highlighted ? "highlighted" : ""}`}
+      className="comment"
     >
-      <button type="button" className="comment-author" onClick={() => onOpenProfile(authorProfile?.handle ?? comment.authorHandle ?? comment.author)}>
-        <span className="avatar small">
-          {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
-        </span>
-        <span>
-          <strong>{authorName}</strong>
-          {comment.createdAt ? <small>{relativeTimeLabel(comment.createdAt)}</small> : null}
-        </span>
-      </button>
-      <p>{comment.body}</p>
-      <button className="reply-button" type="button" onClick={() => setReplyOpen((open) => !open)}>
-        Reply
-      </button>
-      {replyOpen ? (
-        <CommentComposer
+      <div className={`comment-card ${highlighted ? "highlighted" : ""}`}>
+        <button type="button" className="comment-author" onClick={() => onOpenProfile(authorProfile?.handle ?? comment.authorHandle ?? comment.author)}>
+          <span className="avatar small">
+            {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
+          </span>
+          <span>
+            <strong>{authorName}</strong>
+            {comment.createdAt ? <small>{relativeTimeLabel(comment.createdAt)}</small> : null}
+          </span>
+        </button>
+        <p>{comment.body}</p>
+        <CommentTimeFooter comment={comment} />
+        <CommentActions
+          comment={comment}
           itemId={itemId}
-          parentId={comment.id ?? null}
-          compact
-          onAddComment={(id, body, stance, parentId) => {
-            onAddComment(id, body, stance, parentId);
-            setReplyOpen(false);
-          }}
+          actorHandle={actorHandle}
+          onAction={onCommentAction}
         />
-      ) : null}
-      {replies.length ? (
-        <div className="reply-window">
+        <button className="reply-button" type="button" onClick={() => setReplyOpen((open) => !open)}>
+          Reply
+        </button>
+        {replyOpen ? (
+          <CommentComposer
+            itemId={itemId}
+            parentId={comment.id ?? null}
+            compact
+            onAddComment={(id, body, stance, parentId) => {
+              onAddComment(id, body, stance, parentId);
+              setReplyOpen(false);
+            }}
+          />
+        ) : null}
+      </div>
+      {useLinearWindow ? (
+        <LinearReplyWindow
+          chain={linearReplyChain}
+          itemId={itemId}
+          profiles={profiles}
+          selectedCommentId={selectedCommentId}
+          onOpenProfile={onOpenProfile}
+          onAddComment={onAddComment}
+          onCommentAction={onCommentAction}
+          actorHandle={actorHandle}
+        />
+      ) : replies.length ? (
+        <div className="reply-window" ref={replyWindowRef}>
           {hasPreviousReplies ? (
-            <button className="reply-window-button" type="button" onClick={() => setReplyPage((page) => Math.max(0, page - 1))}>
+            <button className="reply-window-button" type="button" onClick={() => changeReplyPage(Math.max(0, replyPage - 1))}>
               Show previous replies
             </button>
           ) : null}
@@ -2973,16 +3462,140 @@ function CommentNode({
             selectedCommentId={selectedCommentId}
             onOpenProfile={onOpenProfile}
             onAddComment={onAddComment}
+            onCommentAction={onCommentAction}
+            actorHandle={actorHandle}
             depth={depth + 1}
           />
           {hasMoreReplies ? (
-            <button className="reply-window-button" type="button" onClick={() => setReplyPage((page) => page + 1)}>
+            <button className="reply-window-button" type="button" onClick={() => changeReplyPage(replyPage + 1)}>
               Show more replies
             </button>
           ) : null}
         </div>
       ) : null}
     </article>
+  );
+}
+
+function LinearReplyWindow({
+  chain,
+  itemId,
+  profiles,
+  selectedCommentId,
+  onOpenProfile,
+  onAddComment,
+  onCommentAction,
+  actorHandle
+}: {
+  chain: InquiryComment[];
+  itemId: string;
+  profiles: Record<string, ResearchProfile>;
+  selectedCommentId: string | null;
+  onOpenProfile: (name: string) => void;
+  onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
+  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  actorHandle: string;
+}) {
+  const [page, setPage] = useState(() => {
+    const selectedIndex = selectedCommentId ? chain.findIndex((comment) => comment.id === selectedCommentId) : -1;
+    return selectedIndex >= 0 ? Math.floor(selectedIndex / commentReplyPageSize) : 0;
+  });
+  const windowRef = useRef<HTMLDivElement | null>(null);
+  const start = page * commentReplyPageSize;
+  const segment = buildLinearReplySegment(chain, start);
+  const hasPrevious = page > 0;
+  const hasMore = start + commentReplyPageSize < chain.length;
+
+  useEffect(() => {
+    if (!selectedCommentId) return;
+    const selectedIndex = chain.findIndex((comment) => comment.id === selectedCommentId);
+    if (selectedIndex >= 0) setPage(Math.floor(selectedIndex / commentReplyPageSize));
+  }, [chain, selectedCommentId]);
+
+  const changePage = (nextPage: number) => {
+    const top = windowRef.current?.getBoundingClientRect().top;
+    setPage(nextPage);
+    window.requestAnimationFrame(() => {
+      if (top === undefined || !windowRef.current) return;
+      window.scrollBy({ top: windowRef.current.getBoundingClientRect().top - top, behavior: "auto" });
+    });
+  };
+
+  return (
+    <div className="reply-window reset-thread" ref={windowRef}>
+      {hasPrevious ? (
+        <button className="reply-window-button" type="button" onClick={() => changePage(Math.max(0, page - 1))}>
+          Show previous replies
+        </button>
+      ) : null}
+      <CommentThread
+        comments={segment}
+        itemId={itemId}
+        profiles={profiles}
+        selectedCommentId={selectedCommentId}
+        onOpenProfile={onOpenProfile}
+        onAddComment={onAddComment}
+        onCommentAction={onCommentAction}
+        actorHandle={actorHandle}
+        depth={0}
+      />
+      {hasMore ? (
+        <button className="reply-window-button" type="button" onClick={() => changePage(page + 1)}>
+          Show more replies
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function CommentTimeFooter({ comment }: { comment: InquiryComment }) {
+  const created = localDateTimeLabel(comment.createdAt);
+  if (!created) return null;
+
+  return <footer className="comment-time-footer">Posted {created}</footer>;
+}
+
+function CommentActions({
+  comment,
+  itemId,
+  actorHandle,
+  onAction
+}: {
+  comment: InquiryComment;
+  itemId: string;
+  actorHandle: string;
+  onAction: (itemId: string, commentId: string, action: CommentAction) => void;
+}) {
+  if (!comment.id) return null;
+
+  const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
+  const actions = [
+    { label: "Likes", active: commentActionActive(comment, "signal", actorHandle), value: metrics.signal, icon: ThumbsUp, action: "signal" as CommentAction },
+    { label: "Reshares", active: commentActionActive(comment, "fork", actorHandle), value: metrics.forks, icon: Repeat2, action: "fork" as CommentAction },
+    { label: "Saves", active: commentActionActive(comment, "save", actorHandle), value: metrics.saves, icon: Bookmark, action: "save" as CommentAction },
+    { label: "Views", value: metrics.reads, icon: Eye, action: "read" as CommentAction }
+  ];
+
+  return (
+    <div className="comment-actions" aria-label="Comment actions">
+      {actions.map((action) => {
+        const Icon = action.icon;
+        const fillActiveIcon = action.active && (action.label === "Likes" || action.label === "Saves");
+        return (
+          <button
+            key={action.label}
+            type="button"
+            title={action.label}
+            className={action.active ? "active" : ""}
+            onClick={() => onAction(itemId, comment.id as string, action.action)}
+          >
+            <Icon size={15} fill={fillActiveIcon ? "currentColor" : "none"} />
+            <span>{action.label}</span>
+            <strong>{formatMetric(metricNumber(action.value))}</strong>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -3074,7 +3687,11 @@ function ProfileView({
   profiles,
   socialLists,
   getProfileRecency,
-  getProfileAllRecency
+  getProfileAllRecency,
+  activeTab,
+  onActiveTabChange,
+  onEditPost,
+  onDeletePost
 }: {
   person: ResearchProfile;
   items: InquiryItem[];
@@ -3090,8 +3707,11 @@ function ProfileView({
   socialLists: ProfileSocialLists;
   getProfileRecency: (item: InquiryItem, handle: string, kind: ProfileActivityKind) => number;
   getProfileAllRecency: (item: InquiryItem, handle: string) => number;
+  activeTab: ProfileTab;
+  onActiveTabChange: (tab: ProfileTab) => void;
+  onEditPost: (item: InquiryItem) => void;
+  onDeletePost: (itemId: string) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<ProfileTab>("all");
   const [activeSocialList, setActiveSocialList] = useState<"following" | "followers" | null>(null);
   const byPublishedRecency = (nextItems: InquiryItem[]) =>
     [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, "authored") - getProfileRecency(a, person.handle, "authored"));
@@ -3148,8 +3768,8 @@ function ProfileView({
   ];
 
   useEffect(() => {
-    if (!tabs.some((tab) => tab.id === activeTab)) setActiveTab("all");
-  }, [activeTab, tabs]);
+    if (!tabs.some((tab) => tab.id === activeTab)) onActiveTabChange("all");
+  }, [activeTab, onActiveTabChange, tabs]);
 
   return (
     <article className="profile-page">
@@ -3192,7 +3812,7 @@ function ProfileView({
                 key={tab.id}
                 type="button"
                 className={activeTab === tab.id ? "active" : ""}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => onActiveTabChange(tab.id)}
               >
                 <strong>{tabCounts[tab.id]}</strong>
                 <span>{tab.label}</span>
@@ -3228,6 +3848,8 @@ function ProfileView({
               onSelect={onSelect}
               onOpenProfile={onOpenProfile}
               onAction={onAction}
+              onEditPost={onEditPost}
+              onDeletePost={onDeletePost}
               actorHandle={actorHandle}
               profiles={profiles}
             />
@@ -3308,6 +3930,7 @@ function ProfileCommentCard({
       <footer>
         <span>On</span>
         <strong>{activity.item.title}</strong>
+        {activity.comment.createdAt ? <em>{localDateTimeLabel(activity.comment.createdAt)}</em> : null}
       </footer>
     </article>
   );

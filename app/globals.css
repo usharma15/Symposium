@@ -1366,10 +1366,10 @@ button {
 }
 
 .comment-composer button {
-  border: 1px solid color-mix(in srgb, var(--aqua) 52%, var(--line));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--aqua) 32%, var(--panel-strong)), color-mix(in srgb, var(--aqua) 20%, var(--panel)));
+  border: 1px solid color-mix(in srgb, var(--aqua) 30%, var(--line));
+  background: color-mix(in srgb, var(--aqua) 10%, var(--panel-strong));
   color: var(--ink);
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--aqua) 18%, transparent);
+  box-shadow: none;
 }
 
 .feed-stream {
@@ -1548,7 +1548,13 @@ button {
 }
 
 .detail-main {
+  position: relative;
   padding: 34px;
+}
+
+.detail-main > .post-owner-actions {
+  top: 18px;
+  right: 18px;
 }
 
 .detail-main h1 {
@@ -1637,6 +1643,11 @@ button {
   border-top: 1px solid var(--line);
 }
 
+.comment-card {
+  display: grid;
+  min-width: 0;
+}
+
 .comment button {
   display: inline-flex;
   align-items: center;
@@ -1664,13 +1675,48 @@ button {
   margin: 8px 0 0 39px;
   color: var(--muted);
   line-height: 1.55;
+  white-space: pre-wrap;
 }
 
-.comment.highlighted {
+.comment-card.highlighted {
   margin-inline: -10px;
   padding-inline: 10px;
+  padding-block: 8px;
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--aqua) 11%, transparent);
+}
+
+.comment-time-footer {
+  margin: 8px 0 0 39px;
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
+  font-size: 0.72rem;
+  font-weight: 720;
+}
+
+.comment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 10px 0 0 39px;
+}
+
+.comment-actions button {
+  justify-content: center;
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--muted);
+  padding: 0 8px;
+  font-size: 0.76rem;
+  font-weight: 780;
+}
+
+.comment-actions button.active {
+  color: var(--aqua);
+}
+
+.comment-actions strong {
+  font-variant-numeric: tabular-nums;
 }
 
 .reply-button {
@@ -1690,6 +1736,16 @@ button {
   gap: 8px;
 }
 
+.reply-window.reset-thread {
+  margin-left: 39px;
+}
+
+.reply-window.reset-thread > .comment-thread {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
 .reply-window-button {
   width: fit-content;
   min-height: 32px;
@@ -1706,6 +1762,19 @@ button {
 .comment-composer.compact {
   margin: 12px 0 0 39px;
   background: color-mix(in srgb, var(--aqua) 7%, transparent);
+}
+
+.comment-composer.compact div {
+  justify-content: flex-start;
+}
+
+.comment-composer.compact button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 142px;
+  border-color: color-mix(in srgb, var(--aqua) 50%, var(--line));
+  background: color-mix(in srgb, var(--aqua) 17%, var(--panel-strong));
 }
 
 .detail-side {
@@ -3382,6 +3451,33 @@ button {
   box-shadow: 0 20px 54px rgba(0, 0, 0, 0.18);
 }
 
+.post-owner-actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 3;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.post-owner-actions button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
+  color: var(--muted);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.post-owner-actions button:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
 .post-kind-paper,
 .post-kind-draft,
 .post-kind-code {
@@ -3420,11 +3516,37 @@ button {
 }
 
 .feed-post p,
+.detail-body,
+.comment p,
+.profile-comment-card p,
 .post-author small,
 .metric-label,
 .social-actions {
   color: rgba(20, 32, 31, 0.72);
   overflow-wrap: anywhere;
+}
+
+.post-time-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 10px 0 0;
+  color: rgba(20, 32, 31, 0.58);
+  font-size: 0.76rem;
+  font-weight: 720;
+}
+
+.post-edit-modal .composer-topline {
+  justify-content: space-between;
+}
+
+.post-edit-modal .danger-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-color: color-mix(in srgb, #b33a30 42%, var(--line));
+  background: color-mix(in srgb, #b33a30 9%, var(--panel));
+  color: color-mix(in srgb, #b33a30 80%, var(--ink));
 }
 
 .post-author strong,
@@ -3721,6 +3843,12 @@ button {
 
 .profile-comment-card footer strong {
   color: var(--ink);
+}
+
+.profile-comment-card footer em {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
 }
 
 .search-launcher {
@@ -4058,6 +4186,7 @@ button {
 
 .symposium-shell.night .feed-post p,
 .symposium-shell.night .post-author small,
+.symposium-shell.night .post-time-footer,
 .symposium-shell.night .metric-label,
 .symposium-shell.night .social-actions {
   color: rgba(246, 234, 212, 0.74);
@@ -4075,6 +4204,21 @@ button {
 .symposium-shell.night .social-actions button.active .metric-label,
 .symposium-shell.night .social-actions button.active strong {
   color: #83cbd1;
+}
+
+.symposium-shell.night .post-owner-actions button {
+  background: rgba(12, 16, 17, 0.74);
+  color: rgba(246, 234, 212, 0.72);
+}
+
+.symposium-shell.night .comment-actions button.active,
+.symposium-shell.night .comment-actions button.active strong,
+.symposium-shell.night .comment-actions button.active span {
+  color: #83cbd1;
+}
+
+.symposium-shell.night .comment-card.highlighted {
+  background: rgba(131, 203, 209, 0.12);
 }
 
 .symposium-shell.night .messages-modal {
