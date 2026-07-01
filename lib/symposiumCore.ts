@@ -43,29 +43,53 @@ export const formatMetric = (value: number) => {
 
 export const incrementMetric = (value: string, amount: number) => formatMetric(metricNumber(value) + amount);
 
-export const toggleHandle = (handles: string[] | undefined, handle: string) => {
-  const current = new Set(handles ?? []);
-  if (current.has(handle)) {
-    current.delete(handle);
+const normalizeHandles = (handles: string[] | undefined) =>
+  Array.from(new Set((handles ?? []).map(cleanHandle).filter((handle) => handle !== "@")));
+
+export const toggleHandle = (handles: string[] | undefined, handle: string, active?: boolean) => {
+  const clean = cleanHandle(handle);
+  const current = new Set(normalizeHandles(handles));
+  if (clean === "@") return { handles: [...current], delta: 0 };
+  const hasCurrent = current.has(clean);
+
+  if (active === true) {
+    if (hasCurrent) return { handles: [...current], delta: 0 };
+    current.add(clean);
+    return { handles: [...current], delta: 1 };
+  }
+
+  if (active === false) {
+    if (!hasCurrent) return { handles: [...current], delta: 0 };
+    current.delete(clean);
     return { handles: [...current], delta: -1 };
   }
-  current.add(handle);
+
+  if (hasCurrent) {
+    current.delete(clean);
+    return { handles: [...current], delta: -1 };
+  }
+
+  current.add(clean);
   return { handles: [...current], delta: 1 };
 };
 
-export const hasHandle = (handles: string[] | undefined, handle: string) => (handles ?? []).includes(handle);
+export const hasHandle = (handles: string[] | undefined, handle: string) => normalizeHandles(handles).includes(cleanHandle(handle));
 
-export const isSavedBy = (item: InquiryItem, handle: string, defaultSavedHandle?: string) =>
-  hasHandle(item.savedBy, handle) || (Boolean(item.saved) && handle === defaultSavedHandle);
+export const isSavedBy = (item: InquiryItem, handle: string, defaultSavedHandle?: string) => {
+  if (item.savedBy) return hasHandle(item.savedBy, handle);
+  return Boolean(item.saved) && cleanHandle(handle) === cleanHandle(defaultSavedHandle ?? "");
+};
 
 export const mutateItemForActor = (
   item: InquiryItem,
   action: PostAction,
   actorHandle: string,
-  defaultSavedHandle?: string
+  defaultSavedHandle?: string,
+  active?: boolean
 ): InquiryItem => {
   if (action === "save") {
-    const next = toggleHandle(item.savedBy ?? (item.saved && defaultSavedHandle ? [defaultSavedHandle] : []), actorHandle);
+    const currentSavedBy = item.savedBy ?? (item.saved && defaultSavedHandle ? [defaultSavedHandle] : []);
+    const next = toggleHandle(currentSavedBy, actorHandle, active);
     return {
       ...item,
       savedBy: next.handles,
@@ -75,7 +99,7 @@ export const mutateItemForActor = (
   }
 
   if (action === "signal") {
-    const next = toggleHandle(item.signaledBy, actorHandle);
+    const next = toggleHandle(item.signaledBy, actorHandle, active);
     return {
       ...item,
       signaledBy: next.handles,
@@ -84,7 +108,7 @@ export const mutateItemForActor = (
   }
 
   if (action === "fork") {
-    const next = toggleHandle(item.forkedBy, actorHandle);
+    const next = toggleHandle(item.forkedBy, actorHandle, active);
     const nextForks = incrementMetric(item.metrics.forks, next.delta);
     return {
       ...item,

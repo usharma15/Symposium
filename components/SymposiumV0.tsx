@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { SignInButton, SignUpButton, useAuth, useUser } from "@clerk/nextjs";
-import { useEffect, useMemo, useState, type CSSProperties, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -404,6 +404,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState("Loading live data");
   const [authError, setAuthError] = useState("");
+  const itemsRef = useRef(items);
+  const profilesRef = useRef(profiles);
+  const actionVersionsRef = useRef<Record<string, number>>({});
+  const actionDesiredStateRef = useRef<Record<string, boolean | undefined>>({});
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState(
     "First note: make the thing feel alive without pretending the whole world is built yet."
@@ -428,6 +432,14 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     profileList.find((person) => person.name === nameOrHandle) ??
     getProfileForName(nameOrHandle);
   const selectedProfile = selectedProfileName ? findProfile(selectedProfileName) : null;
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    profilesRef.current = profiles;
+  }, [profiles]);
   const getPublishedRecency = (item: InquiryItem) => relativeDateScore(item.date);
   const profileActivityKey = (handle: string, action: PostAction, itemId: string) =>
     `profile:${cleanHandle(handle)}:${action}:${itemId}`;
@@ -1214,26 +1226,66 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   };
 
   const applyAction = async (itemId: string, action: PostAction) => {
-    const response = await fetch(`/api/posts/${itemId}/actions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, actorHandle: currentProfile.handle })
-    });
-    if (response.ok) {
-      const data = (await response.json()) as { item: InquiryItem };
-      const updatedItems = items.map((item) => (item.id === itemId ? data.item : item));
-      setItems(updatedItems);
-      persistLocalSnapshot(updatedItems, profiles);
-      touchProfileAction(itemId, action);
-      return;
-    }
+    const actorHandle = currentProfile.handle;
+    const actionKey = `${itemId}:${action}:${actorHandle}`;
+    const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
+    actionVersionsRef.current[actionKey] = version;
 
-    const nextItems = items.map((item) =>
-      item.id === itemId ? mutateItemForActor(item, action, currentProfile.handle, profile.handle) : item
-    );
-    setItems(nextItems);
-    persistLocalSnapshot(nextItems, profiles);
+    const previousItems = itemsRef.current;
+    let actionApplied = false;
+    let desiredActive: boolean | undefined;
+    const optimisticItems = previousItems.map((item) => {
+      if (item.id !== itemId) return item;
+      actionApplied = true;
+      const nextItem = mutateItemForActor(item, action, actorHandle, profile.handle);
+      if (action === "save") desiredActive = isSavedBy(nextItem, actorHandle, profile.handle);
+      if (action === "signal") desiredActive = hasHandle(nextItem.signaledBy, actorHandle);
+      if (action === "fork") desiredActive = hasHandle(nextItem.forkedBy, actorHandle);
+      return nextItem;
+    });
+
+    if (!actionApplied) return;
+    actionDesiredStateRef.current[actionKey] = desiredActive;
+
+    itemsRef.current = optimisticItems;
+    setItems(optimisticItems);
+    persistLocalSnapshot(optimisticItems, profilesRef.current);
     touchProfileAction(itemId, action);
+
+    try {
+      const response = await fetch(`/api/posts/${itemId}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, actorHandle, active: desiredActive })
+      });
+
+      if (!response.ok) throw new Error("Post action failed.");
+
+      const data = (await response.json()) as { item: InquiryItem };
+      if (actionVersionsRef.current[actionKey] !== version) {
+        const latestActive = actionDesiredStateRef.current[actionKey];
+        if (latestActive !== undefined) {
+          void fetch(`/api/posts/${itemId}/actions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action, actorHandle, active: latestActive })
+          }).catch(() => undefined);
+        }
+        return;
+      }
+
+      const committedItems = itemsRef.current.map((item) => (item.id === itemId ? data.item : item));
+      itemsRef.current = committedItems;
+      setItems(committedItems);
+      persistLocalSnapshot(committedItems, profilesRef.current);
+      setSyncStatus("Action synced");
+    } catch {
+      if (actionVersionsRef.current[actionKey] !== version) return;
+      itemsRef.current = previousItems;
+      setItems(previousItems);
+      persistLocalSnapshot(previousItems, profilesRef.current);
+      setSyncStatus("Action could not sync");
+    }
   };
 
   const openPost = (id: string) => {

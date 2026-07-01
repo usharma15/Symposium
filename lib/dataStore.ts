@@ -685,12 +685,12 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
   return comment;
 };
 
-export const applyPostAction = async (itemId: string, action: PostAction, actorHandle = defaultProfile.handle) => {
+export const applyPostAction = async (itemId: string, action: PostAction, actorHandle = defaultProfile.handle, active?: boolean) => {
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing) return null;
-    const updated = mutateItemForActor(existing, action, actorHandle, defaultProfile.handle);
+    const updated = mutateItemForActor(existing, action, actorHandle, defaultProfile.handle, active);
     await getPool().query(
       `UPDATE items
        SET metrics = $2,
@@ -717,7 +717,7 @@ export const applyPostAction = async (itemId: string, action: PostAction, actorH
   let updated: InquiryItem | null = null;
   local.items = local.items.map((item) => {
     if (item.id !== itemId) return item;
-    updated = mutateItemForActor(item, action, actorHandle, defaultProfile.handle);
+    updated = mutateItemForActor(item, action, actorHandle, defaultProfile.handle, active);
     return updated;
   });
   await writeLocal(local);

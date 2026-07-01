@@ -85,8 +85,8 @@ export const appRouter = router({
     react: authedProcedure.input(z.object({ postId: z.string() }).merge(postActionInputSchema)).mutation(({ ctx, input }) =>
       applyPostAction(input.postId, input, ctx.actor)
     ),
-    save: authedProcedure.input(z.object({ postId: z.string(), actorHandle: z.string().optional() })).mutation(({ ctx, input }) =>
-      applyPostAction(input.postId, { action: "save", actorHandle: input.actorHandle }, ctx.actor)
+    save: authedProcedure.input(z.object({ postId: z.string(), actorHandle: z.string().optional(), active: z.boolean().optional() })).mutation(({ ctx, input }) =>
+      applyPostAction(input.postId, { action: "save", actorHandle: input.actorHandle, active: input.active }, ctx.actor)
     )
   }),
   comments: router({

@@ -13,7 +13,7 @@ const actions: PostAction[] = ["signal", "save", "fork", "read"];
 
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
-  const body = await readJson<{ action?: string; actorHandle?: string }>(request);
+  const body = await readJson<{ action?: string; actorHandle?: string; active?: boolean }>(request);
 
   if (!body) {
     return jsonError("Invalid JSON body.", 400);
@@ -32,7 +32,7 @@ export async function POST(request: Request, context: Context) {
   });
   if (live) return live;
 
-  const item = await applyPostAction(id, action as PostAction, String(body.actorHandle ?? ""));
+  const item = await applyPostAction(id, action as PostAction, String(body.actorHandle ?? "@udayan"), body.active);
 
   if (!item) {
     return jsonError("Post not found.", 404);

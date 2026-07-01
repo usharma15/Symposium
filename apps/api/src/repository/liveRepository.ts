@@ -39,6 +39,7 @@ import { emitEvent } from "../services/events";
 import {
   actorHandle,
   callRowToContract,
+  commentTreesFromRows,
   defaultProfile,
   ensureLiveData,
   ensureProfileHandle,
@@ -52,6 +53,7 @@ import {
   rowToItem,
   searchablePostText,
   seedSnapshot,
+  type CommentRow,
   type SnapshotRow
 } from "./foundation";
 
@@ -362,18 +364,76 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
 
 export const applyPostAction = async (postId: string, rawInput: unknown, actor: Actor) => {
   const input: PostActionInputContract = postActionInputSchema.parse(rawInput);
-  const snapshot = await getInitialState();
-  const existing = snapshot.items.find((item) => item.id === postId);
-  if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-
   const handle = actorHandle(actor, input.actorHandle);
-  const updated = mutateItemForActor(existing, input.action, handle, defaultProfile.handle);
 
-  if (!hasDatabase()) return updated;
+  if (!hasDatabase()) {
+    const snapshot = await getInitialState();
+    const existing = snapshot.items.find((item) => item.id === postId);
+    if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    return mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active);
+  }
+
+  await ensureLiveData();
 
   const client = await getPool().connect();
+  let updated: InquiryItemContract;
+
   try {
     await client.query("BEGIN");
+    const postResult = await client.query<SnapshotRow>(
+      `SELECT
+        id,
+        kind,
+        room,
+        title,
+        author_handle AS "authorHandle",
+        author_name AS "authorName",
+        affiliation,
+        date_label AS "dateLabel",
+        status,
+        metrics,
+        gathering_reason AS "gatheringReason",
+        excerpt,
+        body,
+        tags,
+        signals,
+        claims,
+        objections,
+        evidence,
+        tests,
+        forks,
+        saved,
+        saved_by AS "savedBy",
+        signaled_by AS "signaledBy",
+        forked_by AS "forkedBy"
+       FROM posts
+       WHERE id = $1
+       FOR UPDATE`,
+      [postId]
+    );
+
+    const row = postResult.rows[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+
+    const commentsResult = await client.query<CommentRow>(
+      `SELECT
+        id,
+        post_id AS "postId",
+        parent_id AS "parentId",
+        author_handle AS "authorHandle",
+        author_name AS "authorName",
+        stance,
+        body,
+        created_at AS "createdAt"
+       FROM comments
+       WHERE post_id = $1
+       ORDER BY created_at ASC`,
+      [postId]
+    );
+    const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    const existing = rowToItem(row, commentsByPost.get(postId) ?? []);
+    updated = mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active);
+
     if (input.action === "read") {
       await client.query(
         `INSERT INTO post_actions (post_id, actor_handle, action, count)

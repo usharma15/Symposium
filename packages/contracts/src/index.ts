@@ -167,7 +167,8 @@ export const createCommentInputSchema = z.object({
 
 export const postActionInputSchema = z.object({
   action: postActionSchema,
-  actorHandle: z.string().optional()
+  actorHandle: z.string().optional(),
+  active: z.boolean().optional()
 });
 
 export const joinCommunityInputSchema = z.object({

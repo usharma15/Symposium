@@ -437,7 +437,7 @@ export const ensureLiveData = async () => {
   await seedReady;
 };
 
-const commentTreesFromRows = (rows: CommentRow[]) => {
+export const commentTreesFromRows = (rows: CommentRow[]) => {
   const byPostAndParent = new Map<string, Map<string, CommentRow[]>>();
 
   for (const row of rows) {
