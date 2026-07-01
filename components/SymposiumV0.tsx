@@ -43,11 +43,14 @@ import type { PostAction } from "@/lib/dataStore";
 import {
   cleanHandle,
   countComments,
+  formatMetric,
   hasHandle,
+  itemTimestampScore,
   isSavedBy,
+  metricNumber,
   mutateItemForActor,
   normalizeSearchPhrase,
-  relativeDateScore
+  relativeTimeLabel
 } from "@/lib/symposiumCore";
 
 type Theme = "day" | "night";
@@ -60,6 +63,7 @@ type PatronageMode = "lobby" | "civic" | "private";
 type ViewSnapshot = {
   activeRoom: RoomId;
   selectedItemId: string | null;
+  selectedCommentId: string | null;
   selectedProfileName: string | null;
   officeMode: OfficeMode;
   patronageMode: PatronageMode;
@@ -86,6 +90,13 @@ type ProfileFollowResponse = {
 type ProfileSocialLists = {
   following: string[];
   followers: string[];
+};
+
+type ProfileCommentActivity = {
+  id: string;
+  item: InquiryItem;
+  comment: InquiryComment;
+  recency: number;
 };
 
 type PostDraft = {
@@ -328,6 +339,51 @@ const commentTreeHasAuthor = (comments: InquiryComment[], person: ResearchProfil
       commentTreeHasAuthor(comment.replies ?? [], person)
   );
 
+const commentTreeHasId = (comments: InquiryComment[], id: string): boolean =>
+  comments.some((comment) => comment.id === id || commentTreeHasId(comment.replies ?? [], id));
+
+const commentAuthoredByProfile = (comment: InquiryComment, person: ResearchProfile) =>
+  comment.authorHandle ? cleanHandle(comment.authorHandle) === person.handle : comment.author === person.name;
+
+const commentTimestampScore = (comment: InquiryComment) => {
+  const parsed = comment.createdAt ? Date.parse(comment.createdAt) : Number.NaN;
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const collectProfileComments = (
+  items: InquiryItem[],
+  person: ResearchProfile
+): ProfileCommentActivity[] => {
+  const activities: ProfileCommentActivity[] = [];
+
+  const visit = (item: InquiryItem, comments: InquiryComment[]) => {
+    for (const comment of comments) {
+      if (commentAuthoredByProfile(comment, person) && comment.id) {
+        activities.push({
+          id: `${item.id}:${comment.id}`,
+          item,
+          comment,
+          recency: commentTimestampScore(comment) || itemTimestampScore(item)
+        });
+      }
+      visit(item, comment.replies ?? []);
+    }
+  };
+
+  for (const item of items) visit(item, item.comments);
+  return activities.sort((a, b) => b.recency - a.recency);
+};
+
+const updateCommentsForProfile = (
+  comments: InquiryComment[],
+  person: ResearchProfile
+): InquiryComment[] =>
+  comments.map((comment) => ({
+    ...comment,
+    author: comment.authorHandle && cleanHandle(comment.authorHandle) === person.handle ? person.name : comment.author,
+    replies: updateCommentsForProfile(comment.replies ?? [], person)
+  }));
+
 const itemAuthoredByProfile = (item: InquiryItem, person: ResearchProfile) =>
   item.authorHandle ? item.authorHandle === person.handle : item.author === person.name;
 
@@ -342,10 +398,16 @@ const isLiveInquiryItem = (value: unknown): value is InquiryItem =>
 
 const uniqueItemsById = (items: InquiryItem[]) => [...new Map(items.map((item) => [item.id, item])).values()];
 
+const profileForHandle = (profiles: Record<string, ResearchProfile>, handleOrName?: string) => {
+  if (!handleOrName) return undefined;
+  return profiles[cleanHandle(handleOrName)] ?? Object.values(profiles).find((person) => person.name === handleOrName);
+};
+
 const inferredLikesPublic = (person: ResearchProfile) => person.likesPublic ?? person.handle.length % 5 !== 0;
 const inferredResharesPublic = (person: ResearchProfile) => person.resharesPublic ?? person.handle.length % 4 !== 0;
 
 const fallbackCommunityCount = 8;
+const commentReplyPageSize = 6;
 
 const communityMembershipIds = (communities: ResearchCommunity[], person: ResearchProfile) => {
   const explicit = communities.filter((community) => community.memberHandles.includes(person.handle));
@@ -414,6 +476,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [officeMode, setOfficeMode] = useState<OfficeMode>("desk");
   const [patronageMode, setPatronageMode] = useState<PatronageMode>("lobby");
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedCommentId, setSelectedCommentId] = useState<string | null>(null);
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const [communitiesExpanded, setCommunitiesExpanded] = useState(false);
   const [communityQuery, setCommunityQuery] = useState("");
@@ -478,7 +541,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   useEffect(() => {
     selectedProfileNameRef.current = selectedProfileName;
   }, [selectedProfileName]);
-  const getPublishedRecency = (item: InquiryItem) => relativeDateScore(item.date);
+  const getPublishedRecency = (item: InquiryItem) => itemTimestampScore(item);
   const profileActivityKey = (handle: string, action: PostAction, itemId: string) =>
     `profile:${cleanHandle(handle)}:${action}:${itemId}`;
   const getProfileRecency = (item: InquiryItem, handle: string, kind: ProfileActivityKind) => {
@@ -611,10 +674,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       : { [data.defaultProfile.handle]: data.defaultProfile };
     const nextProfile = loadedProfiles[preferredHandle] ?? loadedProfiles[data.defaultProfile.handle] ?? data.defaultProfile;
 
-    setItems(data.items);
+    const loadedItems = sortByPublishedRecency(data.items);
+    setItems(loadedItems);
     setProfiles(loadedProfiles);
     setCurrentProfile(nextProfile);
-    persistLocalSnapshot(data.items, loadedProfiles, nextProfile);
+    persistLocalSnapshot(loadedItems, loadedProfiles, nextProfile);
     setSyncStatus("Live data connected");
   };
 
@@ -652,10 +716,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       existingIndex >= 0
         ? currentItems.map((item) => (item.id === incoming.id ? incoming : item))
         : [incoming, ...currentItems];
+    const sortedItems = sortByPublishedRecency(nextItems);
 
-    itemsRef.current = nextItems;
-    setItems(nextItems);
-    persistLocalSnapshot(nextItems, profilesRef.current, currentProfileRef.current);
+    itemsRef.current = sortedItems;
+    setItems(sortedItems);
+    persistLocalSnapshot(sortedItems, profilesRef.current, currentProfileRef.current);
   };
 
   const mergeLiveFollow = (record: ProfileFollowRecord | undefined, active: boolean) => {
@@ -840,8 +905,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       const local = readLocalSnapshot();
       const fallbackProfiles = local?.profiles ?? { [profile.handle]: profile };
       const fallbackProfile = fallbackProfiles[storedProfileHandle ?? profile.handle] ?? profile;
+      const fallbackItems = sortByPublishedRecency(local?.items ?? inquiryItems);
       setProfiles(fallbackProfiles);
-      setItems(local?.items ?? inquiryItems);
+      setItems(fallbackItems);
       setCurrentProfile(fallbackProfile);
       setSyncStatus("Using seed data");
     });
@@ -934,6 +1000,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setPatronageMode("lobby");
       setSelectedCommunityId(null);
       setSelectedItemId(null);
+      setSelectedCommentId(null);
       setSelectedProfileName(null);
       setViewHistory([]);
       setViewFuture([]);
@@ -982,6 +1049,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const snapshotView = (): ViewSnapshot => ({
     activeRoom,
     selectedItemId,
+    selectedCommentId,
     selectedProfileName,
     officeMode,
     patronageMode,
@@ -992,6 +1060,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const restoreView = (snapshot: ViewSnapshot) => {
     setActiveRoom(snapshot.activeRoom);
     setSelectedItemId(snapshot.selectedItemId);
+    setSelectedCommentId(snapshot.selectedCommentId);
     setSelectedProfileName(snapshot.selectedProfileName);
     setOfficeMode(snapshot.officeMode);
     setPatronageMode(snapshot.patronageMode);
@@ -1013,6 +1082,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setViewFuture([]);
     if (next.activeRoom !== undefined) setActiveRoom(next.activeRoom);
     if (next.selectedItemId !== undefined) setSelectedItemId(next.selectedItemId);
+    if (next.selectedCommentId !== undefined) setSelectedCommentId(next.selectedCommentId);
     if (next.selectedProfileName !== undefined) setSelectedProfileName(next.selectedProfileName);
     if (next.officeMode !== undefined) setOfficeMode(next.officeMode);
     if (next.patronageMode !== undefined) setPatronageMode(next.patronageMode);
@@ -1050,6 +1120,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     navigateView({
       activeRoom: roomId,
       selectedItemId: null,
+      selectedCommentId: null,
       selectedProfileName: null,
       officeMode: roomId === "office" ? mode : "desk",
       patronageMode: roomId === "funding" ? "lobby" : patronageMode,
@@ -1065,6 +1136,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     navigateView({
       activeRoom: "funding",
       selectedItemId: null,
+      selectedCommentId: null,
       selectedProfileName: null,
       officeMode: "desk",
       patronageMode: mode,
@@ -1076,6 +1148,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     navigateView({
       activeRoom: "communities",
       selectedItemId: null,
+      selectedCommentId: null,
       selectedProfileName: null,
       officeMode: "desk",
       patronageMode: "lobby",
@@ -1087,6 +1160,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     navigateView({
       activeRoom: "communities",
       selectedItemId: null,
+      selectedCommentId: null,
       selectedProfileName: null,
       officeMode: "desk",
       patronageMode: "lobby",
@@ -1095,7 +1169,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   };
 
   const openProfile = (profileKey: string) => {
-    navigateView({ selectedProfileName: profileKey, selectedItemId: null });
+    navigateView({ selectedProfileName: profileKey, selectedItemId: null, selectedCommentId: null });
   };
 
   const openNotebook = () => {
@@ -1130,6 +1204,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
   const createPost = async ({ title, body, kind }: PostDraft) => {
     const routedRoom = routePostRoom(kind);
+    const createdAt = new Date().toISOString();
     setSyncStatus("Posting");
     const response = await fetch("/api/posts", {
       method: "POST",
@@ -1145,6 +1220,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       authorHandle: currentProfile.handle,
       affiliation: currentProfile.location,
       date: "Just now",
+      createdAt,
       status: "New",
       metrics: { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" },
       gatheringReason: "",
@@ -1164,13 +1240,15 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       forkedBy: []
     };
     const data = response.ok ? ((await response.json()) as { item: InquiryItem }) : { item: fallbackItem };
-    const nextItems = [data.item, ...items.filter((item) => item.id !== data.item.id)];
-    touchActivity(data.item.id);
+    const committedItem = { ...data.item, createdAt: data.item.createdAt ?? createdAt };
+    const nextItems = sortByPublishedRecency([committedItem, ...items.filter((item) => item.id !== committedItem.id)]);
+    touchActivity(committedItem.id);
     setItems(nextItems);
     persistLocalSnapshot(nextItems, profiles);
     navigateView({
-      activeRoom: data.item.room,
-      selectedItemId: data.item.id,
+      activeRoom: committedItem.room,
+      selectedItemId: committedItem.id,
+      selectedCommentId: null,
       selectedProfileName: null,
       officeMode: "desk"
     });
@@ -1193,7 +1271,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         authorHandle: currentProfile.handle,
         stance: "Comment",
         body,
-        createdAt: "Just now",
+        createdAt: new Date().toISOString(),
         replies: []
       };
       const addToTree = (comments: InquiryComment[]): InquiryComment[] => {
@@ -1211,13 +1289,16 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(nextItems);
       persistLocalSnapshot(nextItems, profiles);
       setSelectedItemId(itemId);
+      setSelectedCommentId(comment.id ?? null);
       setSyncStatus(parentId ? "Reply saved locally" : "Comment saved locally");
       return;
     }
 
+    const data = (await response.json().catch(() => ({}))) as { comment?: InquiryComment };
     touchActivity(itemId);
     await refreshData(currentProfile.handle);
     setSelectedItemId(itemId);
+    setSelectedCommentId(data.comment?.id ?? null);
     setSyncStatus(parentId ? "Reply saved" : "Comment saved");
   };
 
@@ -1236,6 +1317,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setPatronageMode("lobby");
     setSelectedCommunityId(null);
     setSelectedItemId(null);
+    setSelectedCommentId(null);
     setSelectedProfileName(null);
     setViewHistory([]);
     setViewFuture([]);
@@ -1337,9 +1419,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       resharesPublic: draft.resharesPublic
     };
     const nextProfiles = { ...profiles, [updatedProfile.handle]: updatedProfile };
-    const nextItems = items.map((item) =>
-      item.authorHandle === updatedProfile.handle ? { ...item, author: updatedProfile.name } : item
-    );
+    const nextItems = items.map((item) => ({
+      ...item,
+      author: item.authorHandle === updatedProfile.handle ? updatedProfile.name : item.author,
+      comments: updateCommentsForProfile(item.comments, updatedProfile)
+    }));
 
     setCurrentProfile(updatedProfile);
     setProfiles(nextProfiles);
@@ -1372,9 +1456,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       const data = (await response.json()) as { profile: ResearchProfile };
       const committedProfile = { ...updatedProfile, ...data.profile };
       const committedProfiles = { ...nextProfiles, [committedProfile.handle]: committedProfile };
-      const committedItems = nextItems.map((item) =>
-        item.authorHandle === committedProfile.handle ? { ...item, author: committedProfile.name } : item
-      );
+      const committedItems = nextItems.map((item) => ({
+        ...item,
+        author: item.authorHandle === committedProfile.handle ? committedProfile.name : item.author,
+        comments: updateCommentsForProfile(item.comments, committedProfile)
+      }));
       setCurrentProfile(committedProfile);
       setProfiles(committedProfiles);
       setItems(committedItems);
@@ -1499,8 +1585,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     }
   };
 
-  const openPost = (id: string) => {
-    navigateView({ selectedItemId: id, selectedProfileName: null });
+  const openPost = (id: string, commentId?: string | null) => {
+    navigateView({ selectedItemId: id, selectedCommentId: commentId ?? null, selectedProfileName: null });
     void applyAction(id, "read");
   };
 
@@ -1657,6 +1743,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onAddComment={addComment}
             onAction={applyAction}
             actorHandle={currentProfile.handle}
+            profiles={profiles}
+            selectedCommentId={selectedCommentId}
           />
         ) : activeRoom === "hall" ? (
           <HallView onEnter={enterRoom} />
@@ -1677,6 +1765,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             community={selectedCommunity}
             items={items}
             currentProfile={currentProfile}
+            profiles={profiles}
             onBack={closeCommunity}
             onSelect={openPost}
             onOpenProfile={openProfile}
@@ -1711,6 +1800,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onOpenNotes={() => toggleOfficeMode("notes")}
             onOpenSaved={() => toggleOfficeMode("saved")}
             actorHandle={currentProfile.handle}
+            profiles={profiles}
           />
         )}
       </section>
@@ -2147,6 +2237,7 @@ function SelectedCommunityView({
   community,
   items,
   currentProfile,
+  profiles,
   onBack,
   onSelect,
   onOpenProfile,
@@ -2156,8 +2247,9 @@ function SelectedCommunityView({
   community: ResearchCommunity;
   items: InquiryItem[];
   currentProfile: ResearchProfile;
+  profiles: Record<string, ResearchProfile>;
   onBack: () => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
   onDummyCall: (mode: "Voice" | "Video") => void;
@@ -2204,6 +2296,7 @@ function SelectedCommunityView({
               onOpenProfile={onOpenProfile}
               onAction={onAction}
               actorHandle={currentProfile.handle}
+              profiles={profiles}
             />
           ))
         ) : (
@@ -2218,7 +2311,7 @@ function SelectedCommunityView({
 }
 
 const sortCommunityItems = (items: InquiryItem[]) =>
-  [...items].sort((a, b) => relativeDateScore(b.date) - relativeDateScore(a.date));
+  [...items].sort((a, b) => itemTimestampScore(b) - itemTimestampScore(a));
 
 function RoomView({
   room,
@@ -2235,7 +2328,8 @@ function RoomView({
   onAction,
   onOpenNotes,
   onOpenSaved,
-  actorHandle
+  actorHandle,
+  profiles
 }: {
   room: Room;
   items: InquiryItem[];
@@ -2246,12 +2340,13 @@ function RoomView({
   onFeedScope: (scope: FeedScope) => void;
   onRoomChip: (chip: string) => void;
   onPatronageMode: (mode: PatronageMode) => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
   onOpenNotes: () => void;
   onOpenSaved: () => void;
   actorHandle: string;
+  profiles: Record<string, ResearchProfile>;
 }) {
   const roomTitle =
     room.id === "funding" && patronageMode === "civic"
@@ -2354,6 +2449,7 @@ function RoomView({
               onOpenProfile={onOpenProfile}
               onAction={onAction}
               actorHandle={actorHandle}
+              profiles={profiles}
             />
           ))
         ) : (
@@ -2503,13 +2599,15 @@ function FeedPost({
   onSelect,
   onOpenProfile,
   onAction,
-  actorHandle
+  actorHandle,
+  profiles
 }: {
   item: InquiryItem;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
   actorHandle: string;
+  profiles: Record<string, ResearchProfile>;
 }) {
   const openPost = () => onSelect(item.id);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -2530,6 +2628,7 @@ function FeedPost({
     >
       <PostAuthor
         item={item}
+        profiles={profiles}
         onOpenProfile={onOpenProfile}
         onClickStop={(event) => event.stopPropagation()}
       />
@@ -2544,28 +2643,33 @@ function FeedPost({
 
 function PostAuthor({
   item,
+  profiles,
   onOpenProfile,
   onClickStop
 }: {
   item: InquiryItem;
+  profiles: Record<string, ResearchProfile>;
   onOpenProfile: (name: string) => void;
   onClickStop?: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
+  const authorProfile = profileForHandle(profiles, item.authorHandle ?? item.author);
+  const authorName = authorProfile?.name ?? item.author;
+
   return (
     <button
       className="post-author"
       type="button"
       onClick={(event) => {
         onClickStop?.(event);
-        onOpenProfile(item.authorHandle ?? item.author);
+        onOpenProfile(authorProfile?.handle ?? item.authorHandle ?? item.author);
       }}
     >
-      <span className="avatar">{initial(item.author)}</span>
+      <span className="avatar">
+        {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
+      </span>
       <span>
-        <strong>{item.author}</strong>
-        <small>
-          {item.affiliation} · {item.date}
-        </small>
+        <strong>{authorName}</strong>
+        <small>{relativeTimeLabel(item.createdAt, item.date)}</small>
       </span>
     </button>
   );
@@ -2611,7 +2715,7 @@ function SocialActions({
           >
             <Icon size={16} fill={fillActiveIcon ? "currentColor" : "none"} />
             <span className="metric-label">{action.label}</span>
-            <strong>{action.value}</strong>
+            <strong>{formatMetric(metricNumber(action.value))}</strong>
           </button>
         );
       })}
@@ -2626,7 +2730,9 @@ function DetailView({
   onOpenProfile,
   onAddComment,
   onAction,
-  actorHandle
+  actorHandle,
+  profiles,
+  selectedCommentId
 }: {
   item: InquiryItem;
   room: Room;
@@ -2635,10 +2741,14 @@ function DetailView({
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onAction: (itemId: string, action: PostAction) => void;
   actorHandle: string;
+  profiles: Record<string, ResearchProfile>;
+  selectedCommentId: string | null;
 }) {
   const isPaper = item.kind === "paper";
   const doiSlug = item.id.replace(/[^a-z0-9]+/gi, ".").replace(/\.+/g, ".").replace(/\.$/, "");
   const codeSlug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 44);
+  const authorProfile = profileForHandle(profiles, item.authorHandle ?? item.author);
+  const authorName = authorProfile?.name ?? item.author;
 
   return (
     <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}`}>
@@ -2650,13 +2760,13 @@ function DetailView({
       <section className="detail-main">
         <p className="eyebrow">{kindLabels[item.kind]}</p>
         <h1>{item.title}</h1>
-        <button className="detail-byline-button" type="button" onClick={() => onOpenProfile(item.authorHandle ?? item.author)}>
-          <span className="avatar">{initial(item.author)}</span>
+        <button className="detail-byline-button" type="button" onClick={() => onOpenProfile(authorProfile?.handle ?? item.authorHandle ?? item.author)}>
+          <span className="avatar">
+            {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
+          </span>
           <span>
-            <strong>{item.author}</strong>
-            <small>
-              {item.affiliation} · {item.date}
-            </small>
+            <strong>{authorName}</strong>
+            <small>{relativeTimeLabel(item.createdAt, item.date)}</small>
           </span>
         </button>
         <p className="detail-body">{item.body}</p>
@@ -2665,7 +2775,14 @@ function DetailView({
         <section className="comments-section">
           <h2>Discussion</h2>
           <CommentComposer itemId={item.id} onAddComment={onAddComment} />
-          <CommentThread comments={item.comments} itemId={item.id} onOpenProfile={onOpenProfile} onAddComment={onAddComment} />
+          <CommentThread
+            comments={item.comments}
+            itemId={item.id}
+            profiles={profiles}
+            selectedCommentId={selectedCommentId}
+            onOpenProfile={onOpenProfile}
+            onAddComment={onAddComment}
+          />
         </section>
       </section>
 
@@ -2675,7 +2792,7 @@ function DetailView({
             <h2>Paper</h2>
             <div>
               <span>Collaborators</span>
-              <strong>{item.author}</strong>
+              <strong>{authorName}</strong>
               <small>Independent reviewers pending</small>
             </div>
             <div>
@@ -2736,12 +2853,16 @@ function CommentComposer({
 function CommentThread({
   comments,
   itemId,
+  profiles,
+  selectedCommentId,
   onOpenProfile,
   onAddComment,
   depth = 0
 }: {
   comments: InquiryComment[];
   itemId: string;
+  profiles: Record<string, ResearchProfile>;
+  selectedCommentId: string | null;
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   depth?: number;
@@ -2753,6 +2874,8 @@ function CommentThread({
           key={comment.id ?? `${comment.author}-${comment.stance}-${comment.body}`}
           comment={comment}
           itemId={itemId}
+          profiles={profiles}
+          selectedCommentId={selectedCommentId}
           onOpenProfile={onOpenProfile}
           onAddComment={onAddComment}
           depth={depth}
@@ -2765,24 +2888,60 @@ function CommentThread({
 function CommentNode({
   comment,
   itemId,
+  profiles,
+  selectedCommentId,
   onOpenProfile,
   onAddComment,
   depth
 }: {
   comment: InquiryComment;
   itemId: string;
+  profiles: Record<string, ResearchProfile>;
+  selectedCommentId: string | null;
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   depth: number;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
+  const replies = comment.replies ?? [];
+  const [replyPage, setReplyPage] = useState(() => {
+    if (!selectedCommentId) return 0;
+    const selectedReplyIndex = replies.findIndex((reply) => commentTreeHasId([reply], selectedCommentId));
+    return selectedReplyIndex >= 0 ? Math.floor(selectedReplyIndex / commentReplyPageSize) : 0;
+  });
+  const nodeRef = useRef<HTMLElement | null>(null);
+  const authorProfile = profileForHandle(profiles, comment.authorHandle ?? comment.author);
+  const authorName = authorProfile?.name ?? comment.author;
+  const highlighted = Boolean(selectedCommentId && comment.id === selectedCommentId);
+  const pageStart = replyPage * commentReplyPageSize;
+  const visibleReplies = replies.slice(pageStart, pageStart + commentReplyPageSize);
+  const hasPreviousReplies = replyPage > 0;
+  const hasMoreReplies = pageStart + commentReplyPageSize < replies.length;
+
+  useEffect(() => {
+    if (!selectedCommentId || !replies.length) return;
+    const selectedReplyIndex = replies.findIndex((reply) => commentTreeHasId([reply], selectedCommentId));
+    if (selectedReplyIndex >= 0) setReplyPage(Math.floor(selectedReplyIndex / commentReplyPageSize));
+  }, [replies, selectedCommentId]);
+
+  useEffect(() => {
+    if (!highlighted) return;
+    nodeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [highlighted]);
 
   return (
-    <article className="comment">
-      <button type="button" onClick={() => onOpenProfile(comment.authorHandle ?? comment.author)}>
-        <span className="avatar small">{initial(comment.author)}</span>
+    <article
+      ref={nodeRef}
+      id={comment.id ? `comment-${comment.id}` : undefined}
+      className={`comment ${highlighted ? "highlighted" : ""}`}
+    >
+      <button type="button" className="comment-author" onClick={() => onOpenProfile(authorProfile?.handle ?? comment.authorHandle ?? comment.author)}>
+        <span className="avatar small">
+          {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
+        </span>
         <span>
-          <strong>{comment.author}</strong>
+          <strong>{authorName}</strong>
+          {comment.createdAt ? <small>{relativeTimeLabel(comment.createdAt)}</small> : null}
         </span>
       </button>
       <p>{comment.body}</p>
@@ -2800,14 +2959,28 @@ function CommentNode({
           }}
         />
       ) : null}
-      {comment.replies?.length ? (
-        <CommentThread
-          comments={comment.replies}
-          itemId={itemId}
-          onOpenProfile={onOpenProfile}
-          onAddComment={onAddComment}
-          depth={depth + 1}
-        />
+      {replies.length ? (
+        <div className="reply-window">
+          {hasPreviousReplies ? (
+            <button className="reply-window-button" type="button" onClick={() => setReplyPage((page) => Math.max(0, page - 1))}>
+              Show previous replies
+            </button>
+          ) : null}
+          <CommentThread
+            comments={visibleReplies}
+            itemId={itemId}
+            profiles={profiles}
+            selectedCommentId={selectedCommentId}
+            onOpenProfile={onOpenProfile}
+            onAddComment={onAddComment}
+            depth={depth + 1}
+          />
+          {hasMoreReplies ? (
+            <button className="reply-window-button" type="button" onClick={() => setReplyPage((page) => page + 1)}>
+              Show more replies
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </article>
   );
@@ -2907,7 +3080,7 @@ function ProfileView({
   items: InquiryItem[];
   isOwnProfile: boolean;
   isFollowing: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
   onOpenSettings: () => void;
@@ -2933,7 +3106,8 @@ function ProfileView({
   const authored = byPublishedRecency(items.filter(isAuthor));
   const papers = authored.filter((item) => item.kind === "paper");
   const thoughts = authored.filter((item) => item.kind === "thought" || item.kind === "note");
-  const comments = byProfileRecency(items.filter((item) => !isAuthor(item) && commentTreeHasAuthor(item.comments, person)), "comments");
+  const commentActivities = collectProfileComments(items, person);
+  const commentedItems = byProfileRecency(items.filter((item) => !isAuthor(item) && commentTreeHasAuthor(item.comments, person)), "comments");
   const reshares = canShowReshares
     ? byProfileRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.forkedBy, person.handle)), "fork")
     : [];
@@ -2941,16 +3115,26 @@ function ProfileView({
     ? byProfileRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.signaledBy, person.handle)), "signal")
     : [];
   const saved = canShowSaved ? byProfileRecency(items.filter((item) => !isAuthor(item) && isSavedBy(item, person.handle, profile.handle)), "save") : [];
-  const allActivity = byAllProfileRecency(uniqueItemsById([...authored, ...comments, ...reshares, ...likes, ...saved]));
+  const allActivity = byAllProfileRecency(uniqueItemsById([...authored, ...commentedItems, ...reshares, ...likes, ...saved]));
 
   const tabItems: Record<ProfileTab, InquiryItem[]> = {
     all: allActivity,
     papers,
     thoughts,
-    comments,
+    comments: commentedItems,
     reshares,
     likes,
     saved
+  };
+
+  const tabCounts: Record<ProfileTab, number> = {
+    all: allActivity.length,
+    papers: papers.length,
+    thoughts: thoughts.length,
+    comments: commentActivities.length,
+    reshares: reshares.length,
+    likes: likes.length,
+    saved: saved.length
   };
 
   const tabs: Array<{ id: ProfileTab; label: string }> = [
@@ -3010,7 +3194,7 @@ function ProfileView({
                 className={activeTab === tab.id ? "active" : ""}
                 onClick={() => setActiveTab(tab.id)}
               >
-                <strong>{tabItems[tab.id].length}</strong>
+                <strong>{tabCounts[tab.id]}</strong>
                 <span>{tab.label}</span>
               </button>
             ))}
@@ -3019,7 +3203,24 @@ function ProfileView({
       </section>
 
       <section className="feed-stream profile-stream" aria-label={`${person.name} profile feed`}>
-        {tabItems[activeTab].length ? (
+        {activeTab === "comments" ? (
+          commentActivities.length ? (
+            commentActivities.map((activity) => (
+              <ProfileCommentCard
+                key={activity.id}
+                activity={activity}
+                profiles={profiles}
+                onSelect={onSelect}
+                onOpenProfile={onOpenProfile}
+              />
+            ))
+          ) : (
+            <div className="empty-feed">
+              <strong>No comments here yet.</strong>
+              <span>This section will fill as the profile joins discussion threads.</span>
+            </div>
+          )
+        ) : tabItems[activeTab].length ? (
           tabItems[activeTab].map((item) => (
             <FeedPost
               key={item.id}
@@ -3028,6 +3229,7 @@ function ProfileView({
               onOpenProfile={onOpenProfile}
               onAction={onAction}
               actorHandle={actorHandle}
+              profiles={profiles}
             />
           ))
         ) : (
@@ -3050,6 +3252,63 @@ function ProfileView({
           }}
         />
       ) : null}
+    </article>
+  );
+}
+
+function ProfileCommentCard({
+  activity,
+  profiles,
+  onSelect,
+  onOpenProfile
+}: {
+  activity: ProfileCommentActivity;
+  profiles: Record<string, ResearchProfile>;
+  onSelect: (id: string, commentId?: string | null) => void;
+  onOpenProfile: (name: string) => void;
+}) {
+  const authorProfile = profileForHandle(profiles, activity.comment.authorHandle ?? activity.comment.author);
+  const authorName = authorProfile?.name ?? activity.comment.author;
+
+  return (
+    <article
+      className="profile-comment-card"
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(activity.item.id, activity.comment.id ?? null)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(activity.item.id, activity.comment.id ?? null);
+        }
+      }}
+    >
+      <header>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenProfile(authorProfile?.handle ?? activity.comment.authorHandle ?? activity.comment.author);
+          }}
+        >
+          <span className="avatar small">
+            {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
+          </span>
+          <span>
+            <strong>{authorName}</strong>
+            <small>{relativeTimeLabel(activity.comment.createdAt, "Comment")}</small>
+          </span>
+        </button>
+        <span>
+          <MessageCircle size={15} />
+          Comment
+        </span>
+      </header>
+      <p>{activity.comment.body}</p>
+      <footer>
+        <span>On</span>
+        <strong>{activity.item.title}</strong>
+      </footer>
     </article>
   );
 }

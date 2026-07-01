@@ -15,7 +15,6 @@ import {
 import {
   cleanHandle,
   incrementMetric,
-  metricNumber,
   mutateItemForActor,
   updateSignalValue,
   type PostAction
@@ -65,14 +64,6 @@ let schemaReady: Promise<void> | null = null;
 let seedReady: Promise<void> | null = null;
 
 const handleFromName = (name: string) => getProfileForName(name).handle;
-
-const nowLabel = () =>
-  new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date());
 
 const newId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -418,6 +409,7 @@ const loadPostgres = async (): Promise<AppData> => {
       author_name: string;
       affiliation: string;
       date_label: string;
+      created_at: string;
       status: string;
       metrics: InquiryItem["metrics"];
       gathering_reason: string;
@@ -466,6 +458,7 @@ const loadPostgres = async (): Promise<AppData> => {
       authorHandle: item.author_handle,
       affiliation: item.affiliation,
       date: item.date_label,
+      createdAt: item.created_at ? new Date(item.created_at).toISOString() : undefined,
       status: item.status,
       metrics: item.metrics,
       gatheringReason: item.gathering_reason,
@@ -521,11 +514,24 @@ export const upsertProfile = async (input: CreateProfileInput) => {
         JSON.stringify(person.fields)
       ]
     );
+    await getPool().query("UPDATE items SET author_name = $2 WHERE author_handle = $1", [person.handle, person.name]);
+    await getPool().query("UPDATE comments SET author_name = $2 WHERE author_handle = $1", [person.handle, person.name]);
     return person;
   }
 
   const data = await readLocal();
   data.profiles[person.handle] = person;
+  const updateCommentAuthors = (comments: InquiryComment[]): InquiryComment[] =>
+    comments.map((comment) => ({
+      ...comment,
+      author: comment.authorHandle === person.handle ? person.name : comment.author,
+      replies: updateCommentAuthors(comment.replies ?? [])
+    }));
+  data.items = data.items.map((item) => ({
+    ...item,
+    author: item.authorHandle === person.handle ? person.name : item.author,
+    comments: updateCommentAuthors(item.comments)
+  }));
   await writeLocal(data);
   return person;
 };
@@ -543,6 +549,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     authorHandle: author.handle,
     affiliation: author.location,
     date: "Just now",
+    createdAt: new Date().toISOString(),
     status: isPaper ? "Draft" : "New",
     metrics: { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" },
     gatheringReason: "A new working post added to the live v0.",
@@ -571,14 +578,14 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     await ensureSchema();
     await getPool().query(
       `INSERT INTO items (
-        id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
+        id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
         tests, forks, saved, saved_by, signaled_by, forked_by
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24
+        $19, $20, $21, $22, $23, $24, $25
       )`,
       [
         item.id,
@@ -589,6 +596,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
         item.author,
         item.affiliation,
         item.date,
+        item.createdAt,
         item.status,
         JSON.stringify(item.metrics),
         item.gatheringReason,
@@ -626,14 +634,14 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     authorHandle: author.handle,
     stance: input.stance.trim() || "Comment",
     body: input.body.trim(),
-    createdAt: nowLabel(),
+    createdAt: new Date().toISOString(),
     replies: []
   };
 
   if (usePostgres) {
     await ensureSchema();
     const existing = data.items.find((item) => item.id === itemId);
-    const nextCritiques = String(metricNumber(existing?.metrics.critiques ?? "0") + 1);
+    const nextCritiques = incrementMetric(existing?.metrics.critiques ?? "0", 1);
     const nextSignals = updateSignalValue(existing?.signals ?? [], "Critiques", nextCritiques);
     await getPool().query(
       `INSERT INTO comments (id, item_id, parent_id, author_handle, author_name, stance, body)

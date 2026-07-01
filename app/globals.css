@@ -566,7 +566,6 @@ button {
 .secondary-button:hover,
 .chip-row button:hover,
 .folder-tile:hover,
-.feed-post:hover,
 .back-button:hover,
 .side-actions button:hover,
 .panel-header button:hover,
@@ -606,6 +605,7 @@ button {
   display: grid;
   place-items: center;
   border-radius: 50%;
+  overflow: hidden;
   background:
     linear-gradient(145deg, rgba(34, 121, 134, 0.95), rgba(168, 103, 50, 0.9)),
     var(--aqua);
@@ -639,6 +639,7 @@ button {
 }
 
 .avatar img {
+  display: block;
   width: 100%;
   height: 100%;
   border-radius: inherit;
@@ -1364,6 +1365,13 @@ button {
   font-weight: 780;
 }
 
+.comment-composer button {
+  border: 1px solid color-mix(in srgb, var(--aqua) 52%, var(--line));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--aqua) 32%, var(--panel-strong)), color-mix(in srgb, var(--aqua) 20%, var(--panel)));
+  color: var(--ink);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--aqua) 18%, transparent);
+}
+
 .feed-stream {
   display: grid;
   gap: 12px;
@@ -1641,10 +1649,28 @@ button {
   text-align: left;
 }
 
+.comment-author > span:last-child {
+  display: grid;
+  gap: 1px;
+}
+
+.comment-author small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 720;
+}
+
 .comment p {
   margin: 8px 0 0 39px;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.comment.highlighted {
+  margin-inline: -10px;
+  padding-inline: 10px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--aqua) 11%, transparent);
 }
 
 .reply-button {
@@ -1657,6 +1683,24 @@ button {
   padding: 0 10px;
   font-size: 0.78rem;
   font-weight: 780;
+}
+
+.reply-window {
+  display: grid;
+  gap: 8px;
+}
+
+.reply-window-button {
+  width: fit-content;
+  min-height: 32px;
+  margin: 10px 0 0 39px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--aqua) 8%, transparent);
+  color: var(--ink);
+  padding: 0 11px;
+  font-size: 0.78rem;
+  font-weight: 820;
 }
 
 .comment-composer.compact {
@@ -2312,6 +2356,7 @@ button {
 .symposium-shell.night[data-room="funding"]::before,
 .symposium-shell.night[data-room="communities"]::before,
 .symposium-shell.night[data-room="opportunities"]::before,
+.symposium-shell.night[data-view="detail"]::before,
 .symposium-shell.night[data-view="profile"]::before {
   background: var(--room-bg) center center / cover no-repeat;
   opacity: 1;
@@ -2325,6 +2370,7 @@ button {
 .symposium-shell.night[data-room="funding"]::after,
 .symposium-shell.night[data-room="communities"]::after,
 .symposium-shell.night[data-room="opportunities"]::after,
+.symposium-shell.night[data-view="detail"]::after,
 .symposium-shell.night[data-view="profile"]::after {
   background: transparent;
 }
@@ -3340,9 +3386,8 @@ button {
 .post-kind-draft,
 .post-kind-code {
   background:
-    linear-gradient(90deg, rgba(168, 103, 50, 0.05) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(255, 253, 245, 0.92), rgba(247, 238, 214, 0.78));
-  background-size: 28px 100%, auto;
+    linear-gradient(180deg, rgba(255, 253, 245, 0.94), rgba(247, 238, 214, 0.82)),
+    rgba(247, 238, 214, 0.9);
 }
 
 .post-kind-thought,
@@ -3357,9 +3402,8 @@ button {
 .post-kind-code:hover {
   border-color: rgba(168, 103, 50, 0.22);
   background:
-    linear-gradient(90deg, rgba(168, 103, 50, 0.07) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(255, 253, 245, 0.96), rgba(247, 238, 214, 0.84));
-  background-size: 28px 100%, auto;
+    linear-gradient(180deg, rgba(255, 253, 245, 0.97), rgba(247, 238, 214, 0.88)),
+    rgba(247, 238, 214, 0.92);
 }
 
 .post-kind-thought:hover,
@@ -3610,6 +3654,73 @@ button {
   grid-column: 1;
   width: min(800px, 100%);
   margin: 0 auto 32px;
+}
+
+.profile-comment-card {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-strong);
+  box-shadow: var(--small-shadow);
+  cursor: pointer;
+}
+
+.profile-comment-card:hover {
+  border-color: color-mix(in srgb, var(--aqua) 44%, var(--line));
+  background: color-mix(in srgb, var(--aqua) 7%, var(--panel-strong));
+}
+
+.profile-comment-card header,
+.profile-comment-card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.profile-comment-card header > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.profile-comment-card header > button > span:last-child {
+  display: grid;
+  min-width: 0;
+}
+
+.profile-comment-card header > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 820;
+}
+
+.profile-comment-card p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+.profile-comment-card footer {
+  justify-content: flex-start;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.profile-comment-card footer strong {
+  color: var(--ink);
 }
 
 .search-launcher {
@@ -3916,10 +4027,8 @@ button {
 .symposium-shell.night .post-kind-code {
   border-color: rgba(248, 211, 149, 0.22);
   background:
-    linear-gradient(90deg, rgba(248, 211, 149, 0.04) 1px, transparent 1px),
     linear-gradient(180deg, rgba(39, 33, 24, 0.94), rgba(16, 18, 18, 0.86)),
     rgba(17, 15, 13, 0.92);
-  background-size: 28px 100%, auto;
 }
 
 .symposium-shell.night .post-kind-thought,
@@ -3935,10 +4044,8 @@ button {
 .symposium-shell.night .post-kind-code:hover {
   border-color: rgba(248, 211, 149, 0.32);
   background:
-    linear-gradient(90deg, rgba(248, 211, 149, 0.055) 1px, transparent 1px),
     linear-gradient(180deg, rgba(45, 38, 27, 0.96), rgba(19, 20, 18, 0.9)),
     rgba(20, 18, 15, 0.94);
-  background-size: 28px 100%, auto;
 }
 
 .symposium-shell.night .post-kind-thought:hover,

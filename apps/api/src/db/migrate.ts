@@ -636,6 +636,43 @@ const migrations: Migration[] = [
         END IF;
       END $$;
     `
+  },
+  {
+    id: "0004_seed_post_timeline",
+    sql: `
+      WITH ranked_seed_posts AS (
+        SELECT
+          id,
+          row_number() OVER (
+            ORDER BY
+              CASE id
+                WHEN 'cheap-exploration' THEN 1
+                WHEN 'dialogue-object' THEN 2
+                WHEN 'prepared-minds' THEN 3
+                WHEN 'scientific-will' THEN 4
+                WHEN 'hidden-law-runner' THEN 5
+                WHEN 'youth-labs' THEN 6
+                ELSE 1000
+              END,
+              id
+          ) AS seed_rank
+        FROM posts
+        WHERE id LIKE 'live-%'
+           OR id IN (
+             'cheap-exploration',
+             'dialogue-object',
+             'prepared-minds',
+             'scientific-will',
+             'hidden-law-runner',
+             'youth-labs'
+           )
+      )
+      UPDATE posts AS post
+      SET created_at = now() - ((ranked_seed_posts.seed_rank * 3 + 1440) * interval '1 minute'),
+          updated_at = now()
+      FROM ranked_seed_posts
+      WHERE post.id = ranked_seed_posts.id;
+    `
   }
 ];
 

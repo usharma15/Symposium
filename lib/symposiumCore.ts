@@ -29,16 +29,32 @@ export const normalizeSearchPhrase = (value: string) => value.trim().toLowerCase
 
 export const metricNumber = (value: string) => {
   const normalized = value.toLowerCase().replace(/,/g, "");
-  const multiplier = normalized.endsWith("k") ? 1000 : 1;
-  return Math.round((Number.parseFloat(normalized) || 0) * multiplier);
+  const multiplier = normalized.endsWith("b")
+    ? 1_000_000_000
+    : normalized.endsWith("m")
+      ? 1_000_000
+      : normalized.endsWith("k")
+        ? 1000
+        : 1;
+  return Math.max(0, Math.round((Number.parseFloat(normalized) || 0) * multiplier));
 };
 
 export const formatMetric = (value: number) => {
-  if (value >= 1000) {
-    const compact = Number(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1);
-    return `${compact}k`;
+  const safeValue = Math.max(0, Math.round(value));
+  if (safeValue < 1000) return String(safeValue);
+
+  if (safeValue < 1_000_000) {
+    const thousands = safeValue / 1000;
+    return safeValue < 100_000 ? `${thousands.toFixed(1)}k` : `${Math.round(thousands)}k`;
   }
-  return String(Math.max(0, value));
+
+  if (safeValue < 1_000_000_000) {
+    const millions = safeValue / 1_000_000;
+    return safeValue < 100_000_000 ? `${millions.toFixed(1)}M` : `${Math.round(millions)}M`;
+  }
+
+  const billions = safeValue / 1_000_000_000;
+  return Number.isInteger(billions) ? `${Math.round(billions)}B` : `${billions < 100 ? billions.toFixed(1) : Math.round(billions)}B`;
 };
 
 export const incrementMetric = (value: string, amount: number) => formatMetric(metricNumber(value) + amount);
@@ -130,7 +146,7 @@ export const countComments = (comments: InquiryComment[]): number =>
 export const relativeDateScore = (label: string) => {
   const normalized = label.trim().toLowerCase();
   const now = Date.now();
-  if (!normalized || normalized === "just now" || normalized === "live now") return now - 10 * 60 * 1000;
+  if (!normalized || normalized === "just now" || normalized === "live now") return now - 30 * 1000;
   if (normalized === "today") return now - 60 * 60 * 1000;
 
   const minutes = normalized.match(/^(\d+)m ago$/);
@@ -143,6 +159,30 @@ export const relativeDateScore = (label: string) => {
 
   const parsed = Date.parse(`${label} ${new Date().getFullYear()}`);
   return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+export const itemTimestampScore = (item: Pick<InquiryItem, "createdAt" | "date">) => {
+  const parsed = item.createdAt ? Date.parse(item.createdAt) : Number.NaN;
+  return Number.isNaN(parsed) ? relativeDateScore(item.date) : parsed;
+};
+
+export const relativeTimeLabel = (createdAt?: string, fallbackLabel = "") => {
+  const parsed = createdAt ? Date.parse(createdAt) : Number.NaN;
+  if (Number.isNaN(parsed)) return fallbackLabel || "Just now";
+
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - parsed) / 1000));
+  if (elapsedSeconds < 60) return "Just now";
+
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) return `${elapsedMinutes}m ago`;
+
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) return `${elapsedHours}h ago`;
+
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  if (elapsedDays < 7) return `${elapsedDays}d ago`;
+
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(parsed));
 };
 
 export const updateSignalValue = (signals: InquiryItem["signals"], label: string, value: string) =>

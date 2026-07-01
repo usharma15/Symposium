@@ -106,6 +106,7 @@ export const inquiryItemSchema = z.object({
   authorHandle: z.string().optional(),
   affiliation: z.string(),
   date: z.string(),
+  createdAt: z.string().optional(),
   status: z.string(),
   metrics: inquiryMetricsSchema,
   gatheringReason: z.string(),

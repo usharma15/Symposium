@@ -28,6 +28,7 @@ export type SnapshotRow = Omit<InquiryItemContract, "author" | "date" | "comment
   authorHandle: string | null;
   authorName: string;
   dateLabel: string;
+  createdAt?: Date | string | null;
   comments?: InquiryCommentContract[];
 };
 
@@ -380,14 +381,14 @@ const seedDatabase = async () => {
       const comments = normalizeComments(item.comments, item.id, itemIndex);
       await client.query(
         `INSERT INTO posts (
-          id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
+          id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
           metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
           tests, forks, saved, saved_by, signaled_by, forked_by, search_text
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9,
           $10, $11, $12, $13, $14, $15, $16, $17, $18,
-          $19, $20, $21, $22, $23, $24, $25
+          $19, $20, $21, $22, $23, $24, $25, $26
         )
         ON CONFLICT (id) DO NOTHING`,
         [
@@ -399,6 +400,7 @@ const seedDatabase = async () => {
           item.author,
           item.affiliation,
           item.date,
+          item.createdAt ?? null,
           item.status,
           JSON.stringify(item.metrics),
           item.gatheringReason,
@@ -471,6 +473,7 @@ export const rowToItem = (row: SnapshotRow, comments: InquiryCommentContract[]):
   authorHandle: row.authorHandle ?? undefined,
   affiliation: row.affiliation,
   date: row.dateLabel,
+  createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : undefined,
   status: row.status,
   metrics: json(row.metrics, { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" }),
   gatheringReason: row.gatheringReason,
@@ -524,6 +527,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
         author_name AS "authorName",
         affiliation,
         date_label AS "dateLabel",
+        created_at AS "createdAt",
         status,
         metrics,
         gathering_reason AS "gatheringReason",

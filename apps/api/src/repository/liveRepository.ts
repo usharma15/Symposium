@@ -28,7 +28,6 @@ import {
 import {
   cleanHandle,
   incrementMetric,
-  metricNumber,
   mutateItemForActor,
   updateSignalValue
 } from "@/lib/symposiumCore";
@@ -49,7 +48,6 @@ import {
   json,
   newId,
   normalizeProfile,
-  nowLabel,
   rowToItem,
   searchablePostText,
   seedSnapshot,
@@ -121,6 +119,14 @@ export const upsertProfile = async (rawInput: unknown, actor?: Actor) => {
     await client.query("BEGIN");
     await insertProfile(client, person);
     await client.query(
+      "UPDATE posts SET author_name = $2, updated_at = now() WHERE author_handle = $1",
+      [person.handle, person.name]
+    );
+    await client.query(
+      "UPDATE comments SET author_name = $2, updated_at = now() WHERE author_handle = $1",
+      [person.handle, person.name]
+    );
+    await client.query(
       `INSERT INTO audit_logs (actor_handle, action, subject_type, subject_id, metadata)
        VALUES ($1, $2, $3, $4, $5)`,
       [actor?.handle ?? person.handle, "profile.upsert", "profile", person.handle, JSON.stringify({ source: actor?.source ?? "api" })]
@@ -132,6 +138,14 @@ export const upsertProfile = async (rawInput: unknown, actor?: Actor) => {
   } finally {
     client.release();
   }
+
+  await emitEvent({
+    kind: "profile.updated",
+    actorHandle: actor?.handle ?? person.handle,
+    subjectType: "profile",
+    subjectId: person.handle,
+    payload: { profile: person }
+  });
 
   return person;
 };
@@ -235,6 +249,7 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
     authorHandle: author.handle,
     affiliation: author.location,
     date: "Just now",
+    createdAt: new Date().toISOString(),
     status: isPaper ? "Draft" : "New",
     metrics: { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" },
     gatheringReason: "A new working post added to the live beta.",
@@ -264,14 +279,14 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
 
   await getPool().query(
     `INSERT INTO posts (
-      id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
+      id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
       metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
       tests, forks, saved, saved_by, signaled_by, forked_by, search_text
     )
     VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9,
       $10, $11, $12, $13, $14, $15, $16, $17, $18,
-      $19, $20, $21, $22, $23, $24, $25
+      $19, $20, $21, $22, $23, $24, $25, $26
     )`,
     [
       item.id,
@@ -282,6 +297,7 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
       item.author,
       item.affiliation,
       item.date,
+      item.createdAt,
       item.status,
       JSON.stringify(item.metrics),
       item.gatheringReason,
@@ -328,7 +344,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
     authorHandle: author.handle,
     stance: input.stance || "Comment",
     body: input.body,
-    createdAt: nowLabel(),
+    createdAt: new Date().toISOString(),
     replies: []
   };
 
@@ -350,6 +366,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         author_name AS "authorName",
         affiliation,
         date_label AS "dateLabel",
+        created_at AS "createdAt",
         status,
         metrics,
         gathering_reason AS "gatheringReason",
@@ -376,7 +393,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
 
     const lockedItem = rowToItem(row, []);
-    const nextCritiques = String(metricNumber(lockedItem.metrics.critiques) + 1);
+    const nextCritiques = incrementMetric(lockedItem.metrics.critiques, 1);
     const nextMetrics = { ...lockedItem.metrics, critiques: nextCritiques };
     const nextSignals = updateSignalValue(lockedItem.signals, "Critiques", nextCritiques);
 
@@ -462,6 +479,7 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
         author_name AS "authorName",
         affiliation,
         date_label AS "dateLabel",
+        created_at AS "createdAt",
         status,
         metrics,
         gathering_reason AS "gatheringReason",
@@ -891,6 +909,7 @@ export const search = async (rawInput: unknown) => {
       `SELECT
         id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", status, metrics, gathering_reason AS "gatheringReason",
+        created_at AS "createdAt",
         excerpt, body, tags, signals, claims, objections, evidence, tests, forks, saved,
         saved_by AS "savedBy", signaled_by AS "signaledBy", forked_by AS "forkedBy"
        FROM posts

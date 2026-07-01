@@ -51,6 +51,7 @@ export type InquiryItem = {
   authorHandle?: string;
   affiliation: string;
   date: string;
+  createdAt?: string;
   status: string;
   metrics: InquiryMetrics;
   gatheringReason: string;
@@ -1563,4 +1564,24 @@ const generatedInquiryItems: InquiryItem[] = Array.from({ length: 132 }, (_, ind
   };
 });
 
-export const inquiryItems: InquiryItem[] = [...coreInquiryItems, ...generatedInquiryItems];
+const seedIsoDate = (index: number, offsetMinutes = 0) =>
+  new Date(Date.now() - (index + 12 + offsetMinutes) * 60 * 1000).toISOString();
+
+const stampSeedComments = (
+  comments: InquiryComment[],
+  itemIndex: number,
+  parentOffset = 0
+): InquiryComment[] =>
+  comments.map((comment, commentIndex) => ({
+    ...comment,
+    createdAt: comment.createdAt?.includes("T")
+      ? comment.createdAt
+      : seedIsoDate(itemIndex, parentOffset + commentIndex + 1),
+    replies: stampSeedComments(comment.replies ?? [], itemIndex, parentOffset + commentIndex + 6)
+  }));
+
+export const inquiryItems: InquiryItem[] = [...coreInquiryItems, ...generatedInquiryItems].map((item, index) => ({
+  ...item,
+  createdAt: item.createdAt ?? seedIsoDate(index),
+  comments: stampSeedComments(item.comments, index)
+}));
