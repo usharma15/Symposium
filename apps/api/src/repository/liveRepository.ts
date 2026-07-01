@@ -177,14 +177,35 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
       [clerkSubject, email ?? null, handle, name, actor.imageUrl ?? input.imageUrl ?? null]
     );
 
+    const existingProfile = await client.query<ResearchProfileContract & { avatarUrl: string | null }>(
+      `SELECT
+        handle,
+        email,
+        name,
+        avatar_url AS "avatarUrl",
+        likes_public AS "likesPublic",
+        reshares_public AS "resharesPublic",
+        role,
+        location,
+        bio,
+        fields
+       FROM profiles
+       WHERE handle = $1
+       LIMIT 1`,
+      [handle]
+    );
+    const existing = existingProfile.rows[0];
     const person = normalizeProfile({
-      name,
+      name: existing?.name ?? name,
       handle,
-      email,
-      role: "Symposium participant",
-      location: "Public rooms",
-      bio: "A participant in the current inquiry thread.",
-      fields: ["Inquiry"]
+      email: existing?.email ?? email,
+      avatarUrl: existing?.avatarUrl ?? actor.imageUrl ?? input.imageUrl,
+      likesPublic: existing?.likesPublic ?? true,
+      resharesPublic: existing?.resharesPublic ?? true,
+      role: existing?.role ?? "Symposium participant",
+      location: existing?.location ?? "Public rooms",
+      bio: existing?.bio ?? "A participant in the current inquiry thread.",
+      fields: existing?.fields ?? ["Inquiry"]
     });
     await insertProfile(client, person, user.rows[0]?.id);
     await client.query("COMMIT");

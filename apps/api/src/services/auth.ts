@@ -3,6 +3,7 @@ import { verifyToken } from "@clerk/backend";
 import type { FastifyRequest } from "fastify";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { env, requireAuthForWrites } from "../config/env";
+import { getPool, hasDatabase } from "../db/client";
 
 export type Actor = {
   clerkUserId?: string;
@@ -23,6 +24,20 @@ const bearerToken = (authorization?: string) => {
 const headerValue = (value: string | string[] | undefined) =>
   Array.isArray(value) ? value[0] : value;
 
+const getSyncedUserHandle = async (clerkUserId: string) => {
+  if (!hasDatabase()) return undefined;
+
+  try {
+    const result = await getPool().query<{ handle: string | null }>(
+      "SELECT handle FROM users WHERE clerk_user_id = $1 LIMIT 1",
+      [clerkUserId]
+    );
+    return result.rows[0]?.handle ?? undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export const getActorFromRequest = async (request: FastifyRequest): Promise<Actor> => {
   const token = bearerToken(headerValue(request.headers.authorization));
 
@@ -42,7 +57,8 @@ export const getActorFromRequest = async (request: FastifyRequest): Promise<Acto
     }
 
     const email = typeof payload.email === "string" ? payload.email : undefined;
-    const handle = typeof payload.username === "string" ? cleanHandle(payload.username) : undefined;
+    const syncedHandle = payload.sub ? await getSyncedUserHandle(payload.sub) : undefined;
+    const handle = syncedHandle ?? (typeof payload.username === "string" ? cleanHandle(payload.username) : undefined);
     const name = typeof payload.name === "string" ? payload.name : undefined;
     const imageUrl = typeof payload.picture === "string" ? payload.picture : undefined;
 

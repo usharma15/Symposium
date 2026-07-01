@@ -3471,15 +3471,18 @@ button {
 
 .profile-social-counts button {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
+  justify-content: center;
   gap: 7px;
   min-height: 38px;
+  min-width: 164px;
   border: 1px solid rgba(34, 128, 138, 0.24);
   border-radius: 8px;
   padding: 0 11px;
   background: rgba(224, 246, 244, 0.42);
   color: #15565c;
   font-weight: 850;
+  text-align: center;
 }
 
 .profile-social-counts strong {

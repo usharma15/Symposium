@@ -52,6 +52,7 @@ import {
 
 type Theme = "day" | "night";
 type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
+type ProfileActivityKind = "authored" | "comments" | "fork" | "signal" | "save";
 type EntryMode = "loading" | "approach" | "auth" | "complete";
 type OfficeMode = "desk" | "saved" | "notes";
 type PatronageMode = "lobby" | "civic" | "private";
@@ -426,7 +427,20 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     getProfileForName(nameOrHandle);
   const selectedProfile = selectedProfileName ? findProfile(selectedProfileName) : null;
   const getPublishedRecency = (item: InquiryItem) => relativeDateScore(item.date);
-  const getActivityRecency = (item: InquiryItem) => activityRecency[item.id] ?? getPublishedRecency(item);
+  const profileActivityKey = (handle: string, action: PostAction, itemId: string) =>
+    `profile:${cleanHandle(handle)}:${action}:${itemId}`;
+  const getProfileRecency = (item: InquiryItem, handle: string, kind: ProfileActivityKind) => {
+    if (kind === "authored") return getPublishedRecency(item);
+    if (kind === "comments") return activityRecency[item.id] ?? getPublishedRecency(item);
+    return activityRecency[profileActivityKey(handle, kind, item.id)] ?? getPublishedRecency(item);
+  };
+  const getProfileAllRecency = (item: InquiryItem, handle: string) => {
+    const recencies = [getPublishedRecency(item)];
+    if (hasHandle(item.forkedBy, handle)) recencies.push(getProfileRecency(item, handle, "fork"));
+    if (hasHandle(item.signaledBy, handle)) recencies.push(getProfileRecency(item, handle, "signal"));
+    if (isSavedBy(item, handle, profile.handle)) recencies.push(getProfileRecency(item, handle, "save"));
+    return Math.max(...recencies);
+  };
   const sortByPublishedRecency = (nextItems: InquiryItem[]) =>
     [...nextItems].sort((a, b) => getPublishedRecency(b) - getPublishedRecency(a));
 
@@ -732,6 +746,15 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     });
   };
 
+  const touchProfileAction = (itemId: string, action: PostAction, handle = currentProfile.handle, timestamp = Date.now()) => {
+    if (action === "read") return;
+    setActivityRecency((current) => {
+      const next = { ...current, [profileActivityKey(handle, action, itemId)]: timestamp };
+      window.localStorage.setItem("symposium-activity-recency", JSON.stringify(next));
+      return next;
+    });
+  };
+
   const snapshotView = (): ViewSnapshot => ({
     activeRoom,
     selectedItemId,
@@ -1032,15 +1055,22 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     });
 
     if (!uploadResponse.ok) {
-      setSyncStatus("Profile photo previewed locally");
-      return readFileAsDataUrl(file);
+      const error = (await uploadResponse.json().catch(() => null)) as { error?: string } | null;
+      if (uploadResponse.status === 412 && error?.error?.includes("local preview")) {
+        setSyncStatus("Profile photo previewed locally");
+        return readFileAsDataUrl(file);
+      }
+      throw new Error(error?.error ?? "Could not prepare this profile photo.");
     }
 
     const upload = (await uploadResponse.json()) as AttachmentUploadResponse;
 
-    if (!upload.uploadUrl || !upload.publicUrl || !upload.attachmentId) {
-      setSyncStatus("Profile photo previewed locally");
-      return readFileAsDataUrl(file);
+    if (!upload.uploadUrl || !upload.attachmentId) {
+      throw new Error("Could not prepare this profile photo upload.");
+    }
+
+    if (!upload.publicUrl) {
+      throw new Error("Profile photo storage needs a public R2 URL before photos can persist.");
     }
 
     setSyncStatus("Uploading profile photo");
@@ -1183,7 +1213,6 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   };
 
   const applyAction = async (itemId: string, action: PostAction) => {
-    if (action !== "read") touchActivity(itemId);
     const response = await fetch(`/api/posts/${itemId}/actions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1194,6 +1223,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       const updatedItems = items.map((item) => (item.id === itemId ? data.item : item));
       setItems(updatedItems);
       persistLocalSnapshot(updatedItems, profiles);
+      touchProfileAction(itemId, action);
       return;
     }
 
@@ -1202,6 +1232,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     );
     setItems(nextItems);
     persistLocalSnapshot(nextItems, profiles);
+    touchProfileAction(itemId, action);
   };
 
   const openPost = (id: string) => {
@@ -1350,7 +1381,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             actorHandle={currentProfile.handle}
             profiles={profiles}
             socialLists={profileSocialLists[selectedProfile.handle] ?? { following: [], followers: [] }}
-            getRecency={getActivityRecency}
+            getProfileRecency={getProfileRecency}
+            getProfileAllRecency={getProfileAllRecency}
           />
         ) : selectedItem ? (
           <DetailView
@@ -2261,7 +2293,7 @@ function PostAuthor({
       type="button"
       onClick={(event) => {
         onClickStop?.(event);
-        onOpenProfile(item.author);
+        onOpenProfile(item.authorHandle ?? item.author);
       }}
     >
       <span className="avatar">{initial(item.author)}</span>
@@ -2354,7 +2386,7 @@ function DetailView({
       <section className="detail-main">
         <p className="eyebrow">{kindLabels[item.kind]}</p>
         <h1>{item.title}</h1>
-        <button className="detail-byline-button" type="button" onClick={() => onOpenProfile(item.author)}>
+        <button className="detail-byline-button" type="button" onClick={() => onOpenProfile(item.authorHandle ?? item.author)}>
           <span className="avatar">{initial(item.author)}</span>
           <span>
             <strong>{item.author}</strong>
@@ -2483,7 +2515,7 @@ function CommentNode({
 
   return (
     <article className="comment">
-      <button type="button" onClick={() => onOpenProfile(comment.author)}>
+      <button type="button" onClick={() => onOpenProfile(comment.authorHandle ?? comment.author)}>
         <span className="avatar small">{initial(comment.author)}</span>
         <span>
           <strong>{comment.author}</strong>
@@ -2604,7 +2636,8 @@ function ProfileView({
   actorHandle,
   profiles,
   socialLists,
-  getRecency
+  getProfileRecency,
+  getProfileAllRecency
 }: {
   person: ResearchProfile;
   items: InquiryItem[];
@@ -2618,27 +2651,33 @@ function ProfileView({
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
   socialLists: ProfileSocialLists;
-  getRecency: (item: InquiryItem) => number;
+  getProfileRecency: (item: InquiryItem, handle: string, kind: ProfileActivityKind) => number;
+  getProfileAllRecency: (item: InquiryItem, handle: string) => number;
 }) {
   const [activeTab, setActiveTab] = useState<ProfileTab>("all");
   const [activeSocialList, setActiveSocialList] = useState<"following" | "followers" | null>(null);
-  const byRecency = (nextItems: InquiryItem[]) => [...nextItems].sort((a, b) => getRecency(b) - getRecency(a));
+  const byPublishedRecency = (nextItems: InquiryItem[]) =>
+    [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, "authored") - getProfileRecency(a, person.handle, "authored"));
+  const byProfileRecency = (nextItems: InquiryItem[], kind: ProfileActivityKind) =>
+    [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, kind) - getProfileRecency(a, person.handle, kind));
+  const byAllProfileRecency = (nextItems: InquiryItem[]) =>
+    [...nextItems].sort((a, b) => getProfileAllRecency(b, person.handle) - getProfileAllRecency(a, person.handle));
   const isAuthor = (item: InquiryItem) => item.authorHandle === person.handle || item.author === person.name;
   const canShowLikes = actorHandle === person.handle || inferredLikesPublic(person);
   const canShowReshares = actorHandle === person.handle || inferredResharesPublic(person);
   const canShowSaved = actorHandle === person.handle;
-  const authored = byRecency(items.filter(isAuthor));
+  const authored = byPublishedRecency(items.filter(isAuthor));
   const papers = authored.filter((item) => item.kind === "paper");
   const thoughts = authored.filter((item) => item.kind === "thought" || item.kind === "note");
-  const comments = byRecency(items.filter((item) => !isAuthor(item) && commentTreeHasAuthor(item.comments, person)));
+  const comments = byProfileRecency(items.filter((item) => !isAuthor(item) && commentTreeHasAuthor(item.comments, person)), "comments");
   const reshares = canShowReshares
-    ? byRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.forkedBy, person.handle)))
+    ? byProfileRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.forkedBy, person.handle)), "fork")
     : [];
   const likes = canShowLikes
-    ? byRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.signaledBy, person.handle)))
+    ? byProfileRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.signaledBy, person.handle)), "signal")
     : [];
-  const saved = canShowSaved ? byRecency(items.filter((item) => !isAuthor(item) && isSavedBy(item, person.handle, profile.handle))) : [];
-  const allActivity = byRecency(uniqueItemsById([...authored, ...comments, ...reshares, ...likes, ...saved]));
+  const saved = canShowSaved ? byProfileRecency(items.filter((item) => !isAuthor(item) && isSavedBy(item, person.handle, profile.handle)), "save") : [];
+  const allActivity = byAllProfileRecency(uniqueItemsById([...authored, ...comments, ...reshares, ...likes, ...saved]));
 
   const tabItems: Record<ProfileTab, InquiryItem[]> = {
     all: allActivity,
