@@ -1736,6 +1736,16 @@ button {
   gap: 8px;
 }
 
+.reply-window.reset-thread {
+  margin-left: 39px;
+}
+
+.reply-window.reset-thread > .comment-thread {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
 .reply-window-button {
   width: fit-content;
   min-height: 32px;
@@ -1747,135 +1757,6 @@ button {
   padding: 0 11px;
   font-size: 0.78rem;
   font-weight: 820;
-}
-
-.focused-thread-panel {
-  --focus-step: 34px;
-  display: grid;
-  gap: 12px;
-  width: calc(100% + (var(--focus-depth) * var(--focus-step)));
-  margin: 16px 0 0 calc(var(--focus-depth) * -1 * var(--focus-step));
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--aqua) 24%, var(--line));
-  border-radius: var(--radius);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--aqua) 8%, transparent), transparent 44%),
-    color-mix(in srgb, var(--panel-strong) 88%, transparent);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
-}
-
-.focused-thread-context {
-  display: grid;
-  gap: 8px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--line);
-}
-
-.focused-thread-context > span {
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 860;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.focused-thread-context > div {
-  display: grid;
-  gap: 7px;
-}
-
-.focused-context-card {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.34fr) minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-  min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--panel) 70%, transparent);
-}
-
-.focused-context-card.active {
-  border-color: color-mix(in srgb, var(--aqua) 54%, var(--line));
-  background: color-mix(in srgb, var(--aqua) 11%, var(--panel));
-}
-
-.focused-context-author,
-.focused-context-body {
-  min-width: 0;
-}
-
-.focused-context-author {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-}
-
-.focused-context-author > span:last-child {
-  display: grid;
-  min-width: 0;
-}
-
-.focused-context-author strong,
-.focused-context-author small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.focused-context-author small {
-  color: var(--muted);
-  font-size: 0.7rem;
-  font-weight: 760;
-}
-
-.focused-context-body {
-  display: -webkit-box;
-  overflow: hidden;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  padding: 1px 0 0;
-  line-height: 1.45;
-  text-align: left;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.focused-thread-list > .comment-thread,
-.focused-thread-list > .comment-thread > .comment {
-  min-width: 0;
-}
-
-.focused-thread-list > .comment-thread {
-  gap: 6px;
-}
-
-.focused-thread-list > .comment-thread .comment-thread {
-  margin-left: 18px;
-  padding-left: 12px;
-}
-
-.focused-thread-list > .comment-thread > .comment {
-  padding: 12px 0;
-}
-
-.focused-thread-nav {
-  width: fit-content;
-  min-height: 32px;
-  border: 1px solid color-mix(in srgb, var(--aqua) 34%, var(--line));
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--aqua) 10%, transparent);
-  color: var(--ink);
-  padding: 0 12px;
-  font-size: 0.78rem;
-  font-weight: 860;
 }
 
 .comment-composer.compact {
@@ -2447,15 +2328,6 @@ button {
   .comment-composer select {
     width: 100%;
     max-width: none;
-  }
-
-  .focused-thread-panel {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .focused-context-card {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .search-box,
@@ -4347,34 +4219,6 @@ button {
 
 .symposium-shell.night .comment-card.highlighted {
   background: rgba(131, 203, 209, 0.12);
-}
-
-.symposium-shell.night .focused-thread-panel {
-  border-color: rgba(131, 203, 209, 0.22);
-  background:
-    linear-gradient(180deg, rgba(131, 203, 209, 0.1), transparent 44%),
-    rgba(8, 16, 20, 0.72);
-}
-
-.symposium-shell.night .focused-context-card {
-  border-color: rgba(255, 253, 245, 0.12);
-  background: rgba(255, 253, 245, 0.05);
-}
-
-.symposium-shell.night .focused-context-card.active {
-  border-color: rgba(131, 203, 209, 0.38);
-  background: rgba(131, 203, 209, 0.12);
-}
-
-.symposium-shell.night .focused-context-body,
-.symposium-shell.night .focused-thread-context > span {
-  color: rgba(246, 234, 212, 0.72);
-}
-
-.symposium-shell.night .focused-thread-nav {
-  border-color: rgba(131, 203, 209, 0.26);
-  background: rgba(131, 203, 209, 0.1);
-  color: #fff8ea;
 }
 
 .symposium-shell.night .messages-modal {

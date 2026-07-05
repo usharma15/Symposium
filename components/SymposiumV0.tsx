@@ -414,8 +414,8 @@ const inferredLikesPublic = (person: ResearchProfile) => person.likesPublic ?? p
 const inferredResharesPublic = (person: ResearchProfile) => person.resharesPublic ?? person.handle.length % 4 !== 0;
 
 const fallbackCommunityCount = 8;
-const commentReplyPageSize = 6;
-const focusedThreadDepth = 3;
+const initialReplyPageSize = 5;
+const additionalReplyPageSize = 4;
 const commentMetricsFallback = { signal: "0", forks: "0", saves: "0", reads: "0" };
 const clientSeedItemById = new Map(inquiryItems.map((item) => [item.id, item]));
 const clientSeedCommentById = new Map<string, InquiryComment>();
@@ -543,8 +543,28 @@ const getLinearReplyChain = (comments: InquiryComment[]) => {
   return chain;
 };
 
-const buildFocusedReplySegment = (chain: InquiryComment[], start: number) =>
-  chain.slice(start, start + commentReplyPageSize).map((comment) => ({ ...comment, replies: [] as InquiryComment[] }));
+const replyPageStart = (page: number) =>
+  page <= 0 ? 0 : initialReplyPageSize + (page - 1) * additionalReplyPageSize;
+
+const replyPageSize = (page: number) => (page <= 0 ? initialReplyPageSize : additionalReplyPageSize);
+
+const replyPageForIndex = (index: number) =>
+  index < initialReplyPageSize
+    ? 0
+    : Math.floor((index - initialReplyPageSize) / additionalReplyPageSize) + 1;
+
+const buildLinearReplySegment = (chain: InquiryComment[], start: number, size: number) => {
+  const segment = chain.slice(start, start + size).map((comment) => ({
+    ...comment,
+    replies: [] as InquiryComment[]
+  }));
+
+  for (let index = segment.length - 2; index >= 0; index -= 1) {
+    segment[index] = { ...segment[index], replies: [segment[index + 1]] };
+  }
+
+  return segment[0] ? [segment[0]] : [];
+};
 
 const communityMembershipIds = (communities: ResearchCommunity[], person: ResearchProfile) => {
   const explicit = communities.filter((community) => community.memberHandles.includes(person.handle));
@@ -3297,7 +3317,6 @@ function CommentThread({
   onAddComment,
   onCommentAction,
   actorHandle,
-  ancestors = [],
   depth = 0
 }: {
   comments: InquiryComment[];
@@ -3308,7 +3327,6 @@ function CommentThread({
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
   actorHandle: string;
-  ancestors?: InquiryComment[];
   depth?: number;
 }) {
   return (
@@ -3324,7 +3342,6 @@ function CommentThread({
           onAddComment={onAddComment}
           onCommentAction={onCommentAction}
           actorHandle={actorHandle}
-          ancestors={ancestors}
           depth={depth}
         />
       ))}
@@ -3341,7 +3358,6 @@ function CommentNode({
   onAddComment,
   onCommentAction,
   actorHandle,
-  ancestors,
   depth
 }: {
   comment: InquiryComment;
@@ -3352,32 +3368,32 @@ function CommentNode({
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
   actorHandle: string;
-  ancestors: InquiryComment[];
   depth: number;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
   const replies = comment.replies ?? [];
   const linearReplyChain = getLinearReplyChain(replies);
-  const useFocusedThread = replies.length > 0 && (depth >= focusedThreadDepth - 1 || linearReplyChain.length > commentReplyPageSize);
+  const useLinearWindow = linearReplyChain.length > initialReplyPageSize;
   const [replyPage, setReplyPage] = useState(() => {
     if (!selectedCommentId) return 0;
     const selectedReplyIndex = replies.findIndex((reply) => commentTreeHasId([reply], selectedCommentId));
-    return selectedReplyIndex >= 0 ? Math.floor(selectedReplyIndex / commentReplyPageSize) : 0;
+    return selectedReplyIndex >= 0 ? replyPageForIndex(selectedReplyIndex) : 0;
   });
   const nodeRef = useRef<HTMLElement | null>(null);
   const replyWindowRef = useRef<HTMLDivElement | null>(null);
   const authorProfile = profileForHandle(profiles, comment.authorHandle ?? comment.author);
   const authorName = authorProfile?.name ?? comment.author;
   const highlighted = Boolean(selectedCommentId && comment.id === selectedCommentId);
-  const pageStart = replyPage * commentReplyPageSize;
-  const visibleReplies = replies.slice(pageStart, pageStart + commentReplyPageSize);
+  const pageStart = replyPageStart(replyPage);
+  const currentPageSize = replyPageSize(replyPage);
+  const visibleReplies = replies.slice(pageStart, pageStart + currentPageSize);
   const hasPreviousReplies = replyPage > 0;
-  const hasMoreReplies = pageStart + commentReplyPageSize < replies.length;
+  const hasMoreReplies = pageStart + currentPageSize < replies.length;
 
   useEffect(() => {
     if (!selectedCommentId || !replies.length) return;
     const selectedReplyIndex = replies.findIndex((reply) => commentTreeHasId([reply], selectedCommentId));
-    if (selectedReplyIndex >= 0) setReplyPage(Math.floor(selectedReplyIndex / commentReplyPageSize));
+    if (selectedReplyIndex >= 0) setReplyPage(replyPageForIndex(selectedReplyIndex));
   }, [replies, selectedCommentId]);
 
   useEffect(() => {
@@ -3433,12 +3449,9 @@ function CommentNode({
           />
         ) : null}
       </div>
-      {useFocusedThread ? (
-        <FocusedReplyLane
+      {useLinearWindow ? (
+        <LinearReplyWindow
           chain={linearReplyChain}
-          directReplies={replies}
-          contextTrail={[...ancestors, comment]}
-          depth={depth + 1}
           itemId={itemId}
           profiles={profiles}
           selectedCommentId={selectedCommentId}
@@ -3463,7 +3476,6 @@ function CommentNode({
             onAddComment={onAddComment}
             onCommentAction={onCommentAction}
             actorHandle={actorHandle}
-            ancestors={[...ancestors, comment]}
             depth={depth + 1}
           />
           {hasMoreReplies ? (
@@ -3477,11 +3489,8 @@ function CommentNode({
   );
 }
 
-function FocusedReplyLane({
+function LinearReplyWindow({
   chain,
-  directReplies,
-  contextTrail,
-  depth,
   itemId,
   profiles,
   selectedCommentId,
@@ -3491,9 +3500,6 @@ function FocusedReplyLane({
   actorHandle
 }: {
   chain: InquiryComment[];
-  directReplies: InquiryComment[];
-  contextTrail: InquiryComment[];
-  depth: number;
   itemId: string;
   profiles: Record<string, ResearchProfile>;
   selectedCommentId: string | null;
@@ -3502,148 +3508,56 @@ function FocusedReplyLane({
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
   actorHandle: string;
 }) {
-  const isLinearThread = chain.length > commentReplyPageSize;
-  const pageSize = isLinearThread ? commentReplyPageSize : Math.max(4, commentReplyPageSize);
-  const replySet = isLinearThread ? chain : directReplies;
   const [page, setPage] = useState(() => {
-    const selectedIndex = selectedCommentId ? replySet.findIndex((comment) => commentTreeHasId([comment], selectedCommentId)) : -1;
-    return selectedIndex >= 0 ? Math.floor(selectedIndex / pageSize) : 0;
+    const selectedIndex = selectedCommentId ? chain.findIndex((comment) => comment.id === selectedCommentId) : -1;
+    return selectedIndex >= 0 ? replyPageForIndex(selectedIndex) : 0;
   });
   const windowRef = useRef<HTMLDivElement | null>(null);
-  const start = page * pageSize;
-  const segment = isLinearThread
-    ? buildFocusedReplySegment(chain, start)
-    : directReplies.slice(start, start + pageSize);
+  const start = replyPageStart(page);
+  const currentPageSize = replyPageSize(page);
+  const segment = buildLinearReplySegment(chain, start, currentPageSize);
   const hasPrevious = page > 0;
-  const hasMore = start + pageSize < replySet.length;
-  const immediateThreadContext = isLinearThread && start > 0 ? chain[start - 1] : null;
-  const contextBase = start > 0 ? contextTrail.slice(-2) : contextTrail.slice(0, -1).slice(-2);
-  const contextCards = uniqueCommentsById([
-    ...contextBase,
-    ...(immediateThreadContext ? [immediateThreadContext] : [])
-  ]);
+  const hasMore = start + currentPageSize < chain.length;
 
   useEffect(() => {
     if (!selectedCommentId) return;
-    const selectedIndex = replySet.findIndex((comment) => commentTreeHasId([comment], selectedCommentId));
-    if (selectedIndex >= 0) setPage(Math.floor(selectedIndex / pageSize));
-  }, [pageSize, replySet, selectedCommentId]);
+    const selectedIndex = chain.findIndex((comment) => comment.id === selectedCommentId);
+    if (selectedIndex >= 0) setPage(replyPageForIndex(selectedIndex));
+  }, [chain, selectedCommentId]);
 
   const changePage = (nextPage: number) => {
+    const top = windowRef.current?.getBoundingClientRect().top;
     setPage(nextPage);
     window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        const rect = windowRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - 92), behavior: "auto" });
-      });
+      if (top === undefined || !windowRef.current) return;
+      window.scrollBy({ top: windowRef.current.getBoundingClientRect().top - top, behavior: "auto" });
     });
   };
 
   return (
-    <div
-      className="focused-thread-panel"
-      ref={windowRef}
-      style={{ "--focus-depth": Math.min(depth, focusedThreadDepth) } as CSSProperties}
-    >
-      {contextCards.length ? (
-        <section className="focused-thread-context" aria-label="Earlier in this thread">
-          <span>Earlier in this thread</span>
-          <div>
-            {contextCards.map((contextComment) => (
-              <FocusedContextCard
-                key={contextComment.id ?? `${contextComment.author}-${contextComment.body}`}
-                comment={contextComment}
-                profiles={profiles}
-                selectedCommentId={selectedCommentId}
-                onOpenProfile={onOpenProfile}
-                onSelect={() => {
-                  const chainIndex = contextComment.id ? chain.findIndex((reply) => reply.id === contextComment.id) : -1;
-                  if (chainIndex >= 0) {
-                    changePage(Math.floor(chainIndex / pageSize));
-                    return;
-                  }
-                  if (contextComment.id) {
-                    document.getElementById(`comment-${contextComment.id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
-                  }
-                }}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
+    <div className="reply-window reset-thread" ref={windowRef}>
       {hasPrevious ? (
-        <button className="focused-thread-nav" type="button" onClick={() => changePage(Math.max(0, page - 1))}>
-          Earlier replies
+        <button className="reply-window-button" type="button" onClick={() => changePage(Math.max(0, page - 1))}>
+          Show previous replies
         </button>
       ) : null}
-      <div className="focused-thread-list">
-        <CommentThread
-          comments={segment}
-          itemId={itemId}
-          profiles={profiles}
-          selectedCommentId={selectedCommentId}
-          onOpenProfile={onOpenProfile}
-          onAddComment={onAddComment}
-          onCommentAction={onCommentAction}
-          actorHandle={actorHandle}
-          ancestors={contextTrail}
-          depth={0}
-        />
-      </div>
+      <CommentThread
+        comments={segment}
+        itemId={itemId}
+        profiles={profiles}
+        selectedCommentId={selectedCommentId}
+        onOpenProfile={onOpenProfile}
+        onAddComment={onAddComment}
+        onCommentAction={onCommentAction}
+        actorHandle={actorHandle}
+        depth={0}
+      />
       {hasMore ? (
-        <button className="focused-thread-nav" type="button" onClick={() => changePage(page + 1)}>
-          Newer replies
+        <button className="reply-window-button" type="button" onClick={() => changePage(page + 1)}>
+          Show more replies
         </button>
       ) : null}
     </div>
-  );
-}
-
-const uniqueCommentsById = (comments: InquiryComment[]) => {
-  const seen = new Set<string>();
-  const result: InquiryComment[] = [];
-  for (const comment of comments) {
-    const key = comment.id ?? `${comment.author}:${comment.body}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(comment);
-  }
-  return result;
-};
-
-function FocusedContextCard({
-  comment,
-  profiles,
-  selectedCommentId,
-  onOpenProfile,
-  onSelect
-}: {
-  comment: InquiryComment;
-  profiles: Record<string, ResearchProfile>;
-  selectedCommentId: string | null;
-  onOpenProfile: (name: string) => void;
-  onSelect: () => void;
-}) {
-  const authorProfile = profileForHandle(profiles, comment.authorHandle ?? comment.author);
-  const authorName = authorProfile?.name ?? comment.author;
-  const selected = Boolean(selectedCommentId && comment.id === selectedCommentId);
-
-  return (
-    <article className={`focused-context-card ${selected ? "active" : ""}`}>
-      <button type="button" className="focused-context-author" onClick={() => onOpenProfile(authorProfile?.handle ?? comment.authorHandle ?? comment.author)}>
-        <span className="avatar small">
-          {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
-        </span>
-        <span>
-          <strong>{authorName}</strong>
-          {comment.createdAt ? <small>{relativeTimeLabel(comment.createdAt)}</small> : null}
-        </span>
-      </button>
-      <button type="button" className="focused-context-body" onClick={onSelect}>
-        {comment.body}
-      </button>
-    </article>
   );
 }
 
