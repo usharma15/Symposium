@@ -1646,6 +1646,7 @@ button {
 .comment {
   padding: 14px 0;
   border-top: 1px solid var(--line);
+  scroll-margin-top: 104px;
 }
 
 .comment-card {

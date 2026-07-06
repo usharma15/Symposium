@@ -3528,11 +3528,17 @@ function CommentRootSegment({
   );
   const segmentRef = useRef<HTMLDivElement | null>(null);
   const pendingSegmentScrollRef = useRef(false);
+  const selectedCommentRouteRef = useRef(
+    selectedCommentId ? `${comment.id ?? "comment-root"}:${selectedCommentId}` : null
+  );
   const activeSegmentId = segmentStack.at(-1);
   const activeComment = activeSegmentId ? findCommentById([comment], activeSegmentId) ?? comment : comment;
 
   useEffect(() => {
     if (!selectedCommentId) return;
+    const selectedRoute = `${comment.id ?? "comment-root"}:${selectedCommentId}`;
+    if (selectedCommentRouteRef.current === selectedRoute) return;
+    selectedCommentRouteRef.current = selectedRoute;
     const selectedStack = segmentStackForSelectedComment(comment, selectedCommentId);
     setSegmentStack((current) => {
       if (selectedStack.join("|") === current.join("|")) return current;
@@ -3619,10 +3625,12 @@ function CommentNode({
   const canShowReplies = segmentDepth < maxVisibleCommentPathLength;
   const shouldHideReplies = replies.length > 0 && !canShowReplies;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!highlighted) return;
-    nodeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [highlighted]);
+    window.requestAnimationFrame(() => {
+      nodeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  }, [highlighted, selectedCommentId]);
 
   return (
     <article
