@@ -76,7 +76,7 @@ type ViewSnapshot = {
   patronageMode: PatronageMode;
   selectedCommunityId: string | null;
   commentSegmentStacks: CommentSegmentStacks;
-  scrollAnchor: { id: string; top: number } | null;
+  scrollAnchor: { id: string; top: number; commentSegmentKey?: string; commentSegmentStack?: string[] } | null;
   scrollY: number;
 };
 
@@ -364,8 +364,27 @@ const clientId = (prefix: string) =>
 const commentSegmentStackKey = (itemId: string, rootCommentId?: string | null) =>
   `${itemId}:${rootCommentId ?? "root-comment"}`;
 
+const commentRootStackKey = (itemId: string, comment: InquiryComment, index: number) =>
+  commentSegmentStackKey(
+    itemId,
+    comment.id ??
+      `root-${index}-${comment.createdAt ?? "seeded"}-${comment.authorHandle ?? comment.author}-${comment.body
+        .replace(/\s+/g, " ")
+        .slice(0, 80)}`
+  );
+
 const cloneCommentSegmentStacks = (stacks: CommentSegmentStacks): CommentSegmentStacks =>
   Object.fromEntries(Object.entries(stacks).map(([key, stack]) => [key, [...stack]]));
+
+const parseCommentSegmentStack = (value: string | undefined) => {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
+  } catch {
+    return [];
+  }
+};
 
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
   for (const comment of comments) {
@@ -1360,36 +1379,65 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
   const registerVisibleCommentSegmentStack = (key: string, stack: string[]) => {
     const next = { ...visibleCommentSegmentStacksRef.current };
-    if (stack.length) {
-      next[key] = [...stack];
-    } else {
-      delete next[key];
-    }
+    next[key] = [...stack];
     visibleCommentSegmentStacksRef.current = next;
   };
 
-  const currentScrollAnchor = () => {
-    const comments = Array.from(document.querySelectorAll<HTMLElement>(".comment[id]"));
-    const anchor = comments.find((comment) => comment.getBoundingClientRect().bottom > 104);
-    if (!anchor) return null;
-    return { id: anchor.id, top: anchor.getBoundingClientRect().top };
+  const visibleCommentSegmentStacksFromDom = () => {
+    const stacks: CommentSegmentStacks = {};
+    document.querySelectorAll<HTMLElement>(".comment-segment[data-comment-segment-key]").forEach((segment) => {
+      const key = segment.dataset.commentSegmentKey;
+      if (!key) return;
+      stacks[key] = parseCommentSegmentStack(segment.dataset.commentSegmentStack);
+    });
+    return stacks;
   };
 
-  const snapshotView = (): ViewSnapshot => ({
-    activeRoom,
-    selectedItemId,
-    selectedCommentId: null,
-    selectedProfileName,
-    officeMode,
-    patronageMode,
-    selectedCommunityId,
-    commentSegmentStacks: cloneCommentSegmentStacks({
-      ...commentSegmentStacksRef.current,
-      ...visibleCommentSegmentStacksRef.current
-    }),
-    scrollAnchor: currentScrollAnchor(),
-    scrollY: window.scrollY
-  });
+  const currentScrollAnchor = () => {
+    const targetTop = 132;
+    const comments = Array.from(document.querySelectorAll<HTMLElement>(".comment[id]"));
+    const visibleComments = comments
+      .map((comment) => ({ comment, rect: comment.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.bottom > 0 && rect.top < window.innerHeight);
+    const anchor =
+      visibleComments.find(({ rect }) => rect.top <= targetTop && rect.bottom >= targetTop) ??
+      visibleComments.sort(
+        (first, second) => Math.abs(first.rect.top - targetTop) - Math.abs(second.rect.top - targetTop)
+      )[0];
+    if (!anchor) return null;
+    const segment = anchor.comment.closest<HTMLElement>(".comment-segment[data-comment-segment-key]");
+    return {
+      id: anchor.comment.id,
+      top: anchor.rect.top,
+      commentSegmentKey: segment?.dataset.commentSegmentKey,
+      commentSegmentStack: parseCommentSegmentStack(segment?.dataset.commentSegmentStack)
+    };
+  };
+
+  const snapshotView = (): ViewSnapshot => {
+    const scrollAnchor = currentScrollAnchor();
+    const domSegmentStacks = visibleCommentSegmentStacksFromDom();
+    if (scrollAnchor?.commentSegmentKey) {
+      domSegmentStacks[scrollAnchor.commentSegmentKey] = [...(scrollAnchor.commentSegmentStack ?? [])];
+    }
+
+    return {
+      activeRoom,
+      selectedItemId,
+      selectedCommentId: null,
+      selectedProfileName,
+      officeMode,
+      patronageMode,
+      selectedCommunityId,
+      commentSegmentStacks: cloneCommentSegmentStacks({
+        ...commentSegmentStacksRef.current,
+        ...visibleCommentSegmentStacksRef.current,
+        ...domSegmentStacks
+      }),
+      scrollAnchor,
+      scrollY: window.scrollY
+    };
+  };
 
   const restoreScrollPosition = (snapshot: ViewSnapshot) => {
     const scroll = () => {
@@ -3613,28 +3661,28 @@ function CommentThread({
 }) {
   return (
     <div className={`comment-thread depth-${depth}`}>
-      {comments.map((comment) => (
-        <CommentRootSegment
-          key={comment.id ?? `${comment.author}-${comment.stance}-${comment.body}`}
-          comment={comment}
-          itemId={itemId}
-          profiles={profiles}
-          selectedCommentId={selectedCommentId}
-          onOpenProfile={onOpenProfile}
-          onAddComment={onAddComment}
-          onCommentAction={onCommentAction}
-          actorHandle={actorHandle}
-          onClearSelectedComment={onClearSelectedComment}
-          segmentStack={commentSegmentStacks[commentSegmentStackKey(itemId, comment.id)] ?? null}
-          onSegmentStackChange={(stack) =>
-            onCommentSegmentStackChange(commentSegmentStackKey(itemId, comment.id), stack)
-          }
-          onVisibleSegmentStackChange={(stack) =>
-            onVisibleCommentSegmentStackChange(commentSegmentStackKey(itemId, comment.id), stack)
-          }
-          depth={depth}
-        />
-      ))}
+      {comments.map((comment, index) => {
+        const rootStackKey = commentRootStackKey(itemId, comment, index);
+        return (
+          <CommentRootSegment
+            key={rootStackKey}
+            rootStackKey={rootStackKey}
+            comment={comment}
+            itemId={itemId}
+            profiles={profiles}
+            selectedCommentId={selectedCommentId}
+            onOpenProfile={onOpenProfile}
+            onAddComment={onAddComment}
+            onCommentAction={onCommentAction}
+            actorHandle={actorHandle}
+            onClearSelectedComment={onClearSelectedComment}
+            segmentStack={commentSegmentStacks[rootStackKey] ?? null}
+            onSegmentStackChange={(stack) => onCommentSegmentStackChange(rootStackKey, stack)}
+            onVisibleSegmentStackChange={(stack) => onVisibleCommentSegmentStackChange(rootStackKey, stack)}
+            depth={depth}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -3657,6 +3705,7 @@ function segmentStackForSelectedComment(root: InquiryComment, selectedCommentId:
 }
 
 function CommentRootSegment({
+  rootStackKey,
   comment,
   itemId,
   profiles,
@@ -3671,6 +3720,7 @@ function CommentRootSegment({
   onVisibleSegmentStackChange,
   depth
 }: {
+  rootStackKey: string;
   comment: InquiryComment;
   itemId: string;
   profiles: Record<string, ResearchProfile>;
@@ -3698,14 +3748,14 @@ function CommentRootSegment({
       selectedCommentRouteRef.current = null;
       return;
     }
-    const selectedRoute = `${comment.id ?? "comment-root"}:${selectedCommentId}`;
+    const selectedRoute = `${rootStackKey}:${selectedCommentId}`;
     if (selectedCommentRouteRef.current === selectedRoute) return;
     selectedCommentRouteRef.current = selectedRoute;
     const selectedStack = segmentStackForSelectedComment(comment, selectedCommentId);
     const currentStack = segmentStack ?? [];
     if (selectedStack.join("|") === currentStack.join("|")) return;
     onSegmentStackChange(selectedStack);
-  }, [comment, onSegmentStackChange, selectedCommentId, segmentStack]);
+  }, [comment, onSegmentStackChange, rootStackKey, selectedCommentId, segmentStack]);
 
   useLayoutEffect(() => {
     onVisibleSegmentStackChange(visibleSegmentStack);
@@ -3731,7 +3781,12 @@ function CommentRootSegment({
   };
 
   return (
-    <div className="comment-segment" ref={segmentRef}>
+    <div
+      className="comment-segment"
+      ref={segmentRef}
+      data-comment-segment-key={rootStackKey}
+      data-comment-segment-stack={JSON.stringify(visibleSegmentStack)}
+    >
       {visibleSegmentStack.length ? (
         <button
           className="reply-window-button reply-window-button-previous"
