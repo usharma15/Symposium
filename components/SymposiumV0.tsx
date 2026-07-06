@@ -70,6 +70,7 @@ type EntryMode = "loading" | "approach" | "auth" | "complete";
 type OfficeMode = "desk" | "saved" | "notes";
 type PatronageMode = "lobby" | "civic" | "private";
 type CommentSegmentStacks = Record<string, string[]>;
+type ToggleAction = Exclude<PostAction, "read">;
 
 type ViewSnapshot = {
   activeRoom: RoomId;
@@ -191,6 +192,8 @@ const kindLabels: Record<InquiryItem["kind"], string> = {
   note: "Note",
   code: "Code"
 };
+
+const toggleActions: ToggleAction[] = ["save", "signal", "fork"];
 
 const entranceRenders: Record<Theme, string> = {
   day: "/symposium-renders/entrance.png",
@@ -399,6 +402,7 @@ const parseCommentSegmentStack = (value: string | undefined) => {
 
 const collapsedBodyLength = 500;
 const bodyExpansionStep = 2000;
+const actionStateProtectionMs = 5000;
 
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
   for (const comment of comments) {
@@ -721,6 +725,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const visibleCommentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const actionVersionsRef = useRef<Record<string, number>>({});
   const actionDesiredStateRef = useRef<Record<string, boolean | undefined>>({});
+  const actionProtectionUntilRef = useRef<Record<string, number>>({});
   const activityRecencyRef = useRef(activityRecency);
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
   const liveEventCursorRef = useRef("");
@@ -948,6 +953,33 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     );
   };
 
+  const setProtectedDesiredActionState = (key: string, desired: boolean | undefined) => {
+    if (desired === undefined) {
+      delete actionDesiredStateRef.current[key];
+      delete actionProtectionUntilRef.current[key];
+      return;
+    }
+
+    actionDesiredStateRef.current[key] = desired;
+    actionProtectionUntilRef.current[key] = Date.now() + actionStateProtectionMs;
+  };
+
+  const clearDesiredActionState = (key: string) => {
+    delete actionDesiredStateRef.current[key];
+    delete actionProtectionUntilRef.current[key];
+  };
+
+  const protectedDesiredActionState = (key: string) => {
+    const desired = actionDesiredStateRef.current[key];
+    if (desired === undefined) return undefined;
+
+    const protectedUntil = actionProtectionUntilRef.current[key] ?? 0;
+    if (protectedUntil >= Date.now()) return desired;
+
+    clearDesiredActionState(key);
+    return undefined;
+  };
+
   const refreshData = async (preferredHandle = currentProfile.handle) => {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load Symposium data.");
@@ -961,7 +993,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       : { [data.defaultProfile.handle]: data.defaultProfile };
     const nextProfile = loadedProfiles[preferredHandle] ?? loadedProfiles[data.defaultProfile.handle] ?? data.defaultProfile;
 
-    const loadedItems = sortByPublishedRecency(normalizeClientSeedTimes(data.items));
+    const loadedItems = protectItemsFromStaleActionState(
+      sortByPublishedRecency(normalizeClientSeedTimes(data.items)),
+      nextProfile.handle
+    );
     setItems(loadedItems);
     setProfiles(loadedProfiles);
     setCurrentProfile(nextProfile);
@@ -997,6 +1032,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   };
 
   const mergeLiveItem = (incoming: InquiryItem) => {
+    if (conflictsWithDesiredActionState(incoming, currentProfileRef.current.handle)) return false;
+
     const currentItems = itemsRef.current;
     const existingIndex = currentItems.findIndex((item) => item.id === incoming.id);
     const nextItems =
@@ -1008,6 +1045,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     itemsRef.current = sortedItems;
     setItems(sortedItems);
     persistLocalSnapshot(sortedItems, profilesRef.current, currentProfileRef.current);
+    return true;
   };
 
   const mergeLiveFollow = (record: ProfileFollowRecord | undefined, active: boolean) => {
@@ -1070,6 +1108,40 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     return undefined;
   };
 
+  const commentConflictsWithDesiredActionState = (
+    itemId: string,
+    comments: InquiryComment[],
+    handle: string
+  ): boolean =>
+    comments.some((comment) => {
+      if (comment.id) {
+        for (const action of toggleActions) {
+          const key = `${itemId}:${comment.id}:${action}:${handle}`;
+          const desired = protectedDesiredActionState(key);
+          if (desired !== undefined && commentActionActive(comment, action, handle) !== desired) return true;
+        }
+      }
+
+      return commentConflictsWithDesiredActionState(itemId, comment.replies ?? [], handle);
+    });
+
+  const conflictsWithDesiredActionState = (item: InquiryItem, handle: string) => {
+    for (const action of toggleActions) {
+      const key = `${item.id}:${action}:${handle}`;
+      const desired = protectedDesiredActionState(key);
+      if (desired !== undefined && itemActionActive(item, action, handle) !== desired) return true;
+    }
+
+    return commentConflictsWithDesiredActionState(item.id, item.comments ?? [], handle);
+  };
+
+  const protectItemsFromStaleActionState = (incomingItems: InquiryItem[], handle: string) => {
+    const currentById = new Map(itemsRef.current.map((item) => [item.id, item]));
+    return incomingItems.map((incoming) =>
+      conflictsWithDesiredActionState(incoming, handle) ? currentById.get(incoming.id) ?? incoming : incoming
+    );
+  };
+
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
     if (event.cursor) liveEventCursorRef.current = event.cursor;
 
@@ -1094,7 +1166,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       if (action && event.actorHandle === currentProfileRef.current.handle) {
         if (typeof payload.commentId === "string" && action !== "read") {
           const key = `${payload.item.id}:${payload.commentId}:${action}:${currentProfileRef.current.handle}`;
-          const desired = actionDesiredStateRef.current[key];
+          const desired = protectedDesiredActionState(key);
           const eventComment = findCommentById(payload.item.comments, payload.commentId);
           const serverActive = eventComment
             ? commentActionActive(eventComment, action, currentProfileRef.current.handle)
@@ -1103,7 +1175,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
           touchProfileCommentAction(payload.item.id, payload.commentId, action, currentProfileRef.current.handle);
         } else {
           const key = `${payload.item.id}:${action}:${currentProfileRef.current.handle}`;
-          const desired = actionDesiredStateRef.current[key];
+          const desired = protectedDesiredActionState(key);
           const serverActive = itemActionActive(payload.item, action, currentProfileRef.current.handle);
           if (desired !== undefined && serverActive !== desired) return;
           touchProfileAction(payload.item.id, action, currentProfileRef.current.handle);
@@ -2017,7 +2089,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     });
 
     if (!actionApplied) return;
-    actionDesiredStateRef.current[actionKey] = desiredActive;
+    setProtectedDesiredActionState(actionKey, desiredActive);
 
     itemsRef.current = optimisticItems;
     setItems(optimisticItems);
@@ -2035,7 +2107,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
       const data = (await response.json()) as { item: InquiryItem };
       if (actionVersionsRef.current[actionKey] !== version) {
-        const latestActive = actionDesiredStateRef.current[actionKey];
+        const latestActive = protectedDesiredActionState(actionKey);
         if (latestActive !== undefined) {
           void fetch(`/api/posts/${itemId}/actions`, {
             method: "POST",
@@ -2046,13 +2118,22 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         return;
       }
 
+      const committedActive = itemActionActive(data.item, action, actorHandle);
+      if (desiredActive !== undefined && committedActive !== desiredActive) {
+        setProtectedDesiredActionState(actionKey, desiredActive);
+        setSyncStatus("Action syncing");
+        return;
+      }
+
       const committedItems = itemsRef.current.map((item) => (item.id === itemId ? data.item : item));
       itemsRef.current = committedItems;
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
+      setProtectedDesiredActionState(actionKey, desiredActive);
       setSyncStatus("Action synced");
     } catch {
       if (actionVersionsRef.current[actionKey] !== version) return;
+      clearDesiredActionState(actionKey);
       itemsRef.current = previousItems;
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
@@ -2081,7 +2162,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     });
 
     if (!actionApplied) return;
-    actionDesiredStateRef.current[actionKey] = desiredActive;
+    setProtectedDesiredActionState(actionKey, desiredActive);
     itemsRef.current = optimisticItems;
     setItems(optimisticItems);
     persistLocalSnapshot(optimisticItems, profilesRef.current);
@@ -2104,6 +2185,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         ? commentActionActive(committedComment, action, actorHandle)
         : undefined;
       if (desiredActive !== undefined && committedActive !== desiredActive) {
+        setProtectedDesiredActionState(actionKey, desiredActive);
         setSyncStatus("Comment action syncing");
         return;
       }
@@ -2112,9 +2194,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       itemsRef.current = committedItems;
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
+      setProtectedDesiredActionState(actionKey, desiredActive);
       setSyncStatus("Comment action synced");
     } catch {
       if (actionVersionsRef.current[actionKey] !== version) return;
+      clearDesiredActionState(actionKey);
       itemsRef.current = previousItems;
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
