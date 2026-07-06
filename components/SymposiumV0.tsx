@@ -173,6 +173,13 @@ type SymposiumAuthState = {
   signOut: () => Promise<void>;
 };
 
+const liveStatus = {
+  loading: "Loading live data",
+  connected: "Live data connected",
+  reconnecting: "Live updates reconnecting",
+  legacyConnected: "Live updates connected"
+} as const;
+
 const kindLabels: Record<InquiryItem["kind"], string> = {
   paper: "Paper",
   thought: "Thought",
@@ -698,7 +705,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [profileActivityRevision, setProfileActivityRevision] = useState(0);
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
-  const [syncStatus, setSyncStatus] = useState("Loading live data");
+  const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
   const [authError, setAuthError] = useState("");
   const itemsRef = useRef(items);
   const profilesRef = useRef(profiles);
@@ -905,6 +912,27 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     )
   });
 
+  const markLiveDataConnected = () => {
+    setSyncStatus((status) =>
+      status === liveStatus.loading ||
+      status === liveStatus.reconnecting ||
+      status === liveStatus.legacyConnected
+        ? liveStatus.connected
+        : status
+    );
+  };
+
+  const markLiveUpdatesReconnecting = () => {
+    setSyncStatus((status) =>
+      status === liveStatus.loading ||
+      status === liveStatus.connected ||
+      status === liveStatus.reconnecting ||
+      status === liveStatus.legacyConnected
+        ? liveStatus.reconnecting
+        : status
+    );
+  };
+
   const refreshData = async (preferredHandle = currentProfile.handle) => {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load Symposium data.");
@@ -923,7 +951,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setProfiles(loadedProfiles);
     setCurrentProfile(nextProfile);
     persistLocalSnapshot(loadedItems, loadedProfiles, nextProfile);
-    setSyncStatus("Live data connected");
+    setSyncStatus(liveStatus.connected);
   };
 
   const refreshFollowing = async (actorHandle = currentProfile.handle) => {
@@ -1090,6 +1118,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const data = (await response.json()) as { events?: SymposiumLiveEvent[]; cursor?: string | null };
     for (const event of data.events ?? []) mergeLiveEvent(event);
     if (data.cursor) liveEventCursorRef.current = data.cursor;
+    markLiveDataConnected();
   };
 
   useEffect(() => {
@@ -1113,10 +1142,13 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       const cursor = liveEventCursorRef.current;
       source = new EventSource(`/api/events/stream${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
       source.onopen = () => {
-        if (!closed) setSyncStatus((status) => (status === "Loading live data" ? "Live updates connected" : status));
+        if (!closed) markLiveDataConnected();
       };
       source.addEventListener("symposium-ready", () => {
-        if (!closed) setSyncStatus((status) => (status === "Loading live data" ? "Live updates connected" : status));
+        if (!closed) markLiveDataConnected();
+      });
+      source.addEventListener("symposium-heartbeat", () => {
+        if (!closed) markLiveDataConnected();
       });
       source.addEventListener("symposium-event", (message) => {
         if (closed) return;
@@ -1128,7 +1160,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       });
       source.onerror = () => {
         if (!closed) {
-          setSyncStatus("Live updates reconnecting");
+          markLiveUpdatesReconnecting();
           startPolling();
         }
       };
