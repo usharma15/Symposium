@@ -386,6 +386,9 @@ const parseCommentSegmentStack = (value: string | undefined) => {
   }
 };
 
+const collapsedBodyLength = 500;
+const bodyExpansionStep = 2000;
+
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
   for (const comment of comments) {
     if (comment.id === id) return comment;
@@ -2279,6 +2282,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
+            onCommentAction={applyCommentAction}
             onOpenSettings={() => {
               setNotebookOpen(false);
               setTabletOpen(false);
@@ -3347,7 +3351,11 @@ function FeedPost({
       />
       <div className="post-body">
         <h2>{item.title}</h2>
-        <p>{item.excerpt}</p>
+        <ExpandableBodyText
+          text={item.body}
+          className="feed-post-text"
+          onExpand={() => onAction(item.id, "read")}
+        />
         <PostTimeFooter item={item} />
         <SocialActions
           item={item}
@@ -3358,6 +3366,59 @@ function FeedPost({
         />
       </div>
     </article>
+  );
+}
+
+function ExpandableBodyText({
+  text,
+  className,
+  onExpand
+}: {
+  text: string;
+  className?: string;
+  onExpand?: () => void;
+}) {
+  const [visibleLength, setVisibleLength] = useState(() =>
+    text.length > collapsedBodyLength ? collapsedBodyLength : text.length
+  );
+  const hasMore = visibleLength < text.length;
+  const isExpanded = text.length > collapsedBodyLength && !hasMore;
+  const visibleText = text.slice(0, visibleLength);
+
+  useEffect(() => {
+    setVisibleLength(text.length > collapsedBodyLength ? collapsedBodyLength : text.length);
+  }, [text]);
+
+  const showMore = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    setVisibleLength((current) => Math.min(text.length, current + bodyExpansionStep));
+    onExpand?.();
+  };
+
+  const showLess = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    setVisibleLength(Math.min(collapsedBodyLength, text.length));
+  };
+
+  return (
+    <p className={`expandable-text ${className ?? ""}`.trim()}>
+      {visibleText}
+      {hasMore ? (
+        <>
+          <span> ... </span>
+          <button type="button" className="inline-expand-button" onClick={showMore}>
+            show more
+          </button>
+        </>
+      ) : isExpanded ? (
+        <>
+          <span> </span>
+          <button type="button" className="inline-expand-button" onClick={showLess}>
+            show less
+          </button>
+        </>
+      ) : null}
+    </p>
   );
 }
 
@@ -3787,15 +3848,6 @@ function CommentRootSegment({
       data-comment-segment-key={rootStackKey}
       data-comment-segment-stack={JSON.stringify(visibleSegmentStack)}
     >
-      {visibleSegmentStack.length ? (
-        <button
-          className="reply-window-button reply-window-button-previous"
-          type="button"
-          onClick={showPreviousSegment}
-        >
-          Show previous replies
-        </button>
-      ) : null}
       <CommentNode
         comment={activeComment}
         itemId={itemId}
@@ -3809,6 +3861,17 @@ function CommentRootSegment({
         segmentDepth={1}
         onOpenReplySegment={openReplySegment}
         onClearSelectedComment={onClearSelectedComment}
+        leadingAction={
+          visibleSegmentStack.length ? (
+            <button
+              className="reply-window-button reply-window-button-previous"
+              type="button"
+              onClick={showPreviousSegment}
+            >
+              Show previous replies
+            </button>
+          ) : null
+        }
       />
     </div>
   );
@@ -3826,7 +3889,8 @@ function CommentNode({
   depth,
   segmentDepth,
   onOpenReplySegment,
-  onClearSelectedComment
+  onClearSelectedComment,
+  leadingAction
 }: {
   comment: InquiryComment;
   itemId: string;
@@ -3840,6 +3904,7 @@ function CommentNode({
   segmentDepth: number;
   onOpenReplySegment: (commentId: string) => void;
   onClearSelectedComment: () => void;
+  leadingAction?: ReactNode;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
   const replies = comment.replies ?? [];
@@ -3863,6 +3928,7 @@ function CommentNode({
       id={comment.id ? `comment-${comment.id}` : undefined}
       className="comment"
     >
+      {leadingAction ? <div className="comment-leading-action">{leadingAction}</div> : null}
       <div className={`comment-card ${highlighted ? "highlighted" : ""}`}>
         <button type="button" className="comment-author" onClick={() => onOpenProfile(authorProfile?.handle ?? comment.authorHandle ?? comment.author)}>
           <span className="avatar small">
@@ -3958,6 +4024,7 @@ function CommentActions({
   const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
   const actions = [
     { label: "Likes", active: commentActionActive(comment, "signal", actorHandle), value: metrics.signal, icon: ThumbsUp, action: "signal" as CommentAction },
+    { label: "Comments", value: String(countComments(comment.replies ?? [])), icon: MessageCircle, action: null },
     { label: "Reshares", active: commentActionActive(comment, "fork", actorHandle), value: metrics.forks, icon: Repeat2, action: "fork" as CommentAction },
     { label: "Saves", active: commentActionActive(comment, "save", actorHandle), value: metrics.saves, icon: Bookmark, action: "save" as CommentAction },
     { label: "Views", value: metrics.reads, icon: Eye, action: "read" as CommentAction }
@@ -3974,7 +4041,10 @@ function CommentActions({
             type="button"
             title={action.label}
             className={action.active ? "active" : ""}
-            onClick={() => onAction(itemId, comment.id as string, action.action)}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (action.action) onAction(itemId, comment.id as string, action.action);
+            }}
           >
             <Icon size={15} fill={fillActiveIcon ? "currentColor" : "none"} />
             <span>{action.label}</span>
@@ -4068,6 +4138,7 @@ function ProfileView({
   onSelect,
   onOpenProfile,
   onAction,
+  onCommentAction,
   onOpenSettings,
   onToggleFollow,
   actorHandle,
@@ -4088,6 +4159,7 @@ function ProfileView({
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
+  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
   onOpenSettings: () => void;
   onToggleFollow: (handle: string) => void;
   actorHandle: string;
@@ -4301,6 +4373,8 @@ function ProfileView({
                 profiles={profiles}
                 onSelect={onSelect}
                 onOpenProfile={onOpenProfile}
+                onCommentAction={onCommentAction}
+                actorHandle={actorHandle}
               />
             ) : (
               <FeedPost
@@ -4344,12 +4418,16 @@ function ProfileCommentCard({
   activity,
   profiles,
   onSelect,
-  onOpenProfile
+  onOpenProfile,
+  onCommentAction,
+  actorHandle
 }: {
   activity: ProfileCommentActivity;
   profiles: Record<string, ResearchProfile>;
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
+  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  actorHandle: string;
 }) {
   const authorProfile = profileForHandle(profiles, activity.comment.authorHandle ?? activity.comment.author);
   const authorName = authorProfile?.name ?? activity.comment.author;
@@ -4388,7 +4466,19 @@ function ProfileCommentCard({
           {activity.label}
         </span>
       </header>
-      <p>{activity.comment.body}</p>
+      <ExpandableBodyText
+        text={activity.comment.body}
+        className="profile-comment-text"
+        onExpand={() => {
+          if (activity.comment.id) onCommentAction(activity.item.id, activity.comment.id, "read");
+        }}
+      />
+      <CommentActions
+        comment={activity.comment}
+        itemId={activity.item.id}
+        actorHandle={actorHandle}
+        onAction={onCommentAction}
+      />
       <footer>
         <span>On</span>
         <strong>{activity.item.title}</strong>

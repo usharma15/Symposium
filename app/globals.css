@@ -1649,6 +1649,10 @@ button {
   scroll-margin-top: 104px;
 }
 
+.comment-leading-action {
+  margin: 0 0 10px 39px;
+}
+
 .comment-card {
   display: grid;
   min-width: 0;
@@ -1757,7 +1761,7 @@ button {
 }
 
 .reply-window-button-previous {
-  margin: 0 0 8px;
+  margin: 0;
 }
 
 .comment-composer.compact {
@@ -3527,6 +3531,38 @@ button {
   overflow-wrap: anywhere;
 }
 
+.detail-body,
+.expandable-text {
+  white-space: pre-wrap;
+}
+
+.expandable-text {
+  margin: 0;
+}
+
+.inline-expand-button {
+  display: inline;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: #167e89;
+  padding: 0;
+  font: inherit;
+  font-weight: 850;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.inline-expand-button:hover {
+  color: #0e5d66;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.symposium-shell.night .inline-expand-button {
+  color: var(--aqua);
+}
+
 .post-time-footer {
   display: flex;
   flex-wrap: wrap;
@@ -3834,6 +3870,14 @@ button {
   margin: 0;
   color: var(--ink);
   line-height: 1.55;
+}
+
+.profile-comment-card .comment-actions {
+  margin: 0;
+}
+
+.profile-comment-card .comment-actions button {
+  padding-inline: 0;
 }
 
 .profile-comment-card footer {
