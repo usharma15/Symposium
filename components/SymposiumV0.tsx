@@ -735,6 +735,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         ? themedCommunityRenders.selected
         : themedRoomRenders[activeRoom];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+  const editingPostItem = editingPost ? items.find((item) => item.id === editingPost.id) ?? editingPost : null;
   const selectedCommunity =
     selectedCommunityId ? researchCommunities.find((community) => community.id === selectedCommunityId) ?? null : null;
   const profileList = useMemo(() => Object.values(profiles), [profiles]);
@@ -2480,9 +2481,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         />
       ) : null}
 
-      {editingPost ? (
+      {editingPostItem ? (
         <PostEditModal
-          item={items.find((item) => item.id === editingPost.id) ?? editingPost}
+          key={editingPostItem.id}
+          item={editingPostItem}
           onClose={() => setEditingPost(null)}
           onSave={savePostEdit}
           onDelete={deletePost}
@@ -3240,11 +3242,6 @@ function PostEditModal({
 }) {
   const [title, setTitle] = useState(item.title);
   const [body, setBody] = useState(item.body);
-
-  useEffect(() => {
-    setTitle(item.title);
-    setBody(item.body);
-  }, [item]);
 
   const submitEdit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
