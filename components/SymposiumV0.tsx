@@ -65,6 +65,7 @@ type ProfileCommentActivityKind = Exclude<ProfileActivityKind, "authored">;
 type EntryMode = "loading" | "approach" | "auth" | "complete";
 type OfficeMode = "desk" | "saved" | "notes";
 type PatronageMode = "lobby" | "civic" | "private";
+type CommentSegmentStacks = Record<string, string[]>;
 
 type ViewSnapshot = {
   activeRoom: RoomId;
@@ -74,6 +75,7 @@ type ViewSnapshot = {
   officeMode: OfficeMode;
   patronageMode: PatronageMode;
   selectedCommunityId: string | null;
+  commentSegmentStacks: CommentSegmentStacks;
   scrollY: number;
 };
 
@@ -357,6 +359,12 @@ const communitySearchText = (community: ResearchCommunity) =>
 
 const clientId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+const commentSegmentStackKey = (itemId: string, rootCommentId?: string | null) =>
+  `${itemId}:${rootCommentId ?? "root-comment"}`;
+
+const cloneCommentSegmentStacks = (stacks: CommentSegmentStacks): CommentSegmentStacks =>
+  Object.fromEntries(Object.entries(stacks).map(([key, stack]) => [key, [...stack]]));
 
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
   for (const comment of comments) {
@@ -649,6 +657,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [patronageMode, setPatronageMode] = useState<PatronageMode>("lobby");
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [selectedCommentId, setSelectedCommentId] = useState<string | null>(null);
+  const [commentSegmentStacks, setCommentSegmentStacks] = useState<CommentSegmentStacks>({});
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const [communitiesExpanded, setCommunitiesExpanded] = useState(false);
   const [communityQuery, setCommunityQuery] = useState("");
@@ -672,6 +681,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const profilesRef = useRef(profiles);
   const currentProfileRef = useRef(currentProfile);
   const selectedProfileNameRef = useRef(selectedProfileName);
+  const commentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const actionVersionsRef = useRef<Record<string, number>>({});
   const actionDesiredStateRef = useRef<Record<string, boolean | undefined>>({});
   const activityRecencyRef = useRef(activityRecency);
@@ -718,6 +728,20 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   useEffect(() => {
     selectedProfileNameRef.current = selectedProfileName;
   }, [selectedProfileName]);
+
+  useEffect(() => {
+    commentSegmentStacksRef.current = commentSegmentStacks;
+  }, [commentSegmentStacks]);
+
+  useEffect(() => {
+    if (!selectedCommentId || selectedCommentId === commentsSectionTargetId) return;
+    const highlightedCommentId = selectedCommentId;
+    const timer = window.setTimeout(() => {
+      setSelectedCommentId((current) => (current === highlightedCommentId ? null : current));
+    }, 5000);
+
+    return () => window.clearTimeout(timer);
+  }, [selectedCommentId]);
 
   useEffect(() => {
     activityRecencyRef.current = activityRecency;
@@ -1316,14 +1340,31 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     );
   };
 
+  const updateCommentSegmentStack = (key: string, stack: string[]) => {
+    setCommentSegmentStacks((current) => {
+      const currentStack = current[key] ?? [];
+      if (currentStack.join("|") === stack.join("|")) return current;
+
+      const next = { ...current };
+      if (stack.length) {
+        next[key] = [...stack];
+      } else {
+        delete next[key];
+      }
+      commentSegmentStacksRef.current = next;
+      return next;
+    });
+  };
+
   const snapshotView = (): ViewSnapshot => ({
     activeRoom,
     selectedItemId,
-    selectedCommentId,
+    selectedCommentId: null,
     selectedProfileName,
     officeMode,
     patronageMode,
     selectedCommunityId,
+    commentSegmentStacks: cloneCommentSegmentStacks(commentSegmentStacksRef.current),
     scrollY: window.scrollY
   });
 
@@ -1336,6 +1377,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setOfficeMode(snapshot.officeMode);
     setPatronageMode(snapshot.patronageMode);
     setSelectedCommunityId(snapshot.selectedCommunityId);
+    const restoredSegmentStacks = cloneCommentSegmentStacks(snapshot.commentSegmentStacks ?? {});
+    commentSegmentStacksRef.current = restoredSegmentStacks;
+    setCommentSegmentStacks(restoredSegmentStacks);
     setTabletOpen(false);
     setNotebookOpen(false);
     setComposerOpen(false);
@@ -1356,6 +1400,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     if (next.selectedItemId !== undefined) setSelectedItemId(next.selectedItemId);
     if (next.selectedCommentId !== undefined) setSelectedCommentId(next.selectedCommentId);
     if (next.selectedProfileName !== undefined) setSelectedProfileName(next.selectedProfileName);
+    if (next.selectedItemId !== undefined && next.selectedItemId !== selectedItemId) {
+      commentSegmentStacksRef.current = {};
+      setCommentSegmentStacks({});
+    }
     if (next.officeMode !== undefined) setOfficeMode(next.officeMode);
     if (next.patronageMode !== undefined) setPatronageMode(next.patronageMode);
     if (next.selectedCommunityId !== undefined) setSelectedCommunityId(next.selectedCommunityId);
@@ -2163,6 +2211,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             profiles={profiles}
             selectedCommentId={selectedCommentId}
             onClearSelectedComment={() => setSelectedCommentId(null)}
+            commentSegmentStacks={commentSegmentStacks}
+            onCommentSegmentStackChange={updateCommentSegmentStack}
           />
         ) : activeRoom === "hall" ? (
           <HallView onEnter={enterRoom} />
@@ -3305,7 +3355,9 @@ function DetailView({
   actorHandle,
   profiles,
   selectedCommentId,
-  onClearSelectedComment
+  onClearSelectedComment,
+  commentSegmentStacks,
+  onCommentSegmentStackChange
 }: {
   item: InquiryItem;
   room: Room;
@@ -3320,6 +3372,8 @@ function DetailView({
   profiles: Record<string, ResearchProfile>;
   selectedCommentId: string | null;
   onClearSelectedComment: () => void;
+  commentSegmentStacks: CommentSegmentStacks;
+  onCommentSegmentStackChange: (key: string, stack: string[]) => void;
 }) {
   const isPaper = item.kind === "paper";
   const doiSlug = item.id.replace(/[^a-z0-9]+/gi, ".").replace(/\.+/g, ".").replace(/\.$/, "");
@@ -3380,6 +3434,8 @@ function DetailView({
             onCommentAction={onCommentAction}
             actorHandle={actorHandle}
             onClearSelectedComment={onClearSelectedComment}
+            commentSegmentStacks={commentSegmentStacks}
+            onCommentSegmentStackChange={onCommentSegmentStackChange}
           />
         </section>
       </section>
@@ -3458,6 +3514,8 @@ function CommentThread({
   onCommentAction,
   actorHandle,
   onClearSelectedComment,
+  commentSegmentStacks,
+  onCommentSegmentStackChange,
   depth = 0
 }: {
   comments: InquiryComment[];
@@ -3469,6 +3527,8 @@ function CommentThread({
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
   actorHandle: string;
   onClearSelectedComment: () => void;
+  commentSegmentStacks: CommentSegmentStacks;
+  onCommentSegmentStackChange: (key: string, stack: string[]) => void;
   depth?: number;
 }) {
   return (
@@ -3485,6 +3545,10 @@ function CommentThread({
           onCommentAction={onCommentAction}
           actorHandle={actorHandle}
           onClearSelectedComment={onClearSelectedComment}
+          segmentStack={commentSegmentStacks[commentSegmentStackKey(itemId, comment.id)] ?? null}
+          onSegmentStackChange={(stack) =>
+            onCommentSegmentStackChange(commentSegmentStackKey(itemId, comment.id), stack)
+          }
           depth={depth}
         />
       ))}
@@ -3519,6 +3583,8 @@ function CommentRootSegment({
   onCommentAction,
   actorHandle,
   onClearSelectedComment,
+  segmentStack,
+  onSegmentStackChange,
   depth
 }: {
   comment: InquiryComment;
@@ -3530,53 +3596,55 @@ function CommentRootSegment({
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
   actorHandle: string;
   onClearSelectedComment: () => void;
+  segmentStack: string[] | null;
+  onSegmentStackChange: (stack: string[]) => void;
   depth: number;
 }) {
-  const [segmentStack, setSegmentStack] = useState<string[]>(() =>
-    segmentStackForSelectedComment(comment, selectedCommentId)
-  );
   const segmentRef = useRef<HTMLDivElement | null>(null);
   const pendingSegmentScrollRef = useRef(false);
-  const selectedCommentRouteRef = useRef(
-    selectedCommentId ? `${comment.id ?? "comment-root"}:${selectedCommentId}` : null
-  );
-  const activeSegmentId = segmentStack.at(-1);
+  const selectedCommentRouteRef = useRef<string | null>(null);
+  const selectedSegmentStack = segmentStackForSelectedComment(comment, selectedCommentId);
+  const visibleSegmentStack = segmentStack ?? selectedSegmentStack;
+  const activeSegmentId = visibleSegmentStack.at(-1);
   const activeComment = activeSegmentId ? findCommentById([comment], activeSegmentId) ?? comment : comment;
 
   useEffect(() => {
-    if (!selectedCommentId) return;
+    if (!selectedCommentId) {
+      selectedCommentRouteRef.current = null;
+      return;
+    }
     const selectedRoute = `${comment.id ?? "comment-root"}:${selectedCommentId}`;
     if (selectedCommentRouteRef.current === selectedRoute) return;
     selectedCommentRouteRef.current = selectedRoute;
     const selectedStack = segmentStackForSelectedComment(comment, selectedCommentId);
-    setSegmentStack((current) => {
-      if (selectedStack.join("|") === current.join("|")) return current;
-      pendingSegmentScrollRef.current = true;
-      return selectedStack;
-    });
-  }, [comment, selectedCommentId]);
+    const currentStack = segmentStack ?? [];
+    if (selectedStack.join("|") === currentStack.join("|")) return;
+    pendingSegmentScrollRef.current = true;
+    onSegmentStackChange(selectedStack);
+  }, [comment, onSegmentStackChange, selectedCommentId, segmentStack]);
 
   useLayoutEffect(() => {
     if (!pendingSegmentScrollRef.current || !segmentRef.current) return;
     pendingSegmentScrollRef.current = false;
     segmentRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
-  }, [segmentStack]);
+  }, [visibleSegmentStack]);
 
   const openReplySegment = (commentId: string) => {
     onClearSelectedComment();
     pendingSegmentScrollRef.current = true;
-    setSegmentStack((current) => (current.at(-1) === commentId ? current : [...current, commentId]));
+    if (visibleSegmentStack.at(-1) === commentId) return;
+    onSegmentStackChange([...visibleSegmentStack, commentId]);
   };
 
   const showPreviousSegment = () => {
     onClearSelectedComment();
     pendingSegmentScrollRef.current = true;
-    setSegmentStack((current) => current.slice(0, -1));
+    onSegmentStackChange(visibleSegmentStack.slice(0, -1));
   };
 
   return (
     <div className="comment-segment" ref={segmentRef}>
-      {segmentStack.length ? (
+      {visibleSegmentStack.length ? (
         <button
           className="reply-window-button reply-window-button-previous"
           type="button"
