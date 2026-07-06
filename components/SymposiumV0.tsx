@@ -383,6 +383,17 @@ const commentRootStackKey = (itemId: string, comment: InquiryComment, index: num
 const cloneCommentSegmentStacks = (stacks: CommentSegmentStacks): CommentSegmentStacks =>
   Object.fromEntries(Object.entries(stacks).map(([key, stack]) => [key, [...stack]]));
 
+const removePostCommentSegmentStacks = (stacks: CommentSegmentStacks, itemId: string): CommentSegmentStacks =>
+  Object.fromEntries(Object.entries(stacks).filter(([key]) => !key.startsWith(`${itemId}:`)));
+
+const pruneDeletedPostSnapshots = (snapshots: ViewSnapshot[], itemId: string): ViewSnapshot[] =>
+  snapshots
+    .filter((snapshot) => snapshot.selectedItemId !== itemId)
+    .map((snapshot) => ({
+      ...snapshot,
+      commentSegmentStacks: removePostCommentSegmentStacks(snapshot.commentSegmentStacks ?? {}, itemId)
+    }));
+
 const parseCommentSegmentStack = (value: string | undefined) => {
   if (!value) return [];
   try {
@@ -711,6 +722,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const profilesRef = useRef(profiles);
   const currentProfileRef = useRef(currentProfile);
   const selectedProfileNameRef = useRef(selectedProfileName);
+  const selectedItemIdRef = useRef(selectedItemId);
+  const selectedCommentIdRef = useRef(selectedCommentId);
   const commentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const visibleCommentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const actionVersionsRef = useRef<Record<string, number>>({});
@@ -760,6 +773,14 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   useEffect(() => {
     selectedProfileNameRef.current = selectedProfileName;
   }, [selectedProfileName]);
+
+  useEffect(() => {
+    selectedItemIdRef.current = selectedItemId;
+  }, [selectedItemId]);
+
+  useEffect(() => {
+    selectedCommentIdRef.current = selectedCommentId;
+  }, [selectedCommentId]);
 
   useEffect(() => {
     commentSegmentStacksRef.current = commentSegmentStacks;
@@ -1056,6 +1077,27 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     return undefined;
   };
 
+  const finalizeDeletedPostState = (itemId: string) => {
+    setEditingPost((current) => (current?.id === itemId ? null : current));
+    setViewHistory((history) => pruneDeletedPostSnapshots(history, itemId));
+    setViewFuture((future) => pruneDeletedPostSnapshots(future, itemId));
+
+    const nextSegmentStacks = removePostCommentSegmentStacks(commentSegmentStacksRef.current, itemId);
+    commentSegmentStacksRef.current = nextSegmentStacks;
+    setCommentSegmentStacks(nextSegmentStacks);
+    visibleCommentSegmentStacksRef.current = removePostCommentSegmentStacks(
+      visibleCommentSegmentStacksRef.current,
+      itemId
+    );
+
+    if (selectedItemIdRef.current === itemId) {
+      selectedItemIdRef.current = null;
+      selectedCommentIdRef.current = null;
+      setSelectedItemId(null);
+      setSelectedCommentId(null);
+    }
+  };
+
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
     if (event.cursor) liveEventCursorRef.current = event.cursor;
 
@@ -1065,7 +1107,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       itemsRef.current = nextItems;
       setItems(nextItems);
       persistLocalSnapshot(nextItems, profilesRef.current, currentProfileRef.current);
-      setSelectedItemId((current) => (current === payload.itemId ? null : current));
+      finalizeDeletedPostState(payload.itemId);
       return;
     }
 
@@ -2153,12 +2195,19 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     if (!window.confirm(`Delete "${item.title}"?`)) return;
 
     const previousItems = itemsRef.current;
+    const previousSelectedItemId = selectedItemIdRef.current;
+    const previousSelectedCommentId = selectedCommentIdRef.current;
     const nextItems = previousItems.filter((current) => current.id !== itemId);
     itemsRef.current = nextItems;
     setItems(nextItems);
     persistLocalSnapshot(nextItems, profilesRef.current);
     setEditingPost(null);
-    setSelectedItemId((current) => (current === itemId ? null : current));
+    if (previousSelectedItemId === itemId) {
+      selectedItemIdRef.current = null;
+      selectedCommentIdRef.current = null;
+      setSelectedItemId(null);
+      setSelectedCommentId(null);
+    }
     setSyncStatus("Deleting post");
 
     try {
@@ -2169,11 +2218,18 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       });
 
       if (!response.ok) throw new Error("Post delete failed.");
+      finalizeDeletedPostState(itemId);
       setSyncStatus("Post deleted");
     } catch {
       itemsRef.current = previousItems;
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
+      if (previousSelectedItemId === itemId && selectedItemIdRef.current === null) {
+        selectedItemIdRef.current = previousSelectedItemId;
+        selectedCommentIdRef.current = previousSelectedCommentId;
+        setSelectedItemId(previousSelectedItemId);
+        setSelectedCommentId(previousSelectedCommentId);
+      }
       setSyncStatus("Post delete could not sync");
     }
   };
