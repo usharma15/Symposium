@@ -4590,7 +4590,15 @@ function CommentNode({
           onEditComment={onEditComment}
           onDeleteComment={onDeleteComment}
         />
-        <p>{comment.body}</p>
+        <ExpandableBodyText
+          text={comment.body}
+          className="comment-text"
+          onExpand={() => {
+            if (comment.id && !commentDeleted) {
+              onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
+            }
+          }}
+        />
         <CommentTimeFooter comment={comment} />
         <CommentActions
           comment={comment}

@@ -3634,6 +3634,17 @@ button {
   text-underline-offset: 3px;
 }
 
+.comment .inline-expand-button {
+  display: inline;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: #167e89;
+  text-align: inherit;
+}
+
 .symposium-shell.night .inline-expand-button {
   color: var(--aqua);
 }
