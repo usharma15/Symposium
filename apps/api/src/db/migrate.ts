@@ -116,6 +116,8 @@ const migrations: Migration[] = [
         author_name TEXT NOT NULL,
         stance TEXT NOT NULL,
         body TEXT NOT NULL,
+        edited_at TIMESTAMPTZ,
+        deleted_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
@@ -691,6 +693,13 @@ const migrations: Migration[] = [
     id: "0006_post_tombstones",
     sql: `
       ALTER TABLE posts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    `
+  },
+  {
+    id: "0007_comment_edit_delete",
+    sql: `
+      ALTER TABLE comments ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+      ALTER TABLE comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
     `
   }
 ];

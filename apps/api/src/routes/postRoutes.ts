@@ -6,8 +6,10 @@ import {
   applyCommentAction,
   applyPostAction,
   createPost,
+  deleteComment,
   deletePost,
   getInitialState,
+  updateComment,
   updatePost
 } from "../repository/liveRepository";
 import type { RouteParams } from "./types";
@@ -57,6 +59,26 @@ export const registerPostRoutes = (app: FastifyInstance) => {
       const actor = await withWriteActor(request);
       const comment = await addComment(request.params.id, request.body, actor);
       return reply.send({ comment });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: RouteParams & { commentId: string } }>("/v1/posts/:id/comments/:commentId", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const item = await updateComment(request.params.id, request.params.commentId, request.body, actor);
+      return reply.send({ item });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: RouteParams & { commentId: string } }>("/v1/posts/:id/comments/:commentId", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const item = await deleteComment(request.params.id, request.params.commentId, request.body, actor);
+      return reply.send({ item, deleted: { id: request.params.commentId } });
     } catch (error) {
       return sendError(app, reply, error);
     }

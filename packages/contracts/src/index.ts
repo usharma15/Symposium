@@ -82,6 +82,8 @@ export type InquiryCommentContract = {
   body: string;
   stance: string;
   createdAt?: string;
+  editedAt?: string;
+  deletedAt?: string;
   metrics?: Pick<InquiryMetricsContract, "signal" | "forks" | "saves" | "reads">;
   savedBy?: string[];
   signaledBy?: string[];
@@ -98,6 +100,8 @@ export const inquiryCommentSchema: z.ZodType<InquiryCommentContract> = z.lazy(()
     body: z.string(),
     stance: z.string(),
     createdAt: z.string().optional(),
+    editedAt: z.string().optional(),
+    deletedAt: z.string().optional(),
     metrics: inquiryMetricsSchema.pick({ signal: true, forks: true, saves: true, reads: true }).optional(),
     savedBy: z.array(z.string()).optional(),
     signaledBy: z.array(z.string()).optional(),
@@ -181,6 +185,11 @@ export const createCommentInputSchema = z.object({
   stance: z.string().trim().min(1).default("Comment"),
   parentId: z.string().nullable().optional(),
   authorHandle: z.string().optional()
+});
+
+export const updateCommentInputSchema = z.object({
+  body: z.string().trim().min(1).max(8000),
+  actorHandle: z.string().optional()
 });
 
 export const postActionInputSchema = z.object({
@@ -344,6 +353,7 @@ export type InquiryItemContract = z.infer<typeof inquiryItemSchema>;
 export type ResearchCommunityContract = z.infer<typeof researchCommunitySchema>;
 export type CreatePostInputContract = z.infer<typeof createPostInputSchema>;
 export type CreateCommentInputContract = z.infer<typeof createCommentInputSchema>;
+export type UpdateCommentInputContract = z.infer<typeof updateCommentInputSchema>;
 export type PostActionInputContract = z.infer<typeof postActionInputSchema>;
 export type AttachmentStatusContract = z.infer<typeof attachmentStatusSchema>;
 export type BootstrapResponseContract = z.infer<typeof bootstrapResponseSchema>;

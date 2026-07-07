@@ -46,6 +46,8 @@ export type CommentRow = {
   savedBy?: unknown;
   signaledBy?: unknown;
   forkedBy?: unknown;
+  editedAt?: Date | string | null;
+  deletedAt?: Date | string | null;
   createdAt: Date | string;
 };
 
@@ -464,15 +466,17 @@ export const commentTreesFromRows = (rows: CommentRow[]) => {
       id: row.id,
       parentId: row.parentId,
       author: row.authorName,
-          authorHandle: row.authorHandle ?? undefined,
-          stance: row.stance,
-          body: row.body,
-          createdAt: new Date(row.createdAt).toISOString(),
-          metrics: json(row.metrics, { signal: "0", forks: "0", saves: "0", reads: "0" }),
-          savedBy: json(row.savedBy, []),
-          signaledBy: json(row.signaledBy, []),
-          forkedBy: json(row.forkedBy, []),
-          replies: buildTree(byParent, row.id)
+      authorHandle: row.authorHandle ?? undefined,
+      stance: row.stance,
+      body: row.body,
+      createdAt: new Date(row.createdAt).toISOString(),
+      editedAt: row.editedAt ? new Date(row.editedAt).toISOString() : undefined,
+      deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : undefined,
+      metrics: json(row.metrics, { signal: "0", forks: "0", saves: "0", reads: "0" }),
+      savedBy: json(row.savedBy, []),
+      signaledBy: json(row.signaledBy, []),
+      forkedBy: json(row.forkedBy, []),
+      replies: buildTree(byParent, row.id)
     }));
 
   return new Map([...byPostAndParent.entries()].map(([postId, byParent]) => [postId, buildTree(byParent)]));
@@ -578,6 +582,8 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
         saved_by AS "savedBy",
         signaled_by AS "signaledBy",
         forked_by AS "forkedBy",
+        edited_at AS "editedAt",
+        deleted_at AS "deletedAt",
         created_at AS "createdAt"
        FROM comments
        ORDER BY created_at ASC`

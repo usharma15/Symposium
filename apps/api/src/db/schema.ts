@@ -274,6 +274,8 @@ export const comments = pgTable(
     savedBy: jsonb("saved_by").$type<string[]>().default(jsonArray).notNull(),
     signaledBy: jsonb("signaled_by").$type<string[]>().default(jsonArray).notNull(),
     forkedBy: jsonb("forked_by").$type<string[]>().default(jsonArray).notNull(),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },

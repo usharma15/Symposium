@@ -15,8 +15,10 @@ import {
 import {
   cleanHandle,
   incrementMetric,
+  isDeletedComment,
   isDeletedPost,
   mutateItemForActor,
+  tombstoneComment,
   tombstonePost,
   toggleHandle,
   updateSignalValue,
@@ -59,6 +61,10 @@ export type CommentAction = PostAction;
 
 export type UpdatePostInput = {
   title: string;
+  body: string;
+};
+
+export type UpdateCommentInput = {
   body: string;
 };
 
@@ -273,6 +279,8 @@ const ensureSchema = async () => {
           saved_by JSONB NOT NULL DEFAULT '[]'::jsonb,
           signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb,
           forked_by JSONB NOT NULL DEFAULT '[]'::jsonb,
+          edited_at TIMESTAMPTZ,
+          deleted_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ DEFAULT now(),
           updated_at TIMESTAMPTZ DEFAULT now()
         );
@@ -292,6 +300,8 @@ const ensureSchema = async () => {
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS saved_by JSONB NOT NULL DEFAULT '[]'::jsonb;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS forked_by JSONB NOT NULL DEFAULT '[]'::jsonb;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
       `);
 
@@ -434,6 +444,8 @@ type CommentRow = {
   saved_by: string[] | null;
   signaled_by: string[] | null;
   forked_by: string[] | null;
+  edited_at: string | null;
+  deleted_at: string | null;
   created_at: string | null;
 };
 
@@ -459,6 +471,8 @@ const commentTreesFromRows = (rows: CommentRow[]) => {
       savedBy: row.saved_by ?? [],
       signaledBy: row.signaled_by ?? [],
       forkedBy: row.forked_by ?? [],
+      editedAt: row.edited_at ?? undefined,
+      deletedAt: row.deleted_at ?? undefined,
       createdAt: row.created_at ?? undefined,
       replies: buildTree(byParent, row.id)
     }));
@@ -627,7 +641,7 @@ export const upsertProfile = async (input: CreateProfileInput) => {
   const updateCommentAuthors = (comments: InquiryComment[]): InquiryComment[] =>
     comments.map((comment) => ({
       ...comment,
-      author: comment.authorHandle === person.handle ? person.name : comment.author,
+      author: !isDeletedComment(comment) && comment.authorHandle === person.handle ? person.name : comment.author,
       replies: updateCommentAuthors(comment.replies ?? [])
     }));
   data.items = data.items.map((item) => ({
@@ -967,6 +981,8 @@ const mutateCommentForActor = (
   actorHandle: string,
   active?: boolean
 ): InquiryComment => {
+  if (isDeletedComment(comment)) return comment;
+
   const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
 
   if (action === "save") {
@@ -1019,6 +1035,142 @@ const mapCommentTree = (
   });
 
   return { comments: nextComments, updated };
+};
+
+const findCommentInTree = (comments: InquiryComment[], commentId: string): InquiryComment | null => {
+  for (const comment of comments) {
+    if (comment.id === commentId) return comment;
+    const found = findCommentInTree(comment.replies ?? [], commentId);
+    if (found) return found;
+  }
+  return null;
+};
+
+const canManageComment = (comment: InquiryComment, actorHandle: string) =>
+  comment.authorHandle ? cleanHandle(comment.authorHandle) === cleanHandle(actorHandle) : false;
+
+const updateCommentShape = (
+  comment: InquiryComment,
+  input: UpdateCommentInput,
+  editedAt = new Date().toISOString()
+): InquiryComment => ({
+  ...comment,
+  body: input.body.trim(),
+  editedAt
+});
+
+export const updateComment = async (
+  itemId: string,
+  commentId: string,
+  input: UpdateCommentInput,
+  actorHandle = defaultProfile.handle
+) => {
+  const cleanInput = { body: input.body.trim() };
+  if (!cleanInput.body) return null;
+
+  if (usePostgres) {
+    const data = await getSnapshot();
+    const existing = data.items.find((item) => item.id === itemId);
+    if (!existing) return null;
+    const mapped = mapCommentTree(existing.comments, commentId, (comment) => {
+      if (isDeletedComment(comment) || !canManageComment(comment, actorHandle)) return comment;
+      return updateCommentShape(comment, cleanInput);
+    });
+    if (!mapped.updated || isDeletedComment(mapped.updated) || !canManageComment(mapped.updated, actorHandle)) {
+      return null;
+    }
+
+    await getPool().query(
+      `UPDATE comments
+       SET body = $3,
+           edited_at = $4,
+           updated_at = now()
+       WHERE item_id = $1 AND id = $2`,
+      [itemId, commentId, mapped.updated.body, mapped.updated.editedAt]
+    );
+
+    return { ...existing, comments: mapped.comments };
+  }
+
+  const local = await readLocal();
+  let updated: InquiryItem | null = null;
+  local.items = local.items.map((item) => {
+    if (item.id !== itemId) return item;
+    const mapped = mapCommentTree(item.comments, commentId, (comment) => {
+      if (isDeletedComment(comment) || !canManageComment(comment, actorHandle)) return comment;
+      return updateCommentShape(comment, cleanInput);
+    });
+    if (!mapped.updated || isDeletedComment(mapped.updated) || !canManageComment(mapped.updated, actorHandle)) {
+      return item;
+    }
+    updated = { ...item, comments: mapped.comments };
+    return updated;
+  });
+  if (!updated) return null;
+  await writeLocal(local);
+  return updated;
+};
+
+export const deleteComment = async (
+  itemId: string,
+  commentId: string,
+  actorHandle = defaultProfile.handle
+) => {
+  if (usePostgres) {
+    const data = await getSnapshot();
+    const existing = data.items.find((item) => item.id === itemId);
+    if (!existing) return null;
+    const original = findCommentInTree(existing.comments, commentId);
+    if (!original || isDeletedComment(original) || !canManageComment(original, actorHandle)) return null;
+    const mapped = mapCommentTree(existing.comments, commentId, tombstoneComment);
+    if (!mapped.updated) return null;
+
+    await getPool().query(
+      `UPDATE comments
+       SET author_handle = $3,
+           author_name = $4,
+           stance = $5,
+           body = $6,
+           metrics = $7,
+           saved_by = $8,
+           signaled_by = $9,
+           forked_by = $10,
+           edited_at = NULL,
+           deleted_at = $11,
+           updated_at = now()
+       WHERE item_id = $1 AND id = $2`,
+      [
+        itemId,
+        commentId,
+        "",
+        mapped.updated.author,
+        mapped.updated.stance,
+        mapped.updated.body,
+        JSON.stringify(mapped.updated.metrics ?? commentMetricsFallback),
+        JSON.stringify([]),
+        JSON.stringify([]),
+        JSON.stringify([]),
+        mapped.updated.deletedAt
+      ]
+    );
+
+    return { ...existing, comments: mapped.comments };
+  }
+
+  const local = await readLocal();
+  let deleted: InquiryItem | null = null;
+  local.items = local.items.map((item) => {
+    if (item.id !== itemId) return item;
+    const original = findCommentInTree(item.comments, commentId);
+    if (!original || isDeletedComment(original) || !canManageComment(original, actorHandle)) return item;
+    const mapped = mapCommentTree(item.comments, commentId, tombstoneComment);
+    if (!mapped.updated) return item;
+    deleted = { ...item, comments: mapped.comments };
+    return deleted;
+  });
+  if (!deleted) return null;
+  await writeLocal(local);
+  return deleted;
 };
 
 export const applyCommentAction = async (

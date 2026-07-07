@@ -147,9 +147,12 @@ export const countComments = (comments: InquiryComment[]): number =>
 export const deletedPostTitle = "—";
 export const deletedPostBody = "This post has been deleted";
 export const deletedPostAuthor = "—";
+export const deletedCommentBody = "This comment is deleted";
+export const deletedCommentAuthor = "—";
 export const deletedMetricLabel = "—";
 
 export const isDeletedPost = (item: Pick<InquiryItem, "deletedAt">) => Boolean(item.deletedAt);
+export const isDeletedComment = (comment: Pick<InquiryComment, "deletedAt">) => Boolean(comment.deletedAt);
 
 export const deletedPostContextTitle = (item: Pick<InquiryItem, "deletedAt" | "title">) =>
   isDeletedPost(item) ? deletedPostTitle : item.title;
@@ -173,6 +176,24 @@ export const tombstonePost = (item: InquiryItem, deletedAt = new Date().toISOStr
   evidence: [],
   tests: [],
   forks: []
+});
+
+export const tombstoneComment = (
+  comment: InquiryComment,
+  deletedAt = new Date().toISOString()
+): InquiryComment => ({
+  ...comment,
+  author: deletedCommentAuthor,
+  authorHandle: undefined,
+  body: deletedCommentBody,
+  stance: "Deleted",
+  editedAt: undefined,
+  deletedAt,
+  metrics: comment.metrics,
+  savedBy: [],
+  signaledBy: [],
+  forkedBy: [],
+  replies: comment.replies ?? []
 });
 
 export const relativeDateScore = (label: string) => {

@@ -31,6 +31,8 @@ export type InquiryComment = {
   body: string;
   stance: string;
   createdAt?: string;
+  editedAt?: string;
+  deletedAt?: string;
   metrics?: Pick<InquiryMetrics, "signal" | "forks" | "saves" | "reads">;
   savedBy?: string[];
   signaledBy?: string[];

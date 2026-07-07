@@ -50,6 +50,7 @@ import {
   formatMetric,
   hasHandle,
   incrementMetric,
+  isDeletedComment,
   isDeletedPost,
   itemTimestampScore,
   isSavedBy,
@@ -58,6 +59,7 @@ import {
   mutateItemForActor,
   normalizeSearchPhrase,
   relativeTimeLabel,
+  tombstoneComment,
   tombstonePost,
   toggleHandle
 } from "@/lib/symposiumCore";
@@ -71,6 +73,10 @@ type OfficeMode = "desk" | "saved" | "notes";
 type PatronageMode = "lobby" | "civic" | "private";
 type CommentSegmentStacks = Record<string, string[]>;
 type ToggleAction = Exclude<PostAction, "read">;
+type EditingCommentTarget = {
+  itemId: string;
+  commentId: string;
+};
 
 type ViewSnapshot = {
   activeRoom: RoomId;
@@ -279,12 +285,16 @@ const patronageTerms: Record<Exclude<PatronageMode, "lobby">, string[]> = {
 
 const commentSearchText = (comments: InquiryComment[]): string =>
   comments
-    .flatMap((comment) => [
-      comment.author,
-      comment.stance,
-      comment.body,
-      commentSearchText(comment.replies ?? [])
-    ])
+    .flatMap((comment) =>
+      isDeletedComment(comment)
+        ? [commentSearchText(comment.replies ?? [])]
+        : [
+            comment.author,
+            comment.stance,
+            comment.body,
+            commentSearchText(comment.replies ?? [])
+          ]
+    )
     .join(" ");
 
 const searchableText = (item: InquiryItem) =>
@@ -423,7 +433,8 @@ const findCommentPathById = (comments: InquiryComment[], id: string): InquiryCom
 };
 
 const commentAuthoredByProfile = (comment: InquiryComment, person: ResearchProfile) =>
-  comment.authorHandle ? cleanHandle(comment.authorHandle) === person.handle : comment.author === person.name;
+  !isDeletedComment(comment) &&
+  (comment.authorHandle ? cleanHandle(comment.authorHandle) === person.handle : comment.author === person.name);
 
 const commentTimestampScore = (comment: InquiryComment) => {
   const parsed = comment.createdAt ? Date.parse(comment.createdAt) : Number.NaN;
@@ -442,6 +453,7 @@ const commentMatchesProfileActivity = (
   person: ResearchProfile,
   kind: ProfileCommentActivityKind
 ) => {
+  if (isDeletedComment(comment)) return false;
   if (kind === "comments") return commentAuthoredByProfile(comment, person);
   if (kind === "fork") return hasHandle(comment.forkedBy, person.handle);
   if (kind === "signal") return hasHandle(comment.signaledBy, person.handle);
@@ -485,7 +497,10 @@ const updateCommentsForProfile = (
 ): InquiryComment[] =>
   comments.map((comment) => ({
     ...comment,
-    author: comment.authorHandle && cleanHandle(comment.authorHandle) === person.handle ? person.name : comment.author,
+    author:
+      !isDeletedComment(comment) && comment.authorHandle && cleanHandle(comment.authorHandle) === person.handle
+        ? person.name
+        : comment.author,
     replies: updateCommentsForProfile(comment.replies ?? [], person)
   }));
 
@@ -571,6 +586,7 @@ const preservePublishedPosition = (incoming: InquiryItem, existing?: InquiryItem
 };
 
 const commentActionActive = (comment: InquiryComment, action: CommentAction, handle: string) => {
+  if (isDeletedComment(comment)) return false;
   if (action === "save") return hasHandle(comment.savedBy, handle);
   if (action === "signal") return hasHandle(comment.signaledBy, handle);
   if (action === "fork") return hasHandle(comment.forkedBy, handle);
@@ -583,6 +599,8 @@ const mutateCommentForActor = (
   actorHandle: string,
   active?: boolean
 ): InquiryComment => {
+  if (isDeletedComment(comment)) return comment;
+
   const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
 
   if (action === "save") {
@@ -725,6 +743,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [profileActiveTabs, setProfileActiveTabs] = useState<Record<string, ProfileTab>>({});
   const [profileActivityRevision, setProfileActivityRevision] = useState(0);
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
+  const [editingComment, setEditingComment] = useState<EditingCommentTarget | null>(null);
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
   const [authError, setAuthError] = useState("");
@@ -760,6 +779,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         : themedRoomRenders[activeRoom];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
   const editingPostItem = editingPost ? items.find((item) => item.id === editingPost.id) ?? editingPost : null;
+  const editingCommentItem = editingComment ? items.find((item) => item.id === editingComment.itemId) ?? null : null;
+  const editingCommentValue =
+    editingComment && editingCommentItem
+      ? findCommentById(editingCommentItem.comments, editingComment.commentId) ?? null
+      : null;
   const selectedCommunity =
     selectedCommunityId ? researchCommunities.find((community) => community.id === selectedCommunityId) ?? null : null;
   const profileList = useMemo(() => Object.values(profiles), [profiles]);
@@ -1164,10 +1188,15 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         const deletedItem = payload.item;
         mergeLiveItem(deletedItem);
         setEditingPost((current) => (current?.id === deletedItem.id ? null : current));
+        setEditingComment((current) => (current?.itemId === deletedItem.id ? null : current));
       } else {
         scheduleLiveRefresh();
       }
       return;
+    }
+
+    if (event.kind === "comment.deleted" && typeof payload.commentId === "string") {
+      setEditingComment((current) => (current?.commentId === payload.commentId ? null : current));
     }
 
     if (payload.follow || event.kind === "profile.followed" || event.kind === "profile.unfollowed") {
@@ -2309,6 +2338,117 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     }
   };
 
+  const saveCommentEdit = async (itemId: string, commentId: string, body: string) => {
+    const cleanBody = body.trim();
+    if (!cleanBody) return;
+
+    const previousItems = itemsRef.current;
+    const existing = previousItems.find((item) => item.id === itemId);
+    const existingComment = existing ? findCommentById(existing.comments, commentId) : undefined;
+    if (
+      !existing ||
+      !existingComment ||
+      isDeletedComment(existingComment) ||
+      cleanHandle(existingComment.authorHandle ?? existingComment.author) !== currentProfile.handle
+    ) {
+      return;
+    }
+
+    const editedAt = new Date().toISOString();
+    const optimisticItems = previousItems.map((item) => {
+      if (item.id !== itemId) return item;
+      const mapped = mapCommentTree(item.comments, commentId, (comment) => ({
+        ...comment,
+        body: cleanBody,
+        editedAt
+      }));
+      return mapped.updated ? { ...item, comments: mapped.comments } : item;
+    });
+
+    itemsRef.current = optimisticItems;
+    setItems(optimisticItems);
+    persistLocalSnapshot(optimisticItems, profilesRef.current);
+    setEditingComment(null);
+    setSyncStatus("Saving comment edit");
+
+    try {
+      const response = await fetch(`/api/posts/${itemId}/comments/${commentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: cleanBody, actorHandle: currentProfile.handle })
+      });
+
+      if (!response.ok) throw new Error("Comment edit failed.");
+
+      const data = (await response.json()) as { item: InquiryItem };
+      const committedItems = itemsRef.current.map((item) =>
+        item.id === itemId ? preservePublishedPosition(data.item, item) : item
+      );
+      itemsRef.current = committedItems;
+      setItems(committedItems);
+      persistLocalSnapshot(committedItems, profilesRef.current);
+      setSyncStatus("Comment edited");
+    } catch {
+      itemsRef.current = previousItems;
+      setItems(previousItems);
+      persistLocalSnapshot(previousItems, profilesRef.current);
+      setSyncStatus("Comment edit could not sync");
+    }
+  };
+
+  const deleteComment = async (itemId: string, commentId: string) => {
+    const item = itemsRef.current.find((current) => current.id === itemId);
+    const comment = item ? findCommentById(item.comments, commentId) : undefined;
+    if (
+      !item ||
+      !comment ||
+      isDeletedComment(comment) ||
+      cleanHandle(comment.authorHandle ?? comment.author) !== currentProfile.handle
+    ) {
+      return;
+    }
+    if (!window.confirm("Delete this comment?")) return;
+
+    const previousItems = itemsRef.current;
+    const nextItems = previousItems.map((current) => {
+      if (current.id !== itemId) return current;
+      const mapped = mapCommentTree(current.comments, commentId, tombstoneComment);
+      return mapped.updated ? { ...current, comments: mapped.comments } : current;
+    });
+    itemsRef.current = nextItems;
+    setItems(nextItems);
+    persistLocalSnapshot(nextItems, profilesRef.current);
+    setEditingComment((current) =>
+      current?.itemId === itemId && current.commentId === commentId ? null : current
+    );
+    setSyncStatus("Deleting comment");
+
+    try {
+      const response = await fetch(`/api/posts/${itemId}/comments/${commentId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorHandle: currentProfile.handle })
+      });
+
+      if (!response.ok) throw new Error("Comment delete failed.");
+      const data = (await response.json()) as { item?: InquiryItem };
+      if (data.item) {
+        const committedItems = itemsRef.current.map((current) =>
+          current.id === itemId ? preservePublishedPosition(data.item!, current) : current
+        );
+        itemsRef.current = committedItems;
+        setItems(committedItems);
+        persistLocalSnapshot(committedItems, profilesRef.current);
+      }
+      setSyncStatus("Comment deleted");
+    } catch {
+      itemsRef.current = previousItems;
+      setItems(previousItems);
+      persistLocalSnapshot(previousItems, profilesRef.current);
+      setSyncStatus("Comment delete could not sync");
+    }
+  };
+
   const openPost = (id: string, commentId?: string | null) => {
     navigateView(
       { selectedItemId: id, selectedCommentId: commentId ?? null, selectedProfileName: null },
@@ -2450,6 +2590,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onOpenProfile={openProfile}
             onAction={applyAction}
             onCommentAction={applyCommentAction}
+            onEditComment={(itemId, commentId) => setEditingComment({ itemId, commentId })}
+            onDeleteComment={deleteComment}
             onOpenSettings={() => {
               setNotebookOpen(false);
               setTabletOpen(false);
@@ -2479,6 +2621,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onAddComment={addComment}
             onAction={applyAction}
             onCommentAction={applyCommentAction}
+            onEditComment={(itemId, commentId) => setEditingComment({ itemId, commentId })}
+            onDeleteComment={deleteComment}
             onEditPost={setEditingPost}
             onDeletePost={deletePost}
             actorHandle={currentProfile.handle}
@@ -2622,6 +2766,17 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
           onClose={() => setEditingPost(null)}
           onSave={savePostEdit}
           onDelete={deletePost}
+        />
+      ) : null}
+
+      {editingComment && editingCommentItem && editingCommentValue && !isDeletedComment(editingCommentValue) ? (
+        <CommentEditModal
+          key={`${editingComment.itemId}:${editingComment.commentId}`}
+          item={editingCommentItem}
+          comment={editingCommentValue}
+          onClose={() => setEditingComment(null)}
+          onSave={saveCommentEdit}
+          onDelete={deleteComment}
         />
       ) : null}
 
@@ -3416,6 +3571,56 @@ function PostEditModal({
   );
 }
 
+function CommentEditModal({
+  item,
+  comment,
+  onClose,
+  onSave,
+  onDelete
+}: {
+  item: InquiryItem;
+  comment: InquiryComment;
+  onClose: () => void;
+  onSave: (itemId: string, commentId: string, body: string) => void;
+  onDelete: (itemId: string, commentId: string) => void;
+}) {
+  const [body, setBody] = useState(comment.body);
+
+  const submitEdit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!comment.id) return;
+    onSave(item.id, comment.id, body);
+  };
+
+  return (
+    <div className="composer-modal-backdrop" role="presentation" onClick={onClose}>
+      <form className="post-composer post-edit-modal comment-edit-modal" onSubmit={submitEdit} onClick={(event) => event.stopPropagation()}>
+        <div className="composer-modal-head">
+          <div>
+            <span>Edit comment</span>
+            <strong>On {deletedPostContextTitle(item)}</strong>
+          </div>
+          <button type="button" title="Close" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </div>
+        <div className="composer-topline">
+          <button className="danger-action" type="button" onClick={() => comment.id && onDelete(item.id, comment.id)}>
+            <Trash2 size={16} />
+            Delete
+          </button>
+          <button type="submit">Save</button>
+        </div>
+        <textarea
+          value={body}
+          onChange={(event) => setBody(event.target.value)}
+          placeholder="Write the comment"
+        />
+      </form>
+    </div>
+  );
+}
+
 function PostTimeFooter({ item }: { item: InquiryItem }) {
   if (isDeletedPost(item)) return null;
 
@@ -3466,6 +3671,53 @@ function PostOwnerControls({
         }}
       >
         <Trash2 size={16} />
+      </button>
+    </div>
+  );
+}
+
+function CommentOwnerControls({
+  itemId,
+  comment,
+  actorHandle,
+  onEditComment,
+  onDeleteComment
+}: {
+  itemId: string;
+  comment: InquiryComment;
+  actorHandle: string;
+  onEditComment: (itemId: string, commentId: string) => void;
+  onDeleteComment: (itemId: string, commentId: string) => void;
+}) {
+  if (
+    !comment.id ||
+    isDeletedComment(comment) ||
+    cleanHandle(comment.authorHandle ?? comment.author) !== actorHandle
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="comment-owner-actions" aria-label="Comment owner actions">
+      <button
+        type="button"
+        title="Edit comment"
+        onClick={(event) => {
+          event.stopPropagation();
+          onEditComment(itemId, comment.id as string);
+        }}
+      >
+        <Pencil size={14} />
+      </button>
+      <button
+        type="button"
+        title="Delete comment"
+        onClick={(event) => {
+          event.stopPropagation();
+          onDeleteComment(itemId, comment.id as string);
+        }}
+      >
+        <Trash2 size={14} />
       </button>
     </div>
   );
@@ -3695,6 +3947,8 @@ function DetailView({
   onAddComment,
   onAction,
   onCommentAction,
+  onEditComment,
+  onDeleteComment,
   onEditPost,
   onDeletePost,
   actorHandle,
@@ -3712,6 +3966,8 @@ function DetailView({
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onAction: (itemId: string, action: PostAction) => void;
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onEditComment: (itemId: string, commentId: string) => void;
+  onDeleteComment: (itemId: string, commentId: string) => void;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
   actorHandle: string;
@@ -3808,6 +4064,8 @@ function DetailView({
             onOpenProfile={onOpenProfile}
             onAddComment={onAddComment}
             onCommentAction={onCommentAction}
+            onEditComment={onEditComment}
+            onDeleteComment={onDeleteComment}
             actorHandle={actorHandle}
             onClearSelectedComment={onClearSelectedComment}
             commentSegmentStacks={commentSegmentStacks}
@@ -3889,6 +4147,8 @@ function CommentThread({
   onOpenProfile,
   onAddComment,
   onCommentAction,
+  onEditComment,
+  onDeleteComment,
   actorHandle,
   onClearSelectedComment,
   commentSegmentStacks,
@@ -3903,6 +4163,8 @@ function CommentThread({
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onEditComment: (itemId: string, commentId: string) => void;
+  onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
   onClearSelectedComment: () => void;
   commentSegmentStacks: CommentSegmentStacks;
@@ -3925,6 +4187,8 @@ function CommentThread({
             onOpenProfile={onOpenProfile}
             onAddComment={onAddComment}
             onCommentAction={onCommentAction}
+            onEditComment={onEditComment}
+            onDeleteComment={onDeleteComment}
             actorHandle={actorHandle}
             onClearSelectedComment={onClearSelectedComment}
             segmentStack={commentSegmentStacks[rootStackKey] ?? null}
@@ -3964,6 +4228,8 @@ function CommentRootSegment({
   onOpenProfile,
   onAddComment,
   onCommentAction,
+  onEditComment,
+  onDeleteComment,
   actorHandle,
   onClearSelectedComment,
   segmentStack,
@@ -3979,6 +4245,8 @@ function CommentRootSegment({
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onEditComment: (itemId: string, commentId: string) => void;
+  onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
   onClearSelectedComment: () => void;
   segmentStack: string[] | null;
@@ -4046,6 +4314,8 @@ function CommentRootSegment({
         onOpenProfile={onOpenProfile}
         onAddComment={onAddComment}
         onCommentAction={onCommentAction}
+        onEditComment={onEditComment}
+        onDeleteComment={onDeleteComment}
         actorHandle={actorHandle}
         depth={depth}
         segmentDepth={1}
@@ -4075,6 +4345,8 @@ function CommentNode({
   onOpenProfile,
   onAddComment,
   onCommentAction,
+  onEditComment,
+  onDeleteComment,
   actorHandle,
   depth,
   segmentDepth,
@@ -4089,6 +4361,8 @@ function CommentNode({
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onEditComment: (itemId: string, commentId: string) => void;
+  onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
   depth: number;
   segmentDepth: number;
@@ -4099,6 +4373,7 @@ function CommentNode({
   const [replyOpen, setReplyOpen] = useState(false);
   const replies = comment.replies ?? [];
   const nodeRef = useRef<HTMLElement | null>(null);
+  const commentDeleted = isDeletedComment(comment);
   const authorProfile = profileForHandle(profiles, comment.authorHandle ?? comment.author);
   const authorName = authorProfile?.name ?? comment.author;
   const highlighted = Boolean(selectedCommentId && comment.id === selectedCommentId);
@@ -4120,15 +4395,31 @@ function CommentNode({
     >
       {leadingAction ? <div className="comment-leading-action">{leadingAction}</div> : null}
       <div className={`comment-card ${highlighted ? "highlighted" : ""}`}>
-        <button type="button" className="comment-author" onClick={() => onOpenProfile(authorProfile?.handle ?? comment.authorHandle ?? comment.author)}>
-          <span className="avatar small">
-            {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
-          </span>
-          <span>
-            <strong>{authorName}</strong>
-            {comment.createdAt ? <small>{relativeTimeLabel(comment.createdAt)}</small> : null}
-          </span>
-        </button>
+        {commentDeleted ? (
+          <div className="comment-author deleted-comment-author" aria-label="Deleted comment">
+            <span className="avatar small deleted-avatar" aria-hidden="true" />
+            <span>
+              <strong aria-hidden="true">—</strong>
+            </span>
+          </div>
+        ) : (
+          <button type="button" className="comment-author" onClick={() => onOpenProfile(authorProfile?.handle ?? comment.authorHandle ?? comment.author)}>
+            <span className="avatar small">
+              {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
+            </span>
+            <span>
+              <strong>{authorName}</strong>
+              {comment.createdAt ? <small>{relativeTimeLabel(comment.createdAt)}</small> : null}
+            </span>
+          </button>
+        )}
+        <CommentOwnerControls
+          itemId={itemId}
+          comment={comment}
+          actorHandle={actorHandle}
+          onEditComment={onEditComment}
+          onDeleteComment={onDeleteComment}
+        />
         <p>{comment.body}</p>
         <CommentTimeFooter comment={comment} />
         <CommentActions
@@ -4137,20 +4428,24 @@ function CommentNode({
           actorHandle={actorHandle}
           onAction={onCommentAction}
         />
-        <button className="reply-button" type="button" onClick={() => setReplyOpen((open) => !open)}>
-          Reply
-        </button>
-        {replyOpen ? (
-          <CommentComposer
-            itemId={itemId}
-            parentId={comment.id ?? null}
-            compact
-            onAddComment={(id, body, stance, parentId) => {
-              onAddComment(id, body, stance, parentId);
-              setReplyOpen(false);
-            }}
-          />
-        ) : null}
+        {commentDeleted ? null : (
+          <>
+            <button className="reply-button" type="button" onClick={() => setReplyOpen((open) => !open)}>
+              Reply
+            </button>
+            {replyOpen ? (
+              <CommentComposer
+                itemId={itemId}
+                parentId={comment.id ?? null}
+                compact
+                onAddComment={(id, body, stance, parentId) => {
+                  onAddComment(id, body, stance, parentId);
+                  setReplyOpen(false);
+                }}
+              />
+            ) : null}
+          </>
+        )}
       </div>
       {shouldHideReplies ? (
         <div className="reply-window">
@@ -4177,6 +4472,8 @@ function CommentNode({
                 onOpenProfile={onOpenProfile}
                 onAddComment={onAddComment}
                 onCommentAction={onCommentAction}
+                onEditComment={onEditComment}
+                onDeleteComment={onDeleteComment}
                 actorHandle={actorHandle}
                 depth={depth + 1}
                 segmentDepth={segmentDepth + 1}
@@ -4192,10 +4489,18 @@ function CommentNode({
 }
 
 function CommentTimeFooter({ comment }: { comment: InquiryComment }) {
-  const created = localDateTimeLabel(comment.createdAt);
-  if (!created) return null;
+  if (isDeletedComment(comment)) return null;
 
-  return <footer className="comment-time-footer">Posted {created}</footer>;
+  const created = localDateTimeLabel(comment.createdAt);
+  const edited = localDateTimeLabel(comment.editedAt);
+  if (!created && !edited) return null;
+
+  return (
+    <footer className="comment-time-footer">
+      {created ? <span>Posted {created}</span> : null}
+      {edited ? <span>Edited {relativeTimeLabel(comment.editedAt)} · {edited}</span> : null}
+    </footer>
+  );
 }
 
 function CommentActions({
@@ -4211,13 +4516,14 @@ function CommentActions({
 }) {
   if (!comment.id) return null;
 
+  const deleted = isDeletedComment(comment);
   const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
   const actions = [
-    { label: "Likes", active: commentActionActive(comment, "signal", actorHandle), value: metrics.signal, icon: ThumbsUp, action: "signal" as CommentAction },
-    { label: "Comments", value: String(countComments(comment.replies ?? [])), icon: MessageCircle, action: null },
-    { label: "Reshares", active: commentActionActive(comment, "fork", actorHandle), value: metrics.forks, icon: Repeat2, action: "fork" as CommentAction },
-    { label: "Saves", active: commentActionActive(comment, "save", actorHandle), value: metrics.saves, icon: Bookmark, action: "save" as CommentAction },
-    { label: "Views", value: metrics.reads, icon: Eye, action: "read" as CommentAction }
+    { label: "Likes", active: commentActionActive(comment, "signal", actorHandle), value: deleted ? deletedMetricLabel : metrics.signal, icon: ThumbsUp, action: "signal" as CommentAction },
+    { label: "Comments", value: deleted ? deletedMetricLabel : String(countComments(comment.replies ?? [])), icon: MessageCircle, action: null },
+    { label: "Reshares", active: commentActionActive(comment, "fork", actorHandle), value: deleted ? deletedMetricLabel : metrics.forks, icon: Repeat2, action: "fork" as CommentAction },
+    { label: "Saves", active: commentActionActive(comment, "save", actorHandle), value: deleted ? deletedMetricLabel : metrics.saves, icon: Bookmark, action: "save" as CommentAction },
+    { label: "Views", value: deleted ? deletedMetricLabel : metrics.reads, icon: Eye, action: "read" as CommentAction }
   ];
 
   return (
@@ -4230,15 +4536,16 @@ function CommentActions({
             key={action.label}
             type="button"
             title={action.label}
-            className={action.active ? "active" : ""}
+            className={`${action.active ? "active" : ""}${deleted ? " disabled" : ""}`}
+            disabled={deleted || !action.action}
             onClick={(event) => {
               event.stopPropagation();
-              if (action.action) onAction(itemId, comment.id as string, action.action);
+              if (!deleted && action.action) onAction(itemId, comment.id as string, action.action);
             }}
           >
             <Icon size={15} fill={fillActiveIcon ? "currentColor" : "none"} />
             <span>{action.label}</span>
-            <strong>{formatMetric(metricNumber(action.value))}</strong>
+            <strong>{deleted ? deletedMetricLabel : formatMetric(metricNumber(action.value))}</strong>
           </button>
         );
       })}
@@ -4329,6 +4636,8 @@ function ProfileView({
   onOpenProfile,
   onAction,
   onCommentAction,
+  onEditComment,
+  onDeleteComment,
   onOpenSettings,
   onToggleFollow,
   actorHandle,
@@ -4350,6 +4659,8 @@ function ProfileView({
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onEditComment: (itemId: string, commentId: string) => void;
+  onDeleteComment: (itemId: string, commentId: string) => void;
   onOpenSettings: () => void;
   onToggleFollow: (handle: string) => void;
   actorHandle: string;
@@ -4483,7 +4794,7 @@ function ProfileView({
     }
 
     const comment = findCommentById(item.comments, slot.commentId);
-    if (!comment) return null;
+    if (!comment || isDeletedComment(comment)) return null;
 
     return {
       id: slot.id,
@@ -4564,6 +4875,8 @@ function ProfileView({
                 onSelect={onSelect}
                 onOpenProfile={onOpenProfile}
                 onCommentAction={onCommentAction}
+                onEditComment={onEditComment}
+                onDeleteComment={onDeleteComment}
                 actorHandle={actorHandle}
               />
             ) : (
@@ -4610,6 +4923,8 @@ function ProfileCommentCard({
   onSelect,
   onOpenProfile,
   onCommentAction,
+  onEditComment,
+  onDeleteComment,
   actorHandle
 }: {
   activity: ProfileCommentActivity;
@@ -4617,6 +4932,8 @@ function ProfileCommentCard({
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onEditComment: (itemId: string, commentId: string) => void;
+  onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
 }) {
   const authorProfile = profileForHandle(profiles, activity.comment.authorHandle ?? activity.comment.author);
@@ -4651,10 +4968,19 @@ function ProfileCommentCard({
             <small>{relativeTimeLabel(activity.comment.createdAt, "Comment")}</small>
           </span>
         </button>
-        <span>
-          <MessageCircle size={15} />
-          {activity.label}
-        </span>
+        <div className="profile-comment-header-actions">
+          <span>
+            <MessageCircle size={15} />
+            {activity.label}
+          </span>
+          <CommentOwnerControls
+            itemId={activity.item.id}
+            comment={activity.comment}
+            actorHandle={actorHandle}
+            onEditComment={onEditComment}
+            onDeleteComment={onDeleteComment}
+          />
+        </div>
       </header>
       <ExpandableBodyText
         text={activity.comment.body}
@@ -4673,6 +4999,9 @@ function ProfileCommentCard({
         <span>On</span>
         <strong>{deletedPostContextTitle(activity.item)}</strong>
         {activity.comment.createdAt ? <em>{localDateTimeLabel(activity.comment.createdAt)}</em> : null}
+        {activity.comment.editedAt ? (
+          <em>Edited {relativeTimeLabel(activity.comment.editedAt)} · {localDateTimeLabel(activity.comment.editedAt)}</em>
+        ) : null}
       </footer>
     </article>
   );
