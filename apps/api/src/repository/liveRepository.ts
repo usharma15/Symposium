@@ -382,6 +382,53 @@ const mutateCommentForActor = (
   };
 };
 
+const viewDedupeWindowMs = 60 * 60 * 1000;
+type ViewTargetType = "post" | "comment";
+const memoryContentViews = new Map<string, number>();
+
+const normalizeViewActorHandle = (handle: string) => {
+  const normalized = cleanHandle(handle || defaultProfile.handle);
+  return normalized === "@" ? defaultProfile.handle : normalized;
+};
+
+const contentViewKey = (targetType: ViewTargetType, targetId: string, actorHandle: string) =>
+  `${targetType}:${targetId}:${normalizeViewActorHandle(actorHandle)}`;
+
+const pruneMemoryContentViews = (now = Date.now()) => {
+  for (const [key, timestamp] of memoryContentViews.entries()) {
+    if (now - timestamp >= viewDedupeWindowMs) memoryContentViews.delete(key);
+  }
+};
+
+const recordMemoryContentView = (targetType: ViewTargetType, targetId: string, actorHandle: string) => {
+  const now = Date.now();
+  pruneMemoryContentViews(now);
+  const key = contentViewKey(targetType, targetId, actorHandle);
+  const lastViewedAt = memoryContentViews.get(key);
+  if (lastViewedAt && now - lastViewedAt < viewDedupeWindowMs) return false;
+
+  memoryContentViews.set(key, now);
+  return true;
+};
+
+const recordContentView = async (
+  client: PoolClient,
+  targetType: ViewTargetType,
+  targetId: string,
+  actorHandle: string,
+  trigger?: string,
+  surface?: string
+) => {
+  const result = await client.query<{ id: string }>(
+    `INSERT INTO content_views (target_type, target_id, actor_handle, bucket_start, trigger, surface)
+     VALUES ($1, $2, $3, date_trunc('hour', now()), $4, $5)
+     ON CONFLICT (target_type, target_id, actor_handle, bucket_start) DO NOTHING
+     RETURNING id`,
+    [targetType, targetId, normalizeViewActorHandle(actorHandle), trigger ?? null, surface ?? null]
+  );
+  return (result.rowCount ?? 0) > 0;
+};
+
 const mapCommentTree = (
   comments: InquiryCommentContract[],
   commentId: string,
@@ -557,6 +604,9 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
     if (isDeletedPost(existing)) return existing;
+    if (input.action === "read" && !recordMemoryContentView("post", postId, handle)) {
+      return existing;
+    }
     return mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active);
   }
 
@@ -633,6 +683,16 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
       await client.query("COMMIT");
       return updated;
     }
+
+    if (
+      input.action === "read" &&
+      !(await recordContentView(client, "post", postId, handle, input.trigger, input.surface))
+    ) {
+      updated = existing;
+      await client.query("COMMIT");
+      return updated;
+    }
+
     updated = mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active);
 
     if (input.action === "read") {
@@ -1161,11 +1221,16 @@ export const applyCommentAction = async (postId: string, commentId: string, rawI
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    const original = findCommentInTree(existing.comments, commentId);
+    if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
+    if (isDeletedComment(original)) return existing;
+    if (input.action === "read" && !recordMemoryContentView("comment", commentId, handle)) {
+      return existing;
+    }
     const mapped = mapCommentTree(existing.comments, commentId, (comment) =>
       mutateCommentForActor(comment, input.action, handle, input.active)
     );
     if (!mapped.updated) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
-    if (isDeletedComment(mapped.updated)) return existing;
     return { ...existing, comments: mapped.comments };
   }
 
@@ -1203,15 +1268,28 @@ export const applyCommentAction = async (postId: string, commentId: string, rawI
       [postId]
     );
     const commentsByPost = commentTreesFromRows(commentsResult.rows);
-    const mapped = mapCommentTree(commentsByPost.get(postId) ?? [], commentId, (comment) =>
-      mutateCommentForActor(comment, input.action, handle, input.active)
-    );
-    if (!mapped.updated) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
-    if (isDeletedComment(mapped.updated)) {
-      updatedItem = rowToItem(row, commentsByPost.get(postId) ?? []);
+    const existingComments = commentsByPost.get(postId) ?? [];
+    const original = findCommentInTree(existingComments, commentId);
+    if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
+    if (isDeletedComment(original)) {
+      updatedItem = rowToItem(row, existingComments);
       await client.query("COMMIT");
       return updatedItem;
     }
+
+    if (
+      input.action === "read" &&
+      !(await recordContentView(client, "comment", commentId, handle, input.trigger, input.surface))
+    ) {
+      updatedItem = rowToItem(row, existingComments);
+      await client.query("COMMIT");
+      return updatedItem;
+    }
+
+    const mapped = mapCommentTree(existingComments, commentId, (comment) =>
+      mutateCommentForActor(comment, input.action, handle, input.active)
+    );
+    if (!mapped.updated) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     updatedComment = mapped.updated;
 
     await client.query(

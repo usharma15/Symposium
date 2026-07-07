@@ -133,6 +133,19 @@ const migrations: Migration[] = [
         UNIQUE (post_id, actor_handle, action)
       );
 
+      CREATE TABLE IF NOT EXISTS content_views (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        actor_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        bucket_start TIMESTAMPTZ NOT NULL,
+        trigger TEXT,
+        surface TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (target_type, target_id, actor_handle, bucket_start)
+      );
+
       CREATE TABLE IF NOT EXISTS attachments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         owner_type TEXT NOT NULL,
@@ -346,6 +359,8 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS comments_parent_idx ON comments (parent_id);
       CREATE INDEX IF NOT EXISTS comments_author_idx ON comments (author_handle);
       CREATE INDEX IF NOT EXISTS post_actions_actor_idx ON post_actions (actor_handle);
+      CREATE INDEX IF NOT EXISTS content_views_target_idx ON content_views (target_type, target_id);
+      CREATE INDEX IF NOT EXISTS content_views_actor_idx ON content_views (actor_handle);
       CREATE INDEX IF NOT EXISTS attachments_owner_idx ON attachments (owner_type, owner_id);
       CREATE INDEX IF NOT EXISTS previews_attachment_idx ON previews (attachment_id);
       CREATE INDEX IF NOT EXISTS external_links_owner_idx ON external_links (owner_type, owner_id);
@@ -700,6 +715,26 @@ const migrations: Migration[] = [
     sql: `
       ALTER TABLE comments ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
       ALTER TABLE comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    `
+  },
+  {
+    id: "0008_content_view_dedupe",
+    sql: `
+      CREATE TABLE IF NOT EXISTS content_views (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        actor_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        bucket_start TIMESTAMPTZ NOT NULL,
+        trigger TEXT,
+        surface TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (target_type, target_id, actor_handle, bucket_start)
+      );
+
+      CREATE INDEX IF NOT EXISTS content_views_target_idx ON content_views (target_type, target_id);
+      CREATE INDEX IF NOT EXISTS content_views_actor_idx ON content_views (actor_handle);
     `
   }
 ];

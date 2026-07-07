@@ -307,6 +307,33 @@ export const postActions = pgTable(
   ]
 );
 
+export const contentViews = pgTable(
+  "content_views",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id").notNull(),
+    actorHandle: text("actor_handle")
+      .notNull()
+      .references(() => profiles.handle, { onDelete: "cascade" }),
+    bucketStart: timestamp("bucket_start", { withTimezone: true }).notNull(),
+    trigger: text("trigger"),
+    surface: text("surface"),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("content_views_unique_bucket_idx").on(
+      table.targetType,
+      table.targetId,
+      table.actorHandle,
+      table.bucketStart
+    ),
+    index("content_views_target_idx").on(table.targetType, table.targetId),
+    index("content_views_actor_idx").on(table.actorHandle)
+  ]
+);
+
 export const attachments = pgTable(
   "attachments",
   {
@@ -660,6 +687,7 @@ export const pledges = pgTable(
 export type ProfileRow = typeof profiles.$inferSelect;
 export type PostRow = typeof posts.$inferSelect;
 export type CommentRow = typeof comments.$inferSelect;
+export type ContentViewRow = typeof contentViews.$inferSelect;
 export type CommunityRow = typeof communities.$inferSelect;
 export type OpportunityPostRow = typeof opportunityPosts.$inferSelect;
 export type CommunityCallRow = typeof communityCalls.$inferSelect;

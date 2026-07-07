@@ -195,7 +195,9 @@ export const updateCommentInputSchema = z.object({
 export const postActionInputSchema = z.object({
   action: postActionSchema,
   actorHandle: z.string().optional(),
-  active: z.boolean().optional()
+  active: z.boolean().optional(),
+  trigger: z.enum(["visibility", "click", "expand"]).optional(),
+  surface: z.enum(["feed", "profile", "detail", "thread", "search", "community"]).optional()
 });
 export const commentActionInputSchema = postActionInputSchema;
 

@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { SignInButton, SignUpButton, useAuth, useUser } from "@clerk/nextjs";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -73,6 +73,20 @@ type OfficeMode = "desk" | "saved" | "notes";
 type PatronageMode = "lobby" | "civic" | "private";
 type CommentSegmentStacks = Record<string, string[]>;
 type ToggleAction = Exclude<PostAction, "read">;
+type ViewTargetType = "post" | "comment";
+type ViewTrigger = "visibility" | "click" | "expand";
+type ViewSurface = "feed" | "profile" | "detail" | "thread" | "search" | "community";
+type ViewActionOptions = {
+  trigger?: ViewTrigger;
+  surface?: ViewSurface;
+};
+type PostActionHandler = (itemId: string, action: PostAction, options?: ViewActionOptions) => void;
+type CommentActionHandler = (
+  itemId: string,
+  commentId: string,
+  action: CommentAction,
+  options?: ViewActionOptions
+) => void;
 type EditingCommentTarget = {
   itemId: string;
   commentId: string;
@@ -413,6 +427,65 @@ const parseCommentSegmentStack = (value: string | undefined) => {
 const collapsedBodyLength = 500;
 const bodyExpansionStep = 2000;
 const actionStateProtectionMs = 5000;
+const qualifiedViewVisibleRatio = 0.6;
+const qualifiedViewDelayMs = 3000;
+const viewDedupeWindowMs = 60 * 60 * 1000;
+
+function useQualifiedView<T extends Element>(
+  targetRef: RefObject<T | null>,
+  {
+    disabled = false,
+    targetKey,
+    onView
+  }: {
+    disabled?: boolean;
+    targetKey?: string | null;
+    onView: () => void;
+  }
+) {
+  const onViewRef = useRef(onView);
+
+  useEffect(() => {
+    onViewRef.current = onView;
+  }, [onView]);
+
+  useEffect(() => {
+    if (disabled || !targetKey || typeof IntersectionObserver === "undefined") return;
+
+    const element = targetRef.current;
+    if (!element) return;
+
+    let viewTimer: number | null = null;
+    const clearViewTimer = () => {
+      if (viewTimer === null) return;
+      window.clearTimeout(viewTimer);
+      viewTimer = null;
+    };
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting && entry.intersectionRatio >= qualifiedViewVisibleRatio) {
+          if (viewTimer === null) {
+            viewTimer = window.setTimeout(() => {
+              viewTimer = null;
+              onViewRef.current();
+            }, qualifiedViewDelayMs);
+          }
+          return;
+        }
+
+        clearViewTimer();
+      },
+      { threshold: [0, qualifiedViewVisibleRatio, 1] }
+    );
+
+    observer.observe(element);
+    return () => {
+      clearViewTimer();
+      observer.disconnect();
+    };
+  }, [disabled, targetKey, targetRef]);
+}
 
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
   for (const comment of comments) {
@@ -758,6 +831,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const actionVersionsRef = useRef<Record<string, number>>({});
   const actionDesiredStateRef = useRef<Record<string, boolean | undefined>>({});
   const actionProtectionUntilRef = useRef<Record<string, number>>({});
+  const viewDedupeRef = useRef<Record<string, number>>({});
   const activityRecencyRef = useRef(activityRecency);
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
   const liveEventCursorRef = useRef("");
@@ -805,6 +879,54 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   useEffect(() => {
     currentProfileRef.current = currentProfile;
   }, [currentProfile]);
+
+  const clientViewStorageKey = (handle: string) => `symposium-view-dedupe:${cleanHandle(handle)}`;
+  const clientViewKey = (targetType: ViewTargetType, targetId: string) => `${targetType}:${targetId}`;
+  const pruneClientViewDedupe = (dedupe: Record<string, number>, now = Date.now()) =>
+    Object.fromEntries(
+      Object.entries(dedupe).filter(([, timestamp]) => Number.isFinite(timestamp) && now - timestamp < viewDedupeWindowMs)
+    );
+  const persistClientViewDedupe = (dedupe: Record<string, number>, handle = currentProfileRef.current.handle) => {
+    const pruned = pruneClientViewDedupe(dedupe);
+    viewDedupeRef.current = pruned;
+    window.localStorage.setItem(clientViewStorageKey(handle), JSON.stringify(pruned));
+  };
+  const readClientViewDedupe = (handle: string) => {
+    try {
+      const raw = window.localStorage.getItem(clientViewStorageKey(handle));
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      return pruneClientViewDedupe(parsed);
+    } catch {
+      return {};
+    }
+  };
+  const claimClientView = (targetType: ViewTargetType, targetId: string) => {
+    const now = Date.now();
+    const key = clientViewKey(targetType, targetId);
+    const dedupe = pruneClientViewDedupe(viewDedupeRef.current, now);
+    const lastViewedAt = dedupe[key];
+    if (Number.isFinite(lastViewedAt) && now - lastViewedAt < viewDedupeWindowMs) {
+      viewDedupeRef.current = dedupe;
+      return false;
+    }
+
+    dedupe[key] = now;
+    persistClientViewDedupe(dedupe);
+    return true;
+  };
+  const releaseClientViewClaim = (targetType: ViewTargetType, targetId: string) => {
+    const key = clientViewKey(targetType, targetId);
+    const rest = { ...viewDedupeRef.current };
+    delete rest[key];
+    persistClientViewDedupe(rest);
+  };
+
+  useEffect(() => {
+    const dedupe = readClientViewDedupe(currentProfile.handle);
+    viewDedupeRef.current = dedupe;
+    persistClientViewDedupe(dedupe, currentProfile.handle);
+  }, [currentProfile.handle]);
 
   useEffect(() => {
     selectedProfileNameRef.current = selectedProfileName;
@@ -2111,7 +2233,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setEntryMode("auth");
   };
 
-  const applyAction = async (itemId: string, action: PostAction) => {
+  const applyAction = async (itemId: string, action: PostAction, options: ViewActionOptions = {}) => {
+    const isViewAction = action === "read";
+    if (isViewAction && !claimClientView("post", itemId)) return;
+
     const actorHandle = currentProfile.handle;
     const actionKey = `${itemId}:${action}:${actorHandle}`;
     const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
@@ -2131,7 +2256,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       return nextItem;
     });
 
-    if (!actionApplied) return;
+    if (!actionApplied) {
+      if (isViewAction) releaseClientViewClaim("post", itemId);
+      return;
+    }
     setProtectedDesiredActionState(actionKey, desiredActive);
 
     itemsRef.current = optimisticItems;
@@ -2143,7 +2271,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       const response = await fetch(`/api/posts/${itemId}/actions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, actorHandle, active: desiredActive })
+        body: JSON.stringify({ action, actorHandle, active: desiredActive, trigger: options.trigger, surface: options.surface })
       });
 
       if (!response.ok) throw new Error("Post action failed.");
@@ -2155,7 +2283,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
           void fetch(`/api/posts/${itemId}/actions`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action, actorHandle, active: latestActive })
+            body: JSON.stringify({ action, actorHandle, active: latestActive, trigger: options.trigger, surface: options.surface })
           }).catch(() => undefined);
         }
         return;
@@ -2179,6 +2307,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     } catch {
       if (actionVersionsRef.current[actionKey] !== version) return;
       clearDesiredActionState(actionKey);
+      if (isViewAction) releaseClientViewClaim("post", itemId);
       itemsRef.current = previousItems;
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
@@ -2186,7 +2315,15 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     }
   };
 
-  const applyCommentAction = async (itemId: string, commentId: string, action: CommentAction) => {
+  const applyCommentAction = async (
+    itemId: string,
+    commentId: string,
+    action: CommentAction,
+    options: ViewActionOptions = {}
+  ) => {
+    const isViewAction = action === "read";
+    if (isViewAction && !claimClientView("comment", commentId)) return;
+
     const actorHandle = currentProfile.handle;
     const actionKey = `${itemId}:${commentId}:${action}:${actorHandle}`;
     const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
@@ -2206,7 +2343,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       return { ...item, comments: mapped.comments };
     });
 
-    if (!actionApplied) return;
+    if (!actionApplied) {
+      if (isViewAction) releaseClientViewClaim("comment", commentId);
+      return;
+    }
     setProtectedDesiredActionState(actionKey, desiredActive);
     itemsRef.current = optimisticItems;
     setItems(optimisticItems);
@@ -2217,7 +2357,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       const response = await fetch(`/api/posts/${itemId}/comments/${commentId}/actions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, actorHandle, active: desiredActive })
+        body: JSON.stringify({ action, actorHandle, active: desiredActive, trigger: options.trigger, surface: options.surface })
       });
 
       if (!response.ok) throw new Error("Comment action failed.");
@@ -2246,6 +2386,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     } catch {
       if (actionVersionsRef.current[actionKey] !== version) return;
       clearDesiredActionState(actionKey);
+      if (isViewAction) releaseClientViewClaim("comment", commentId);
       itemsRef.current = previousItems;
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
@@ -2450,14 +2591,17 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     }
   };
 
-  const openPost = (id: string, commentId?: string | null) => {
+  const openPost = (id: string, commentId?: string | null, sourceSurface?: ViewSurface) => {
     navigateView(
       { selectedItemId: id, selectedCommentId: commentId ?? null, selectedProfileName: null },
       commentId ? null : 0
     );
     const targetItem = itemsRef.current.find((item) => item.id === id);
     if (targetItem && !isDeletedPost(targetItem)) {
-      void applyAction(id, "read");
+      void applyAction(id, "read", {
+        trigger: "click",
+        surface: sourceSurface ?? (selectedProfileNameRef.current ? "profile" : "feed")
+      });
     }
   };
 
@@ -2789,7 +2933,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
           onClose={() => setSearchOpen(false)}
           onOpenPost={(id) => {
             setSearchOpen(false);
-            openPost(id);
+            openPost(id, null, "search");
           }}
           onOpenProfile={(name) => {
             setSearchOpen(false);
@@ -3166,7 +3310,7 @@ function SelectedCommunityView({
   onBack: () => void;
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
-  onAction: (itemId: string, action: PostAction) => void;
+  onAction: PostActionHandler;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
   onDummyCall: (mode: "Voice" | "Video") => void;
@@ -3216,6 +3360,7 @@ function SelectedCommunityView({
               onDeletePost={onDeletePost}
               actorHandle={currentProfile.handle}
               profiles={profiles}
+              surface="community"
             />
           ))
         ) : (
@@ -3263,7 +3408,7 @@ function RoomView({
   onPatronageMode: (mode: PatronageMode) => void;
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
-  onAction: (itemId: string, action: PostAction) => void;
+  onAction: PostActionHandler;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
   onOpenNotes: () => void;
@@ -3732,17 +3877,20 @@ function FeedPost({
   onEditPost,
   onDeletePost,
   actorHandle,
-  profiles
+  profiles,
+  surface = "feed"
 }: {
   item: InquiryItem;
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
-  onAction: (itemId: string, action: PostAction) => void;
+  onAction: PostActionHandler;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
+  surface?: ViewSurface;
 }) {
+  const postRef = useRef<HTMLElement | null>(null);
   const openPost = () => onSelect(item.id);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -3750,9 +3898,15 @@ function FeedPost({
       openPost();
     }
   };
+  useQualifiedView(postRef, {
+    disabled: isDeletedPost(item),
+    targetKey: item.id,
+    onView: () => onAction(item.id, "read", { trigger: "visibility", surface })
+  });
 
   return (
     <article
+      ref={postRef}
       className={`feed-post post-kind-${item.kind}`}
       data-testid={`feed-card-${item.id}`}
       role="button"
@@ -3772,7 +3926,7 @@ function FeedPost({
         <ExpandableBodyText
           text={item.body}
           className="feed-post-text"
-          onExpand={() => onAction(item.id, "read")}
+          onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
         />
         <PostTimeFooter item={item} />
         <SocialActions
@@ -3894,7 +4048,7 @@ function SocialActions({
 }: {
   item: InquiryItem;
   commentCount: number;
-  onAction: (itemId: string, action: PostAction) => void;
+  onAction: PostActionHandler;
   onCommentsClick?: () => void;
   actorHandle: string;
 }) {
@@ -3965,8 +4119,8 @@ function DetailView({
   onBack: () => void;
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
-  onAction: (itemId: string, action: PostAction) => void;
-  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onAction: PostActionHandler;
+  onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   onEditPost: (item: InquiryItem) => void;
@@ -3981,6 +4135,7 @@ function DetailView({
 }) {
   const isPaper = item.kind === "paper";
   const postDeleted = isDeletedPost(item);
+  const detailRef = useRef<HTMLElement | null>(null);
   const doiSlug = item.id.replace(/[^a-z0-9]+/gi, ".").replace(/\.+/g, ".").replace(/\.$/, "");
   const codeSlug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 44);
   const authorProfile = profileForHandle(profiles, item.authorHandle ?? item.author);
@@ -4015,6 +4170,12 @@ function DetailView({
     };
   }, [commentSegmentStacks, item.id, threadSelectedCommentId]);
 
+  useQualifiedView(detailRef, {
+    disabled: postDeleted,
+    targetKey: item.id,
+    onView: () => onAction(item.id, "read", { trigger: "visibility", surface: "detail" })
+  });
+
   return (
     <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}`}>
       <button className="back-button" type="button" onClick={onBack}>
@@ -4022,7 +4183,7 @@ function DetailView({
         Back to {room.feedLabel}
       </button>
 
-      <section className="detail-main">
+      <section className="detail-main" ref={detailRef}>
         <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />
         <p className="eyebrow">{kindLabels[item.kind]}</p>
         <h1>{deletedPostContextTitle(item)}</h1>
@@ -4163,7 +4324,7 @@ function CommentThread({
   selectedCommentId: string | null;
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
-  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
@@ -4245,7 +4406,7 @@ function CommentRootSegment({
   selectedCommentId: string | null;
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
-  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
@@ -4361,7 +4522,7 @@ function CommentNode({
   selectedCommentId: string | null;
   onOpenProfile: (name: string) => void;
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
-  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
@@ -4380,6 +4541,14 @@ function CommentNode({
   const highlighted = Boolean(selectedCommentId && comment.id === selectedCommentId);
   const canShowReplies = segmentDepth < maxVisibleCommentPathLength;
   const shouldHideReplies = replies.length > 0 && !canShowReplies;
+
+  useQualifiedView(nodeRef, {
+    disabled: commentDeleted || !comment.id,
+    targetKey: comment.id,
+    onView: () => {
+      if (comment.id) onCommentAction(itemId, comment.id, "read", { trigger: "visibility", surface: "thread" });
+    }
+  });
 
   useLayoutEffect(() => {
     if (!highlighted) return;
@@ -4524,7 +4693,7 @@ function CommentActions({
     { label: "Comments", value: deleted ? deletedMetricLabel : String(countComments(comment.replies ?? [])), icon: MessageCircle, action: null },
     { label: "Reshares", active: commentActionActive(comment, "fork", actorHandle), value: deleted ? deletedMetricLabel : metrics.forks, icon: Repeat2, action: "fork" as CommentAction },
     { label: "Saves", active: commentActionActive(comment, "save", actorHandle), value: deleted ? deletedMetricLabel : metrics.saves, icon: Bookmark, action: "save" as CommentAction },
-    { label: "Views", value: deleted ? deletedMetricLabel : metrics.reads, icon: Eye, action: "read" as CommentAction }
+    { label: "Views", value: deleted ? deletedMetricLabel : metrics.reads, icon: Eye, action: null }
   ];
 
   return (
@@ -4658,8 +4827,8 @@ function ProfileView({
   isFollowing: boolean;
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
-  onAction: (itemId: string, action: PostAction) => void;
-  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onAction: PostActionHandler;
+  onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   onOpenSettings: () => void;
@@ -4891,6 +5060,7 @@ function ProfileView({
                 onDeletePost={onDeletePost}
                 actorHandle={actorHandle}
                 profiles={profiles}
+                surface="profile"
               />
             )
           )
@@ -4932,24 +5102,43 @@ function ProfileCommentCard({
   profiles: Record<string, ResearchProfile>;
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
-  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
 }) {
+  const cardRef = useRef<HTMLElement | null>(null);
   const authorProfile = profileForHandle(profiles, activity.comment.authorHandle ?? activity.comment.author);
   const authorName = authorProfile?.name ?? activity.comment.author;
+  const commentDeleted = isDeletedComment(activity.comment);
+  const openComment = () => {
+    if (activity.comment.id && !commentDeleted) {
+      onCommentAction(activity.item.id, activity.comment.id, "read", { trigger: "click", surface: "profile" });
+    }
+    onSelect(activity.item.id, activity.comment.id ?? null);
+  };
+
+  useQualifiedView(cardRef, {
+    disabled: commentDeleted || !activity.comment.id,
+    targetKey: activity.comment.id,
+    onView: () => {
+      if (activity.comment.id) {
+        onCommentAction(activity.item.id, activity.comment.id, "read", { trigger: "visibility", surface: "profile" });
+      }
+    }
+  });
 
   return (
     <article
+      ref={cardRef}
       className="profile-comment-card"
       role="button"
       tabIndex={0}
-      onClick={() => onSelect(activity.item.id, activity.comment.id ?? null)}
+      onClick={openComment}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          onSelect(activity.item.id, activity.comment.id ?? null);
+          openComment();
         }
       }}
     >
@@ -4987,7 +5176,9 @@ function ProfileCommentCard({
         text={activity.comment.body}
         className="profile-comment-text"
         onExpand={() => {
-          if (activity.comment.id) onCommentAction(activity.item.id, activity.comment.id, "read");
+          if (activity.comment.id) {
+            onCommentAction(activity.item.id, activity.comment.id, "read", { trigger: "expand", surface: "profile" });
+          }
         }}
       />
       <CommentActions

@@ -28,6 +28,7 @@ import {
 type AppData = {
   profiles: Record<string, ResearchProfile>;
   items: InquiryItem[];
+  viewDedupe: Record<string, string>;
 };
 
 export type CreateProfileInput = {
@@ -69,6 +70,8 @@ export type UpdateCommentInput = {
 };
 
 const commentMetricsFallback = { signal: "0", forks: "0", saves: "0", reads: "0" };
+const viewDedupeWindowMs = 60 * 60 * 1000;
+type ViewTargetType = "post" | "comment";
 
 const localDataPath = process.env.VERCEL
   ? path.join("/tmp", "symposium.json")
@@ -108,6 +111,60 @@ const legacyLiveSeedCreatedAt = (id?: string, offsetMinutes = 0) => {
 const stableSeedCreatedAt = (createdAt: string | undefined, fallback?: string) => {
   if (createdAt && !Number.isNaN(Date.parse(createdAt))) return createdAt;
   return fallback ?? createdAt;
+};
+
+const normalizeViewActorHandle = (handle: string | undefined) => {
+  const normalized = cleanHandle(handle || defaultProfile.handle);
+  return normalized === "@" ? defaultProfile.handle : normalized;
+};
+
+const contentViewKey = (targetType: ViewTargetType, targetId: string, actorHandle: string) =>
+  `${targetType}:${targetId}:${normalizeViewActorHandle(actorHandle)}`;
+
+const pruneViewDedupe = (dedupe: Record<string, string> | undefined, now = Date.now()) =>
+  Object.fromEntries(
+    Object.entries(dedupe ?? {}).filter(([, timestamp]) => {
+      const parsed = Date.parse(timestamp);
+      return Number.isFinite(parsed) && now - parsed < viewDedupeWindowMs;
+    })
+  );
+
+const claimLocalContentView = (
+  data: AppData,
+  targetType: ViewTargetType,
+  targetId: string,
+  actorHandle: string
+) => {
+  const now = Date.now();
+  const key = contentViewKey(targetType, targetId, actorHandle);
+  const dedupe = pruneViewDedupe(data.viewDedupe, now);
+  const lastViewedAt = Date.parse(dedupe[key] ?? "");
+  data.viewDedupe = dedupe;
+
+  if (Number.isFinite(lastViewedAt) && now - lastViewedAt < viewDedupeWindowMs) {
+    return false;
+  }
+
+  data.viewDedupe[key] = new Date(now).toISOString();
+  return true;
+};
+
+const recordPostgresContentView = async (
+  targetType: ViewTargetType,
+  targetId: string,
+  actorHandle: string,
+  trigger?: string,
+  surface?: string
+) => {
+  const bucketStart = new Date(Math.floor(Date.now() / viewDedupeWindowMs) * viewDedupeWindowMs).toISOString();
+  const result = await getPool().query<{ id: string }>(
+    `INSERT INTO content_views (target_type, target_id, actor_handle, bucket_start, trigger, surface)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (target_type, target_id, actor_handle, bucket_start) DO NOTHING
+     RETURNING id`,
+    [targetType, targetId, normalizeViewActorHandle(actorHandle), bucketStart, trigger ?? null, surface ?? null]
+  );
+  return (result.rowCount ?? 0) > 0;
 };
 
 const normalizeProfile = (input: CreateProfileInput): ResearchProfile => ({
@@ -155,7 +212,8 @@ const normalizeItem = (item: InquiryItem): InquiryItem => {
 
 const normalizeData = (data: AppData): AppData => ({
   profiles: data.profiles,
-  items: data.items.map(normalizeItem)
+  items: data.items.map(normalizeItem),
+  viewDedupe: pruneViewDedupe(data.viewDedupe)
 });
 
 const mergeSeedData = (data: AppData): AppData => {
@@ -167,7 +225,8 @@ const mergeSeedData = (data: AppData): AppData => {
     items: [
       ...data.items,
       ...seed.items.filter((item) => !existingItemIds.has(item.id))
-    ].map(normalizeItem)
+    ].map(normalizeItem),
+    viewDedupe: pruneViewDedupe(data.viewDedupe)
   };
 };
 
@@ -178,6 +237,7 @@ const seedData = (): AppData => {
 
   return {
     profiles,
+    viewDedupe: {},
     items: inquiryItems.map((item, itemIndex) => ({
       ...normalizeItem(item),
       authorHandle: handleFromName(item.author),
@@ -284,6 +344,19 @@ const ensureSchema = async () => {
           created_at TIMESTAMPTZ DEFAULT now(),
           updated_at TIMESTAMPTZ DEFAULT now()
         );
+
+        CREATE TABLE IF NOT EXISTS content_views (
+          id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+          target_type TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          actor_handle TEXT NOT NULL,
+          bucket_start TIMESTAMPTZ NOT NULL,
+          trigger TEXT,
+          surface TEXT,
+          created_at TIMESTAMPTZ DEFAULT now(),
+          updated_at TIMESTAMPTZ DEFAULT now(),
+          UNIQUE (target_type, target_id, actor_handle, bucket_start)
+        );
       `);
 
       await db.query(`
@@ -303,6 +376,8 @@ const ensureSchema = async () => {
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+        CREATE INDEX IF NOT EXISTS content_views_target_idx ON content_views (target_type, target_id);
+        CREATE INDEX IF NOT EXISTS content_views_actor_idx ON content_views (actor_handle);
       `);
 
       const { rows } = await db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM items");
@@ -547,6 +622,7 @@ const loadPostgres = async (): Promise<AppData> => {
   const commentsByItem = commentTreesFromRows(commentResult.rows);
 
   return {
+    viewDedupe: {},
     profiles: Object.fromEntries(
       profileResult.rows.map((person) => [
         person.handle,
@@ -822,12 +898,22 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
   return comment;
 };
 
-export const applyPostAction = async (itemId: string, action: PostAction, actorHandle = defaultProfile.handle, active?: boolean) => {
+export const applyPostAction = async (
+  itemId: string,
+  action: PostAction,
+  actorHandle = defaultProfile.handle,
+  active?: boolean,
+  trigger?: string,
+  surface?: string
+) => {
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing) return null;
     if (isDeletedPost(existing)) return existing;
+    if (action === "read" && !(await recordPostgresContentView("post", itemId, actorHandle, trigger, surface))) {
+      return existing;
+    }
     const updated = mutateItemForActor(existing, action, actorHandle, defaultProfile.handle, active);
     await getPool().query(
       `UPDATE items
@@ -856,6 +942,10 @@ export const applyPostAction = async (itemId: string, action: PostAction, actorH
   local.items = local.items.map((item) => {
     if (item.id !== itemId) return item;
     if (isDeletedPost(item)) {
+      updated = item;
+      return item;
+    }
+    if (action === "read" && !claimLocalContentView(local, "post", itemId, actorHandle)) {
       updated = item;
       return item;
     }
@@ -1178,12 +1268,21 @@ export const applyCommentAction = async (
   commentId: string,
   action: CommentAction,
   actorHandle = defaultProfile.handle,
-  active?: boolean
+  active?: boolean,
+  trigger?: string,
+  surface?: string
 ) => {
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing) return null;
+
+    const original = findCommentInTree(existing.comments, commentId);
+    if (!original) return null;
+    if (isDeletedComment(original)) return existing;
+    if (action === "read" && !(await recordPostgresContentView("comment", commentId, actorHandle, trigger, surface))) {
+      return existing;
+    }
 
     const mapped = mapCommentTree(existing.comments, commentId, (comment) =>
       mutateCommentForActor(comment, action, actorHandle, active)
@@ -1215,6 +1314,16 @@ export const applyCommentAction = async (
   let updated: InquiryItem | null = null;
   local.items = local.items.map((item) => {
     if (item.id !== itemId) return item;
+    const original = findCommentInTree(item.comments, commentId);
+    if (!original) return item;
+    if (isDeletedComment(original)) {
+      updated = item;
+      return item;
+    }
+    if (action === "read" && !claimLocalContentView(local, "comment", commentId, actorHandle)) {
+      updated = item;
+      return item;
+    }
     const mapped = mapCommentTree(item.comments, commentId, (comment) =>
       mutateCommentForActor(comment, action, actorHandle, active)
     );
