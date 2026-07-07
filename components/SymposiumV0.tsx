@@ -557,6 +557,19 @@ const normalizeClientSeedTimes = (items: InquiryItem[]): InquiryItem[] =>
     };
   });
 
+const normalizeClientItem = (item: InquiryItem) => normalizeClientSeedTimes([item])[0] ?? item;
+
+const preservePublishedPosition = (incoming: InquiryItem, existing?: InquiryItem): InquiryItem => {
+  const normalized = normalizeClientItem(incoming);
+  if (!existing) return normalized;
+
+  return {
+    ...normalized,
+    date: existing.date,
+    createdAt: existing.createdAt
+  };
+};
+
 const commentActionActive = (comment: InquiryComment, action: CommentAction, handle: string) => {
   if (action === "save") return hasHandle(comment.savedBy, handle);
   if (action === "signal") return hasHandle(comment.signaledBy, handle);
@@ -1008,7 +1021,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const cached = readLocalFollowing(actorHandle);
     if (cached.length) setFollowingHandles(cached);
 
-    const response = await fetch("/api/follows", { cache: "no-store" });
+    const response = await fetch(`/api/follows?actorHandle=${encodeURIComponent(actorHandle)}`, { cache: "no-store" });
     if (!response.ok) return;
 
     const data = (await response.json()) as ProfileFollowResponse;
@@ -1036,15 +1049,15 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
     const currentItems = itemsRef.current;
     const existingIndex = currentItems.findIndex((item) => item.id === incoming.id);
+    const nextItem = preservePublishedPosition(incoming, existingIndex >= 0 ? currentItems[existingIndex] : undefined);
     const nextItems =
       existingIndex >= 0
-        ? currentItems.map((item) => (item.id === incoming.id ? incoming : item))
-        : [incoming, ...currentItems];
-    const sortedItems = sortByPublishedRecency(nextItems);
+        ? currentItems.map((item) => (item.id === incoming.id ? nextItem : item))
+        : sortByPublishedRecency([nextItem, ...currentItems]);
 
-    itemsRef.current = sortedItems;
-    setItems(sortedItems);
-    persistLocalSnapshot(sortedItems, profilesRef.current, currentProfileRef.current);
+    itemsRef.current = nextItems;
+    setItems(nextItems);
+    persistLocalSnapshot(nextItems, profilesRef.current, currentProfileRef.current);
     return true;
   };
 
@@ -2125,7 +2138,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         return;
       }
 
-      const committedItems = itemsRef.current.map((item) => (item.id === itemId ? data.item : item));
+      const committedItems = itemsRef.current.map((item) =>
+        item.id === itemId ? preservePublishedPosition(data.item, item) : item
+      );
       itemsRef.current = committedItems;
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
@@ -2190,7 +2205,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         return;
       }
 
-      const committedItems = itemsRef.current.map((item) => (item.id === itemId ? data.item : item));
+      const committedItems = itemsRef.current.map((item) =>
+        item.id === itemId ? preservePublishedPosition(data.item, item) : item
+      );
       itemsRef.current = committedItems;
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
@@ -2237,7 +2254,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       if (!response.ok) throw new Error("Post edit failed.");
 
       const data = (await response.json()) as { item: InquiryItem };
-      const committedItems = itemsRef.current.map((item) => (item.id === itemId ? data.item : item));
+      const committedItems = itemsRef.current.map((item) =>
+        item.id === itemId ? preservePublishedPosition(data.item, item) : item
+      );
       itemsRef.current = committedItems;
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
@@ -2274,7 +2293,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       if (!response.ok) throw new Error("Post delete failed.");
       const data = (await response.json()) as { item?: InquiryItem };
       if (data.item) {
-        const committedItems = itemsRef.current.map((current) => (current.id === itemId ? data.item! : current));
+        const committedItems = itemsRef.current.map((current) =>
+          current.id === itemId ? preservePublishedPosition(data.item!, current) : current
+        );
         itemsRef.current = committedItems;
         setItems(committedItems);
         persistLocalSnapshot(committedItems, profilesRef.current);

@@ -55,6 +55,7 @@ export async function DELETE(request: Request, context: Context) {
 
   const live = await proxyLiveBackend(`/v1/profiles/${encodeURIComponent(targetHandle)}/follow`, {
     method: "DELETE",
+    body: { actorHandle: body.actorHandle },
     actorHandle: body.actorHandle ? String(body.actorHandle) : undefined
   });
   if (live) return live;

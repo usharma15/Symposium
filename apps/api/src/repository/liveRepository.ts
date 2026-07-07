@@ -1036,7 +1036,7 @@ export const followProfile = async (rawInput: unknown, actor: Actor) => {
 
 export const unfollowProfile = async (rawInput: unknown, actor: Actor) => {
   const input = unfollowProfileInputSchema.parse(rawInput);
-  const follower = await ensureProfileHandle(actorHandle(actor));
+  const follower = await ensureProfileHandle(actorHandle(actor, input.actorHandle));
   const following = cleanHandle(input.targetHandle);
 
   if (hasDatabase()) {

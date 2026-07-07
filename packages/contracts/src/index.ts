@@ -200,7 +200,8 @@ export const followProfileInputSchema = z.object({
 });
 
 export const unfollowProfileInputSchema = z.object({
-  targetHandle: z.string().trim().min(1)
+  targetHandle: z.string().trim().min(1),
+  actorHandle: z.string().optional()
 });
 
 export const createCommunityCallInputSchema = z.object({

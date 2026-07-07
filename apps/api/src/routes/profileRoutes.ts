@@ -74,7 +74,7 @@ export const registerProfileRoutes = (app: FastifyInstance) => {
   app.delete<{ Params: HandleParams }>("/v1/profiles/:handle/follow", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const follow = await unfollowProfile({ targetHandle: request.params.handle }, actor);
+      const follow = await unfollowProfile({ ...(request.body ?? {}), targetHandle: request.params.handle }, actor);
       return reply.send({ follow });
     } catch (error) {
       return sendError(app, reply, error);
