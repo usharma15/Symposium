@@ -8,11 +8,17 @@ import {
   ArrowRight,
   Bookmark,
   BrainCircuit,
+  ChevronLeft,
+  ChevronRight,
   Eye,
+  FileText,
+  Film,
   Home,
+  ImageIcon,
   MessageCircle,
   Moon,
   NotebookPen,
+  Paperclip,
   Pencil,
   Repeat2,
   Search,
@@ -34,6 +40,7 @@ import {
   roomChips,
   rooms,
   type FeedScope,
+  type InquiryAttachment,
   type InquiryComment,
   type InquiryItem,
   type ResearchCommunity,
@@ -42,6 +49,16 @@ import {
   type RoomId
 } from "@/lib/mockData";
 import type { CommentAction, PostAction } from "@/lib/dataStore";
+import {
+  attachmentKindForContentType,
+  formatAttachmentBytes,
+  inferAttachmentContentType,
+  maxAttachmentPreviewTextLength,
+  maxPostAttachments,
+  postAttachmentAccept,
+  splitPreviewTextIntoPages,
+  validatePostAttachmentDetails
+} from "@/lib/attachmentRules";
 import {
   appendCommentToTree,
   cleanHandle,
@@ -93,6 +110,7 @@ type ViewActionOptions = {
   surface?: ViewSurface;
 };
 type PostActionHandler = (itemId: string, action: PostAction, options?: ViewActionOptions) => void;
+type AttachmentPreviewHandler = (item: InquiryItem, attachmentId: string) => void;
 type CommentActionHandler = (
   itemId: string,
   commentId: string,
@@ -167,6 +185,7 @@ type PostDraft = {
   title: string;
   body: string;
   kind: Extract<InquiryItem["kind"], "paper" | "thought">;
+  attachments: InquiryAttachment[];
 };
 
 type ProfileSettingsDraft = {
@@ -181,6 +200,11 @@ type AttachmentUploadResponse = {
   attachmentId?: string;
   uploadUrl?: string;
   publicUrl?: string | null;
+};
+
+type AttachmentPreviewTarget = {
+  itemId: string;
+  attachmentId: string;
 };
 
 type LiveEventPayload = {
@@ -232,6 +256,88 @@ const metricKeyForAction = (action: PostAction): ActionMetricKey => {
   if (action === "fork") return "forks";
   if (action === "read") return "reads";
   return "signal";
+};
+
+const metadataNumber = (metadata: Record<string, unknown> | undefined, key: string) => {
+  const value = metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : undefined;
+};
+
+const metadataString = (metadata: Record<string, unknown> | undefined, key: string) => {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value : "";
+};
+
+const attachmentPageCount = (attachment: InquiryAttachment, fallbackText = "") => {
+  const metadataCount = metadataNumber(attachment.metadata, "pageCount");
+  if (metadataCount) return metadataCount;
+  if (fallbackText) return splitPreviewTextIntoPages(fallbackText).length;
+  return 1;
+};
+
+const decodeXmlText = (value: string) =>
+  value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'");
+
+const extractDocxMetadata = async (file: File) => {
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(file);
+  const appXml = await zip.file("docProps/app.xml")?.async("text");
+  const documentXml = await zip.file("word/document.xml")?.async("text");
+  const pageMatch = appXml?.match(/<Pages>(\d+)<\/Pages>/i);
+  const pageCount = pageMatch ? Number(pageMatch[1]) : undefined;
+  const previewText = documentXml
+    ? Array.from(documentXml.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g))
+        .map((match) => decodeXmlText(match[1] ?? ""))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, maxAttachmentPreviewTextLength)
+    : "";
+
+  return {
+    ...(pageCount && Number.isFinite(pageCount) ? { pageCount } : {}),
+    ...(previewText ? { previewText } : {})
+  };
+};
+
+const extractPdfMetadata = async (file: File) => {
+  const bytes = await file.arrayBuffer();
+  const text = new TextDecoder("latin1").decode(bytes);
+  const matches = text.match(/\/Type\s*\/Page\b/g);
+  return matches?.length ? { pageCount: matches.length } : {};
+};
+
+const extractTextMetadata = async (file: File) => {
+  const text = (await file.text()).slice(0, maxAttachmentPreviewTextLength);
+  return {
+    pageCount: splitPreviewTextIntoPages(text).length,
+    previewText: text
+  };
+};
+
+const buildPostAttachmentMetadata = async (file: File, contentType: string) => {
+  try {
+    if (contentType === "application/pdf") return extractPdfMetadata(file);
+    if (contentType.startsWith("text/") || contentType === "application/json") return extractTextMetadata(file);
+    if (contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+      return extractDocxMetadata(file);
+    }
+  } catch {
+    return {};
+  }
+  return {};
+};
+
+const startAttachmentDrag = (attachment: InquiryAttachment) => (event: React.DragEvent<HTMLElement>) => {
+  if (!attachment.url) return;
+  const url = new URL(attachment.url, window.location.href).toString();
+  event.dataTransfer.effectAllowed = "copy";
+  event.dataTransfer.setData("DownloadURL", `${attachment.contentType}:${attachment.fileName}:${url}`);
 };
 
 const entranceRenders: Record<Theme, string> = {
@@ -726,7 +832,8 @@ const preservePublishedPosition = (incoming: InquiryItem, existing?: InquiryItem
   return {
     ...normalized,
     date: existing.date,
-    createdAt: existing.createdAt
+    createdAt: existing.createdAt,
+    attachments: normalized.attachments ?? existing.attachments
   };
 };
 
@@ -818,6 +925,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [profileActivityRevision, setProfileActivityRevision] = useState(0);
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [editingComment, setEditingComment] = useState<EditingCommentTarget | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewTarget | null>(null);
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
   const [authError, setAuthError] = useState("");
@@ -855,6 +963,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         : themedRoomRenders[activeRoom];
   const themePreloadRenders = useMemo(() => getThemePreloadRenders(theme), [theme]);
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+  const attachmentPreviewItem = attachmentPreview
+    ? items.find((item) => item.id === attachmentPreview.itemId) ?? null
+    : null;
   const activeItems = useMemo(() => items.filter((item) => !isDeletedPost(item)), [items]);
   const editingPostItem = editingPost ? items.find((item) => item.id === editingPost.id) ?? editingPost : null;
   const editingCommentItem = editingComment ? items.find((item) => item.id === editingComment.itemId) ?? null : null;
@@ -2079,47 +2190,101 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setSearchOpen(true);
   };
 
+  const openAttachmentPreview: AttachmentPreviewHandler = (item, attachmentId) => {
+    setAttachmentPreview({ itemId: item.id, attachmentId });
+  };
+
   const routePostRoom = (kind: PostDraft["kind"]): Exclude<RoomId, "hall" | "office"> =>
     kind === "paper" ? "library" : "amphitheater";
 
-  const createPost = async ({ title, body, kind }: PostDraft) => {
+  const uploadPostAttachment = async (file: File): Promise<InquiryAttachment> => {
+    const contentType = inferAttachmentContentType(file.name, file.type);
+    const validationError = validatePostAttachmentDetails(file.name, contentType, file.size);
+    if (validationError) throw new Error(validationError);
+
+    const metadata = await buildPostAttachmentMetadata(file, contentType);
+    const uploadResponse = await fetch("/api/attachments/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actorHandle: currentProfile.handle,
+        fileName: file.name,
+        contentType,
+        byteSize: file.size,
+        ownerType: "post"
+      })
+    });
+
+    if (!uploadResponse.ok) {
+      const error = (await uploadResponse.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(error?.error ?? "Could not prepare this attachment upload.");
+    }
+
+    const upload = (await uploadResponse.json()) as AttachmentUploadResponse;
+    if (!upload.uploadUrl || !upload.attachmentId || !upload.publicUrl) {
+      throw new Error("Could not prepare this attachment upload.");
+    }
+
+    const putResponse = await fetch(upload.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: file
+    });
+    if (!putResponse.ok) {
+      throw new Error("Could not upload this attachment.");
+    }
+
+    const confirmResponse = await fetch("/api/attachments/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actorHandle: currentProfile.handle,
+        attachmentId: upload.attachmentId,
+        byteSize: file.size,
+        metadata
+      })
+    });
+    if (!confirmResponse.ok) {
+      const error = (await confirmResponse.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(error?.error ?? "Could not confirm this attachment.");
+    }
+
+    return {
+      id: upload.attachmentId,
+      fileName: file.name,
+      contentType,
+      byteSize: file.size,
+      url: upload.publicUrl,
+      status: "uploaded",
+      kind: attachmentKindForContentType(contentType),
+      metadata,
+      createdAt: new Date().toISOString()
+    };
+  };
+
+  const createPost = async ({ title, body, kind, attachments }: PostDraft) => {
     const routedRoom = routePostRoom(kind);
     const createdAt = new Date().toISOString();
     setSyncStatus("Posting");
-    const response = await fetch("/api/posts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, body, kind, room: routedRoom, authorHandle: currentProfile.handle })
-    });
-    const fallbackItem: InquiryItem = {
-      id: clientId("post"),
-      kind,
-      room: routedRoom,
-      title,
-      author: currentProfile.name,
-      authorHandle: currentProfile.handle,
-      affiliation: currentProfile.location,
-      date: "Just now",
-      createdAt,
-      status: "New",
-      metrics: { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" },
-      gatheringReason: "",
-      excerpt: body,
-      body,
-      tags: [],
-      signals: [],
-      claims: [],
-      objections: [],
-      evidence: [],
-      tests: [],
-      forks: [],
-      comments: [],
-      saved: false,
-      savedBy: [],
-      signaledBy: [],
-      forkedBy: []
-    };
-    const data = response.ok ? ((await response.json()) as { item: InquiryItem }) : { item: fallbackItem };
+    let response: Response;
+    try {
+      response = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, body, kind, room: routedRoom, authorHandle: currentProfile.handle, attachments })
+      });
+    } catch {
+      setSyncStatus("Post could not reach the live service");
+      return false;
+    }
+
+    if (!response.ok) {
+      const error = (await response.json().catch(() => null)) as { error?: string } | null;
+      setSyncStatus(error?.error ?? "Post could not be saved");
+      return false;
+    }
+
+    const data = (await response.json()) as { item: InquiryItem };
     const committedItem = { ...data.item, createdAt: data.item.createdAt ?? createdAt };
     const nextItems = sortByPublishedRecency([committedItem, ...items.filter((item) => item.id !== committedItem.id)]);
     touchActivity(committedItem.id);
@@ -2134,6 +2299,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     });
     setComposerOpen(false);
     setSyncStatus("Post saved");
+    return true;
   };
 
   const addComment = async (itemId: string, body: string, stance: string, parentId?: string | null) => {
@@ -2979,6 +3145,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onActiveTabChange={(tab) => changeProfileTab(selectedProfile.handle, tab)}
             onEditPost={setEditingPost}
             onDeletePost={deletePost}
+            onOpenAttachmentPreview={openAttachmentPreview}
           />
         ) : selectedItem ? (
           <DetailView
@@ -3000,6 +3167,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             commentSegmentStacks={commentSegmentStacks}
             onCommentSegmentStackChange={updateCommentSegmentStack}
             onVisibleCommentSegmentStackChange={registerVisibleCommentSegmentStack}
+            onOpenAttachmentPreview={openAttachmentPreview}
           />
         ) : activeRoom === "hall" ? (
           <HallView onEnter={enterRoom} />
@@ -3027,6 +3195,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onAction={applyAction}
             onEditPost={setEditingPost}
             onDeletePost={deletePost}
+            onOpenAttachmentPreview={openAttachmentPreview}
             onDummyCall={(mode) => setSyncStatus(`${mode} call placeholder`)}
           />
         ) : activeRoom === "communities" ? (
@@ -3060,6 +3229,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             onOpenSaved={() => toggleOfficeMode("saved")}
             actorHandle={currentProfile.handle}
             profiles={profiles}
+            onOpenAttachmentPreview={openAttachmentPreview}
           />
         )}
       </section>
@@ -3124,6 +3294,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         <PostComposerModal
           onClose={() => setComposerOpen(false)}
           onCreatePost={createPost}
+          onUploadAttachment={uploadPostAttachment}
         />
       ) : null}
 
@@ -3145,6 +3316,14 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
           onClose={() => setEditingComment(null)}
           onSave={saveCommentEdit}
           onDelete={deleteComment}
+        />
+      ) : null}
+
+      {attachmentPreview && attachmentPreviewItem ? (
+        <AttachmentPreviewModal
+          item={attachmentPreviewItem}
+          attachmentId={attachmentPreview.attachmentId}
+          onClose={() => setAttachmentPreview(null)}
         />
       ) : null}
 
@@ -3527,6 +3706,7 @@ function SelectedCommunityView({
   onAction,
   onEditPost,
   onDeletePost,
+  onOpenAttachmentPreview,
   onDummyCall
 }: {
   community: ResearchCommunity;
@@ -3539,6 +3719,7 @@ function SelectedCommunityView({
   onAction: PostActionHandler;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
+  onOpenAttachmentPreview: AttachmentPreviewHandler;
   onDummyCall: (mode: "Voice" | "Video") => void;
 }) {
   const memberships = communityMembershipIds(researchCommunities, currentProfile);
@@ -3584,6 +3765,7 @@ function SelectedCommunityView({
               onAction={onAction}
               onEditPost={onEditPost}
               onDeletePost={onDeletePost}
+              onOpenAttachmentPreview={onOpenAttachmentPreview}
               actorHandle={currentProfile.handle}
               profiles={profiles}
               surface="community"
@@ -3621,7 +3803,8 @@ function RoomView({
   onOpenNotes,
   onOpenSaved,
   actorHandle,
-  profiles
+  profiles,
+  onOpenAttachmentPreview
 }: {
   room: Room;
   items: InquiryItem[];
@@ -3641,6 +3824,7 @@ function RoomView({
   onOpenSaved: () => void;
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
+  onOpenAttachmentPreview: AttachmentPreviewHandler;
 }) {
   const roomTitle =
     room.id === "funding" && patronageMode === "civic"
@@ -3746,6 +3930,7 @@ function RoomView({
               onDeletePost={onDeletePost}
               actorHandle={actorHandle}
               profiles={profiles}
+              onOpenAttachmentPreview={onOpenAttachmentPreview}
             />
           ))
         ) : (
@@ -3832,25 +4017,61 @@ const postKindOptions: PostDraft["kind"][] = ["thought", "paper"];
 
 function PostComposerModal({
   onClose,
-  onCreatePost
+  onCreatePost,
+  onUploadAttachment
 }: {
   onClose: () => void;
-  onCreatePost: (draft: PostDraft) => void;
+  onCreatePost: (draft: PostDraft) => Promise<boolean>;
+  onUploadAttachment: (file: File) => Promise<InquiryAttachment>;
 }) {
   const [kind, setKind] = useState<PostDraft["kind"]>("thought");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [attachments, setAttachments] = useState<InquiryAttachment[]>([]);
+  const [attachmentStatus, setAttachmentStatus] = useState("");
+  const [uploading, setUploading] = useState(false);
 
-  const submitPost = (event: FormEvent<HTMLFormElement>) => {
+  const submitPost = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const cleanTitle = title.trim();
     const cleanBody = body.trim();
-    if (!cleanTitle || !cleanBody) return;
+    if (!cleanTitle || !cleanBody || uploading) return;
 
-    onCreatePost({ title: cleanTitle, body: cleanBody, kind });
+    const saved = await onCreatePost({ title: cleanTitle, body: cleanBody, kind, attachments });
+    if (!saved) return;
     setTitle("");
     setBody("");
     setKind("thought");
+    setAttachments([]);
+    setAttachmentStatus("");
+  };
+
+  const uploadFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!files.length) return;
+
+    const openSlots = maxPostAttachments - attachments.length;
+    const selectedFiles = files.slice(0, Math.max(0, openSlots));
+    if (!selectedFiles.length) {
+      setAttachmentStatus(`Attachment limit reached (${maxPostAttachments})`);
+      return;
+    }
+
+    setUploading(true);
+    setAttachmentStatus(`Uploading ${selectedFiles.length} file${selectedFiles.length === 1 ? "" : "s"}`);
+    try {
+      const uploaded: InquiryAttachment[] = [];
+      for (const file of selectedFiles) {
+        uploaded.push(await onUploadAttachment(file));
+      }
+      setAttachments((current) => [...current, ...uploaded].slice(0, maxPostAttachments));
+      setAttachmentStatus(`${uploaded.length} file${uploaded.length === 1 ? "" : "s"} attached`);
+    } catch (error) {
+      setAttachmentStatus(error instanceof Error ? error.message : "Could not attach this file.");
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -3873,7 +4094,7 @@ function PostComposerModal({
               </option>
             ))}
           </select>
-          <button type="submit">Post</button>
+          <button type="submit" disabled={uploading}>Post</button>
         </div>
         <input
           value={title}
@@ -3885,6 +4106,39 @@ function PostComposerModal({
           onChange={(event) => setBody(event.target.value)}
           placeholder="Write the thing itself"
         />
+        <div className="composer-attachments">
+          <label className="attachment-picker">
+            <Paperclip size={16} />
+            <span>{attachments.length}/{maxPostAttachments}</span>
+            <input
+              type="file"
+              multiple
+              accept={postAttachmentAccept}
+              disabled={uploading || attachments.length >= maxPostAttachments}
+              onChange={uploadFiles}
+            />
+          </label>
+          {attachmentStatus ? <small>{attachmentStatus}</small> : null}
+          {attachments.length ? (
+            <div className="composer-attachment-list">
+              {attachments.map((attachment) => (
+                <div key={attachment.id} className="composer-attachment-chip">
+                  {attachmentIcon(attachment)}
+                  <span>{attachment.fileName}</span>
+                  <small>{formatAttachmentBytes(attachment.byteSize)}</small>
+                  <button
+                    type="button"
+                    title="Remove attachment"
+                    disabled={uploading}
+                    onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </form>
     </div>
   );
@@ -4102,6 +4356,7 @@ function FeedPost({
   onAction,
   onEditPost,
   onDeletePost,
+  onOpenAttachmentPreview,
   actorHandle,
   profiles,
   surface = "feed"
@@ -4112,6 +4367,7 @@ function FeedPost({
   onAction: PostActionHandler;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
+  onOpenAttachmentPreview: AttachmentPreviewHandler;
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
   surface?: ViewSurface;
@@ -4154,6 +4410,7 @@ function FeedPost({
           className="feed-post-text"
           onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
         />
+        <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} />
         <PostTimeFooter item={item} />
         <SocialActions
           item={item}
@@ -4217,6 +4474,302 @@ function ExpandableBodyText({
         </>
       ) : null}
     </p>
+  );
+}
+
+function postPreviewAttachments(item: InquiryItem) {
+  if (isDeletedPost(item)) return [];
+  return (item.attachments ?? []).filter((attachment) => attachment.url);
+}
+
+function PostAttachmentCarousel({
+  item,
+  onOpenPreview,
+  variant = "feed"
+}: {
+  item: InquiryItem;
+  onOpenPreview: AttachmentPreviewHandler;
+  variant?: "feed" | "detail";
+}) {
+  const attachments = postPreviewAttachments(item);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const activeAttachment = attachments[Math.min(activeIndex, Math.max(attachments.length - 1, 0))];
+
+  useEffect(() => {
+    setActiveIndex((current) => Math.min(current, Math.max(attachments.length - 1, 0)));
+  }, [attachments.length]);
+
+  if (!attachments.length || !activeAttachment) return null;
+
+  const move = (event: React.MouseEvent<HTMLButtonElement>, direction: -1 | 1) => {
+    event.stopPropagation();
+    setActiveIndex((current) => (current + direction + attachments.length) % attachments.length);
+  };
+
+  const openPreview = (event: React.MouseEvent<HTMLElement>) => {
+    event.stopPropagation();
+    onOpenPreview(item, activeAttachment.id);
+  };
+
+  return (
+    <section className={`post-attachments post-attachments-${variant}`} aria-label="Post attachments">
+      <div
+        className="attachment-frame"
+        role="button"
+        tabIndex={0}
+        draggable={Boolean(activeAttachment.url)}
+        onDragStart={startAttachmentDrag(activeAttachment)}
+        onClick={openPreview}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onOpenPreview(item, activeAttachment.id);
+          }
+        }}
+      >
+        <AttachmentPreviewPane attachment={activeAttachment} mode={variant === "detail" ? "detail" : "feed"} />
+      </div>
+
+      <div className="attachment-rail">
+        <div className="attachment-meta">
+          {attachmentIcon(activeAttachment)}
+          <span>{activeAttachment.fileName}</span>
+          <small>{formatAttachmentBytes(activeAttachment.byteSize)}</small>
+        </div>
+        {attachments.length > 1 ? (
+          <div className="attachment-controls" aria-label="Attachment navigation">
+            <button type="button" title="Previous attachment" onClick={(event) => move(event, -1)}>
+              <ChevronLeft size={16} />
+            </button>
+            <span>{activeIndex + 1}/{attachments.length}</span>
+            <button type="button" title="Next attachment" onClick={(event) => move(event, 1)}>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function attachmentIcon(attachment: InquiryAttachment) {
+  if (attachment.kind === "image") return <ImageIcon size={15} />;
+  if (attachment.kind === "video") return <Film size={15} />;
+  if (attachment.kind === "pdf" || attachment.kind === "text" || attachment.kind === "document") {
+    return <FileText size={15} />;
+  }
+  return <Paperclip size={15} />;
+}
+
+function AttachmentPreviewPane({
+  attachment,
+  mode
+}: {
+  attachment: InquiryAttachment;
+  mode: "feed" | "detail" | "modal";
+}) {
+  if (attachment.kind === "image" && attachment.url) {
+    return (
+      <div className={`attachment-media attachment-media-${mode}`}>
+        <img src={attachment.url} alt="" />
+      </div>
+    );
+  }
+
+  if (attachment.kind === "video" && attachment.url) {
+    return (
+      <div className={`attachment-media attachment-media-${mode}`}>
+        <video src={attachment.url} controls playsInline preload="metadata" onClick={(event) => event.stopPropagation()} />
+      </div>
+    );
+  }
+
+  if (attachment.kind === "pdf" && attachment.url) {
+    return <PdfAttachmentPreview attachment={attachment} mode={mode} />;
+  }
+
+  if (attachment.kind === "text" || attachment.kind === "document") {
+    return <TextAttachmentPreview attachment={attachment} mode={mode} />;
+  }
+
+  return (
+    <div className={`attachment-document attachment-document-${mode}`}>
+      {attachmentIcon(attachment)}
+      <strong>{attachment.fileName}</strong>
+      <span>{formatAttachmentBytes(attachment.byteSize)}</span>
+    </div>
+  );
+}
+
+function PdfAttachmentPreview({ attachment, mode }: { attachment: InquiryAttachment; mode: "feed" | "detail" | "modal" }) {
+  const pageCount = attachmentPageCount(attachment);
+  const [page, setPage] = useState(1);
+  const boundedPage = Math.min(page, pageCount);
+  const source = attachment.url ? `${attachment.url}#page=${boundedPage}` : undefined;
+
+  useEffect(() => {
+    setPage(1);
+  }, [attachment.id]);
+
+  return (
+    <div className={`attachment-document attachment-document-${mode} attachment-pdf`}>
+      <div className="attachment-pagebar">
+        <span>Page {boundedPage}/{pageCount}</span>
+        {pageCount > 1 ? (
+          <div>
+            <button
+              type="button"
+              title="Previous page"
+              disabled={boundedPage <= 1}
+              onClick={(event) => {
+                event.stopPropagation();
+                setPage((current) => Math.max(1, current - 1));
+              }}
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <button
+              type="button"
+              title="Next page"
+              disabled={boundedPage >= pageCount}
+              onClick={(event) => {
+                event.stopPropagation();
+                setPage((current) => Math.min(pageCount, current + 1));
+              }}
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {source ? <iframe title={attachment.fileName} src={source} /> : null}
+    </div>
+  );
+}
+
+function TextAttachmentPreview({ attachment, mode }: { attachment: InquiryAttachment; mode: "feed" | "detail" | "modal" }) {
+  const previewText = metadataString(attachment.metadata, "previewText");
+  const pages = splitPreviewTextIntoPages(previewText);
+  const pageCount = attachmentPageCount(attachment, previewText);
+  const [page, setPage] = useState(1);
+  const boundedPage = Math.min(page, Math.max(pageCount, pages.length));
+  const pageText = pages[Math.min(boundedPage - 1, pages.length - 1)] ?? "";
+
+  useEffect(() => {
+    setPage(1);
+  }, [attachment.id]);
+
+  return (
+    <div className={`attachment-document attachment-document-${mode}`}>
+      <div className="attachment-pagebar">
+        <span>Page {boundedPage}/{Math.max(pageCount, pages.length)}</span>
+        {Math.max(pageCount, pages.length) > 1 ? (
+          <div>
+            <button
+              type="button"
+              title="Previous page"
+              disabled={boundedPage <= 1}
+              onClick={(event) => {
+                event.stopPropagation();
+                setPage((current) => Math.max(1, current - 1));
+              }}
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <button
+              type="button"
+              title="Next page"
+              disabled={boundedPage >= Math.max(pageCount, pages.length)}
+              onClick={(event) => {
+                event.stopPropagation();
+                setPage((current) => Math.min(Math.max(pageCount, pages.length), current + 1));
+              }}
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {pageText ? (
+        <pre>{pageText}</pre>
+      ) : (
+        <div className="attachment-file-shell">
+          {attachmentIcon(attachment)}
+          <strong>{attachment.fileName}</strong>
+          <span>{formatAttachmentBytes(attachment.byteSize)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AttachmentPreviewModal({
+  item,
+  attachmentId,
+  onClose
+}: {
+  item: InquiryItem;
+  attachmentId: string;
+  onClose: () => void;
+}) {
+  const attachments = postPreviewAttachments(item);
+  const attachmentIdsKey = attachments.map((attachment) => attachment.id).join("|");
+  const initialIndex = Math.max(0, attachments.findIndex((attachment) => attachment.id === attachmentId));
+  const [activeIndex, setActiveIndex] = useState(initialIndex);
+  const activeAttachment = attachments[Math.min(activeIndex, Math.max(attachments.length - 1, 0))];
+
+  useEffect(() => {
+    setActiveIndex(Math.max(0, attachments.findIndex((attachment) => attachment.id === attachmentId)));
+  }, [attachmentId, attachmentIdsKey]);
+
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key === "ArrowLeft" && attachments.length > 1) {
+        setActiveIndex((current) => (current - 1 + attachments.length) % attachments.length);
+      }
+      if (event.key === "ArrowRight" && attachments.length > 1) {
+        setActiveIndex((current) => (current + 1) % attachments.length);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [attachments.length, onClose]);
+
+  if (!activeAttachment) return null;
+
+  return (
+    <div className="attachment-modal-backdrop" role="presentation" onClick={onClose}>
+      <section className="attachment-modal" aria-label="Attachment preview" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <div>
+            <span>{deletedPostContextTitle(item)}</span>
+            <strong>{activeAttachment.fileName}</strong>
+          </div>
+          <button type="button" title="Close" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </header>
+        <div
+          className="attachment-modal-frame"
+          draggable={Boolean(activeAttachment.url)}
+          onDragStart={startAttachmentDrag(activeAttachment)}
+        >
+          <AttachmentPreviewPane attachment={activeAttachment} mode="modal" />
+        </div>
+        {attachments.length > 1 ? (
+          <footer>
+            <button type="button" title="Previous attachment" onClick={() => setActiveIndex((current) => (current - 1 + attachments.length) % attachments.length)}>
+              <ChevronLeft size={17} />
+            </button>
+            <span>{activeIndex + 1}/{attachments.length}</span>
+            <button type="button" title="Next attachment" onClick={() => setActiveIndex((current) => (current + 1) % attachments.length)}>
+              <ChevronRight size={17} />
+            </button>
+          </footer>
+        ) : null}
+      </section>
+    </div>
   );
 }
 
@@ -4338,7 +4891,8 @@ function DetailView({
   onClearSelectedComment,
   commentSegmentStacks,
   onCommentSegmentStackChange,
-  onVisibleCommentSegmentStackChange
+  onVisibleCommentSegmentStackChange,
+  onOpenAttachmentPreview
 }: {
   item: InquiryItem;
   room: Room;
@@ -4358,6 +4912,7 @@ function DetailView({
   commentSegmentStacks: CommentSegmentStacks;
   onCommentSegmentStackChange: (key: string, stack: string[]) => void;
   onVisibleCommentSegmentStackChange: (key: string, stack: string[]) => void;
+  onOpenAttachmentPreview: AttachmentPreviewHandler;
 }) {
   const isPaper = item.kind === "paper";
   const postDeleted = isDeletedPost(item);
@@ -4432,6 +4987,7 @@ function DetailView({
           </button>
         )}
         <p className="detail-body">{item.body}</p>
+        <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} variant="detail" />
         <PostTimeFooter item={item} />
         <SocialActions
           item={item}
@@ -5053,7 +5609,8 @@ function ProfileView({
   activityRevision,
   onActiveTabChange,
   onEditPost,
-  onDeletePost
+  onDeletePost,
+  onOpenAttachmentPreview
 }: {
   person: ResearchProfile;
   items: InquiryItem[];
@@ -5082,6 +5639,7 @@ function ProfileView({
   onActiveTabChange: (tab: ProfileTab) => void;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
+  onOpenAttachmentPreview: AttachmentPreviewHandler;
 }) {
   const [activeSocialList, setActiveSocialList] = useState<"following" | "followers" | null>(null);
   const [visibleSlots, setVisibleSlots] = useState<ProfileActivitySlot[]>([]);
@@ -5295,6 +5853,7 @@ function ProfileView({
                 actorHandle={actorHandle}
                 profiles={profiles}
                 surface="profile"
+                onOpenAttachmentPreview={onOpenAttachmentPreview}
               />
             )
           )

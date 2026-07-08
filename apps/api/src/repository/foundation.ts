@@ -4,6 +4,7 @@ import type {
   BootstrapResponseContract,
   CommunityCallContract,
   CreateProfileInputContract,
+  InquiryAttachmentContract,
   InquiryCommentContract,
   InquiryItemContract,
   OpportunityContract,
@@ -49,6 +50,18 @@ export type CommentRow = {
   editedAt?: Date | string | null;
   deletedAt?: Date | string | null;
   createdAt: Date | string;
+};
+
+export type AttachmentRow = {
+  id: string;
+  ownerId: string | null;
+  fileName: string;
+  contentType: string;
+  byteSize: number;
+  status: "pending" | "uploaded" | "previewed" | "failed";
+  metadata?: unknown;
+  objectKey: string;
+  createdAt?: Date | string | null;
 };
 
 let seedReady: Promise<void> | null = null;
@@ -482,42 +495,83 @@ export const commentTreesFromRows = (rows: CommentRow[]) => {
   return new Map([...byPostAndParent.entries()].map(([postId, byParent]) => [postId, buildTree(byParent)]));
 };
 
-export const rowToItem = (row: SnapshotRow, comments: InquiryCommentContract[]): InquiryItemContract => ({
+const attachmentKindForContentType = (contentType: string): InquiryAttachmentContract["kind"] => {
+  const normalized = contentType.toLowerCase();
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("video/")) return "video";
+  if (normalized === "application/pdf") return "pdf";
+  if (normalized.startsWith("text/") || normalized === "application/json") return "text";
+  return "document";
+};
+
+const attachmentPublicUrl = (row: Pick<AttachmentRow, "objectKey">) =>
+  env.R2_PUBLIC_BASE_URL ? `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${row.objectKey}` : undefined;
+
+export const rowToAttachment = (row: AttachmentRow): InquiryAttachmentContract => ({
   id: row.id,
-  kind: row.kind,
-  room: row.room,
-  title: row.title,
-  author: row.authorName,
-  authorHandle: row.authorHandle ?? undefined,
-  affiliation: row.affiliation,
-  date: row.dateLabel,
-  createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : undefined,
-  editedAt: row.editedAt ? new Date(row.editedAt).toISOString() : undefined,
-  deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : undefined,
+  fileName: row.fileName,
+  contentType: row.contentType,
+  byteSize: row.byteSize,
+  url: attachmentPublicUrl(row),
   status: row.status,
-  metrics: json(row.metrics, { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" }),
-  gatheringReason: row.gatheringReason,
-  excerpt: row.excerpt,
-  body: row.body,
-  tags: json(row.tags, []),
-  signals: json(row.signals, []),
-  claims: json(row.claims, []),
-  objections: json(row.objections, []),
-  evidence: json(row.evidence, []),
-  tests: json(row.tests, []),
-  forks: json(row.forks, []),
-  comments,
-  saved: row.saved,
-  savedBy: json(row.savedBy, []),
-  signaledBy: json(row.signaledBy, []),
-  forkedBy: json(row.forkedBy, [])
+  kind: attachmentKindForContentType(row.contentType),
+  metadata: json(row.metadata, {}),
+  createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : undefined
 });
+
+export const attachmentsByOwner = (rows: AttachmentRow[]) => {
+  const byOwner = new Map<string, InquiryAttachmentContract[]>();
+  for (const row of rows) {
+    if (!row.ownerId) continue;
+    byOwner.set(row.ownerId, [...(byOwner.get(row.ownerId) ?? []), rowToAttachment(row)]);
+  }
+  return byOwner;
+};
+
+export const rowToItem = (
+  row: SnapshotRow,
+  comments: InquiryCommentContract[],
+  attachments?: InquiryAttachmentContract[]
+): InquiryItemContract => {
+  const postAttachments = attachments ?? row.attachments ?? [];
+  return {
+    id: row.id,
+    kind: row.kind,
+    room: row.room,
+    title: row.title,
+    author: row.authorName,
+    authorHandle: row.authorHandle ?? undefined,
+    affiliation: row.affiliation,
+    date: row.dateLabel,
+    createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : undefined,
+    editedAt: row.editedAt ? new Date(row.editedAt).toISOString() : undefined,
+    deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : undefined,
+    status: row.status,
+    metrics: json(row.metrics, { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" }),
+    gatheringReason: row.gatheringReason,
+    excerpt: row.excerpt,
+    body: row.body,
+    tags: json(row.tags, []),
+    signals: json(row.signals, []),
+    claims: json(row.claims, []),
+    objections: json(row.objections, []),
+    evidence: json(row.evidence, []),
+    tests: json(row.tests, []),
+    forks: json(row.forks, []),
+    comments,
+    attachments: postAttachments.length ? postAttachments : undefined,
+    saved: row.saved,
+    savedBy: json(row.savedBy, []),
+    signaledBy: json(row.signaledBy, []),
+    forkedBy: json(row.forkedBy, [])
+  };
+};
 
 export const getInitialState = async (): Promise<BootstrapResponseContract> => {
   if (!hasDatabase()) return seedSnapshot();
   await ensureLiveData();
 
-  const [profileResult, postResult, commentResult, communityResult] = await Promise.all([
+  const [profileResult, postResult, commentResult, attachmentResult, communityResult] = await Promise.all([
     getPool().query<ResearchProfileContract & {
       likesPublic: boolean;
       resharesPublic: boolean;
@@ -588,6 +642,22 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
        FROM comments
        ORDER BY created_at ASC`
     ),
+    getPool().query<AttachmentRow>(
+      `SELECT
+        id::text,
+        owner_id AS "ownerId",
+        file_name AS "fileName",
+        content_type AS "contentType",
+        byte_size AS "byteSize",
+        status,
+        metadata,
+        object_key AS "objectKey",
+        created_at AS "createdAt"
+       FROM attachments
+       WHERE owner_type = 'post'
+         AND status IN ('uploaded', 'previewed')
+       ORDER BY created_at ASC`
+    ),
     getPool().query<ResearchCommunityContract>(
       `SELECT
         id,
@@ -606,6 +676,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
   ]);
 
   const commentsByPost = commentTreesFromRows(commentResult.rows);
+  const attachmentsByPost = attachmentsByOwner(attachmentResult.rows);
   const profiles = Object.fromEntries(
     profileResult.rows.map((person) => [
       person.handle,
@@ -620,7 +691,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
 
   return {
     profiles,
-    items: postResult.rows.map((row) => rowToItem(row, commentsByPost.get(row.id) ?? [])),
+    items: postResult.rows.map((row) => rowToItem(row, commentsByPost.get(row.id) ?? [], attachmentsByPost.get(row.id) ?? [])),
     communities: communityResult.rows.map((community) => ({
       ...community,
       memberHandles: json(community.memberHandles, []),

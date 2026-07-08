@@ -48,6 +48,18 @@ export type InquiryMetrics = {
   reads: string;
 };
 
+export type InquiryAttachment = {
+  id: string;
+  fileName: string;
+  contentType: string;
+  byteSize: number;
+  url?: string;
+  status: "pending" | "uploaded" | "previewed" | "failed";
+  kind: "image" | "video" | "pdf" | "text" | "document";
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+};
+
 export type InquiryItem = {
   id: string;
   kind: ContentKind;
@@ -76,6 +88,7 @@ export type InquiryItem = {
   tests: string[];
   forks: string[];
   comments: InquiryComment[];
+  attachments?: InquiryAttachment[];
   saved?: boolean;
   savedBy?: string[];
   signaledBy?: string[];

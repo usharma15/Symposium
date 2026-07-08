@@ -4,6 +4,7 @@ import {
   confirmAttachmentInputSchema,
   createAttachmentUploadInputSchema
 } from "../../../../packages/contracts/src";
+import { inferAttachmentContentType, validatePostAttachmentDetails } from "@/lib/attachmentRules";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
@@ -15,7 +16,11 @@ const allowedProfileImageTypes = new Set(["image/png", "image/jpeg", "image/jpg"
 const maxProfileImageBytes = 5 * 1024 * 1024;
 
 export const createAttachmentUpload = async (rawInput: unknown, actor: Actor) => {
-  const input = createAttachmentUploadInputSchema.parse(rawInput);
+  const parsedInput = createAttachmentUploadInputSchema.parse(rawInput);
+  const input = {
+    ...parsedInput,
+    contentType: inferAttachmentContentType(parsedInput.fileName, parsedInput.contentType)
+  };
 
   if (input.ownerType === "profile") {
     if (!allowedProfileImageTypes.has(input.contentType.toLowerCase())) {
@@ -29,6 +34,14 @@ export const createAttachmentUpload = async (rawInput: unknown, actor: Actor) =>
       throw new TRPCError({
         code: "BAD_REQUEST",
         message: "Profile photos must be 5 MB or smaller."
+      });
+    }
+  } else {
+    const validationError = validatePostAttachmentDetails(input.fileName, input.contentType, input.byteSize);
+    if (validationError) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: validationError
       });
     }
   }
@@ -76,9 +89,10 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
     `UPDATE attachments
      SET status = 'uploaded',
          byte_size = COALESCE($2, byte_size),
+         metadata = metadata || COALESCE($4::jsonb, '{}'::jsonb),
          updated_at = now()
      WHERE id = $1 AND uploader_handle = $3`,
-    [input.attachmentId, input.byteSize ?? null, handle]
+    [input.attachmentId, input.byteSize ?? null, handle, input.metadata ? JSON.stringify(input.metadata) : null]
   );
 
   await emitEvent({

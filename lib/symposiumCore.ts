@@ -292,7 +292,8 @@ export const tombstonePost = (item: InquiryItem, deletedAt = new Date().toISOStr
   objections: [],
   evidence: [],
   tests: [],
-  forks: []
+  forks: [],
+  attachments: []
 });
 
 export const tombstoneComment = (

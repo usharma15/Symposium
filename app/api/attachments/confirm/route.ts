@@ -1,4 +1,5 @@
 import { jsonError, readJson } from "@/lib/api";
+import { confirmLocalAttachment, LocalAttachmentStoreError } from "@/lib/localAttachmentStore";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 
 export const runtime = "nodejs";
@@ -8,6 +9,7 @@ type ConfirmBody = {
   actorHandle?: string;
   attachmentId?: string;
   byteSize?: number;
+  metadata?: Record<string, unknown>;
 };
 
 export async function POST(request: Request) {
@@ -21,11 +23,24 @@ export async function POST(request: Request) {
     method: "POST",
     body: {
       attachmentId: body.attachmentId,
-      byteSize: body.byteSize
+      byteSize: body.byteSize,
+      metadata: body.metadata
     },
     actorHandle: body.actorHandle
   });
   if (live) return live;
 
-  return jsonError("Live uploads are not configured in local preview.", 412);
+  try {
+    const attachment = await confirmLocalAttachment({
+      attachmentId: body.attachmentId,
+      byteSize: body.byteSize,
+      metadata: body.metadata
+    });
+    return Response.json({ attachmentId: attachment.attachmentId, status: attachment.status });
+  } catch (error) {
+    if (error instanceof LocalAttachmentStoreError) {
+      return jsonError(error.message, error.status);
+    }
+    throw error;
+  }
 }

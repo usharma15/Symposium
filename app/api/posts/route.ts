@@ -30,7 +30,8 @@ export async function POST(request: Request) {
     kind: contentKinds.includes(kind as ContentKind) ? (kind as ContentKind) : "thought",
     room: postRooms.includes(room as Exclude<RoomId, "hall">)
       ? (room as Exclude<RoomId, "hall">)
-      : "symposium"
+      : "symposium",
+    attachments: Array.isArray(body.attachments) ? body.attachments : []
   };
 
   if (!input.title || !input.body) {

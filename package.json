@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "WATCHPACK_POLLING=true next dev --webpack",
     "api:dev": "tsx watch apps/api/src/server.ts",
     "api:preflight": "tsx apps/api/src/config/preflight.ts",
     "api:smoke": "tsx apps/api/src/smoke.ts",
@@ -37,6 +37,7 @@
     "drizzle-kit": "0.31.10",
     "drizzle-orm": "0.45.2",
     "fastify": "5.9.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^1.18.0",
     "next": "^16.2.9",
     "pg": "^8.21.0",

@@ -29,6 +29,7 @@ export const liveCallStatusSchema = z.enum(["scheduled", "live", "ended", "cance
 export const liveCallKindSchema = z.enum(["voice", "video"]);
 export const patronageVisibilitySchema = z.enum(["civic", "private"]);
 export const attachmentStatusSchema = z.enum(["pending", "uploaded", "previewed", "failed"]);
+export const attachmentKindSchema = z.enum(["image", "video", "pdf", "text", "document"]);
 export const followStatusSchema = z.enum(["active", "muted", "blocked"]);
 export const opportunityStatusSchema = z.enum(["open", "closed", "draft"]);
 export const opportunityKindSchema = z.enum(["job", "bounty", "collaboration", "grant", "internship"]);
@@ -72,6 +73,30 @@ export type InquiryMetricsContract = z.infer<typeof inquiryMetricsSchema>;
 export const inquirySignalSchema = z.object({
   label: z.string(),
   value: z.string()
+});
+
+export const attachmentMetadataSchema = z.record(z.string(), z.unknown()).default({});
+
+export const inquiryAttachmentSchema = z.object({
+  id: z.string().min(1),
+  fileName: z.string().min(1).max(255),
+  contentType: z.string().min(1).max(160),
+  byteSize: z.number().int().positive(),
+  url: z.string().url().optional(),
+  status: attachmentStatusSchema.default("uploaded"),
+  kind: attachmentKindSchema,
+  metadata: attachmentMetadataSchema.optional(),
+  createdAt: z.string().optional()
+});
+
+export const postAttachmentInputSchema = inquiryAttachmentSchema.pick({
+  id: true,
+  fileName: true,
+  contentType: true,
+  byteSize: true,
+  url: true,
+  kind: true,
+  metadata: true
 });
 
 export type InquiryCommentContract = {
@@ -135,6 +160,7 @@ export const inquiryItemSchema = z.object({
   tests: z.array(z.string()),
   forks: z.array(z.string()),
   comments: z.array(inquiryCommentSchema),
+  attachments: z.array(inquiryAttachmentSchema).optional(),
   saved: z.boolean().optional(),
   savedBy: z.array(z.string()).optional(),
   signaledBy: z.array(z.string()).optional(),
@@ -171,7 +197,8 @@ export const createPostInputSchema = z.object({
   body: z.string().trim().min(1).max(20000),
   kind: contentKindSchema,
   room: postRoomSchema,
-  authorHandle: z.string().optional()
+  authorHandle: z.string().optional(),
+  attachments: z.array(postAttachmentInputSchema).max(10).default([])
 });
 
 export const updatePostInputSchema = z.object({
@@ -249,7 +276,8 @@ export const createAttachmentUploadInputSchema = z.object({
 
 export const confirmAttachmentInputSchema = z.object({
   attachmentId: z.string().min(1),
-  byteSize: z.number().int().positive().optional()
+  byteSize: z.number().int().positive().optional(),
+  metadata: attachmentMetadataSchema.optional()
 });
 
 export const searchInputSchema = z.object({
@@ -352,12 +380,14 @@ export type PostActionContract = z.infer<typeof postActionSchema>;
 export type ResearchProfileContract = z.infer<typeof researchProfileSchema>;
 export type CreateProfileInputContract = z.infer<typeof createProfileInputSchema>;
 export type InquiryItemContract = z.infer<typeof inquiryItemSchema>;
+export type InquiryAttachmentContract = z.infer<typeof inquiryAttachmentSchema>;
 export type ResearchCommunityContract = z.infer<typeof researchCommunitySchema>;
 export type CreatePostInputContract = z.infer<typeof createPostInputSchema>;
 export type CreateCommentInputContract = z.infer<typeof createCommentInputSchema>;
 export type UpdateCommentInputContract = z.infer<typeof updateCommentInputSchema>;
 export type PostActionInputContract = z.infer<typeof postActionInputSchema>;
 export type AttachmentStatusContract = z.infer<typeof attachmentStatusSchema>;
+export type AttachmentKindContract = z.infer<typeof attachmentKindSchema>;
 export type BootstrapResponseContract = z.infer<typeof bootstrapResponseSchema>;
 export type FollowProfileInputContract = z.infer<typeof followProfileInputSchema>;
 export type ProfileFollowContract = z.infer<typeof profileFollowSchema>;

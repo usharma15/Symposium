@@ -61,9 +61,11 @@ import {
   json,
   newId,
   normalizeProfile,
+  rowToAttachment,
   rowToItem,
   searchablePostText,
   seedSnapshot,
+  type AttachmentRow,
   type CommentRow,
   type SnapshotRow
 } from "./foundation";
@@ -253,6 +255,14 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
   const handle = actorHandle(actor, input.authorHandle);
   const author = snapshot.profiles[handle] ?? defaultProfile;
   const isPaper = input.kind === "paper";
+  const requestedAttachments = (input.attachments ?? []).map((attachment) => ({
+    ...attachment,
+    status: "uploaded" as const
+  }));
+  const requestedAttachmentIds = requestedAttachments.map((attachment) => attachment.id);
+  if (new Set(requestedAttachmentIds).size !== requestedAttachmentIds.length) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Each post attachment can only be attached once." });
+  }
   const item: InquiryItemContract = {
     id: newId("post"),
     kind: input.kind,
@@ -281,6 +291,7 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
     tests: [],
     forks: [],
     comments: [],
+    attachments: requestedAttachments,
     saved: input.room === "office",
     savedBy: input.room === "office" ? [author.handle] : [],
     signaledBy: [],
@@ -290,46 +301,92 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
   if (!hasDatabase()) return item;
   await ensureLiveData();
 
-  await getPool().query(
-    `INSERT INTO posts (
-      id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
-      metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-      tests, forks, saved, saved_by, signaled_by, forked_by, search_text
-    )
-    VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9,
-      $10, $11, $12, $13, $14, $15, $16, $17, $18,
-      $19, $20, $21, $22, $23, $24, $25, $26
-    )`,
-    [
-      item.id,
-      item.kind,
-      item.room,
-      item.title,
-      item.authorHandle,
-      item.author,
-      item.affiliation,
-      item.date,
-      item.createdAt,
-      item.status,
-      JSON.stringify(item.metrics),
-      item.gatheringReason,
-      item.excerpt,
-      item.body,
-      JSON.stringify(item.tags),
-      JSON.stringify(item.signals),
-      JSON.stringify(item.claims),
-      JSON.stringify(item.objections),
-      JSON.stringify(item.evidence),
-      JSON.stringify(item.tests),
-      JSON.stringify(item.forks),
-      item.saved,
-      JSON.stringify(item.savedBy ?? []),
-      JSON.stringify(item.signaledBy ?? []),
-      JSON.stringify(item.forkedBy ?? []),
-      searchablePostText({ ...item, authorName: item.author })
-    ]
-  );
+  const client = await getPool().connect();
+  let attachedRows: AttachmentRow[] = [];
+
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `INSERT INTO posts (
+        id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
+        metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
+        tests, forks, saved, saved_by, signaled_by, forked_by, search_text
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9,
+        $10, $11, $12, $13, $14, $15, $16, $17, $18,
+        $19, $20, $21, $22, $23, $24, $25, $26
+      )`,
+      [
+        item.id,
+        item.kind,
+        item.room,
+        item.title,
+        item.authorHandle,
+        item.author,
+        item.affiliation,
+        item.date,
+        item.createdAt,
+        item.status,
+        JSON.stringify(item.metrics),
+        item.gatheringReason,
+        item.excerpt,
+        item.body,
+        JSON.stringify(item.tags),
+        JSON.stringify(item.signals),
+        JSON.stringify(item.claims),
+        JSON.stringify(item.objections),
+        JSON.stringify(item.evidence),
+        JSON.stringify(item.tests),
+        JSON.stringify(item.forks),
+        item.saved,
+        JSON.stringify(item.savedBy ?? []),
+        JSON.stringify(item.signaledBy ?? []),
+        JSON.stringify(item.forkedBy ?? []),
+        searchablePostText({ ...item, authorName: item.author })
+      ]
+    );
+
+    if (requestedAttachmentIds.length) {
+      const result = await client.query<AttachmentRow>(
+        `UPDATE attachments
+         SET owner_id = $1,
+             updated_at = now()
+         WHERE id = ANY($2::uuid[])
+           AND owner_type = 'post'
+           AND uploader_handle = $3
+           AND status IN ('uploaded', 'previewed')
+           AND (owner_id IS NULL OR owner_id = $1)
+         RETURNING
+           id::text,
+           owner_id AS "ownerId",
+           file_name AS "fileName",
+           content_type AS "contentType",
+           byte_size AS "byteSize",
+           status,
+           metadata,
+           object_key AS "objectKey",
+           created_at AS "createdAt"`,
+        [item.id, requestedAttachmentIds, item.authorHandle]
+      );
+
+      if ((result.rowCount ?? 0) !== requestedAttachmentIds.length) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "One or more attachments could not be attached to this post." });
+      }
+
+      const rowById = new Map(result.rows.map((row) => [row.id, row]));
+      attachedRows = requestedAttachmentIds.map((id) => rowById.get(id)).filter((row): row is AttachmentRow => Boolean(row));
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  item.attachments = attachedRows.map(rowToAttachment);
 
   await emitEvent({
     kind: "post.created",
@@ -899,7 +956,8 @@ export const deletePost = async (postId: string, actor: Actor) => {
       if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this post." });
       }
-      deleted = tombstonePost(existing);
+      const deletedPost = tombstonePost(existing);
+      deleted = deletedPost;
       await client.query(
         `UPDATE posts
          SET title = $2,
@@ -924,27 +982,27 @@ export const deletePost = async (postId: string, actor: Actor) => {
          WHERE id = $1`,
         [
           postId,
-          deleted.title,
-          deleted.author,
-          deleted.affiliation,
-          deleted.status,
-          deleted.gatheringReason,
-          deleted.excerpt,
-          deleted.body,
-          JSON.stringify(deleted.tags),
-          JSON.stringify(deleted.signals),
-          JSON.stringify(deleted.claims),
-          JSON.stringify(deleted.objections),
-          JSON.stringify(deleted.evidence),
-          JSON.stringify(deleted.tests),
-          JSON.stringify(deleted.forks),
+          deletedPost.title,
+          deletedPost.author,
+          deletedPost.affiliation,
+          deletedPost.status,
+          deletedPost.gatheringReason,
+          deletedPost.excerpt,
+          deletedPost.body,
+          JSON.stringify(deletedPost.tags),
+          JSON.stringify(deletedPost.signals),
+          JSON.stringify(deletedPost.claims),
+          JSON.stringify(deletedPost.objections),
+          JSON.stringify(deletedPost.evidence),
+          JSON.stringify(deletedPost.tests),
+          JSON.stringify(deletedPost.forks),
           searchablePostText({
-            title: deleted.title,
-            body: deleted.body,
-            excerpt: deleted.excerpt,
-            authorName: deleted.author
+            title: deletedPost.title,
+            body: deletedPost.body,
+            excerpt: deletedPost.excerpt,
+            authorName: deletedPost.author
           }),
-          deleted.deletedAt
+          deletedPost.deletedAt
         ]
       );
       didDelete = true;

@@ -7,6 +7,7 @@ import {
   profile as defaultProfile,
   profilesByName,
   type ContentKind,
+  type InquiryAttachment,
   type InquiryComment,
   type InquiryItem,
   type ResearchProfile,
@@ -54,6 +55,7 @@ export type CreatePostInput = {
   body: string;
   kind: ContentKind;
   room: Exclude<RoomId, "hall">;
+  attachments?: InquiryAttachment[];
 };
 
 export type CreateCommentInput = {
@@ -210,6 +212,7 @@ const normalizeItem = (item: InquiryItem): InquiryItem => {
     signaledBy: item.signaledBy ?? [],
     forkedBy: item.forkedBy ?? [],
     saved: Boolean(item.saved),
+    attachments: item.attachments ?? [],
     comments: normalizeCommentState(item.comments ?? [])
   };
 };
@@ -322,6 +325,7 @@ const ensureSchema = async () => {
           evidence JSONB NOT NULL,
           tests JSONB NOT NULL,
           forks JSONB NOT NULL,
+          attachments JSONB DEFAULT '[]'::jsonb,
           saved BOOLEAN DEFAULT false,
           saved_by JSONB DEFAULT '[]'::jsonb,
           signaled_by JSONB DEFAULT '[]'::jsonb,
@@ -371,6 +375,7 @@ const ensureSchema = async () => {
         ALTER TABLE items ADD COLUMN IF NOT EXISTS saved_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS signaled_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS forked_by JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{"signal":"0","forks":"0","saves":"0","reads":"0"}'::jsonb;
@@ -616,6 +621,7 @@ const loadPostgres = async (): Promise<AppData> => {
       evidence: string[];
       tests: string[];
       forks: string[];
+      attachments: InquiryAttachment[] | null;
       saved: boolean;
       saved_by: string[];
       signaled_by: string[];
@@ -668,6 +674,7 @@ const loadPostgres = async (): Promise<AppData> => {
       evidence: item.evidence,
       tests: item.tests,
       forks: item.forks,
+      attachments: item.attachments ?? [],
       comments: commentsByItem.get(item.id) ?? [],
       saved: item.saved,
       savedBy: item.saved_by?.length ? item.saved_by : item.saved ? [defaultProfile.handle] : [],
@@ -765,6 +772,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     tests: [],
     forks: [],
     comments: [],
+    attachments: input.attachments ?? [],
     saved: input.room === "office",
     savedBy: input.room === "office" ? [author.handle] : [],
     signaledBy: [],
@@ -777,12 +785,12 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
       `INSERT INTO items (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by
+        tests, forks, attachments, saved, saved_by, signaled_by, forked_by
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25
+        $19, $20, $21, $22, $23, $24, $25, $26
       )`,
       [
         item.id,
@@ -806,6 +814,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
         JSON.stringify(item.evidence),
         JSON.stringify(item.tests),
         JSON.stringify(item.forks),
+        JSON.stringify(item.attachments ?? []),
         item.saved,
         JSON.stringify(item.savedBy),
         JSON.stringify(item.signaledBy),
