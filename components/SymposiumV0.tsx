@@ -13,23 +13,30 @@ import {
   Eye,
   FileText,
   Film,
+  Fullscreen,
   Home,
   ImageIcon,
+  Maximize2,
+  Minimize2,
   MessageCircle,
   Moon,
   NotebookPen,
   Paperclip,
   Pencil,
   Repeat2,
+  RotateCcw,
   Search,
   Send,
+  Shrink,
   Sparkles,
   Settings,
   Sun,
   ThumbsUp,
   Trash2,
   UserRound,
-  X
+  X,
+  ZoomIn,
+  ZoomOut
 } from "lucide-react";
 import {
   feedScopes,
@@ -207,6 +214,14 @@ type AttachmentPreviewTarget = {
   attachmentId: string;
 };
 
+type AttachmentRenderMode = "feed" | "detail" | "modal" | "expanded";
+type AttachmentExpandedMode = "fit" | "actual";
+
+type MediaIntrinsicSize = {
+  width: number;
+  height: number;
+};
+
 type LiveEventPayload = {
   item?: unknown;
   follow?: ProfileFollowRecord;
@@ -268,6 +283,29 @@ const metadataString = (metadata: Record<string, unknown> | undefined, key: stri
   return typeof value === "string" ? value : "";
 };
 
+const metadataFiniteNumber = (metadata: Record<string, unknown> | undefined, key: string) => {
+  const value = metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+};
+
+const clampUnit = (value: number | undefined, fallback = 0.5) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(1, Math.max(0, value));
+};
+
+const attachmentFocalStyle = (attachment: InquiryAttachment): CSSProperties => {
+  const focalX = clampUnit(metadataFiniteNumber(attachment.metadata, "focalX"));
+  const focalY = clampUnit(metadataFiniteNumber(attachment.metadata, "focalY"));
+  return { objectPosition: `${focalX * 100}% ${focalY * 100}%` };
+};
+
+const attachmentMediaSize = (attachment: InquiryAttachment): MediaIntrinsicSize | null => {
+  const width = metadataFiniteNumber(attachment.metadata, "width");
+  const height = metadataFiniteNumber(attachment.metadata, "height");
+  if (!width || !height || width <= 0 || height <= 0) return null;
+  return { width, height };
+};
+
 const attachmentPageCount = (attachment: InquiryAttachment, fallbackText = "") => {
   const metadataCount = metadataNumber(attachment.metadata, "pageCount");
   if (metadataCount) return metadataCount;
@@ -320,8 +358,53 @@ const extractTextMetadata = async (file: File) => {
   };
 };
 
+const centeredMediaMetadata = (width: number, height: number, extra: Record<string, unknown> = {}) => ({
+  width,
+  height,
+  focalX: 0.5,
+  focalY: 0.5,
+  ...extra
+});
+
+const extractImageMetadata = async (file: File) =>
+  new Promise<Record<string, unknown>>((resolve) => {
+    const url = URL.createObjectURL(file);
+    const image = document.createElement("img");
+    const finish = (metadata: Record<string, unknown>) => {
+      URL.revokeObjectURL(url);
+      resolve(metadata);
+    };
+    image.onload = () =>
+      finish(image.naturalWidth > 0 && image.naturalHeight > 0 ? centeredMediaMetadata(image.naturalWidth, image.naturalHeight) : {});
+    image.onerror = () => finish({});
+    image.src = url;
+  });
+
+const extractVideoMetadata = async (file: File) =>
+  new Promise<Record<string, unknown>>((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    const finish = (metadata: Record<string, unknown>) => {
+      URL.revokeObjectURL(url);
+      resolve(metadata);
+    };
+    video.preload = "metadata";
+    video.onloadedmetadata = () =>
+      finish(
+        video.videoWidth > 0 && video.videoHeight > 0
+          ? centeredMediaMetadata(video.videoWidth, video.videoHeight, {
+              ...(Number.isFinite(video.duration) ? { duration: video.duration } : {})
+            })
+          : {}
+      );
+    video.onerror = () => finish({});
+    video.src = url;
+  });
+
 const buildPostAttachmentMetadata = async (file: File, contentType: string) => {
   try {
+    if (contentType.startsWith("image/")) return extractImageMetadata(file);
+    if (contentType.startsWith("video/")) return extractVideoMetadata(file);
     if (contentType === "application/pdf") return extractPdfMetadata(file);
     if (contentType.startsWith("text/") || contentType === "application/json") return extractTextMetadata(file);
     if (contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
@@ -4510,16 +4593,19 @@ function PostAttachmentCarousel({
     event.stopPropagation();
     onOpenPreview(item, activeAttachment.id);
   };
+  const openOnSingleClick = activeAttachment.kind !== "video";
 
   return (
     <section className={`post-attachments post-attachments-${variant}`} aria-label="Post attachments">
       <div
-        className="attachment-frame"
+        className={`attachment-frame attachment-frame-${activeAttachment.kind}`}
         role="button"
         tabIndex={0}
         draggable={Boolean(activeAttachment.url)}
         onDragStart={startAttachmentDrag(activeAttachment)}
-        onClick={openPreview}
+        title={openOnSingleClick ? "Open attachment" : "Double-click to open video"}
+        onClick={openOnSingleClick ? openPreview : undefined}
+        onDoubleClick={openOnSingleClick ? undefined : openPreview}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
@@ -4527,15 +4613,26 @@ function PostAttachmentCarousel({
           }
         }}
       >
-        <AttachmentPreviewPane attachment={activeAttachment} mode={variant === "detail" ? "detail" : "feed"} />
+        <AttachmentPreviewPane
+          attachment={activeAttachment}
+          mode={variant === "detail" ? "detail" : "feed"}
+          onOpenPreview={openPreview}
+        />
       </div>
 
       <div className="attachment-rail">
-        <div className="attachment-meta">
+        <button
+          type="button"
+          className="attachment-meta attachment-meta-button"
+          draggable={Boolean(activeAttachment.url)}
+          onDragStart={startAttachmentDrag(activeAttachment)}
+          onClick={openPreview}
+          title="Open attachment"
+        >
           {attachmentIcon(activeAttachment)}
           <span>{activeAttachment.fileName}</span>
           <small>{formatAttachmentBytes(activeAttachment.byteSize)}</small>
-        </div>
+        </button>
         {attachments.length > 1 ? (
           <div className="attachment-controls" aria-label="Attachment navigation">
             <button type="button" title="Previous attachment" onClick={(event) => move(event, -1)}>
@@ -4563,15 +4660,17 @@ function attachmentIcon(attachment: InquiryAttachment) {
 
 function AttachmentPreviewPane({
   attachment,
-  mode
+  mode,
+  onOpenPreview
 }: {
   attachment: InquiryAttachment;
-  mode: "feed" | "detail" | "modal";
+  mode: AttachmentRenderMode;
+  onOpenPreview?: (event: React.MouseEvent<HTMLElement>) => void;
 }) {
   if (attachment.kind === "image" && attachment.url) {
     return (
       <div className={`attachment-media attachment-media-${mode}`}>
-        <img src={attachment.url} alt="" />
+        <img src={attachment.url} alt="" style={attachmentFocalStyle(attachment)} />
       </div>
     );
   }
@@ -4579,7 +4678,19 @@ function AttachmentPreviewPane({
   if (attachment.kind === "video" && attachment.url) {
     return (
       <div className={`attachment-media attachment-media-${mode}`}>
-        <video src={attachment.url} controls playsInline preload="metadata" onClick={(event) => event.stopPropagation()} />
+        <video
+          src={attachment.url}
+          controls
+          playsInline
+          preload="metadata"
+          style={attachmentFocalStyle(attachment)}
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onOpenPreview?.(event);
+          }}
+        />
       </div>
     );
   }
@@ -4601,11 +4712,20 @@ function AttachmentPreviewPane({
   );
 }
 
-function PdfAttachmentPreview({ attachment, mode }: { attachment: InquiryAttachment; mode: "feed" | "detail" | "modal" }) {
+function PdfAttachmentPreview({
+  attachment,
+  mode,
+  zoom = 1
+}: {
+  attachment: InquiryAttachment;
+  mode: AttachmentRenderMode;
+  zoom?: number;
+}) {
   const pageCount = attachmentPageCount(attachment);
   const [page, setPage] = useState(1);
   const boundedPage = Math.min(page, pageCount);
-  const source = attachment.url ? `${attachment.url}#page=${boundedPage}` : undefined;
+  const zoomFragment = mode === "expanded" ? `&zoom=${Math.round(zoom * 100)}` : "";
+  const source = attachment.url ? `${attachment.url}#page=${boundedPage}${zoomFragment}` : undefined;
 
   useEffect(() => {
     setPage(1);
@@ -4647,7 +4767,15 @@ function PdfAttachmentPreview({ attachment, mode }: { attachment: InquiryAttachm
   );
 }
 
-function TextAttachmentPreview({ attachment, mode }: { attachment: InquiryAttachment; mode: "feed" | "detail" | "modal" }) {
+function TextAttachmentPreview({
+  attachment,
+  mode,
+  zoom = 1
+}: {
+  attachment: InquiryAttachment;
+  mode: AttachmentRenderMode;
+  zoom?: number;
+}) {
   const previewText = metadataString(attachment.metadata, "previewText");
   const pages = splitPreviewTextIntoPages(previewText);
   const pageCount = attachmentPageCount(attachment, previewText);
@@ -4691,7 +4819,7 @@ function TextAttachmentPreview({ attachment, mode }: { attachment: InquiryAttach
         ) : null}
       </div>
       {pageText ? (
-        <pre>{pageText}</pre>
+        <pre style={mode === "expanded" ? { fontSize: `${0.86 * zoom}rem` } : undefined}>{pageText}</pre>
       ) : (
         <div className="attachment-file-shell">
           {attachmentIcon(attachment)}
@@ -4701,6 +4829,109 @@ function TextAttachmentPreview({ attachment, mode }: { attachment: InquiryAttach
       )}
     </div>
   );
+}
+
+function ExpandedMediaPreview({
+  attachment,
+  viewMode,
+  zoom,
+  onReady
+}: {
+  attachment: InquiryAttachment;
+  viewMode: AttachmentExpandedMode;
+  zoom: number;
+  onReady?: () => void;
+}) {
+  const [intrinsicSize, setIntrinsicSize] = useState<MediaIntrinsicSize | null>(() => attachmentMediaSize(attachment));
+
+  useEffect(() => {
+    setIntrinsicSize(attachmentMediaSize(attachment));
+  }, [attachment.id, attachment.metadata]);
+
+  const actualStyle =
+    viewMode === "actual" && intrinsicSize
+      ? ({ width: `${Math.max(1, Math.round(intrinsicSize.width * zoom))}px` } as CSSProperties)
+      : undefined;
+
+  if (attachment.kind === "image" && attachment.url) {
+    return (
+      <div className={`attachment-expanded-media attachment-expanded-media-${viewMode}`}>
+        <img
+          src={attachment.url}
+          alt=""
+          style={{ ...attachmentFocalStyle(attachment), ...actualStyle }}
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+              setIntrinsicSize({ width: image.naturalWidth, height: image.naturalHeight });
+              onReady?.();
+            }
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (attachment.kind === "video" && attachment.url) {
+    return (
+      <div className={`attachment-expanded-media attachment-expanded-media-${viewMode}`}>
+        <video
+          src={attachment.url}
+          controls
+          playsInline
+          preload="metadata"
+          style={{ ...attachmentFocalStyle(attachment), ...actualStyle }}
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+              setIntrinsicSize({ width: video.videoWidth, height: video.videoHeight });
+              onReady?.();
+            }
+          }}
+        />
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function AttachmentExpandedPane({
+  attachment,
+  viewMode,
+  zoom,
+  onReady
+}: {
+  attachment: InquiryAttachment;
+  viewMode: AttachmentExpandedMode;
+  zoom: number;
+  onReady?: () => void;
+}) {
+  if (attachment.kind === "image" || attachment.kind === "video") {
+    return <ExpandedMediaPreview attachment={attachment} viewMode={viewMode} zoom={zoom} onReady={onReady} />;
+  }
+
+  if (attachment.kind === "pdf" && attachment.url) {
+    return <PdfAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} />;
+  }
+
+  if (attachment.kind === "text" || attachment.kind === "document") {
+    return <TextAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} />;
+  }
+
+  return (
+    <div className="attachment-document attachment-document-expanded">
+      <div className="attachment-file-shell">
+        {attachmentIcon(attachment)}
+        <strong>{attachment.fileName}</strong>
+        <span>{formatAttachmentBytes(attachment.byteSize)}</span>
+      </div>
+    </div>
+  );
+}
+
+function defaultExpandedMode(attachment: InquiryAttachment): AttachmentExpandedMode {
+  return attachment.kind === "image" || attachment.kind === "video" ? "actual" : "fit";
 }
 
 function AttachmentPreviewModal({
@@ -4717,57 +4948,182 @@ function AttachmentPreviewModal({
   const initialIndex = Math.max(0, attachments.findIndex((attachment) => attachment.id === attachmentId));
   const [activeIndex, setActiveIndex] = useState(initialIndex);
   const activeAttachment = attachments[Math.min(activeIndex, Math.max(attachments.length - 1, 0))];
+  const [viewMode, setViewMode] = useState<AttachmentExpandedMode>(() =>
+    activeAttachment ? defaultExpandedMode(activeAttachment) : "fit"
+  );
+  const [zoom, setZoom] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [stageRevision, setStageRevision] = useState(0);
+  const modalRef = useRef<HTMLElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setActiveIndex(Math.max(0, attachments.findIndex((attachment) => attachment.id === attachmentId)));
   }, [attachmentId, attachmentIdsKey]);
 
   useEffect(() => {
+    if (!activeAttachment) return;
+    setViewMode(defaultExpandedMode(activeAttachment));
+    setZoom(1);
+  }, [activeAttachment?.id]);
+
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const frame = window.requestAnimationFrame(() => {
+      stage.scrollLeft = Math.max(0, (stage.scrollWidth - stage.clientWidth) / 2);
+      stage.scrollTop = Math.max(0, (stage.scrollHeight - stage.clientHeight) / 2);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeAttachment?.id, stageRevision, viewMode, zoom]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === modalRef.current);
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !document.fullscreenElement) onClose();
       if (event.key === "ArrowLeft" && attachments.length > 1) {
+        event.preventDefault();
         setActiveIndex((current) => (current - 1 + attachments.length) % attachments.length);
       }
       if (event.key === "ArrowRight" && attachments.length > 1) {
+        event.preventDefault();
         setActiveIndex((current) => (current + 1) % attachments.length);
+      }
+      if ((event.key === "+" || event.key === "=") && activeAttachment) {
+        event.preventDefault();
+        if (activeAttachment.kind === "image" || activeAttachment.kind === "video") setViewMode("actual");
+        setZoom((current) => Math.min(4, Math.round((current + 0.25) * 100) / 100));
+      }
+      if (event.key === "-" && activeAttachment) {
+        event.preventDefault();
+        if (activeAttachment.kind === "image" || activeAttachment.kind === "video") setViewMode("actual");
+        setZoom((current) => Math.max(0.25, Math.round((current - 0.25) * 100) / 100));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [attachments.length, onClose]);
+  }, [activeAttachment, attachments.length, onClose]);
 
   if (!activeAttachment) return null;
 
+  const closeModal = () => {
+    if (document.fullscreenElement === modalRef.current) {
+      void document.exitFullscreen().then(onClose, onClose);
+      return;
+    }
+    onClose();
+  };
+
+  const setFitMode = () => setViewMode("fit");
+  const setActualMode = () => setViewMode("actual");
+  const resetZoom = () => setZoom(1);
+  const adjustZoom = (delta: number) => {
+    if (activeAttachment.kind === "image" || activeAttachment.kind === "video") setViewMode("actual");
+    setZoom((current) => Math.min(4, Math.max(0.25, Math.round((current + delta) * 100) / 100)));
+  };
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement === modalRef.current) {
+        await document.exitFullscreen();
+      } else {
+        await modalRef.current?.requestFullscreen();
+      }
+    } catch {
+      setIsFullscreen(false);
+    }
+  };
+
   return (
-    <div className="attachment-modal-backdrop" role="presentation" onClick={onClose}>
-      <section className="attachment-modal" aria-label="Attachment preview" onClick={(event) => event.stopPropagation()}>
+    <div className="attachment-modal-backdrop" role="presentation" onClick={closeModal}>
+      <section
+        ref={modalRef}
+        className="attachment-modal"
+        aria-label="Attachment preview"
+        onClick={(event) => event.stopPropagation()}
+      >
         <header>
           <div>
             <span>{deletedPostContextTitle(item)}</span>
             <strong>{activeAttachment.fileName}</strong>
           </div>
-          <button type="button" title="Close" onClick={onClose}>
+          <button type="button" title="Close" onClick={closeModal}>
             <X size={17} />
           </button>
         </header>
+
+        <div className="attachment-modal-toolbar" aria-label="Attachment viewing controls">
+          <div className="attachment-view-toggle">
+            <button
+              type="button"
+              className={viewMode === "fit" ? "active" : ""}
+              title="Fit attachment to viewer"
+              onClick={setFitMode}
+            >
+              <Minimize2 size={15} />
+            </button>
+            <button
+              type="button"
+              className={viewMode === "actual" ? "active" : ""}
+              title="Show actual size"
+              onClick={setActualMode}
+            >
+              <Maximize2 size={15} />
+            </button>
+          </div>
+          <div className="attachment-zoom-controls">
+            <button type="button" title="Zoom out" onClick={() => adjustZoom(-0.25)}>
+              <ZoomOut size={15} />
+            </button>
+            <span>{Math.round(zoom * 100)}%</span>
+            <button type="button" title="Zoom in" onClick={() => adjustZoom(0.25)}>
+              <ZoomIn size={15} />
+            </button>
+            <button type="button" title="Reset zoom" onClick={resetZoom}>
+              <RotateCcw size={15} />
+            </button>
+          </div>
+          <button type="button" title={isFullscreen ? "Exit full screen" : "Full screen"} onClick={toggleFullscreen}>
+            {isFullscreen ? <Shrink size={15} /> : <Fullscreen size={15} />}
+          </button>
+        </div>
+
         <div
-          className="attachment-modal-frame"
+          ref={stageRef}
+          className={`attachment-modal-stage attachment-modal-stage-${activeAttachment.kind} attachment-modal-stage-${viewMode}`}
           draggable={Boolean(activeAttachment.url)}
           onDragStart={startAttachmentDrag(activeAttachment)}
         >
-          <AttachmentPreviewPane attachment={activeAttachment} mode="modal" />
+          <AttachmentExpandedPane
+            attachment={activeAttachment}
+            viewMode={viewMode}
+            zoom={zoom}
+            onReady={() => setStageRevision((current) => current + 1)}
+          />
         </div>
-        {attachments.length > 1 ? (
-          <footer>
-            <button type="button" title="Previous attachment" onClick={() => setActiveIndex((current) => (current - 1 + attachments.length) % attachments.length)}>
-              <ChevronLeft size={17} />
-            </button>
-            <span>{activeIndex + 1}/{attachments.length}</span>
-            <button type="button" title="Next attachment" onClick={() => setActiveIndex((current) => (current + 1) % attachments.length)}>
-              <ChevronRight size={17} />
-            </button>
-          </footer>
-        ) : null}
+
+        <footer className="attachment-modal-footer">
+          {attachments.length > 1 ? (
+            <div className="attachment-modal-navigation">
+              <button type="button" title="Previous attachment" onClick={() => setActiveIndex((current) => (current - 1 + attachments.length) % attachments.length)}>
+                <ChevronLeft size={17} />
+              </button>
+              <span>{activeIndex + 1}/{attachments.length}</span>
+              <button type="button" title="Next attachment" onClick={() => setActiveIndex((current) => (current + 1) % attachments.length)}>
+                <ChevronRight size={17} />
+              </button>
+            </div>
+          ) : (
+            <span />
+          )}
+          <small>{formatAttachmentBytes(activeAttachment.byteSize)}</small>
+        </footer>
       </section>
     </div>
   );

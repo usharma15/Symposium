@@ -1585,6 +1585,11 @@ button {
   cursor: pointer;
 }
 
+.post-attachments-detail .attachment-frame {
+  aspect-ratio: 3 / 2;
+  max-height: 560px;
+}
+
 .attachment-modal-frame {
   aspect-ratio: 16 / 9;
   max-height: min(68vh, 640px);
@@ -1605,8 +1610,8 @@ button {
 }
 
 .attachment-media {
-  display: grid;
-  place-items: center;
+  position: relative;
+  display: block;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -1614,15 +1619,26 @@ button {
   background: #0d1313;
 }
 
-.attachment-media img,
-.attachment-media video {
+.attachment-frame .attachment-media img,
+.attachment-frame .attachment-media video {
+  position: absolute;
+  inset: 0;
   display: block;
+  inline-size: 100%;
+  block-size: 100%;
   width: 100%;
   height: 100%;
   max-width: 100%;
   max-height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   object-position: center;
+}
+
+.attachment-media-modal img,
+.attachment-media-modal video,
+.attachment-media-expanded img,
+.attachment-media-expanded video {
+  object-fit: contain;
 }
 
 .attachment-document {
@@ -1688,16 +1704,22 @@ button {
 
 .attachment-pagebar button,
 .attachment-controls button,
-.attachment-modal footer button {
+.attachment-meta-button,
+.attachment-modal button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
   min-height: 30px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
   color: var(--ink);
+}
+
+.attachment-pagebar button,
+.attachment-controls button,
+.attachment-modal button {
+  width: 30px;
 }
 
 .attachment-pagebar button:disabled {
@@ -1744,6 +1766,20 @@ button {
   max-width: 100%;
 }
 
+.attachment-meta-button {
+  justify-content: flex-start;
+  width: min(100%, max-content);
+  border-color: transparent;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.attachment-meta-button:hover,
+.attachment-meta-button:focus-visible {
+  color: var(--aqua);
+}
+
 .attachment-meta span {
   flex: 1 1 auto;
   min-width: 0;
@@ -1781,8 +1817,9 @@ button {
 .attachment-modal {
   display: grid;
   gap: 10px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   width: min(800px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
+  max-height: calc(100vh - 32px);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 12px;
@@ -1793,11 +1830,20 @@ button {
 }
 
 .attachment-modal header,
-.attachment-modal footer {
+.attachment-modal footer,
+.attachment-modal-toolbar,
+.attachment-modal-navigation,
+.attachment-view-toggle,
+.attachment-zoom-controls {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
+}
+
+.attachment-modal header,
+.attachment-modal footer,
+.attachment-modal-toolbar {
+  justify-content: space-between;
 }
 
 .attachment-modal header div {
@@ -1825,6 +1871,148 @@ button {
   width: 34px;
   min-height: 34px;
   border-radius: var(--radius);
+}
+
+.attachment-modal-toolbar {
+  min-width: 0;
+}
+
+.attachment-view-toggle,
+.attachment-zoom-controls {
+  min-width: 0;
+}
+
+.attachment-zoom-controls span,
+.attachment-modal-navigation span {
+  min-width: 42px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 780;
+  text-align: center;
+}
+
+.attachment-modal button.active {
+  border-color: color-mix(in srgb, var(--aqua) 58%, transparent);
+  background: color-mix(in srgb, var(--aqua) 14%, var(--panel));
+  color: var(--aqua);
+}
+
+.attachment-modal-stage {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: min(62vh, 620px);
+  max-height: min(78vh, 760px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #0d1313;
+}
+
+.attachment-modal-stage-pdf,
+.attachment-modal-stage-text,
+.attachment-modal-stage-document {
+  place-items: stretch;
+  min-height: min(78vh, 900px);
+  max-height: min(82vh, 940px);
+  background: color-mix(in srgb, var(--paper) 74%, var(--panel-strong));
+}
+
+.attachment-expanded-media {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.attachment-expanded-media-fit {
+  height: 100%;
+}
+
+.attachment-modal-stage-image.attachment-modal-stage-fit,
+.attachment-modal-stage-video.attachment-modal-stage-fit {
+  position: relative;
+  overflow: hidden;
+}
+
+.attachment-modal-stage-image.attachment-modal-stage-fit .attachment-expanded-media-fit,
+.attachment-modal-stage-video.attachment-modal-stage-fit .attachment-expanded-media-fit {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.attachment-expanded-media img,
+.attachment-expanded-media video {
+  display: block;
+  object-position: center;
+}
+
+.attachment-expanded-media-fit img,
+.attachment-expanded-media-fit video {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.attachment-expanded-media-actual {
+  width: max-content;
+  min-width: min-content;
+  padding: 18px;
+}
+
+.attachment-expanded-media-actual img,
+.attachment-expanded-media-actual video {
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+}
+
+.attachment-document-expanded {
+  height: 100%;
+  min-height: min(78vh, 900px);
+}
+
+.attachment-document-expanded iframe,
+.attachment-document-expanded pre,
+.attachment-modal-stage-document .attachment-file-shell {
+  min-height: calc(min(78vh, 900px) - 37px);
+}
+
+.attachment-modal-footer small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
+.attachment-modal:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-height: none;
+  border-radius: 0;
+}
+
+.attachment-modal:fullscreen .attachment-modal-stage {
+  max-height: none;
+  min-height: 0;
+}
+
+.attachment-modal:fullscreen .attachment-modal-stage-image,
+.attachment-modal:fullscreen .attachment-modal-stage-video {
+  height: calc(100vh - 156px);
+}
+
+.attachment-modal:fullscreen .attachment-modal-stage-pdf,
+.attachment-modal:fullscreen .attachment-modal-stage-text,
+.attachment-modal:fullscreen .attachment-modal-stage-document {
+  height: calc(100vh - 156px);
 }
 
 .attachment-modal-frame .attachment-media,
