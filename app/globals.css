@@ -1560,12 +1560,19 @@ button {
 .post-attachments {
   display: grid;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   margin: 12px 0 13px;
+  overflow: hidden;
 }
 
 .attachment-frame,
 .attachment-modal-frame {
+  display: grid;
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1573,7 +1580,23 @@ button {
 }
 
 .attachment-frame {
+  aspect-ratio: 16 / 9;
+  max-height: 420px;
   cursor: pointer;
+}
+
+.attachment-modal-frame {
+  aspect-ratio: 16 / 9;
+  max-height: min(68vh, 640px);
+}
+
+.attachment-frame > *,
+.attachment-modal-frame > * {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .attachment-frame:focus-visible {
@@ -1585,23 +1608,32 @@ button {
   display: grid;
   place-items: center;
   width: 100%;
-  aspect-ratio: 16 / 9;
-  max-height: 420px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   background: #0d1313;
 }
 
 .attachment-media img,
 .attachment-media video {
+  display: block;
   width: 100%;
   height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
+  object-position: center;
 }
 
 .attachment-document {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 240px;
-  max-height: 420px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
   background: color-mix(in srgb, var(--paper) 74%, var(--panel-strong));
   color: var(--ink);
 }
@@ -1609,14 +1641,17 @@ button {
 .attachment-document iframe {
   width: 100%;
   height: 100%;
-  min-height: 240px;
+  min-width: 0;
+  min-height: 0;
   border: 0;
   background: #fff;
 }
 
 .attachment-document pre {
-  min-height: 210px;
-  max-height: 360px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   margin: 0;
   overflow: auto;
   padding: 14px;
@@ -1675,7 +1710,10 @@ button {
   place-items: center;
   align-content: center;
   gap: 8px;
-  min-height: 210px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   padding: 18px;
   color: var(--muted);
   text-align: center;
@@ -1690,6 +1728,8 @@ button {
 }
 
 .attachment-rail {
+  min-width: 0;
+  max-width: 100%;
   min-height: 34px;
   color: var(--muted);
   font-size: 0.78rem;
@@ -1697,12 +1737,17 @@ button {
 
 .attachment-meta {
   display: inline-flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: 7px;
   min-width: 0;
+  max-width: 100%;
 }
 
 .attachment-meta span {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   color: var(--ink);
   font-weight: 760;
@@ -1710,9 +1755,17 @@ button {
   white-space: nowrap;
 }
 
+.attachment-meta small {
+  flex: 0 0 auto;
+}
+
 .attachment-controls span {
   min-width: 38px;
   text-align: center;
+}
+
+.attachment-controls {
+  flex: 0 0 auto;
 }
 
 .attachment-modal-backdrop {
