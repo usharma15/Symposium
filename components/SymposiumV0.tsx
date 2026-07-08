@@ -428,7 +428,7 @@ const collapsedBodyLength = 500;
 const bodyExpansionStep = 2000;
 const actionStateProtectionMs = 5000;
 const qualifiedViewVisibleRatio = 0.6;
-const qualifiedViewDelayMs = 3000;
+const qualifiedViewDelayMs = 5000;
 const viewDedupeWindowMs = 60 * 60 * 1000;
 
 function useQualifiedView<T extends Element>(
