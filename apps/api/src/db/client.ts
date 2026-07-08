@@ -1,10 +1,7 @@
-import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { databaseUrl } from "../config/env";
-import * as schema from "./schema";
 
 let pool: Pool | null = null;
-let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 
 export const hasDatabase = () => Boolean(databaseUrl);
 
@@ -25,18 +22,9 @@ export const getPool = () => {
   return pool;
 };
 
-export const getDb = () => {
-  if (!db) {
-    db = drizzle(getPool(), { schema });
-  }
-
-  return db;
-};
-
 export const closeDb = async () => {
   if (pool) {
     await pool.end();
     pool = null;
-    db = null;
   }
 };
