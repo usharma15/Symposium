@@ -214,6 +214,16 @@ type AttachmentPreviewTarget = {
 
 type AttachmentRenderMode = "feed" | "detail" | "modal" | "expanded";
 
+type MediaIntrinsicSize = {
+  width: number;
+  height: number;
+};
+
+type AttachmentViewportSize = {
+  width: number;
+  height: number;
+};
+
 type DocxPreviewRun = {
   text: string;
   bold: boolean;
@@ -302,6 +312,37 @@ const attachmentFocalStyle = (attachment: InquiryAttachment): CSSProperties => {
   const focalX = clampUnit(metadataFiniteNumber(attachment.metadata, "focalX"));
   const focalY = clampUnit(metadataFiniteNumber(attachment.metadata, "focalY"));
   return { objectPosition: `${focalX * 100}% ${focalY * 100}%` };
+};
+
+const attachmentMediaSize = (attachment: InquiryAttachment): MediaIntrinsicSize | null => {
+  const width = metadataFiniteNumber(attachment.metadata, "width");
+  const height = metadataFiniteNumber(attachment.metadata, "height");
+  if (!width || !height || width <= 0 || height <= 0) return null;
+  return { width, height };
+};
+
+const minAttachmentZoom = 0.1;
+const maxAttachmentZoom = 5;
+const zoomInStep = 0.25;
+const zoomOutStep = 0.1;
+
+const clampAttachmentZoom = (value: number) =>
+  Math.min(maxAttachmentZoom, Math.max(minAttachmentZoom, Math.round(value * 100) / 100));
+
+const fitMediaSizeToViewport = (
+  intrinsicSize: MediaIntrinsicSize | null,
+  viewportSize: AttachmentViewportSize | null,
+  zoom: number
+): MediaIntrinsicSize | null => {
+  if (!intrinsicSize || !viewportSize || viewportSize.width <= 0 || viewportSize.height <= 0) return null;
+  const fitScale = Math.min(
+    viewportSize.width / intrinsicSize.width,
+    viewportSize.height / intrinsicSize.height
+  );
+  return {
+    width: Math.max(1, Math.round(intrinsicSize.width * fitScale * zoom)),
+    height: Math.max(1, Math.round(intrinsicSize.height * fitScale * zoom))
+  };
 };
 
 const attachmentPageCount = (attachment: InquiryAttachment, fallbackText = "") => {
@@ -5071,35 +5112,69 @@ function DocxAttachmentPreview({
 
 function ExpandedMediaPreview({
   attachment,
-  zoom
+  zoom,
+  viewportSize
 }: {
   attachment: InquiryAttachment;
   zoom: number;
+  viewportSize: AttachmentViewportSize | null;
 }) {
-  const boundedZoom = Math.max(0.5, Math.min(4, zoom));
-  const shellPercent = `${Math.round(Math.max(1, boundedZoom) * 10000) / 100}%`;
-  const mediaPercent = `${Math.round(Math.min(1, boundedZoom) * 10000) / 100}%`;
-  const mediaStyle = {
-    width: shellPercent,
-    height: shellPercent
-  } as CSSProperties;
-  const mediaElementStyle = {
-    width: mediaPercent,
-    height: mediaPercent
-  } as CSSProperties;
+  const [intrinsicSize, setIntrinsicSize] = useState<MediaIntrinsicSize | null>(() =>
+    attachmentMediaSize(attachment)
+  );
+  const mediaSize = fitMediaSizeToViewport(intrinsicSize, viewportSize, clampAttachmentZoom(zoom));
+  const mediaStyle = mediaSize
+    ? ({
+        width: `${mediaSize.width}px`,
+        height: `${mediaSize.height}px`
+      } satisfies CSSProperties)
+    : undefined;
+  const mediaShellStyle =
+    mediaSize && viewportSize
+      ? ({
+          width: `${Math.max(mediaSize.width, viewportSize.width)}px`,
+          height: `${Math.max(mediaSize.height, viewportSize.height)}px`
+        } satisfies CSSProperties)
+      : undefined;
+
+  useEffect(() => {
+    setIntrinsicSize(attachmentMediaSize(attachment));
+  }, [attachment.id]);
 
   if (attachment.kind === "image" && attachment.url) {
     return (
-      <div className="attachment-expanded-media" style={mediaStyle}>
-        <img src={attachment.url} alt="" style={mediaElementStyle} />
+      <div className="attachment-expanded-media" style={mediaShellStyle}>
+        <img
+          src={attachment.url}
+          alt=""
+          style={mediaStyle}
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+              setIntrinsicSize({ width: image.naturalWidth, height: image.naturalHeight });
+            }
+          }}
+        />
       </div>
     );
   }
 
   if (attachment.kind === "video" && attachment.url) {
     return (
-      <div className="attachment-expanded-media" style={mediaStyle}>
-        <video src={attachment.url} controls playsInline preload="metadata" style={mediaElementStyle} />
+      <div className="attachment-expanded-media" style={mediaShellStyle}>
+        <video
+          src={attachment.url}
+          controls
+          playsInline
+          preload="metadata"
+          style={mediaStyle}
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+              setIntrinsicSize({ width: video.videoWidth, height: video.videoHeight });
+            }
+          }}
+        />
       </div>
     );
   }
@@ -5109,13 +5184,15 @@ function ExpandedMediaPreview({
 
 function AttachmentExpandedPane({
   attachment,
-  zoom
+  zoom,
+  viewportSize
 }: {
   attachment: InquiryAttachment;
   zoom: number;
+  viewportSize: AttachmentViewportSize | null;
 }) {
   if (attachment.kind === "image" || attachment.kind === "video") {
-    return <ExpandedMediaPreview attachment={attachment} zoom={zoom} />;
+    return <ExpandedMediaPreview attachment={attachment} zoom={zoom} viewportSize={viewportSize} />;
   }
 
   if (attachment.kind === "pdf" && attachment.url) {
@@ -5157,6 +5234,7 @@ function AttachmentPreviewModal({
   const activeAttachment = attachments[Math.min(activeIndex, Math.max(attachments.length - 1, 0))];
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [stageSize, setStageSize] = useState<AttachmentViewportSize | null>(null);
   const modalRef = useRef<HTMLElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
 
@@ -5172,12 +5250,49 @@ function AttachmentPreviewModal({
   useLayoutEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    const frame = window.requestAnimationFrame(() => {
+    const updateStageSize = () => {
+      const nextSize = {
+        width: stage.clientWidth,
+        height: stage.clientHeight
+      };
+      if (nextSize.width <= 0 || nextSize.height <= 0) return;
+      setStageSize((currentSize) =>
+        currentSize?.width === nextSize.width && currentSize?.height === nextSize.height ? currentSize : nextSize
+      );
+    };
+    updateStageSize();
+    const resizeObserver = new ResizeObserver(updateStageSize);
+    resizeObserver.observe(stage);
+    window.addEventListener("resize", updateStageSize);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateStageSize);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    let secondFrame = 0;
+    let firstTimeout = 0;
+    let secondTimeout = 0;
+    const centerStage = () => {
       stage.scrollLeft = Math.max(0, (stage.scrollWidth - stage.clientWidth) / 2);
       stage.scrollTop = Math.max(0, (stage.scrollHeight - stage.clientHeight) / 2);
+    };
+    const frame = window.requestAnimationFrame(() => {
+      centerStage();
+      secondFrame = window.requestAnimationFrame(centerStage);
+      firstTimeout = window.setTimeout(centerStage, 60);
+      secondTimeout = window.setTimeout(centerStage, 180);
     });
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeAttachment?.id, zoom]);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+      if (firstTimeout) window.clearTimeout(firstTimeout);
+      if (secondTimeout) window.clearTimeout(secondTimeout);
+    };
+  }, [activeAttachment?.id, stageSize?.height, stageSize?.width, zoom]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -5200,11 +5315,11 @@ function AttachmentPreviewModal({
       }
       if ((event.key === "+" || event.key === "=") && activeAttachment) {
         event.preventDefault();
-        setZoom((current) => Math.min(4, Math.round((current + 0.25) * 100) / 100));
+        setZoom((current) => clampAttachmentZoom(current + zoomInStep));
       }
       if (event.key === "-" && activeAttachment) {
         event.preventDefault();
-        setZoom((current) => Math.max(0.5, Math.round((current - 0.25) * 100) / 100));
+        setZoom((current) => clampAttachmentZoom(current - zoomOutStep));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -5223,7 +5338,7 @@ function AttachmentPreviewModal({
 
   const resetZoom = () => setZoom(1);
   const adjustZoom = (delta: number) => {
-    setZoom((current) => Math.min(4, Math.max(0.5, Math.round((current + delta) * 100) / 100)));
+    setZoom((current) => clampAttachmentZoom(current + delta));
   };
   const toggleFullscreen = async () => {
     try {
@@ -5257,11 +5372,11 @@ function AttachmentPreviewModal({
 
         <div className="attachment-modal-toolbar" aria-label="Attachment viewing controls">
           <div className="attachment-zoom-controls">
-            <button type="button" title="Zoom out" onClick={() => adjustZoom(-0.25)}>
+            <button type="button" title="Zoom out" onClick={() => adjustZoom(-zoomOutStep)}>
               <ZoomOut size={15} />
             </button>
             <span>{Math.round(zoom * 100)}%</span>
-            <button type="button" title="Zoom in" onClick={() => adjustZoom(0.25)}>
+            <button type="button" title="Zoom in" onClick={() => adjustZoom(zoomInStep)}>
               <ZoomIn size={15} />
             </button>
             <button type="button" title="Reset zoom" onClick={resetZoom}>
@@ -5279,7 +5394,7 @@ function AttachmentPreviewModal({
           draggable={Boolean(activeAttachment.url)}
           onDragStart={startAttachmentDrag(activeAttachment)}
         >
-          <AttachmentExpandedPane attachment={activeAttachment} zoom={zoom} />
+          <AttachmentExpandedPane attachment={activeAttachment} zoom={zoom} viewportSize={stageSize} />
         </div>
 
         <footer className="attachment-modal-footer">
