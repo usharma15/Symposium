@@ -91,6 +91,11 @@ import {
   tombstonePost,
   updateSignalValue
 } from "@/lib/symposiumCore";
+import {
+  itemMatchesProfilePostAction,
+  reconcileProfileActivitySlots,
+  uniqueProfileActivityEntries
+} from "@/lib/profileActivity";
 
 type Theme = "day" | "night";
 type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
@@ -1776,7 +1781,13 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
     if (isLiveInquiryItem(payload.item)) {
       const action = payload.action;
-      if (action && event.actorHandle === currentProfileRef.current.handle) {
+      if (
+        action &&
+        event.actorHandle &&
+        cleanHandle(event.actorHandle) === cleanHandle(currentProfileRef.current.handle)
+      ) {
+        const eventTimestamp = event.createdAt ? Date.parse(event.createdAt) : Number.NaN;
+        const profileActivityTimestamp = Number.isFinite(eventTimestamp) ? eventTimestamp : Date.now();
         if (typeof payload.commentId === "string" && action !== "read") {
           const key = `${payload.item.id}:${payload.commentId}:${action}:${currentProfileRef.current.handle}`;
           const desired = protectedDesiredActionState(key);
@@ -1785,13 +1796,24 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             ? commentActionActive(eventComment, action, currentProfileRef.current.handle)
             : undefined;
           if (desired !== undefined && serverActive !== desired) return;
-          touchProfileCommentAction(payload.item.id, payload.commentId, action, currentProfileRef.current.handle);
+          touchProfileCommentAction(
+            payload.item.id,
+            payload.commentId,
+            action,
+            currentProfileRef.current.handle,
+            profileActivityTimestamp
+          );
         } else {
           const key = `${payload.item.id}:${action}:${currentProfileRef.current.handle}`;
           const desired = protectedDesiredActionState(key);
           const serverActive = itemActionActive(payload.item, action, currentProfileRef.current.handle);
           if (desired !== undefined && serverActive !== desired) return;
-          touchProfileAction(payload.item.id, action, currentProfileRef.current.handle);
+          touchProfileAction(
+            payload.item.id,
+            action,
+            currentProfileRef.current.handle,
+            profileActivityTimestamp
+          );
         }
       }
 
@@ -2822,7 +2844,6 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     itemsRef.current = optimisticItems;
     setItems(optimisticItems);
     persistLocalSnapshot(optimisticItems, profilesRef.current);
-    touchProfileAction(itemId, action);
 
     try {
       const response = await fetch(`/api/posts/${itemId}/actions`, {
@@ -2862,6 +2883,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
       setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
+      touchProfileAction(itemId, action, actorHandle);
       setSyncStatus("Action synced");
     } catch {
       if (actionVersionsRef.current[actionKey] !== version) return;
@@ -2917,7 +2939,6 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     itemsRef.current = optimisticItems;
     setItems(optimisticItems);
     persistLocalSnapshot(optimisticItems, profilesRef.current);
-    touchProfileCommentAction(itemId, commentId, action);
 
     try {
       const response = await fetch(`/api/posts/${itemId}/comments/${commentId}/actions`, {
@@ -2950,6 +2971,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
       setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
+      touchProfileCommentAction(itemId, commentId, action, actorHandle);
       setSyncStatus("Comment action synced");
     } catch {
       if (actionVersionsRef.current[actionKey] !== version) return;
@@ -6267,6 +6289,7 @@ function ProfileView({
 }) {
   const [activeSocialList, setActiveSocialList] = useState<"following" | "followers" | null>(null);
   const [visibleSlots, setVisibleSlots] = useState<ProfileActivitySlot[]>([]);
+  const visibleSlotContextRef = useRef("");
   const byPublishedRecency = (nextItems: InquiryItem[]) =>
     [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, "authored") - getProfileRecency(a, person.handle, "authored"));
   const byProfileRecency = (nextItems: InquiryItem[], kind: ProfileActivityKind) =>
@@ -6310,12 +6333,17 @@ function ProfileView({
   const commentLikes = canShowLikes ? collectProfileComments(items, person, "signal", commentRecency) : [];
   const commentSaved = canShowSaved ? collectProfileComments(items, person, "save", commentRecency) : [];
   const reshares = canShowReshares
-    ? byProfileRecency(items.filter((item) => !isDeletedPost(item) && !isAuthor(item) && hasHandle(item.forkedBy, person.handle)), "fork")
+    ? byProfileRecency(items.filter((item) => itemMatchesProfilePostAction(item, person, "fork")), "fork")
     : [];
   const likes = canShowLikes
-    ? byProfileRecency(items.filter((item) => !isDeletedPost(item) && !isAuthor(item) && hasHandle(item.signaledBy, person.handle)), "signal")
+    ? byProfileRecency(items.filter((item) => itemMatchesProfilePostAction(item, person, "signal")), "signal")
     : [];
-  const saved = canShowSaved ? byProfileRecency(items.filter((item) => !isDeletedPost(item) && !isAuthor(item) && isSavedBy(item, person.handle, profile.handle)), "save") : [];
+  const saved = canShowSaved
+    ? byProfileRecency(
+        items.filter((item) => itemMatchesProfilePostAction(item, person, "save", profile.handle)),
+        "save"
+      )
+    : [];
   const authoredEntries = authored.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
   const paperEntries = papers.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
   const thoughtEntries = thoughts.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
@@ -6326,12 +6354,13 @@ function ProfileView({
   const commentReshareEntries = commentReshares.map(commentEntry);
   const commentLikeEntries = commentLikes.map(commentEntry);
   const commentSavedEntries = commentSaved.map(commentEntry);
-  const allActivity = sortEntries([
-    ...authoredEntries,
-    ...commentEntries,
-    ...reshareEntries,
-    ...commentReshareEntries
-  ]);
+  const allActivity = uniqueProfileActivityEntries(
+    [...authoredEntries, ...commentEntries, ...reshareEntries, ...commentReshareEntries],
+    (entry) =>
+      entry.type === "post"
+        ? `post:${entry.item.id}`
+        : `comment:${entry.activity.item.id}:${entry.activity.comment.id}`
+  );
 
   const tabEntries: Record<ProfileTab, ProfileActivityEntry[]> = {
     all: allActivity,
@@ -6367,9 +6396,17 @@ function ProfileView({
     if (!tabs.some((tab) => tab.id === activeTab)) onActiveTabChange("all");
   }, [activeTab, onActiveTabChange, tabs]);
 
+  const nextVisibleSlots = tabEntries[activeTab].map(entryToSlot);
+  const visibleSlotContext = `${person.handle}:${activeTab}:${activityRevision}`;
+  const visibleSlotMembership = nextVisibleSlots.map((slot) => slot.id).join("|");
+
   useLayoutEffect(() => {
-    setVisibleSlots(tabEntries[activeTab].map(entryToSlot));
-  }, [activeTab, person.handle, activityRevision]);
+    const contextChanged = visibleSlotContextRef.current !== visibleSlotContext;
+    visibleSlotContextRef.current = visibleSlotContext;
+    setVisibleSlots((current) =>
+      contextChanged ? nextVisibleSlots : reconcileProfileActivitySlots(current, nextVisibleSlots)
+    );
+  }, [visibleSlotContext, visibleSlotMembership]);
 
   const resolveSlot = (slot: ProfileActivitySlot): ProfileActivityEntry | null => {
     const item = items.find((candidate) => candidate.id === slot.itemId);

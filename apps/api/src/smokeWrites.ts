@@ -49,6 +49,16 @@ const requireId = (label: string, value: unknown): string => {
   return value;
 };
 
+type ActionListKey = "savedBy" | "forkedBy";
+
+const requireActionList = (label: string, item: Record<string, unknown> | undefined, key: ActionListKey) => {
+  const value = item?.[key];
+  if (!Array.isArray(value) || !value.every((handle) => typeof handle === "string")) {
+    throw new Error(`${label} did not return ${key}: ${JSON.stringify(item)}`);
+  }
+  return [...value].sort();
+};
+
 const main = async () => {
   const bootstrap = await requestJson<{
     items?: Array<{ id?: string }>;
@@ -60,7 +70,7 @@ const main = async () => {
   const communityId = requireId("Seeded community", bootstrap.body.communities?.[0]?.id);
   const stamp = new Date().toISOString();
 
-  const createdPost = await requestJson<{ item?: { id?: string } }>("POST", "/v1/posts", {
+  const createdPost = await requestJson<{ item?: { id?: string; savedBy?: string[]; forkedBy?: string[] } }>("POST", "/v1/posts", {
     title: `Smoke write verification ${stamp}`,
     body: "Verifies the SYMPOSIUM REST write route wiring after backend refactors.",
     kind: "thought",
@@ -69,16 +79,54 @@ const main = async () => {
   assertOk("POST /v1/posts", createdPost);
   const createdPostId = requireId("Created post", createdPost.body.item?.id);
 
+  const verifyPostActionPersistence = async (action: "save" | "fork", key: ActionListKey) => {
+    const activated = await requestJson<{ item?: Record<string, unknown> }>(
+      "POST",
+      `/v1/posts/${createdPostId}/actions`,
+      { action, active: true }
+    );
+    assertOk(`Activate ${action}`, activated);
+    const activeHandles = requireActionList(`Activate ${action}`, activated.body.item, key);
+    if (activeHandles.length !== 1) {
+      throw new Error(`Activate ${action} returned an unexpected ${key}: ${JSON.stringify(activeHandles)}`);
+    }
+
+    const persistedActive = await requestJson<{ items?: Array<Record<string, unknown>> }>("GET", "/v1/bootstrap");
+    assertOk(`Persist ${action}`, persistedActive);
+    const persistedActiveItem = persistedActive.body.items?.find((item) => item.id === createdPostId);
+    const persistedActiveHandles = requireActionList(`Persist ${action}`, persistedActiveItem, key);
+    if (JSON.stringify(persistedActiveHandles) !== JSON.stringify(activeHandles)) {
+      throw new Error(`${action} did not persist: ${JSON.stringify({ activeHandles, persistedActiveHandles })}`);
+    }
+
+    const deactivated = await requestJson<{ item?: Record<string, unknown> }>(
+      "POST",
+      `/v1/posts/${createdPostId}/actions`,
+      { action, active: false }
+    );
+    assertOk(`Deactivate ${action}`, deactivated);
+    const inactiveHandles = requireActionList(`Deactivate ${action}`, deactivated.body.item, key);
+    if (inactiveHandles.length) {
+      throw new Error(`Deactivate ${action} left stale ${key}: ${JSON.stringify(inactiveHandles)}`);
+    }
+
+    const persistedInactive = await requestJson<{ items?: Array<Record<string, unknown>> }>("GET", "/v1/bootstrap");
+    assertOk(`Persist ${action} removal`, persistedInactive);
+    const persistedInactiveItem = persistedInactive.body.items?.find((item) => item.id === createdPostId);
+    const persistedInactiveHandles = requireActionList(`Persist ${action} removal`, persistedInactiveItem, key);
+    if (persistedInactiveHandles.length) {
+      throw new Error(`${action} removal did not persist: ${JSON.stringify(persistedInactiveHandles)}`);
+    }
+  };
+
+  await verifyPostActionPersistence("save", "savedBy");
+  await verifyPostActionPersistence("fork", "forkedBy");
+
   const comment = await requestJson<{ comment?: { id?: string } }>("POST", `/v1/posts/${seededPostId}/comments`, {
     body: `Smoke comment verification ${stamp}`,
     stance: "Verification"
   });
   assertOk("POST /v1/posts/:id/comments", comment);
-
-  const action = await requestJson<{ item?: { id?: string } }>("POST", `/v1/posts/${seededPostId}/actions`, {
-    action: "save"
-  });
-  assertOk("POST /v1/posts/:id/actions", action);
 
   const call = await requestJson<{ call?: { id?: string } }>("POST", `/v1/communities/${communityId}/calls`, {
     title: `Smoke call ${stamp}`,
