@@ -323,7 +323,7 @@ const attachmentMediaSize = (attachment: InquiryAttachment): MediaIntrinsicSize 
 
 const minAttachmentZoom = 0.1;
 const maxAttachmentZoom = 5;
-const zoomInStep = 0.25;
+const zoomInStep = 0.2;
 const zoomOutStep = 0.1;
 
 const clampAttachmentZoom = (value: number) =>
@@ -366,25 +366,6 @@ const isDocxAttachment = (attachment: InquiryAttachment) =>
   attachment.contentType.toLowerCase() === docxContentType ||
   attachment.fileName.toLowerCase().endsWith(".docx");
 
-const docxAttrValue = (element: Element | null | undefined, name: string) => {
-  if (!element) return "";
-  return (
-    element.getAttribute(`w:${name}`) ??
-    element.getAttribute(name) ??
-    element.getAttributeNS("http://schemas.openxmlformats.org/wordprocessingml/2006/main", name) ??
-    ""
-  );
-};
-
-const childElementsByLocalName = (element: Element, localName: string) =>
-  Array.from(element.children).filter((child) => child.localName === localName);
-
-const firstChildByLocalName = (element: Element, localName: string) =>
-  childElementsByLocalName(element, localName)[0];
-
-const descendantElementsByLocalName = (element: Element | Document, localName: string) =>
-  Array.from(element.getElementsByTagName("*")).filter((child) => child.localName === localName);
-
 const extractDocxParagraphText = (paragraphXml: string) =>
   Array.from(paragraphXml.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g))
     .map((match) => decodeXmlText(match[1] ?? ""))
@@ -409,48 +390,6 @@ const plainTextToDocxBlocks = (text: string): DocxPreviewBlock[] => {
     runs: [{ text: chunk.replace(/\*\*/g, ""), bold: false, italic: false, underline: false }],
     style: /^(?:INTRODUCTION|BODY|CONCLUSION)\b/i.test(chunk) ? "heading" : "paragraph"
   }));
-};
-
-const parseDocxPreviewBlocks = (documentXml: string): DocxPreviewBlock[] => {
-  const xml = new DOMParser().parseFromString(documentXml, "application/xml");
-  const body = descendantElementsByLocalName(xml, "body")[0] ?? xml.documentElement;
-  const paragraphs = childElementsByLocalName(body, "p");
-
-  return paragraphs.flatMap((paragraph, index) => {
-    const paragraphProperties = firstChildByLocalName(paragraph, "pPr");
-    const paragraphStyle = docxAttrValue(
-      descendantElementsByLocalName(paragraphProperties ?? paragraph, "pStyle")[0],
-      "val"
-    ).toLowerCase();
-    const hasListProperties = Boolean(descendantElementsByLocalName(paragraphProperties ?? paragraph, "numPr")[0]);
-    const runs = childElementsByLocalName(paragraph, "r").flatMap((run) => {
-      const runProperties = firstChildByLocalName(run, "rPr");
-      const text = childElementsByLocalName(run, "t")
-        .map((node) => node.textContent ?? "")
-        .join("");
-      const inlineBreaks = childElementsByLocalName(run, "br").map(() => "\n").join("");
-      const tabs = childElementsByLocalName(run, "tab").map(() => "\t").join("");
-      const value = `${tabs}${text}${inlineBreaks}`;
-      if (!value) return [];
-      return [
-        {
-          text: value,
-          bold: Boolean(descendantElementsByLocalName(runProperties ?? run, "b")[0]),
-          italic: Boolean(descendantElementsByLocalName(runProperties ?? run, "i")[0]),
-          underline: Boolean(descendantElementsByLocalName(runProperties ?? run, "u")[0])
-        }
-      ];
-    });
-    const visibleText = runs.map((run) => run.text).join("").trim();
-    if (!visibleText) return [];
-    return [
-      {
-        id: `docx-${index}`,
-        runs,
-        style: hasListProperties ? "list" : paragraphStyle.includes("heading") || paragraphStyle.includes("title") ? "heading" : "paragraph"
-      }
-    ];
-  });
 };
 
 const paginateDocxBlocks = (blocks: DocxPreviewBlock[], pageSize = 2600) => {
@@ -4994,17 +4933,20 @@ function DocxAttachmentPreview({
     () => plainTextToDocxBlocks(metadataString(attachment.metadata, "previewText")),
     [attachment.metadata]
   );
-  const [blocks, setBlocks] = useState<DocxPreviewBlock[] | null>(null);
-  const [parseFailed, setParseFailed] = useState(false);
-  const shownBlocks = blocks?.length ? blocks : fallbackBlocks;
-  const pages = paginateDocxBlocks(shownBlocks);
+  const fallbackPages = paginateDocxBlocks(fallbackBlocks);
   const metadataPageCount = attachmentPageCount(attachment, metadataString(attachment.metadata, "previewText"));
-  const totalPages = Math.max(metadataPageCount, pages.length);
+  const renderTargetRef = useRef<HTMLDivElement>(null);
+  const [renderedPageCount, setRenderedPageCount] = useState(0);
+  const [fitScale, setFitScale] = useState(1);
+  const [parseFailed, setParseFailed] = useState(false);
+  const totalPages = Math.max(1, renderedPageCount || metadataPageCount || fallbackPages.length);
   const [page, setPage] = useState(1);
   const boundedPage = Math.min(page, totalPages);
-  const pageBlocks = pages[Math.min(boundedPage - 1, pages.length - 1)] ?? [];
-  const docxScrollStyle =
-    mode === "expanded" ? ({ fontSize: `${Math.max(0.5, Math.min(4, zoom)) * 0.95}rem` } as CSSProperties) : undefined;
+  const fallbackPageBlocks = fallbackPages[Math.min(boundedPage - 1, fallbackPages.length - 1)] ?? [];
+  const renderedZoom = fitScale * (mode === "expanded" ? clampAttachmentZoom(zoom) : 1);
+  const renderedStyle = {
+    "--docx-preview-scale": renderedZoom
+  } as CSSProperties;
 
   useEffect(() => {
     setPage(1);
@@ -5012,32 +4954,81 @@ function DocxAttachmentPreview({
 
   useEffect(() => {
     let cancelled = false;
-    setBlocks(null);
+    let resizeObserver: ResizeObserver | null = null;
+    const target = renderTargetRef.current;
+    if (target) target.replaceChildren();
+    setRenderedPageCount(0);
+    setFitScale(1);
     setParseFailed(false);
 
-    if (!attachment.url) return;
+    if (!attachment.url || !target) return;
     const attachmentUrl = attachment.url;
 
     const loadDocx = async () => {
       try {
         const response = await fetch(attachmentUrl, { cache: "force-cache" });
         if (!response.ok) throw new Error("Could not load document.");
-        const JSZip = (await import("jszip")).default;
-        const zip = await JSZip.loadAsync(await response.arrayBuffer());
-        const documentXml = await zip.file("word/document.xml")?.async("text");
-        if (!documentXml) throw new Error("Document body missing.");
-        const nextBlocks = parseDocxPreviewBlocks(documentXml);
-        if (!cancelled) setBlocks(nextBlocks);
+        const bytes = await response.arrayBuffer();
+        const { renderAsync } = await import("docx-preview");
+        if (cancelled) return;
+
+        await renderAsync(bytes, target, target, {
+          breakPages: true,
+          className: "symposium-docx",
+          experimental: true,
+          ignoreFonts: false,
+          ignoreHeight: false,
+          ignoreLastRenderedPageBreak: false,
+          ignoreWidth: false,
+          inWrapper: true,
+          renderComments: false,
+          renderEndnotes: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          renderHeaders: true,
+          useBase64URL: true
+        });
+
+        if (cancelled) return;
+        const renderedPages = Array.from(target.querySelectorAll<HTMLElement>("section.symposium-docx"));
+        if (!renderedPages.length) throw new Error("Document pages missing.");
+        renderedPages.forEach((renderedPage, index) => {
+          renderedPage.hidden = index !== 0;
+        });
+        const firstPageWidth = renderedPages[0]?.getBoundingClientRect().width ?? 0;
+        const updateFitScale = () => {
+          const availableWidth = Math.max(1, target.clientWidth - 28);
+          setFitScale(firstPageWidth > 0 ? Math.min(1, availableWidth / firstPageWidth) : 1);
+        };
+        updateFitScale();
+        resizeObserver = new ResizeObserver(updateFitScale);
+        resizeObserver.observe(target);
+        setRenderedPageCount(renderedPages.length);
       } catch {
-        if (!cancelled) setParseFailed(true);
+        if (!cancelled) {
+          target.replaceChildren();
+          setParseFailed(true);
+        }
       }
     };
 
     void loadDocx();
     return () => {
       cancelled = true;
+      resizeObserver?.disconnect();
+      target.replaceChildren();
     };
-  }, [attachment.id, attachment.url]);
+  }, [attachment.id, attachment.url, mode]);
+
+  useEffect(() => {
+    const target = renderTargetRef.current;
+    if (!target || !renderedPageCount) return;
+    const renderedPages = Array.from(target.querySelectorAll<HTMLElement>("section.symposium-docx"));
+    renderedPages.forEach((renderedPage, index) => {
+      renderedPage.hidden = index !== boundedPage - 1;
+    });
+    target.closest<HTMLElement>(".attachment-docx-scroll")?.scrollTo({ top: 0, left: 0 });
+  }, [boundedPage, renderedPageCount]);
 
   return (
     <div className={`attachment-document attachment-document-${mode} attachment-docx`}>
@@ -5070,41 +5061,46 @@ function DocxAttachmentPreview({
           </div>
         ) : null}
       </div>
-      <div
-        className="attachment-docx-scroll"
-        style={docxScrollStyle}
-      >
-        <article className="attachment-docx-page">
-          {pageBlocks.length ? (
-            pageBlocks.map((block) => (
-              <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
-                {block.style === "list" ? <span className="attachment-docx-bullet" aria-hidden="true">•</span> : null}
-                <span>
-                  {block.runs.map((run, runIndex) => (
-                    <span
-                      key={`${block.id}-${runIndex}`}
-                      className={[
-                        run.bold ? "attachment-docx-bold" : "",
-                        run.italic ? "attachment-docx-italic" : "",
-                        run.underline ? "attachment-docx-underline" : ""
-                      ]
-                        .filter(Boolean)
-                        .join(" ")}
-                    >
-                      {run.text}
-                    </span>
-                  ))}
-                </span>
-              </p>
-            ))
-          ) : (
-            <div className="attachment-file-shell">
-              {attachmentIcon(attachment)}
-              <strong>{attachment.fileName}</strong>
-              <span>{parseFailed ? "Document preview unavailable." : "Preparing document preview."}</span>
-            </div>
-          )}
-        </article>
+      <div className="attachment-docx-scroll">
+        <div
+          ref={renderTargetRef}
+          className="attachment-docx-rendered"
+          style={renderedStyle}
+          aria-label={`${attachment.fileName} document preview`}
+        />
+        {!renderedPageCount ? (
+          <article className="attachment-docx-page attachment-docx-fallback">
+            {fallbackPageBlocks.length ? (
+              fallbackPageBlocks.map((block) => (
+                <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
+                  {block.style === "list" ? <span className="attachment-docx-bullet" aria-hidden="true">•</span> : null}
+                  <span>
+                    {block.runs.map((run, runIndex) => (
+                      <span
+                        key={`${block.id}-${runIndex}`}
+                        className={[
+                          run.bold ? "attachment-docx-bold" : "",
+                          run.italic ? "attachment-docx-italic" : "",
+                          run.underline ? "attachment-docx-underline" : ""
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                      >
+                        {run.text}
+                      </span>
+                    ))}
+                  </span>
+                </p>
+              ))
+            ) : (
+              <div className="attachment-file-shell">
+                {attachmentIcon(attachment)}
+                <strong>{attachment.fileName}</strong>
+                <span>{parseFailed ? "Document formatting could not be rendered. Showing the available text preview." : "Preparing original document formatting."}</span>
+              </div>
+            )}
+          </article>
+        ) : null}
       </div>
     </div>
   );
