@@ -1,5 +1,6 @@
 import { jsonError } from "@/lib/api";
 import { LocalAttachmentStoreError, writeLocalAttachmentFile } from "@/lib/localAttachmentStore";
+import { localDataFallbackAllowed, localPreviewRouteUnavailableResponse } from "@/lib/runtimeSafety";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +10,8 @@ type Context = {
 };
 
 export async function PUT(request: Request, context: Context) {
+  if (!localDataFallbackAllowed()) return localPreviewRouteUnavailableResponse();
+
   const { attachmentId } = await context.params;
 
   try {

@@ -2523,6 +2523,15 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setSelectedItemId(itemId);
     setSelectedCommentId(optimisticComment.id ?? null);
 
+    const rollbackOptimisticComment = (message: string) => {
+      itemsRef.current = previousItems;
+      setItems(previousItems);
+      persistLocalSnapshot(previousItems, profilesRef.current);
+      setSelectedItemId(previousSelectedItemId);
+      setSelectedCommentId(previousSelectedCommentId);
+      setSyncStatus(message);
+    };
+
     try {
       const response = await fetch(`/api/posts/${itemId}/comments`, {
         method: "POST",
@@ -2531,12 +2540,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       });
       if (!response.ok) {
         const errorData = (await response.json().catch(() => ({}))) as { error?: string };
-        itemsRef.current = previousItems;
-        setItems(previousItems);
-        persistLocalSnapshot(previousItems, profilesRef.current);
-        setSelectedItemId(previousSelectedItemId);
-        setSelectedCommentId(previousSelectedCommentId);
-        setSyncStatus(errorData.error ?? (parentId ? "Reply could not be saved" : "Comment could not be saved"));
+        rollbackOptimisticComment(
+          errorData.error ?? (parentId ? "Reply could not be saved" : "Comment could not be saved")
+        );
         return;
       }
 
@@ -2556,7 +2562,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setSelectedCommentId(data.comment?.id ?? optimisticComment.id ?? null);
       setSyncStatus(parentId ? "Reply saved" : "Comment saved");
     } catch {
-      setSyncStatus(parentId ? "Reply saved locally" : "Comment saved locally");
+      rollbackOptimisticComment(
+        parentId ? "Reply could not reach the live service" : "Comment could not reach the live service"
+      );
     }
   };
 

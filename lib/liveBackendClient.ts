@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import { liveBackendUnavailableResponse, localDataFallbackAllowed } from "@/lib/runtimeSafety";
 
 const backendUrl = process.env.SYMPOSIUM_API_URL?.replace(/\/$/, "");
 const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
@@ -14,7 +15,12 @@ export const hasLiveBackend = Boolean(backendUrl);
 export const liveBackendPath = (path: string) => (backendUrl ? `${backendUrl}${path}` : null);
 
 export const proxyLiveBackend = async (path: string, options: LiveBackendOptions = {}) => {
-  if (!backendUrl) return null;
+  if (!backendUrl) {
+    if (localDataFallbackAllowed()) return null;
+
+    console.error("SYMPOSIUM_API_URL is required when running the Next application in production.");
+    return liveBackendUnavailableResponse();
+  }
 
   try {
     const token = clerkEnabled ? await (await auth()).getToken().catch(() => null) : null;
@@ -37,19 +43,18 @@ export const proxyLiveBackend = async (path: string, options: LiveBackendOptions
     });
   } catch (error) {
     console.error("SYMPOSIUM live backend unavailable.", error);
-    return Response.json(
-      {
-        error:
-          "The SYMPOSIUM live backend is configured but unavailable. Try again once the live service is healthy."
-      },
-      { status: 503 }
-    );
+    return liveBackendUnavailableResponse();
   }
 };
 
 export const proxyLiveBackendStream = async (path: string) => {
   const url = liveBackendPath(path);
-  if (!url) return null;
+  if (!url) {
+    if (localDataFallbackAllowed()) return null;
+
+    console.error("SYMPOSIUM_API_URL is required when running the Next application in production.");
+    return liveBackendUnavailableResponse();
+  }
 
   try {
     const token = clerkEnabled ? await (await auth()).getToken().catch(() => null) : null;
@@ -72,6 +77,6 @@ export const proxyLiveBackendStream = async (path: string) => {
     });
   } catch (error) {
     console.error("SYMPOSIUM live event stream unavailable.", error);
-    return null;
+    return liveBackendUnavailableResponse();
   }
 };
