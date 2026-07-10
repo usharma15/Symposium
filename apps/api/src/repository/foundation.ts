@@ -629,177 +629,259 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
   if (!hasDatabase()) return seedSnapshot();
   await ensureLiveData();
 
-  const [
-    profileResult,
-    postResult,
-    commentResult,
-    attachmentResult,
-    communityResult,
-    postActionResult,
-    commentActionResult
-  ] = await Promise.all([
-    getPool().query<ResearchProfileContract & {
-      likesPublic: boolean;
-      resharesPublic: boolean;
-      avatarUrl: string | null;
-    }>(
-      `SELECT
-        handle,
-        email,
-        name,
-        avatar_url AS "avatarUrl",
-        likes_public AS "likesPublic",
-        reshares_public AS "resharesPublic",
-        role,
-        location,
-        bio,
-        fields
-       FROM profiles
-       ORDER BY created_at ASC`
-    ),
-    getPool().query<SnapshotRow>(
-      `SELECT
-        id,
-        kind,
-        room,
-        title,
-        author_handle AS "authorHandle",
-        author_name AS "authorName",
-        affiliation,
-        date_label AS "dateLabel",
-        created_at AS "createdAt",
-        edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        status,
-        metrics,
-        gathering_reason AS "gatheringReason",
-        excerpt,
-        body,
-        tags,
-        signals,
-        claims,
-        objections,
-        evidence,
-        tests,
-        forks,
-        saved,
-        saved_by AS "savedBy",
-        signaled_by AS "signaledBy",
-        forked_by AS "forkedBy"
-       FROM posts
-       ORDER BY created_at DESC`
-    ),
-    getPool().query<CommentRow>(
-      `SELECT
-        id,
-        post_id AS "postId",
-        parent_id AS "parentId",
-        author_handle AS "authorHandle",
-        author_name AS "authorName",
-        stance,
-        body,
-        metrics,
-        saved_by AS "savedBy",
-        signaled_by AS "signaledBy",
-        forked_by AS "forkedBy",
-        edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        created_at AS "createdAt"
-       FROM comments
-       ORDER BY created_at ASC`
-    ),
-    getPool().query<AttachmentRow>(
-      `SELECT
-        id::text,
-        owner_id AS "ownerId",
-        file_name AS "fileName",
-        content_type AS "contentType",
-        byte_size AS "byteSize",
-        status,
-        metadata,
-        object_key AS "objectKey",
-        created_at AS "createdAt"
-       FROM attachments
-       WHERE owner_type = 'post'
-         AND status IN ('uploaded', 'previewed')
-       ORDER BY created_at ASC`
-    ),
-    getPool().query<ResearchCommunityContract>(
-      `SELECT
-        id,
-        name,
-        field,
-        summary,
-        visibility,
-        online,
-        member_handles AS "memberHandles",
-        keywords,
-        seed_counts AS "seedCounts",
-        call_status AS "callStatus"
-       FROM communities
-       ORDER BY name ASC`
-    ),
-    getPool().query<ActionProjectionRow>(
-      `SELECT
-        post_id AS "subjectId",
-        actor_handle AS "actorHandle",
-        action,
-        active
-       FROM post_actions
-       WHERE action IN ('save', 'signal', 'fork')
-       ORDER BY post_id, action, actor_handle`
-    ),
-    getPool().query<ActionProjectionRow>(
-      `SELECT
-        comment_id AS "subjectId",
-        actor_handle AS "actorHandle",
-        action,
-        active
-       FROM comment_actions
-       WHERE action IN ('save', 'signal', 'fork')
-       ORDER BY comment_id, action, actor_handle`
-    )
-  ]);
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
 
-  const postActionHandles = actionHandlesBySubject(postActionResult.rows);
-  const commentActionHandles = actionHandlesBySubject(commentActionResult.rows);
-  const projectedComments = commentResult.rows.map((row) =>
-    applyCommentActionProjection(row, commentActionHandles.get(row.id))
-  );
-  const commentsByPost = commentTreesFromRows(projectedComments);
-  const attachmentsByPost = attachmentsByOwner(attachmentResult.rows);
-  const profiles = Object.fromEntries(
-    profileResult.rows.map((person) => [
-      person.handle,
-      {
-        ...person,
-        email: person.email || undefined,
-        avatarUrl: person.avatarUrl || undefined,
-        fields: json(person.fields, [])
-      }
-    ])
-  );
+    const [
+      profileResult,
+      postResult,
+      commentResult,
+      attachmentResult,
+      communityResult,
+      postActionResult,
+      commentActionResult
+    ] = await Promise.all([
+      client.query<ResearchProfileContract & {
+        likesPublic: boolean;
+        resharesPublic: boolean;
+        avatarUrl: string | null;
+      }>(
+        `SELECT
+          handle,
+          email,
+          name,
+          avatar_url AS "avatarUrl",
+          likes_public AS "likesPublic",
+          reshares_public AS "resharesPublic",
+          role,
+          location,
+          bio,
+          fields
+         FROM profiles
+         ORDER BY created_at ASC`
+      ),
+      client.query<SnapshotRow>(
+        `SELECT
+          id,
+          kind,
+          room,
+          title,
+          author_handle AS "authorHandle",
+          author_name AS "authorName",
+          affiliation,
+          date_label AS "dateLabel",
+          created_at AS "createdAt",
+          edited_at AS "editedAt",
+          deleted_at AS "deletedAt",
+          status,
+          metrics,
+          gathering_reason AS "gatheringReason",
+          excerpt,
+          body,
+          tags,
+          signals,
+          claims,
+          objections,
+          evidence,
+          tests,
+          forks,
+          saved,
+          saved_by AS "savedBy",
+          signaled_by AS "signaledBy",
+          forked_by AS "forkedBy"
+         FROM posts
+         ORDER BY created_at DESC`
+      ),
+      client.query<CommentRow>(
+        `SELECT
+          id,
+          post_id AS "postId",
+          parent_id AS "parentId",
+          author_handle AS "authorHandle",
+          author_name AS "authorName",
+          stance,
+          body,
+          metrics,
+          saved_by AS "savedBy",
+          signaled_by AS "signaledBy",
+          forked_by AS "forkedBy",
+          edited_at AS "editedAt",
+          deleted_at AS "deletedAt",
+          created_at AS "createdAt"
+         FROM comments
+         ORDER BY created_at ASC`
+      ),
+      client.query<AttachmentRow>(
+        `SELECT
+          id::text,
+          owner_id AS "ownerId",
+          file_name AS "fileName",
+          content_type AS "contentType",
+          byte_size AS "byteSize",
+          status,
+          metadata,
+          object_key AS "objectKey",
+          created_at AS "createdAt"
+         FROM attachments
+         WHERE owner_type = 'post'
+           AND status IN ('uploaded', 'previewed')
+         ORDER BY created_at ASC`
+      ),
+      client.query<ResearchCommunityContract>(
+        `SELECT
+          id,
+          name,
+          field,
+          summary,
+          visibility,
+          online,
+          member_handles AS "memberHandles",
+          keywords,
+          seed_counts AS "seedCounts",
+          call_status AS "callStatus"
+         FROM communities
+         ORDER BY name ASC`
+      ),
+      client.query<ActionProjectionRow>(
+        `SELECT
+          post_id AS "subjectId",
+          actor_handle AS "actorHandle",
+          action,
+          active
+         FROM post_actions
+         WHERE action IN ('save', 'signal', 'fork')
+         ORDER BY post_id, action, actor_handle`
+      ),
+      client.query<ActionProjectionRow>(
+        `SELECT
+          comment_id AS "subjectId",
+          actor_handle AS "actorHandle",
+          action,
+          active
+         FROM comment_actions
+         WHERE action IN ('save', 'signal', 'fork')
+         ORDER BY comment_id, action, actor_handle`
+      )
+    ]);
 
-  return {
-    profiles,
-    items: postResult.rows.map((row) => {
-      const projectedRow = applyPostActionProjection(row, postActionHandles.get(row.id));
-      return rowToItem(projectedRow, commentsByPost.get(row.id) ?? [], attachmentsByPost.get(row.id) ?? []);
-    }),
-    communities: communityResult.rows.map((community) => ({
-      ...community,
-      memberHandles: json(community.memberHandles, []),
-      keywords: json(community.keywords, []),
-      seedCounts: json(community.seedCounts, { papers: 0, thoughts: 0, opportunities: 0 })
-    })),
-    defaultProfile
-  };
+    const postActionHandles = actionHandlesBySubject(postActionResult.rows);
+    const commentActionHandles = actionHandlesBySubject(commentActionResult.rows);
+    const projectedComments = commentResult.rows.map((row) =>
+      applyCommentActionProjection(row, commentActionHandles.get(row.id))
+    );
+    const commentsByPost = commentTreesFromRows(projectedComments);
+    const attachmentsByPost = attachmentsByOwner(attachmentResult.rows);
+    const profiles = Object.fromEntries(
+      profileResult.rows.map((person) => [
+        person.handle,
+        {
+          ...person,
+          email: person.email || undefined,
+          avatarUrl: person.avatarUrl || undefined,
+          fields: json(person.fields, [])
+        }
+      ])
+    );
+
+    const state: BootstrapResponseContract = {
+      profiles,
+      items: postResult.rows.map((row) => {
+        const projectedRow = applyPostActionProjection(row, postActionHandles.get(row.id));
+        return rowToItem(projectedRow, commentsByPost.get(row.id) ?? [], attachmentsByPost.get(row.id) ?? []);
+      }),
+      communities: communityResult.rows.map((community) => ({
+        ...community,
+        memberHandles: json(community.memberHandles, []),
+        keywords: json(community.keywords, []),
+        seedCounts: json(community.seedCounts, { papers: 0, thoughts: 0, opportunities: 0 })
+      })),
+      defaultProfile
+    };
+    await client.query("COMMIT");
+    return state;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 export const listCommunities = async () => (await getInitialState()).communities ?? [];
+
+export const publicProfile = (person: ResearchProfileContract): ResearchProfileContract => {
+  const { email: _email, ...profile } = person;
+  return profile;
+};
+
+export const publicCommunity = (community: ResearchCommunityContract): ResearchCommunityContract =>
+  community.visibility === "private" ? { ...community, memberHandles: [] } : community;
+
+const visibleActionHandles = (
+  handles: string[] | undefined,
+  profiles: Record<string, ResearchProfileContract>,
+  requesterHandle: string | null,
+  privacy: "likesPublic" | "resharesPublic"
+) =>
+  (handles ?? []).filter((handle) => {
+    const normalized = cleanHandle(handle);
+    return normalized === requesterHandle || profiles[normalized]?.[privacy] !== false;
+  });
+
+const publicCommentProjection = (
+  comment: InquiryCommentContract,
+  profiles: Record<string, ResearchProfileContract>,
+  requesterHandle: string | null
+): InquiryCommentContract => ({
+  ...comment,
+  savedBy: (comment.savedBy ?? []).filter((handle) => cleanHandle(handle) === requesterHandle),
+  signaledBy: visibleActionHandles(comment.signaledBy, profiles, requesterHandle, "likesPublic"),
+  forkedBy: visibleActionHandles(comment.forkedBy, profiles, requesterHandle, "resharesPublic"),
+  replies: (comment.replies ?? []).map((reply) => publicCommentProjection(reply, profiles, requesterHandle))
+});
+
+const publicItemProjection = (
+  item: InquiryItemContract,
+  profiles: Record<string, ResearchProfileContract>,
+  requesterHandle: string | null
+): InquiryItemContract => {
+  const savedBy = (item.savedBy ?? []).filter((handle) => cleanHandle(handle) === requesterHandle);
+  return {
+    ...item,
+    saved: savedBy.length > 0,
+    savedBy,
+    signaledBy: visibleActionHandles(item.signaledBy, profiles, requesterHandle, "likesPublic"),
+    forkedBy: visibleActionHandles(item.forkedBy, profiles, requesterHandle, "resharesPublic"),
+    comments: (item.comments ?? []).map((comment) => publicCommentProjection(comment, profiles, requesterHandle))
+  };
+};
+
+export const getPublicInitialState = async (rawRequesterHandle?: string | null) => {
+  const state = await getInitialState();
+  const requesterHandle = rawRequesterHandle ? cleanHandle(rawRequesterHandle) : null;
+  return {
+    ...state,
+    profiles: Object.fromEntries(
+      Object.entries(state.profiles).map(([handle, person]) => [handle, publicProfile(person)])
+    ),
+    items: state.items
+      .filter((item) => {
+        if (item.room !== "office" && item.kind !== "draft") return true;
+        return Boolean(requesterHandle && item.authorHandle && cleanHandle(item.authorHandle) === requesterHandle);
+      })
+      .map((item) => publicItemProjection(item, state.profiles, requesterHandle)),
+    communities: (state.communities ?? []).map(publicCommunity),
+    defaultProfile: publicProfile(state.defaultProfile)
+  };
+};
+
+export const listPublicCommunities = async () => (await listCommunities()).map(publicCommunity);
 
 export const getCommunity = async (communityId: string) => {
   const community = (await listCommunities()).find((item) => item.id === communityId);
   if (!community) throw new TRPCError({ code: "NOT_FOUND", message: "Community not found." });
   return community;
 };
+
+export const getPublicCommunity = async (communityId: string) => publicCommunity(await getCommunity(communityId));

@@ -55,7 +55,6 @@ import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import {
-  emitEvent,
   publishStoredEvent,
   stageEvent,
   type StoredLiveEvent
@@ -65,6 +64,7 @@ import {
   completeMutation,
   type MutationContext
 } from "../services/mutations";
+import { runAtomic } from "../services/transactions";
 import { buildLegacyProfileActivity } from "@/lib/profileActivity";
 import {
   decodeActivityCursor,
@@ -80,11 +80,15 @@ import {
   ensureLiveData,
   ensureProfileHandle,
   getCommunity,
+  getPublicCommunity,
+  getPublicInitialState,
   getInitialState,
   insertProfile,
   json,
   newId,
   normalizeProfile,
+  publicCommunity,
+  publicProfile,
   rowToAttachment,
   rowToItem,
   searchablePostText,
@@ -94,7 +98,14 @@ import {
   type SnapshotRow
 } from "./foundation";
 
-export { getCommunity, getInitialState, listCommunities } from "./foundation";
+export {
+  getCommunity,
+  getInitialState,
+  getPublicCommunity,
+  getPublicInitialState,
+  listCommunities,
+  listPublicCommunities
+} from "./foundation";
 export { confirmAttachment, createAttachmentUpload } from "./attachments";
 export { askAssistant } from "./assistant";
 export { createOpportunity, listOpportunities } from "./opportunities";
@@ -187,7 +198,7 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor) => {
       actorHandle: writerHandle,
       subjectType: "profile",
       subjectId: person.handle,
-      payload: { profile: person }
+      payload: { profile: publicProfile(person) }
     });
     await client.query("COMMIT");
   } catch (error) {
@@ -278,6 +289,12 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
       fields: existing?.fields ?? ["Inquiry"]
     });
     await insertProfile(client, person, user.rows[0]?.id);
+    await client.query(
+      `INSERT INTO workspaces (owner_handle, name)
+       VALUES ($1, 'Notebook')
+       ON CONFLICT (owner_handle, name) DO NOTHING`,
+      [handle]
+    );
     syncedProfile = person;
     await stageAuditLog(client, {
       actorHandle: handle,
@@ -291,7 +308,7 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
       actorHandle: handle,
       subjectType: "profile",
       subjectId: handle,
-      payload: { profile: person }
+      payload: { profile: publicProfile(person) }
     });
     await client.query("COMMIT");
   } catch (error) {
@@ -312,7 +329,8 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
   const input = createPostInputSchema.parse(rawInput);
   const snapshot = await getInitialState();
   const handle = actorHandle(actor, input.authorHandle);
-  const author = snapshot.profiles[handle] ?? defaultProfile;
+  const author = snapshot.profiles[handle];
+  if (!author) throw new TRPCError({ code: "NOT_FOUND", message: "Author profile not found." });
   const isPaper = input.kind === "paper";
   const requestedAttachments = (input.attachments ?? []).map((attachment) => ({
     ...attachment,
@@ -470,6 +488,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       actorHandle: item.authorHandle,
       subjectType: "post",
       subjectId: item.id,
+      visibility: item.room === "office" || item.kind === "draft" ? "private" : "public",
       payload: { item, room: item.room, kind: item.kind, title: item.title }
     });
     await client.query("COMMIT");
@@ -550,7 +569,14 @@ export const addComment = async (
   }
 
   const handle = actorHandle(actor, input.authorHandle);
-  const author = snapshot.profiles[handle] ?? defaultProfile;
+  if (
+    (existing.room === "office" || existing.kind === "draft") &&
+    (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
+  ) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+  }
+  const author = snapshot.profiles[handle];
+  if (!author) throw new TRPCError({ code: "NOT_FOUND", message: "Author profile not found." });
   const comment: InquiryCommentContract = {
     id: newId("comment"),
     parentId: input.parentId ?? null,
@@ -728,7 +754,11 @@ export const addComment = async (
       actorHandle: comment.authorHandle,
       subjectType: "post",
       subjectId: postId,
-      payload: { comment, item: updatedItem, commentId: comment.id, parentId: comment.parentId }
+      visibility: existing.room === "office" || existing.kind === "draft" ? "private" : "public",
+      payload:
+        existing.room === "office" || existing.kind === "draft"
+          ? { comment, item: updatedItem, commentId: comment.id, parentId: comment.parentId }
+          : { commentId: comment.id, itemId: postId, parentId: comment.parentId }
     });
     await client.query("COMMIT");
   } catch (error) {
@@ -756,6 +786,12 @@ export const applyPostAction = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (
+      (existing.room === "office" || existing.kind === "draft") &&
+      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
     if (isDeletedPost(existing)) return { item: existing };
     if (input.action === "read" && !recordMemoryContentView("post", postId, handle)) {
       return { item: existing };
@@ -769,7 +805,7 @@ export const applyPostAction = async (
 
   const client = await getPool().connect();
   let updated: InquiryItemContract;
-  let stagedEvent: StoredLiveEvent | undefined;
+  const stagedEvents: StoredLiveEvent[] = [];
   let activity: CanonicalActionActivityContract | undefined;
 
   try {
@@ -840,6 +876,12 @@ export const applyPostAction = async (
     );
     const commentsByPost = commentTreesFromRows(commentsResult.rows);
     const existing = rowToItem(row, commentsByPost.get(postId) ?? []);
+    if (
+      (existing.room === "office" || existing.kind === "draft") &&
+      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
     if (isDeletedPost(existing)) {
       updated = existing;
       await completeMutation(client, handle, mutation, { item: updated });
@@ -926,13 +968,27 @@ export const applyPostAction = async (
       });
     }
     await completeMutation(client, handle, mutation, { item: updated, activity });
-    stagedEvent = await stageEvent(client, {
-      kind: `post.${input.action}`,
-      actorHandle: handle,
-      subjectType: "post",
-      subjectId: postId,
-      payload: { action: input.action, active: activity?.active, activity, item: updated }
-    });
+    const privatePost = updated.room === "office" || updated.kind === "draft";
+    if (!privatePost) {
+      stagedEvents.push(
+        await stageEvent(client, {
+          kind: `post.${input.action}`,
+          subjectType: "post",
+          subjectId: postId,
+          payload: { action: input.action, itemId: postId }
+        })
+      );
+    }
+    stagedEvents.push(
+      await stageEvent(client, {
+        kind: `post.${input.action}`,
+        actorHandle: handle,
+        subjectType: "post",
+        subjectId: postId,
+        visibility: "private",
+        payload: { action: input.action, active: activity?.active, activity, item: updated }
+      })
+    );
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -941,7 +997,7 @@ export const applyPostAction = async (
     client.release();
   }
 
-  if (stagedEvent) await publishStoredEvent(stagedEvent);
+  for (const event of stagedEvents) await publishStoredEvent(event);
 
   return { item: updated, activity };
 };
@@ -955,6 +1011,12 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (
+      (existing.room === "office" || existing.kind === "draft") &&
+      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
     if (isDeletedPost(existing)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be edited." });
     }
@@ -986,6 +1048,12 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
     );
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (
+      (row.room === "office" || row.kind === "draft") &&
+      (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
     if (row.deletedAt) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be edited." });
     }
@@ -1041,7 +1109,11 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
       actorHandle: handle,
       subjectType: "post",
       subjectId: postId,
-      payload: { item: updated }
+      visibility: updated.room === "office" || updated.kind === "draft" ? "private" : "public",
+      payload:
+        updated.room === "office" || updated.kind === "draft"
+          ? { item: updated }
+          : { itemId: postId }
     });
     await client.query("COMMIT");
   } catch (error) {
@@ -1093,6 +1165,12 @@ export const deletePost = async (postId: string, actor: Actor) => {
     );
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (
+      (row.room === "office" || row.kind === "draft") &&
+      (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
 
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
@@ -1198,7 +1276,11 @@ export const deletePost = async (postId: string, actor: Actor) => {
         actorHandle: handle,
         subjectType: "post",
         subjectId: postId,
-        payload: { itemId: postId, item: deleted }
+        visibility: deleted.room === "office" || deleted.kind === "draft" ? "private" : "public",
+        payload:
+          deleted.room === "office" || deleted.kind === "draft"
+            ? { itemId: postId, item: deleted }
+            : { itemId: postId }
       });
       await client.query("COMMIT");
     }
@@ -1225,6 +1307,12 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (
+      (existing.room === "office" || existing.kind === "draft") &&
+      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
     const original = findCommentInTree(existing.comments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) {
@@ -1263,6 +1351,12 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
     );
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (
+      (row.room === "office" || row.kind === "draft") &&
+      (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
 
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
@@ -1314,7 +1408,11 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
       actorHandle: handle,
       subjectType: "comment",
       subjectId: commentId,
-      payload: { item: updatedItem, commentId }
+      visibility: updatedItem.room === "office" || updatedItem.kind === "draft" ? "private" : "public",
+      payload:
+        updatedItem.room === "office" || updatedItem.kind === "draft"
+          ? { item: updatedItem, commentId }
+          : { itemId: postId, commentId }
     });
     await client.query("COMMIT");
   } catch (error) {
@@ -1338,6 +1436,12 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (
+      (existing.room === "office" || existing.kind === "draft") &&
+      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
     const original = findCommentInTree(existing.comments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) return existing;
@@ -1371,6 +1475,12 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
     );
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (
+      (row.room === "office" || row.kind === "draft") &&
+      (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
 
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
@@ -1442,7 +1552,11 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
         actorHandle: handle,
         subjectType: "comment",
         subjectId: commentId,
-        payload: { item: updatedItem, commentId }
+        visibility: updatedItem.room === "office" || updatedItem.kind === "draft" ? "private" : "public",
+        payload:
+          updatedItem.room === "office" || updatedItem.kind === "draft"
+            ? { item: updatedItem, commentId }
+            : { itemId: postId, commentId }
       });
       await client.query("COMMIT");
     }
@@ -1472,6 +1586,12 @@ export const applyCommentAction = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (
+      (existing.room === "office" || existing.kind === "draft") &&
+      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
     const original = findCommentInTree(existing.comments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) return { item: existing };
@@ -1490,7 +1610,7 @@ export const applyCommentAction = async (
   let updatedItem: InquiryItemContract;
   let updatedComment: InquiryCommentContract | undefined;
   let activity: CanonicalActionActivityContract | undefined;
-  let stagedEvent: StoredLiveEvent | undefined;
+  const stagedEvents: StoredLiveEvent[] = [];
 
   try {
     await client.query("BEGIN");
@@ -1514,6 +1634,12 @@ export const applyCommentAction = async (
     );
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (
+      (row.room === "office" || row.kind === "draft") &&
+      (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
 
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
@@ -1602,13 +1728,27 @@ export const applyCommentAction = async (
       });
     }
     await completeMutation(client, handle, mutation, { item: updatedItem, activity });
-    stagedEvent = await stageEvent(client, {
-      kind: `comment.${input.action}`,
-      actorHandle: handle,
-      subjectType: "comment",
-      subjectId: commentId,
-      payload: { action: input.action, active: activity?.active, activity, item: updatedItem, commentId }
-    });
+    const privatePost = updatedItem.room === "office" || updatedItem.kind === "draft";
+    if (!privatePost) {
+      stagedEvents.push(
+        await stageEvent(client, {
+          kind: `comment.${input.action}`,
+          subjectType: "comment",
+          subjectId: commentId,
+          payload: { action: input.action, commentId, itemId: postId }
+        })
+      );
+    }
+    stagedEvents.push(
+      await stageEvent(client, {
+        kind: `comment.${input.action}`,
+        actorHandle: handle,
+        subjectType: "comment",
+        subjectId: commentId,
+        visibility: "private",
+        payload: { action: input.action, active: activity?.active, activity, item: updatedItem, commentId }
+      })
+    );
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1617,7 +1757,7 @@ export const applyCommentAction = async (
     client.release();
   }
 
-  if (stagedEvent) await publishStoredEvent(stagedEvent);
+  for (const event of stagedEvents) await publishStoredEvent(event);
 
   return { item: updatedItem, activity };
 };
@@ -1688,24 +1828,36 @@ export const followProfile = async (rawInput: unknown, actor: Actor) => {
   if (!hasDatabase()) {
     return { followerHandle: follower, followingHandle: following, status: input.status };
   }
-
-  await getPool().query(
-    `INSERT INTO profile_follows (follower_handle, following_handle, status)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (follower_handle, following_handle)
-     DO UPDATE SET status = EXCLUDED.status, updated_at = now()`,
-    [follower, following, input.status]
-  );
-
-  await emitEvent({
-    kind: "profile.followed",
-    actorHandle: follower,
-    subjectType: "profile",
-    subjectId: following,
-    payload: { follow: { followerHandle: follower, followingHandle: following, status: input.status } }
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const result = await client.query(
+      `INSERT INTO profile_follows (follower_handle, following_handle, status)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (follower_handle, following_handle)
+       DO UPDATE SET status = EXCLUDED.status, updated_at = now()
+       WHERE profile_follows.status IS DISTINCT FROM EXCLUDED.status
+       RETURNING follower_handle`,
+      [follower, following, input.status]
+    );
+    const value = { followerHandle: follower, followingHandle: following, status: input.status };
+    if (!result.rowCount) return { value };
+    await stageAuditLog(client, {
+      actorHandle: follower,
+      action: "profile.follow",
+      subjectType: "profile",
+      subjectId: following,
+      metadata: { status: input.status }
+    });
+    const event = await stageEvent(client, {
+      kind: "profile.followed",
+      actorHandle: follower,
+      subjectType: "profile",
+      subjectId: following,
+      visibility: input.status === "active" ? "public" : "private",
+      payload: { follow: value }
+    });
+    return { value, events: [event] };
   });
-
-  return { followerHandle: follower, followingHandle: following, status: input.status };
 };
 
 export const unfollowProfile = async (rawInput: unknown, actor: Actor) => {
@@ -1715,29 +1867,40 @@ export const unfollowProfile = async (rawInput: unknown, actor: Actor) => {
 
   if (hasDatabase()) {
     await ensureLiveData();
-    await getPool().query(
-      "DELETE FROM profile_follows WHERE follower_handle = $1 AND following_handle = $2",
-      [follower, following]
-    );
+    return runAtomic(async (client) => {
+      const result = await client.query<{ status: string }>(
+        "DELETE FROM profile_follows WHERE follower_handle = $1 AND following_handle = $2 RETURNING status",
+        [follower, following]
+      );
+      const value = { followerHandle: follower, followingHandle: following, status: "none" as const };
+      if (!result.rowCount) return { value };
+      await stageAuditLog(client, {
+        actorHandle: follower,
+        action: "profile.unfollow",
+        subjectType: "profile",
+        subjectId: following
+      });
+      const event = await stageEvent(client, {
+        kind: "profile.unfollowed",
+        actorHandle: follower,
+        subjectType: "profile",
+        subjectId: following,
+        visibility: result.rows[0]?.status === "active" ? "public" : "private",
+        payload: { follow: value }
+      });
+      return { value, events: [event] };
+    });
   }
-
-  await emitEvent({
-    kind: "profile.unfollowed",
-    actorHandle: follower,
-    subjectType: "profile",
-    subjectId: following,
-    payload: { follow: { followerHandle: follower, followingHandle: following, status: "none" } }
-  });
 
   return { followerHandle: follower, followingHandle: following, status: "none" };
 };
 
 export const listFollowing = async (actor: Actor) => {
   const handle = await ensureProfileHandle(actorHandle(actor));
-  return listProfileFollows(handle);
+  return listProfileFollows(handle, true);
 };
 
-export const listProfileFollows = async (profileHandle: string) => {
+export const listProfileFollows = async (profileHandle: string, includePrivateStatuses = false) => {
   const handle = await ensureProfileHandle(profileHandle);
   if (!hasDatabase()) return { following: [], followers: [] };
   await ensureLiveData();
@@ -1746,16 +1909,16 @@ export const listProfileFollows = async (profileHandle: string) => {
     getPool().query(
       `SELECT follower_handle AS "followerHandle", following_handle AS "followingHandle", status, created_at AS "createdAt"
        FROM profile_follows
-       WHERE follower_handle = $1
+       WHERE follower_handle = $1 AND ($2::boolean OR status = 'active')
        ORDER BY created_at DESC`,
-      [handle]
+      [handle, includePrivateStatuses]
     ),
     getPool().query(
       `SELECT follower_handle AS "followerHandle", following_handle AS "followingHandle", status, created_at AS "createdAt"
        FROM profile_follows
-       WHERE following_handle = $1
+       WHERE following_handle = $1 AND ($2::boolean OR status = 'active')
        ORDER BY created_at DESC`,
-      [handle]
+      [handle, includePrivateStatuses]
     )
   ]);
 
@@ -1766,29 +1929,97 @@ export const joinOrRequestCommunity = async (rawInput: unknown, actor: Actor) =>
   const input = joinCommunityInputSchema.parse(rawInput);
   const handle = actorHandle(actor);
   const community = await getCommunity(input.communityId);
-  if (!hasDatabase()) return { community, status: community.visibility === "private" ? "requested" : "joined" };
-
-  await getPool().query(
-    `INSERT INTO community_memberships (community_id, profile_handle, status)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (community_id, profile_handle) DO UPDATE SET status = EXCLUDED.status`,
-    [community.id, handle, community.visibility === "private" ? "requested" : "active"]
-  );
-
-  await emitEvent({
-    kind: community.visibility === "private" ? "community.requested" : "community.joined",
-    actorHandle: handle,
-    subjectType: "community",
-    subjectId: community.id
+  if (!hasDatabase()) {
+    return {
+      community: community.visibility === "private" ? publicCommunity(community) : community,
+      status: community.visibility === "private" ? ("requested" as const) : ("joined" as const)
+    };
+  }
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const requestedStatus = community.visibility === "private" ? "requested" : "active";
+    const existingMembership = await client.query<{ status: string }>(
+      `SELECT status FROM community_memberships
+       WHERE community_id = $1 AND profile_handle = $2
+       FOR UPDATE`,
+      [community.id, handle]
+    );
+    if (existingMembership.rows[0]?.status === "blocked") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "This community membership is unavailable." });
+    }
+    const membership = await client.query<{ status: string }>(
+      `INSERT INTO community_memberships (community_id, profile_handle, status)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (community_id, profile_handle) DO UPDATE SET status = EXCLUDED.status
+       WHERE community_memberships.status IS DISTINCT FROM EXCLUDED.status
+         AND community_memberships.status <> 'active'
+       RETURNING status`,
+      [community.id, handle, requestedStatus]
+    );
+    const membershipStatus =
+      membership.rows[0]?.status ??
+      existingMembership.rows[0]?.status ??
+      requestedStatus;
+    let updatedCommunity = membershipStatus === "active" ? community : publicCommunity(community);
+    if (membershipStatus === "active") {
+      await client.query(
+        `UPDATE communities
+         SET member_handles = CASE
+               WHEN member_handles ? $2 THEN member_handles
+               ELSE member_handles || to_jsonb($2::text)
+             END,
+             updated_at = now()
+         WHERE id = $1`,
+        [community.id, handle]
+      );
+      updatedCommunity = {
+        ...community,
+        memberHandles: [...new Set([...community.memberHandles, handle])]
+      };
+    }
+    const value = {
+      community: updatedCommunity,
+      status: membershipStatus === "active" ? ("joined" as const) : ("requested" as const)
+    };
+    if (!membership.rowCount) return { value };
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: value.status === "requested" ? "community.request" : "community.join",
+      subjectType: "community",
+      subjectId: community.id,
+      metadata: { status: membershipStatus }
+    });
+    const event = await stageEvent(client, {
+      kind: value.status === "requested" ? "community.requested" : "community.joined",
+      actorHandle: handle,
+      subjectType: "community",
+      subjectId: community.id,
+      visibility: value.status === "requested" ? "private" : "public",
+      payload: { community: updatedCommunity, status: value.status }
+    });
+    return { value, events: [event] };
   });
-
-  return { community, status: community.visibility === "private" ? "requested" : "joined" };
 };
 
-export const listCommunityCalls = async (communityId: string) => {
+export const listCommunityCalls = async (communityId: string, actor?: Actor) => {
   const community = await getCommunity(communityId);
   if (!hasDatabase()) return { community, calls: [] as CommunityCallContract[] };
   await ensureLiveData();
+
+  if (community.visibility === "private") {
+    const requester = actor?.handle ? cleanHandle(actor.handle) : null;
+    if (!requester) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Private community calls require membership." });
+    }
+    const membership = await getPool().query(
+      `SELECT 1 FROM community_memberships
+       WHERE community_id = $1 AND profile_handle = $2 AND status = 'active'`,
+      [community.id, requester]
+    );
+    if (!membership.rowCount) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Private community calls require membership." });
+    }
+  }
 
   const result = await getPool().query(
     `SELECT
@@ -1815,10 +2046,20 @@ export const listCommunityCalls = async (communityId: string) => {
   return { community, calls: result.rows.map(callRowToContract) };
 };
 
-export const createCommunityCall = async (rawInput: unknown, actor: Actor) => {
+const communityAudienceHandles = async (client: PoolClient, communityId: string) => {
+  const result = await client.query<{ profileHandle: string }>(
+    `SELECT profile_handle AS "profileHandle"
+     FROM community_memberships
+     WHERE community_id = $1 AND status = 'active'`,
+    [communityId]
+  );
+  return result.rows.map((row) => row.profileHandle);
+};
+
+export const createCommunityCall = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = createCommunityCallInputSchema.parse(rawInput);
   const host = await ensureProfileHandle(actorHandle(actor));
-  await getCommunity(input.communityId);
+  const community = await getCommunity(input.communityId);
 
   if (!hasDatabase()) {
     return {
@@ -1836,10 +2077,19 @@ export const createCommunityCall = async (rawInput: unknown, actor: Actor) => {
   }
 
   await ensureLiveData();
-  const client = await getPool().connect();
-
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<CommunityCallContract>(client, host, mutation);
+    if (claim.replayed) return { value: claim.response };
+    if (community.visibility === "private") {
+      const membership = await client.query(
+        `SELECT 1 FROM community_memberships
+         WHERE community_id = $1 AND profile_handle = $2 AND status = 'active'`,
+        [community.id, host]
+      );
+      if (!membership.rowCount) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Join this private community before hosting a call." });
+      }
+    }
     const call = await client.query(
       `INSERT INTO community_calls (
          community_id, host_handle, title, kind, status, starts_at, provider, provider_room_id
@@ -1879,23 +2129,29 @@ export const createCommunityCall = async (rawInput: unknown, actor: Actor) => {
        WHERE id = $1`,
       [input.communityId, input.kind === "video" ? "video live" : "voice live"]
     );
-    await client.query("COMMIT");
-
     const created = callRowToContract({ ...call.rows[0]!, participantHandles: [host] });
-    await emitEvent({
+    await stageAuditLog(client, {
+      actorHandle: host,
+      action: "community.call.create",
+      subjectType: "community_call",
+      subjectId: created.id,
+      metadata: mutationAuditMetadata(mutation, { communityId: input.communityId, kind: input.kind })
+    });
+    await completeMutation(client, host, mutation, created);
+    const event = await stageEvent(client, {
       kind: "community.call.created",
       actorHandle: host,
       subjectType: "community_call",
       subjectId: created.id,
+      visibility: community.visibility === "private" ? "community" : "public",
+      audienceHandles:
+        community.visibility === "private"
+          ? await communityAudienceHandles(client, community.id)
+          : undefined,
       payload: { communityId: input.communityId, title: input.title, kind: input.kind }
     });
-    return created;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { value: created, events: [event] };
+  });
 };
 
 export const joinCommunityCall = async (rawInput: unknown, actor: Actor) => {
@@ -1904,32 +2160,62 @@ export const joinCommunityCall = async (rawInput: unknown, actor: Actor) => {
 
   if (!hasDatabase()) return { callId: input.callId, profileHandle: handle, status: "joined" };
   await ensureLiveData();
-
-  const call = await getPool().query<{ id: string; status: string }>(
-    "SELECT id, status FROM community_calls WHERE id = $1 LIMIT 1",
-    [input.callId]
-  );
-  if (!call.rowCount) throw new TRPCError({ code: "NOT_FOUND", message: "Call not found." });
-  if (call.rows[0]!.status === "ended") {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "This call has already ended." });
-  }
-
-  await getPool().query(
-    `INSERT INTO call_participants (call_id, profile_handle)
-     VALUES ($1, $2)
-     ON CONFLICT (call_id, profile_handle)
-     DO UPDATE SET left_at = NULL`,
-    [input.callId, handle]
-  );
-
-  await emitEvent({
-    kind: "community.call.joined",
-    actorHandle: handle,
-    subjectType: "community_call",
-    subjectId: input.callId
+  return runAtomic(async (client) => {
+    const call = await client.query<{ communityId: string; status: string; visibility: string }>(
+      `SELECT c.community_id AS "communityId", c.status, community.visibility
+       FROM community_calls c
+       JOIN communities community ON community.id = c.community_id
+       WHERE c.id = $1
+       FOR UPDATE OF c`,
+      [input.callId]
+    );
+    const callRow = call.rows[0];
+    if (!callRow) throw new TRPCError({ code: "NOT_FOUND", message: "Call not found." });
+    if (callRow.status === "ended" || callRow.status === "cancelled") {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "This call has already ended." });
+    }
+    if (callRow.visibility === "private") {
+      const membership = await client.query(
+        `SELECT 1 FROM community_memberships
+         WHERE community_id = $1 AND profile_handle = $2 AND status = 'active'`,
+        [callRow.communityId, handle]
+      );
+      if (!membership.rowCount) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "This call belongs to a private community." });
+      }
+    }
+    const joined = await client.query(
+      `INSERT INTO call_participants (call_id, profile_handle)
+       VALUES ($1, $2)
+       ON CONFLICT (call_id, profile_handle)
+       DO UPDATE SET left_at = NULL, joined_at = now()
+       WHERE call_participants.left_at IS NOT NULL
+       RETURNING call_id`,
+      [input.callId, handle]
+    );
+    const value = { callId: input.callId, profileHandle: handle, status: "joined" as const };
+    if (!joined.rowCount) return { value };
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "community.call.join",
+      subjectType: "community_call",
+      subjectId: input.callId,
+      metadata: { communityId: callRow.communityId }
+    });
+    const event = await stageEvent(client, {
+      kind: "community.call.joined",
+      actorHandle: handle,
+      subjectType: "community_call",
+      subjectId: input.callId,
+      visibility: callRow.visibility === "private" ? "community" : "public",
+      audienceHandles:
+        callRow.visibility === "private"
+          ? await communityAudienceHandles(client, callRow.communityId)
+          : undefined,
+      payload: { communityId: callRow.communityId }
+    });
+    return { value, events: [event] };
   });
-
-  return { callId: input.callId, profileHandle: handle, status: "joined" };
 };
 
 export const endCommunityCall = async (rawInput: unknown, actor: Actor) => {
@@ -1938,36 +2224,67 @@ export const endCommunityCall = async (rawInput: unknown, actor: Actor) => {
 
   if (!hasDatabase()) return { callId: input.callId, status: "ended" };
   await ensureLiveData();
+  return runAtomic(async (client) => {
+    const call = await client.query<{
+      communityId: string;
+      hostHandle: string | null;
+      status: string;
+      visibility: string;
+    }>(
+      `SELECT call.community_id AS "communityId", call.host_handle AS "hostHandle",
+         call.status, community.visibility
+       FROM community_calls call
+       JOIN communities community ON community.id = call.community_id
+       WHERE call.id = $1
+       FOR UPDATE OF call`,
+      [input.callId]
+    );
+    const callRow = call.rows[0];
+    if (!callRow) throw new TRPCError({ code: "NOT_FOUND", message: "Call not found." });
+    if (!callRow.hostHandle || cleanHandle(callRow.hostHandle) !== handle) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only the call host can end this call." });
+    }
+    const value = { callId: input.callId, status: "ended" as const };
+    if (callRow.status === "ended") return { value };
 
-  const result = await getPool().query<{ communityId: string }>(
-    `UPDATE community_calls
-     SET status = 'ended', ended_at = now(), updated_at = now()
-     WHERE id = $1
-     RETURNING community_id AS "communityId"`,
-    [input.callId]
-  );
-  if (!result.rowCount) throw new TRPCError({ code: "NOT_FOUND", message: "Call not found." });
-
-  await getPool().query("UPDATE call_participants SET left_at = now() WHERE call_id = $1", [input.callId]);
-  await getPool().query(
-    `UPDATE communities
-     SET call_status = 'quiet', updated_at = now()
-     WHERE id = $1
-       AND NOT EXISTS (
-         SELECT 1 FROM community_calls
-         WHERE community_id = $1 AND status = 'live' AND id <> $2
-       )`,
-    [result.rows[0]!.communityId, input.callId]
-  );
-
-  await emitEvent({
-    kind: "community.call.ended",
-    actorHandle: handle,
-    subjectType: "community_call",
-    subjectId: input.callId
+    await client.query(
+      `UPDATE community_calls
+       SET status = 'ended', ended_at = now(), updated_at = now()
+       WHERE id = $1`,
+      [input.callId]
+    );
+    await client.query("UPDATE call_participants SET left_at = now() WHERE call_id = $1 AND left_at IS NULL", [input.callId]);
+    await client.query(
+      `UPDATE communities
+       SET call_status = 'quiet', updated_at = now()
+       WHERE id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM community_calls
+           WHERE community_id = $1 AND status = 'live' AND id <> $2
+         )`,
+      [callRow.communityId, input.callId]
+    );
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "community.call.end",
+      subjectType: "community_call",
+      subjectId: input.callId,
+      metadata: { communityId: callRow.communityId }
+    });
+    const event = await stageEvent(client, {
+      kind: "community.call.ended",
+      actorHandle: handle,
+      subjectType: "community_call",
+      subjectId: input.callId,
+      visibility: callRow.visibility === "private" ? "community" : "public",
+      audienceHandles:
+        callRow.visibility === "private"
+          ? await communityAudienceHandles(client, callRow.communityId)
+          : undefined,
+      payload: { communityId: callRow.communityId }
+    });
+    return { value, events: [event] };
   });
-
-  return { callId: input.callId, status: "ended" };
 };
 
 export const search = async (rawInput: unknown) => {
@@ -1979,12 +2296,25 @@ export const search = async (rawInput: unknown) => {
     return {
       posts: snapshot.items
         .filter((item) => !isDeletedPost(item))
+        .filter((item) => item.room !== "office" && item.kind !== "draft")
         .filter((item) => searchablePostText({ ...item, authorName: item.author }).toLowerCase().includes(term))
+        .map((item) => ({
+          ...item,
+          saved: false,
+          savedBy: [],
+          signaledBy: [],
+          forkedBy: [],
+          comments: []
+        }))
         .slice(0, input.limit),
       profiles: Object.values(snapshot.profiles)
         .filter((person) => [person.name, person.handle, person.role, person.location, person.bio, ...person.fields].join(" ").toLowerCase().includes(term))
+        .map(publicProfile)
         .slice(0, input.limit),
-      communities: (snapshot.communities ?? []).filter((community) => [community.name, community.field, community.summary, ...community.keywords].join(" ").toLowerCase().includes(term)).slice(0, input.limit)
+      communities: (snapshot.communities ?? [])
+        .filter((community) => [community.name, community.field, community.summary, ...community.keywords].join(" ").toLowerCase().includes(term))
+        .map(publicCommunity)
+        .slice(0, input.limit)
     };
   }
 
@@ -1999,13 +2329,16 @@ export const search = async (rawInput: unknown) => {
         excerpt, body, tags, signals, claims, objections, evidence, tests, forks, saved,
         saved_by AS "savedBy", signaled_by AS "signaledBy", forked_by AS "forkedBy"
        FROM posts
-       WHERE search_text ILIKE $1 AND deleted_at IS NULL
+       WHERE search_text ILIKE $1
+         AND deleted_at IS NULL
+         AND room <> 'office'
+         AND kind <> 'draft'
        ORDER BY created_at DESC
        LIMIT $2`,
       [like, input.limit]
     ),
     getPool().query<ResearchProfileContract>(
-      `SELECT handle, email, name, avatar_url AS "avatarUrl", likes_public AS "likesPublic",
+      `SELECT handle, name, avatar_url AS "avatarUrl", likes_public AS "likesPublic",
         reshares_public AS "resharesPublic", role, location, bio, fields
        FROM profiles
        WHERE name ILIKE $1 OR handle ILIKE $1 OR role ILIKE $1 OR location ILIKE $1 OR bio ILIKE $1
@@ -2025,14 +2358,22 @@ export const search = async (rawInput: unknown) => {
   ]);
 
   return {
-    posts: postsResult.rows.map((row) => rowToItem(row, [])),
-    profiles: profilesResult.rows.map((person) => ({ ...person, fields: json(person.fields, []) })),
-    communities: communitiesResult.rows.map((community) => ({
-      ...community,
-      memberHandles: json(community.memberHandles, []),
-      keywords: json(community.keywords, []),
-      seedCounts: json(community.seedCounts, { papers: 0, thoughts: 0, opportunities: 0 })
-    }))
+    posts: postsResult.rows.map((row) => ({
+      ...rowToItem(row, []),
+      saved: false,
+      savedBy: [],
+      signaledBy: [],
+      forkedBy: []
+    })),
+    profiles: profilesResult.rows.map((person) => publicProfile({ ...person, fields: json(person.fields, []) })),
+    communities: communitiesResult.rows.map((community) =>
+      publicCommunity({
+        ...community,
+        memberHandles: json(community.memberHandles, []),
+        keywords: json(community.keywords, []),
+        seedCounts: json(community.seedCounts, { papers: 0, thoughts: 0, opportunities: 0 })
+      })
+    )
   };
 };
 
@@ -2055,11 +2396,34 @@ export const markNotificationRead = async (rawInput: unknown, actor: Actor) => {
   const input = markNotificationInputSchema.parse(rawInput);
   const handle = actorHandle(actor);
   if (!hasDatabase()) return { notificationId: input.notificationId, read: true };
-  await getPool().query(
-    "UPDATE notifications SET read_at = now() WHERE id = $1 AND profile_handle = $2",
-    [input.notificationId, handle]
-  );
-  return { notificationId: input.notificationId, read: true };
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const notification = await client.query<{ readAt: Date | null }>(
+      `SELECT read_at AS "readAt" FROM notifications
+       WHERE id = $1 AND profile_handle = $2
+       FOR UPDATE`,
+      [input.notificationId, handle]
+    );
+    const existing = notification.rows[0];
+    if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Notification not found." });
+    const value = { notificationId: input.notificationId, read: true };
+    if (existing.readAt) return { value };
+    await client.query("UPDATE notifications SET read_at = now() WHERE id = $1", [input.notificationId]);
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "notification.read",
+      subjectType: "notification",
+      subjectId: input.notificationId
+    });
+    const event = await stageEvent(client, {
+      kind: "notification.read",
+      actorHandle: handle,
+      subjectType: "notification",
+      subjectId: input.notificationId,
+      visibility: "private"
+    });
+    return { value, events: [event] };
+  });
 };
 
 export const listConversations = async (actor: Actor) => {
@@ -2080,29 +2444,95 @@ export const listConversations = async (actor: Actor) => {
   return result.rows;
 };
 
-export const sendMessage = async (rawInput: unknown, actor: Actor) => {
+type OwnedWorkspaceRow = { id: string; name: string; visibility: string };
+type OwnedNoteRow = { id: string; workspaceId: string };
+type OwnedBlockRow = { id: string; noteId: string; workspaceId: string };
+
+const ensureOwnedWorkspace = async (client: PoolClient, handle: string, workspaceId?: string) => {
+  if (workspaceId) {
+    const owned = await client.query<OwnedWorkspaceRow>(
+      `SELECT id, name, visibility FROM workspaces
+       WHERE id = $1 AND owner_handle = $2
+       FOR SHARE`,
+      [workspaceId, handle]
+    );
+    if (!owned.rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Workspace not found." });
+    return owned.rows[0];
+  }
+
+  const workspace = await client.query<OwnedWorkspaceRow>(
+    `INSERT INTO workspaces (owner_handle, name)
+     VALUES ($1, 'Notebook')
+     ON CONFLICT (owner_handle, name) DO UPDATE SET updated_at = workspaces.updated_at
+     RETURNING id, name, visibility`,
+    [handle]
+  );
+  return workspace.rows[0]!;
+};
+
+const findOwnedNote = async (client: PoolClient, handle: string, noteId: string) => {
+  const result = await client.query<OwnedNoteRow>(
+    `SELECT note.id, note.workspace_id AS "workspaceId"
+     FROM notes note
+     JOIN workspaces workspace ON workspace.id = note.workspace_id
+     WHERE note.id = $1 AND workspace.owner_handle = $2
+     FOR SHARE OF note`,
+    [noteId, handle]
+  );
+  return result.rows[0];
+};
+
+const findOwnedBlock = async (client: PoolClient, handle: string, blockId: string) => {
+  const result = await client.query<OwnedBlockRow>(
+    `SELECT block.id, block.note_id AS "noteId", note.workspace_id AS "workspaceId"
+     FROM note_blocks block
+     JOIN notes note ON note.id = block.note_id
+     JOIN workspaces workspace ON workspace.id = note.workspace_id
+     WHERE block.id = $1 AND workspace.owner_handle = $2
+     FOR UPDATE OF block`,
+    [blockId, handle]
+  );
+  return result.rows[0];
+};
+
+export const sendMessage = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = sendMessageInputSchema.parse(rawInput);
   const sender = actorHandle(actor);
   if (!hasDatabase()) {
     return { id: randomUUID(), conversationId: input.conversationId ?? randomUUID(), senderHandle: sender, body: input.body };
   }
   await ensureLiveData();
+  const requestedRecipient = input.recipientHandle
+    ? await ensureProfileHandle(input.recipientHandle)
+    : undefined;
+  if (!input.conversationId && !requestedRecipient) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "recipientHandle or conversationId is required." });
+  }
+  if (requestedRecipient === sender) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Direct messages require another recipient." });
+  }
 
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<Record<string, unknown>>(client, sender, mutation);
+    if (claim.replayed) return { value: claim.response };
     let conversationId = input.conversationId;
 
     if (!conversationId) {
-      if (!input.recipientHandle) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "recipientHandle or conversationId is required." });
-      }
-      const recipient = cleanHandle(input.recipientHandle);
+      const recipient = requestedRecipient!;
+      const directKey = [sender, recipient].sort().join(":");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [directKey]);
       const existing = await client.query<{ conversationId: string }>(
         `SELECT cp1.conversation_id AS "conversationId"
          FROM conversation_participants cp1
          JOIN conversation_participants cp2 ON cp2.conversation_id = cp1.conversation_id
-         WHERE cp1.profile_handle = $1 AND cp2.profile_handle = $2
+         JOIN conversations c ON c.id = cp1.conversation_id AND c.kind = 'direct'
+         WHERE cp1.profile_handle = $1
+           AND cp2.profile_handle = $2
+           AND NOT EXISTS (
+             SELECT 1 FROM conversation_participants other
+             WHERE other.conversation_id = cp1.conversation_id
+               AND other.profile_handle NOT IN ($1, $2)
+           )
          LIMIT 1`,
         [sender, recipient]
       );
@@ -2120,6 +2550,19 @@ export const sendMessage = async (rawInput: unknown, actor: Actor) => {
           [conversationId, sender, recipient]
         );
       }
+    } else {
+      const membership = await client.query(
+        `SELECT c.id
+         FROM conversations c
+         JOIN conversation_participants participant
+           ON participant.conversation_id = c.id AND participant.profile_handle = $2
+         WHERE c.id = $1
+         FOR SHARE OF c`,
+        [conversationId, sender]
+      );
+      if (!membership.rowCount) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Conversation not found." });
+      }
     }
 
     const message = await client.query(
@@ -2129,50 +2572,39 @@ export const sendMessage = async (rawInput: unknown, actor: Actor) => {
       [conversationId, sender, input.body]
     );
     await client.query("UPDATE conversations SET updated_at = now() WHERE id = $1", [conversationId]);
-    await client.query("COMMIT");
-
-    await emitEvent({
+    const participants = await client.query<{ profileHandle: string }>(
+      `SELECT profile_handle AS "profileHandle"
+       FROM conversation_participants WHERE conversation_id = $1`,
+      [conversationId]
+    );
+    const value = message.rows[0] as Record<string, unknown>;
+    await stageAuditLog(client, {
+      actorHandle: sender,
+      action: "message.send",
+      subjectType: "conversation",
+      subjectId: conversationId,
+      metadata: mutationAuditMetadata(mutation, { messageId: value.id })
+    });
+    await completeMutation(client, sender, mutation, value);
+    const event = await stageEvent(client, {
       kind: "message.sent",
       actorHandle: sender,
       subjectType: "conversation",
-      subjectId: conversationId!,
-      visibility: "private"
+      subjectId: conversationId,
+      visibility: "private",
+      audienceHandles: participants.rows.map((participant) => participant.profileHandle),
+      payload: { messageId: value.id }
     });
-
-    return message.rows[0];
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { value, events: [event] };
+  });
 };
 
 export const getWorkspace = async (actor: Actor) => {
   const handle = actorHandle(actor);
   if (!hasDatabase()) return { workspace: null, notes: [], blocks: [] };
   await ensureLiveData();
-
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-    const workspace = await client.query<{ id: string; name: string; visibility: string }>(
-      `INSERT INTO workspaces (owner_handle, name)
-       VALUES ($1, 'Notebook')
-       ON CONFLICT (owner_handle, name) DO UPDATE SET updated_at = workspaces.updated_at
-       RETURNING id, name, visibility`,
-      [handle]
-    );
-
-    let workspaceRow = workspace.rows[0];
-    if (!workspaceRow) {
-      const existing = await client.query<{ id: string; name: string; visibility: string }>(
-        "SELECT id, name, visibility FROM workspaces WHERE owner_handle = $1 ORDER BY created_at ASC LIMIT 1",
-        [handle]
-      );
-      workspaceRow = existing.rows[0]!;
-    }
-
+  return runAtomic(async (client) => {
+    const workspaceRow = await ensureOwnedWorkspace(client, handle);
     const notes = await client.query(
       "SELECT id, title, visibility, created_at AS \"createdAt\", updated_at AS \"updatedAt\" FROM notes WHERE workspace_id = $1 ORDER BY created_at ASC",
       [workspaceRow.id]
@@ -2185,61 +2617,109 @@ export const getWorkspace = async (actor: Actor) => {
        ORDER BY nb.sort_order ASC, nb.created_at ASC`,
       [workspaceRow.id]
     );
-    await client.query("COMMIT");
-    return { workspace: workspaceRow, notes: notes.rows, blocks: blocks.rows };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { value: { workspace: workspaceRow, notes: notes.rows, blocks: blocks.rows } };
+  });
 };
 
-export const saveNoteBlock = async (rawInput: unknown, actor: Actor) => {
+export const saveNoteBlock = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = saveNoteBlockInputSchema.parse(rawInput);
   const handle = actorHandle(actor);
   if (!hasDatabase()) return { id: input.blockId ?? randomUUID(), body: input.body };
   await ensureLiveData();
 
-  const workspaceState = await getWorkspace(actor);
-  const workspaceId = input.workspaceId ?? workspaceState.workspace?.id;
-  if (!workspaceId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Workspace could not be created." });
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<Record<string, unknown>>(client, handle, mutation);
+    if (claim.replayed) return { value: claim.response };
 
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+    let workspace = input.workspaceId
+      ? await ensureOwnedWorkspace(client, handle, input.workspaceId)
+      : undefined;
     let noteId = input.noteId;
+    if (noteId) {
+      const ownedNote = await findOwnedNote(client, handle, noteId);
+      if (!ownedNote) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found." });
+      if (workspace && workspace.id !== ownedNote.workspaceId) {
+        throw new TRPCError({ code: "CONFLICT", message: "The note does not belong to this workspace." });
+      }
+      workspace ??= await ensureOwnedWorkspace(client, handle, ownedNote.workspaceId);
+    }
+
+    const existingBlock = input.blockId
+      ? await findOwnedBlock(client, handle, input.blockId)
+      : undefined;
+    if (input.blockId && !existingBlock) {
+      const foreignBlock = await client.query("SELECT 1 FROM note_blocks WHERE id = $1", [input.blockId]);
+      if (foreignBlock.rowCount) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Note block not found." });
+      }
+    }
+    if (existingBlock) {
+      if (noteId && noteId !== existingBlock.noteId) {
+        throw new TRPCError({ code: "CONFLICT", message: "The block already belongs to another note." });
+      }
+      if (workspace && workspace.id !== existingBlock.workspaceId) {
+        throw new TRPCError({ code: "CONFLICT", message: "The block does not belong to this workspace." });
+      }
+      noteId = existingBlock.noteId;
+      workspace ??= await ensureOwnedWorkspace(client, handle, existingBlock.workspaceId);
+    }
+
+    workspace ??= await ensureOwnedWorkspace(client, handle);
     if (!noteId) {
       const note = await client.query<{ id: string }>(
         `INSERT INTO notes (workspace_id, title, visibility)
          VALUES ($1, 'Notebook', $2)
          RETURNING id`,
-        [workspaceId, input.visibility]
+        [workspace.id, input.visibility]
       );
       noteId = note.rows[0]!.id;
     }
 
-    const block = await client.query(
-      `INSERT INTO note_blocks (id, note_id, body)
-       VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3)
-       ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, updated_at = now()
-       RETURNING id, note_id AS "noteId", body, updated_at AS "updatedAt"`,
-      [input.blockId ?? null, noteId, input.body]
-    );
-    await client.query("UPDATE workspaces SET updated_at = now() WHERE id = $1 AND owner_handle = $2", [workspaceId, handle]);
-    await client.query("COMMIT");
-    return block.rows[0];
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    const block = existingBlock
+      ? await client.query(
+          `UPDATE note_blocks SET body = $2, updated_at = now()
+           WHERE id = $1
+           RETURNING id, note_id AS "noteId", body, updated_at AS "updatedAt"`,
+          [existingBlock.id, input.body]
+        )
+      : await client.query(
+          `INSERT INTO note_blocks (id, note_id, body)
+           VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3)
+           RETURNING id, note_id AS "noteId", body, updated_at AS "updatedAt"`,
+          [input.blockId ?? null, noteId, input.body]
+        );
+    await client.query("UPDATE workspaces SET updated_at = now() WHERE id = $1 AND owner_handle = $2", [workspace.id, handle]);
+    const value = block.rows[0] as Record<string, unknown>;
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: existingBlock ? "note.block.update" : "note.block.create",
+      subjectType: "note_block",
+      subjectId: String(value.id),
+      metadata: mutationAuditMetadata(mutation, { noteId, workspaceId: workspace.id })
+    });
+    await completeMutation(client, handle, mutation, value);
+    const event = await stageEvent(client, {
+      kind: existingBlock ? "note.block.updated" : "note.block.created",
+      actorHandle: handle,
+      subjectType: "note_block",
+      subjectId: String(value.id),
+      visibility: "private",
+      payload: { noteId, workspaceId: workspace.id }
+    });
+    return { value, events: [event] };
+  });
 };
 
-export const publishNote = async (rawInput: unknown, actor: Actor) => {
+export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input: PublishNoteInputContract = publishNoteInputSchema.parse(rawInput);
   const publisher = await ensureProfileHandle(actorHandle(actor));
+
+  if (input.visibility !== "public") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Private and community note publishing require protected post delivery and are not enabled yet."
+    });
+  }
 
   let title = input.title;
   let body = input.body;
@@ -2278,13 +2758,28 @@ export const publishNote = async (rawInput: unknown, actor: Actor) => {
       room: "library",
       authorHandle: publisher
     },
-    actor
+    actor,
+    mutation ? { ...mutation, scope: "note.publish.post" } : undefined
   );
 
-  if (hasDatabase()) {
-    await getPool().query(
+  const value = {
+    item,
+    publication: { noteId: input.noteId ?? null, postId: item.id, visibility: input.visibility }
+  };
+  if (!hasDatabase()) return value;
+
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<typeof value>(client, publisher, mutation);
+    if (claim.replayed) return { value: claim.response };
+    await client.query(
       `INSERT INTO note_publications (note_id, post_id, publisher_handle, visibility, metadata)
-       VALUES ($1, $2, $3, $4, $5)`,
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (post_id) WHERE post_id IS NOT NULL
+       DO UPDATE SET
+         note_id = EXCLUDED.note_id,
+         publisher_handle = EXCLUDED.publisher_handle,
+         visibility = EXCLUDED.visibility,
+         metadata = EXCLUDED.metadata`,
       [
         input.noteId ?? null,
         item.id,
@@ -2293,15 +2788,21 @@ export const publishNote = async (rawInput: unknown, actor: Actor) => {
         JSON.stringify({ source: input.noteId ? "note" : "direct" })
       ]
     );
-  }
-
-  await emitEvent({
-    kind: "note.published",
-    actorHandle: publisher,
-    subjectType: "post",
-    subjectId: item.id,
-    payload: { noteId: input.noteId ?? null, visibility: input.visibility }
+    await stageAuditLog(client, {
+      actorHandle: publisher,
+      action: "note.publish",
+      subjectType: "post",
+      subjectId: item.id,
+      metadata: mutationAuditMetadata(mutation, { noteId: input.noteId, visibility: input.visibility })
+    });
+    await completeMutation(client, publisher, mutation, value);
+    const event = await stageEvent(client, {
+      kind: "note.published",
+      actorHandle: publisher,
+      subjectType: "post",
+      subjectId: item.id,
+      payload: { noteId: input.noteId ?? null, visibility: input.visibility }
+    });
+    return { value, events: [event] };
   });
-
-  return { item, publication: { noteId: input.noteId ?? null, postId: item.id, visibility: input.visibility } };
 };

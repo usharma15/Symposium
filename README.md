@@ -12,9 +12,8 @@ npm run dev
 ## Production check
 
 ```bash
-npm run typecheck
-npm run api:typecheck
-npm run build
+npm run verify
+npm audit --audit-level=high
 npm run start
 ```
 

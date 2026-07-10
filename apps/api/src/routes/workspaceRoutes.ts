@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
+import { mutationContextFromRequest } from "../services/mutations";
 import {
   askAssistant,
   createOpportunity,
@@ -26,7 +27,11 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.post("/v1/opportunities", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const opportunity = await createOpportunity(request.body, actor);
+      const opportunity = await createOpportunity(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "opportunity.create", request.body)
+      );
       return reply.send({ opportunity });
     } catch (error) {
       return sendError(app, reply, error);
@@ -46,7 +51,11 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.post("/v1/messages", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const message = await sendMessage(request.body, actor);
+      const message = await sendMessage(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "message.send", request.body)
+      );
       return reply.send({ message });
     } catch (error) {
       return sendError(app, reply, error);
@@ -76,7 +85,11 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.post("/v1/notes/blocks", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const block = await saveNoteBlock(request.body, actor);
+      const block = await saveNoteBlock(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "note.block.save", request.body)
+      );
       return reply.send({ block });
     } catch (error) {
       return sendError(app, reply, error);
@@ -86,7 +99,11 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.post("/v1/notes/publish", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const publication = await publishNote(request.body, actor);
+      const publication = await publishNote(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "note.publish", request.body)
+      );
       return reply.send(publication);
     } catch (error) {
       return sendError(app, reply, error);
@@ -96,7 +113,11 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.post("/v1/assistant/messages", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const response = await askAssistant(request.body, actor);
+      const response = await askAssistant(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "assistant.message", request.body)
+      );
       return reply.send(response);
     } catch (error) {
       return sendError(app, reply, error);

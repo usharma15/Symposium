@@ -217,7 +217,12 @@ export const listCanonicalProfileActivity = async (
          revision,
          updated_at AS "updatedAt"
        FROM post_actions
-       WHERE actor_handle = $1 AND action = ANY($2::text[]) AND ($8::boolean OR active = true)
+       JOIN posts post ON post.id = post_actions.post_id
+       WHERE actor_handle = $1
+         AND action = ANY($2::text[])
+         AND ($8::boolean OR active = true)
+         AND post.deleted_at IS NULL
+         AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
        UNION ALL
        SELECT
          'comment'::text AS "subjectType",
@@ -230,7 +235,12 @@ export const listCanonicalProfileActivity = async (
          revision,
          updated_at AS "updatedAt"
        FROM comment_actions
-       WHERE actor_handle = $1 AND action = ANY($2::text[]) AND ($8::boolean OR active = true)
+       JOIN posts post ON post.id = comment_actions.post_id
+       WHERE actor_handle = $1
+         AND action = ANY($2::text[])
+         AND ($8::boolean OR active = true)
+         AND post.deleted_at IS NULL
+         AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
      )
      SELECT *
      FROM profile_activity

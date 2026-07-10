@@ -7,6 +7,7 @@ import { getRedis } from "./redis";
 export type LiveEvent = {
   kind: string;
   actorHandle?: string;
+  audienceHandles?: string[];
   subjectType: string;
   subjectId: string;
   visibility?: "public" | "private" | "community";
@@ -23,6 +24,7 @@ type EventRow = {
   id: string;
   kind: string;
   actorHandle: string | null;
+  audienceHandles: unknown;
   subjectType: string;
   subjectId: string;
   visibility: "public" | "private" | "community";
@@ -33,9 +35,16 @@ type EventRow = {
 const eventCursor = (createdAt: Date | string, id: string) => `${new Date(createdAt).toISOString()}::${id}`;
 
 export const parseEventCursor = (cursor?: string | null) => {
-  if (!cursor) return null;
+  if (!cursor || cursor.length > 200) return null;
   const [createdAt, id] = cursor.split("::");
-  if (!createdAt || !id || Number.isNaN(Date.parse(createdAt))) return null;
+  if (
+    !createdAt ||
+    !id ||
+    Number.isNaN(Date.parse(createdAt)) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+  ) {
+    return null;
+  }
   return { createdAt, id };
 };
 
@@ -50,6 +59,9 @@ const rowToEvent = (row: EventRow): StoredLiveEvent => ({
   id: row.id,
   kind: row.kind,
   actorHandle: row.actorHandle ?? undefined,
+  audienceHandles: Array.isArray(row.audienceHandles)
+    ? row.audienceHandles.filter((handle): handle is string => typeof handle === "string")
+    : [],
   subjectType: row.subjectType,
   subjectId: row.subjectId,
   visibility: row.visibility,
@@ -60,12 +72,13 @@ const rowToEvent = (row: EventRow): StoredLiveEvent => ({
 
 const insertStoredEvent = async (queryable: Pick<PoolClient, "query">, event: LiveEvent) => {
   const result = await queryable.query<EventRow>(
-    `INSERT INTO events (kind, actor_handle, subject_type, subject_id, visibility, payload)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO events (kind, actor_handle, audience_handles, subject_type, subject_id, visibility, payload)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING
        id::text,
        kind,
        actor_handle AS "actorHandle",
+       audience_handles AS "audienceHandles",
        subject_type AS "subjectType",
        subject_id AS "subjectId",
        visibility,
@@ -74,6 +87,10 @@ const insertStoredEvent = async (queryable: Pick<PoolClient, "query">, event: Li
     [
       event.kind,
       event.actorHandle ?? null,
+      JSON.stringify(
+        event.audienceHandles ??
+          ((event.visibility ?? "public") === "private" && event.actorHandle ? [event.actorHandle] : [])
+      ),
       event.subjectType,
       event.subjectId,
       event.visibility ?? "public",
@@ -104,7 +121,11 @@ export const publishStoredEvent = async (stored: StoredLiveEvent) => {
   return stored;
 };
 
-export const listEventsSince = async (cursor?: string | null, limit = 50): Promise<StoredLiveEvent[]> => {
+export const listEventsSince = async (
+  cursor?: string | null,
+  limit = 50,
+  actorHandle?: string | null
+): Promise<StoredLiveEvent[]> => {
   if (!hasDatabase()) return [];
 
   const parsed = parseEventCursor(cursor);
@@ -116,6 +137,7 @@ export const listEventsSince = async (cursor?: string | null, limit = 50): Promi
          id::text,
          kind,
          actor_handle AS "actorHandle",
+         audience_handles AS "audienceHandles",
          subject_type AS "subjectType",
          subject_id AS "subjectId",
          visibility,
@@ -123,9 +145,10 @@ export const listEventsSince = async (cursor?: string | null, limit = 50): Promi
          created_at AS "createdAt"
        FROM events
        WHERE visibility = 'public'
+          OR (visibility IN ('private', 'community') AND audience_handles ? $1)
        ORDER BY created_at DESC, id DESC
-       LIMIT $1`,
-      [boundedLimit]
+       LIMIT $2`,
+      [actorHandle ?? null, boundedLimit]
     );
 
     return latest.rows.reverse().map(rowToEvent);
@@ -136,17 +159,18 @@ export const listEventsSince = async (cursor?: string | null, limit = 50): Promi
        id::text,
        kind,
        actor_handle AS "actorHandle",
+       audience_handles AS "audienceHandles",
        subject_type AS "subjectType",
        subject_id AS "subjectId",
        visibility,
        payload,
        created_at AS "createdAt"
      FROM events
-     WHERE visibility = 'public'
-       AND (created_at, id::text) > ($1::timestamptz, $2::text)
+     WHERE (visibility = 'public' OR (visibility IN ('private', 'community') AND audience_handles ? $1))
+       AND (created_at, id::text) > ($2::timestamptz, $3::text)
      ORDER BY created_at ASC, id ASC
-     LIMIT $3`,
-    [parsed.createdAt, parsed.id, boundedLimit]
+     LIMIT $4`,
+    [actorHandle ?? null, parsed.createdAt, parsed.id, boundedLimit]
   );
 
   return result.rows.map(rowToEvent);
@@ -163,6 +187,9 @@ export const emitEvent = async (event: LiveEvent) => {
     stored = {
       ...event,
       id,
+      audienceHandles:
+        event.audienceHandles ??
+        ((event.visibility ?? "public") === "private" && event.actorHandle ? [event.actorHandle] : []),
       visibility: event.visibility ?? "public",
       payload: event.payload ?? {},
       createdAt,

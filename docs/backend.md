@@ -45,6 +45,8 @@ Useful endpoints:
 - `/trpc/*` for the typed procedure router
 - Socket.IO on the same server for realtime presence/events
 
+Every API response includes `X-Request-Id`. Validation and application errors also include the same value in the JSON body, so a client-visible failure can be matched to one backend log entry without exposing internal exception text.
+
 ## Environment
 
 Backend:
@@ -145,7 +147,27 @@ npm run api:smoke:writes
 
 This creates verification posts, comments, post actions, community calls, opportunities, note blocks, note publications, and assistant messages. Use it only against environments where test writes are acceptable.
 
-`/healthz` is a cheap process liveness check. `/readyz` is the safer deployment-readiness check: it reports whether the live provider boundary is configured without returning secret values. In strict live mode it expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash, R2, and the reserved owner handle binding. The AI tablet provider is reported separately because the fallback response is valid until model execution policy is finalized.
+`/healthz` is a cheap process liveness check. `/readyz` is the safer deployment-readiness check: it verifies the database connection and migration position, reports the maintenance worker and release identifier, and checks the provider boundary without returning secret values. In strict live mode it expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash, R2, a public R2 delivery URL, and the reserved owner handle binding. The AI tablet provider is reported separately because the fallback response is valid until model execution policy is finalized.
+
+## Integrity Architecture
+
+The durable API follows one mutation rule: domain changes, idempotency receipts, audit records, and durable live events are committed in the same Postgres transaction. Live publication happens only after commit. If local or Redis publication fails, the event remains in Postgres and the SSE poller recovers it.
+
+The current guarantees are:
+
+- High-risk creates accept `Idempotency-Key`; the key is scoped by actor and operation and bound to a canonical payload hash. A safe retry replays the committed response, while reusing the key for a different payload returns `409`.
+- Action rows are the canonical save/signal/fork ledger. The denormalized post/comment arrays and metrics are reconciled inside the same locked transaction for fast reads.
+- Bootstrap reads profiles, posts, comments, attachments, communities, and action ledgers from one repeatable-read snapshot, so a refresh cannot mix rows from different mutation moments.
+- Follow, membership, call, notification, message, note, opportunity, assistant, and upload-prepare writes use atomic transactions and no-op-aware state transitions.
+- Direct-message creation uses a transaction-scoped advisory lock so simultaneous first messages cannot produce duplicate direct conversations.
+- Note publishing is a recoverable two-stage idempotent operation: a retry reuses the same post and then completes the publication record.
+- Workspace, note, block, AI-conversation, message-conversation, notification, private-community, Office, and draft access is checked server-side against the authenticated actor. Unknown and foreign resources deliberately collapse to `404` where existence should not be disclosed.
+- Public bootstrap/search/profile/community projections remove email addresses, private save membership, privacy-disabled action membership, private-community member lists, and Office/draft content. Public live events contain only refresh-safe identifiers; personalized payloads use explicit event audiences.
+- Event cursors are strictly parsed, event delivery is audience-filtered in both durable polling and local streaming, slow SSE clients are dropped, and both SSE and Socket.IO connections have process/client/room/buffer bounds.
+- The API caps JSON bodies at 1 MiB, constrains route parameter length, sets request timeouts, redacts authorization/cookie headers from logs, returns generic `500` responses, applies no-store API caching, and uses a shared Redis rate limiter with a bounded process-local outage fallback.
+- Migration `0012_operational_integrity` backfills event audiences, removes impossible self-follows and duplicate publication links, normalizes legacy enum values conservatively, adds database checks, and adds compound/GIN indexes for the live read paths.
+
+`npm run verify` is the local release gate. It runs security, infrastructure, domain, attachment, mutation, profile, TypeScript, and production-build checks. `npm audit --audit-level=high` is the dependency vulnerability gate.
 
 ## Database
 
@@ -169,7 +191,7 @@ The runner creates the live relational graph:
 - opportunity/job posts
 - AI tablet conversations and messages
 - notifications, events, audit logs, moderation reports
-- mutation receipts for idempotent post/comment creates and actions
+- mutation receipts for retry-safe domain creates, actions, messages, notes, assistant requests, and upload preparation
 - credit accounts, ledger entries, bounties, pledges
 
 On first boot, the backend seeds the current mock SYMPOSIUM world into Postgres so the interface does not become empty.
@@ -182,8 +204,11 @@ Implemented now:
 - Clerk-aware actor layer with server-bound profile ownership
 - Neon/Postgres schema and migrations
 - shared Upstash rate limiting with a bounded local outage fallback
-- transactionally staged database events and audit records with after-commit live publication
-- end-to-end idempotency keys for post/comment creates and canonical actions
+- transactionally staged database events and audit records with after-commit live publication and durable SSE recovery
+- end-to-end idempotency keys for posts, comments, canonical actions, calls, opportunities, messages, note blocks/publications, assistant messages, and upload preparation
+- explicit public/private/community live-event audiences and privacy-safe read projections
+- server-side ownership and membership boundaries across Office/drafts, communities/calls, DMs, notifications, workspaces/notes, and AI conversations
+- migration/readiness/release/maintenance observability plus structured request correlation
 - verified R2 staging uploads promoted to immutable public objects only after size, MIME, signature, and DOCX-structure checks
 - batched retention maintenance for replay receipts, live events, view dedupe rows, and expired attachment states
 - tRPC-style typed procedure router
@@ -217,6 +242,6 @@ Still intentionally next:
 6. Put the backend env vars in Render and run `npm run deploy:api:check`.
 7. Run `npm run db:migrate` against Neon.
 8. Deploy the Render API and run `SYMPOSIUM_SMOKE_URL=<render-url> npm run api:smoke`.
-9. Open `<render-url>/readyz` and confirm `status: "ready"` with no issues.
+9. Open `<render-url>/readyz` and confirm `status: "ready"`, no pending migration ids, and no issues.
 10. Put frontend env vars in Vercel: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and `SYMPOSIUM_API_URL`.
-11. Redeploy Vercel and verify sign-in, `/api/auth/sync`, `/api/bootstrap`, post creation, comments, saves, and community browsing against the live API.
+11. Redeploy Vercel and verify sign-in, `/api/auth/sync`, `/api/bootstrap`, post creation, comments, saves, attachment prepare/confirm, private-room concealment, and community browsing against the live API.

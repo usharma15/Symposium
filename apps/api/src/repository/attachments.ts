@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import JSZip from "jszip";
+import type { PoolClient } from "pg";
 import {
   confirmAttachmentInputSchema,
   createAttachmentUploadInputSchema
@@ -15,9 +16,10 @@ import {
 import { cleanHandle } from "@/lib/symposiumCore";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
-import { stageAuditLog } from "../services/audit";
+import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import type { Actor } from "../services/auth";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
+import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import {
   createObjectKey,
   createUploadObjectKey,
@@ -26,6 +28,7 @@ import {
   inspectUploadedObject,
   promoteUploadedObject
 } from "../services/storage";
+import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData } from "./foundation";
 
 const allowedProfileImageTypes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/avif"]);
@@ -65,8 +68,8 @@ const requireAttachmentDatabase = () => {
   }
 };
 
-const assertUploadAllowance = async (handle: string, incomingByteSize: number) => {
-  await getPool().query(
+const assertUploadAllowance = async (client: PoolClient, handle: string, incomingByteSize: number) => {
+  await client.query(
     `UPDATE attachments
      SET status = 'failed',
          metadata = metadata || jsonb_build_object('verificationError', 'Upload window expired.'),
@@ -78,7 +81,7 @@ const assertUploadAllowance = async (handle: string, incomingByteSize: number) =
        )`,
     [handle]
   );
-  const result = await getPool().query<{
+  const result = await client.query<{
     dailyBytes: string;
     dailyCount: string;
     pendingCount: string;
@@ -103,7 +106,11 @@ const assertUploadAllowance = async (handle: string, incomingByteSize: number) =
   }
 };
 
-export const createAttachmentUpload = async (rawInput: unknown, actor: Actor) => {
+export const createAttachmentUpload = async (
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+) => {
   const parsedInput = createAttachmentUploadInputSchema.parse(rawInput);
   const input = {
     ...parsedInput,
@@ -151,38 +158,66 @@ export const createAttachmentUpload = async (rawInput: unknown, actor: Actor) =>
 
   requireAttachmentDatabase();
   await ensureLiveData();
-  await assertUploadAllowance(handle, input.byteSize);
+  const prepared = await runAtomic(async (client) => {
+    const claim = await claimMutation<{
+      attachmentId: string;
+      objectKey: string;
+      publicUrl: string | null;
+      uploadObjectKey: string;
+    }>(client, handle, mutation);
+    if (claim.replayed) return { value: claim.response };
 
-  const attachmentId = randomUUID();
-  const objectKey = createObjectKey(input.ownerType, input.fileName);
-  const uploadObjectKey = createUploadObjectKey(attachmentId);
-  const uploadUrl = await createUploadUrl(uploadObjectKey, input.contentType);
-
-  await getPool().query(
-    `INSERT INTO attachments (
-      id, owner_type, owner_id, uploader_handle, bucket, object_key, upload_object_key,
-      file_name, content_type, byte_size, status
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')`,
-    [
+    await assertUploadAllowance(client, handle, input.byteSize);
+    const attachmentId = randomUUID();
+    const objectKey = createObjectKey(input.ownerType, input.fileName);
+    const uploadObjectKey = createUploadObjectKey(attachmentId);
+    await client.query(
+      `INSERT INTO attachments (
+        id, owner_type, owner_id, uploader_handle, bucket, object_key, upload_object_key,
+        file_name, content_type, byte_size, status
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')`,
+      [
+        attachmentId,
+        input.ownerType,
+        input.ownerType === "profile" ? handle : null,
+        handle,
+        env.R2_BUCKET ?? "symposium",
+        objectKey,
+        uploadObjectKey,
+        input.fileName,
+        input.contentType,
+        input.byteSize
+      ]
+    );
+    const value = {
       attachmentId,
-      input.ownerType,
-      input.ownerType === "profile" ? handle : null,
-      handle,
-      env.R2_BUCKET ?? "symposium",
       objectKey,
       uploadObjectKey,
-      input.fileName,
-      input.contentType,
-      input.byteSize
-    ]
-  );
+      publicUrl: publicObjectUrl(objectKey)
+    };
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "attachment.prepare",
+      subjectType: "attachment",
+      subjectId: attachmentId,
+      metadata: mutationAuditMetadata(mutation, {
+        byteSize: input.byteSize,
+        contentType: input.contentType,
+        ownerType: input.ownerType
+      })
+    });
+    await completeMutation(client, handle, mutation, value);
+    return { value };
+  });
+
+  const uploadUrl = await createUploadUrl(prepared.uploadObjectKey, input.contentType);
 
   return {
-    attachmentId,
-    objectKey,
+    attachmentId: prepared.attachmentId,
+    objectKey: prepared.objectKey,
     uploadUrl,
-    publicUrl: publicObjectUrl(objectKey)
+    publicUrl: prepared.publicUrl
   };
 };
 
@@ -391,6 +426,7 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
       actorHandle: handle,
       subjectType: "attachment",
       subjectId: attachment.attachmentId,
+      visibility: "private",
       payload: { ownerType: attachment.ownerType }
     });
     await client.query("COMMIT");

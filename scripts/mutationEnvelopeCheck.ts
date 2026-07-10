@@ -48,10 +48,11 @@ const fakeClient = {
           id: "00000000-0000-4000-8000-000000000001",
           kind: params[0],
           actorHandle: params[1],
-          subjectType: params[2],
-          subjectId: params[3],
-          visibility: params[4],
-          payload: JSON.parse(String(params[5])),
+          audienceHandles: JSON.parse(String(params[2])),
+          subjectType: params[3],
+          subjectId: params[4],
+          visibility: params[5],
+          payload: JSON.parse(String(params[6])),
           createdAt: "2026-07-10T12:00:00.000Z"
         }]
       };
@@ -101,6 +102,14 @@ const main = async () => {
   assert.deepEqual(receivedEvents, []);
   await publishStoredEvent(staged);
   assert.deepEqual(receivedEvents, [staged.id]);
+  const privateEvent = await stageEvent(fakeClient, {
+    kind: "note.updated",
+    actorHandle: "@ada",
+    subjectType: "note",
+    subjectId: "note-1",
+    visibility: "private"
+  });
+  assert.deepEqual(privateEvent.audienceHandles, ["@ada"]);
   unsubscribe();
 
   console.log(
@@ -112,7 +121,8 @@ const main = async () => {
           "idempotency key validation",
           "response replay",
           "payload conflict rejection",
-          "transactional event staging"
+          "transactional event staging",
+          "private event audience defaults"
         ]
       },
       null,

@@ -897,8 +897,161 @@ const migrations: Migration[] = [
       END
       $$;
     `
+  },
+  {
+    id: "0012_operational_integrity",
+    sql: `
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS audience_handles JSONB NOT NULL DEFAULT '[]'::jsonb;
+      UPDATE events
+      SET audience_handles = jsonb_build_array(actor_handle)
+      WHERE visibility = 'private'
+        AND actor_handle IS NOT NULL
+        AND audience_handles = '[]'::jsonb;
+
+      UPDATE profile_follows SET status = 'blocked'
+        WHERE status NOT IN ('active', 'muted', 'blocked');
+      UPDATE community_memberships SET status = 'removed'
+        WHERE status NOT IN ('active', 'requested', 'invited', 'rejected', 'blocked', 'removed');
+      UPDATE community_calls SET kind = 'voice' WHERE kind NOT IN ('voice', 'video');
+      UPDATE community_calls SET status = 'ended'
+        WHERE status NOT IN ('scheduled', 'live', 'ended', 'cancelled');
+      UPDATE conversations SET kind = 'direct' WHERE kind NOT IN ('direct', 'group');
+      UPDATE workspaces SET visibility = 'private'
+        WHERE visibility NOT IN ('private', 'community', 'public');
+      UPDATE notes SET visibility = 'private'
+        WHERE visibility NOT IN ('private', 'community', 'public');
+      UPDATE note_publications SET visibility = 'private'
+        WHERE visibility NOT IN ('private', 'community', 'public');
+      UPDATE events SET visibility = 'private'
+        WHERE visibility NOT IN ('public', 'private', 'community');
+      UPDATE events
+      SET audience_handles = jsonb_build_array(actor_handle)
+      WHERE visibility = 'private'
+        AND actor_handle IS NOT NULL
+        AND audience_handles = '[]'::jsonb;
+      UPDATE ai_messages SET role = 'assistant'
+        WHERE role NOT IN ('user', 'assistant', 'system');
+
+      DELETE FROM profile_follows WHERE follower_handle = following_handle;
+
+      WITH duplicate_publications AS (
+        SELECT id, row_number() OVER (PARTITION BY post_id ORDER BY created_at ASC, id ASC) AS duplicate_rank
+        FROM note_publications
+        WHERE post_id IS NOT NULL
+      )
+      DELETE FROM note_publications publication
+      USING duplicate_publications duplicate
+      WHERE publication.id = duplicate.id AND duplicate.duplicate_rank > 1;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS note_publications_post_unique_idx
+        ON note_publications (post_id) WHERE post_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS messages_conversation_created_idx
+        ON messages (conversation_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS notifications_profile_created_idx
+        ON notifications (profile_handle, created_at DESC);
+      CREATE INDEX IF NOT EXISTS notes_workspace_updated_idx
+        ON notes (workspace_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS note_blocks_note_updated_idx
+        ON note_blocks (note_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS ai_messages_conversation_created_idx
+        ON ai_messages (conversation_id, created_at ASC);
+      CREATE INDEX IF NOT EXISTS events_audience_handles_idx
+        ON events USING GIN (audience_handles);
+
+      DROP INDEX IF EXISTS messages_conversation_idx;
+      DROP INDEX IF EXISTS notifications_profile_idx;
+      DROP INDEX IF EXISTS notes_workspace_idx;
+      DROP INDEX IF EXISTS note_blocks_note_idx;
+      DROP INDEX IF EXISTS note_publications_post_idx;
+      DROP INDEX IF EXISTS ai_messages_conversation_idx;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'profile_follows_no_self_check') THEN
+          ALTER TABLE profile_follows
+            ADD CONSTRAINT profile_follows_no_self_check CHECK (follower_handle <> following_handle);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'profile_follows_status_check') THEN
+          ALTER TABLE profile_follows
+            ADD CONSTRAINT profile_follows_status_check CHECK (status IN ('active', 'muted', 'blocked'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'community_memberships_status_check') THEN
+          ALTER TABLE community_memberships
+            ADD CONSTRAINT community_memberships_status_check
+            CHECK (status IN ('active', 'requested', 'invited', 'rejected', 'blocked', 'removed'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'community_calls_kind_check') THEN
+          ALTER TABLE community_calls
+            ADD CONSTRAINT community_calls_kind_check CHECK (kind IN ('voice', 'video'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'community_calls_status_check') THEN
+          ALTER TABLE community_calls
+            ADD CONSTRAINT community_calls_status_check
+            CHECK (status IN ('scheduled', 'live', 'ended', 'cancelled'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversations_kind_check') THEN
+          ALTER TABLE conversations
+            ADD CONSTRAINT conversations_kind_check CHECK (kind IN ('direct', 'group'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workspaces_visibility_check') THEN
+          ALTER TABLE workspaces
+            ADD CONSTRAINT workspaces_visibility_check CHECK (visibility IN ('private', 'community', 'public'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'notes_visibility_check') THEN
+          ALTER TABLE notes
+            ADD CONSTRAINT notes_visibility_check CHECK (visibility IN ('private', 'community', 'public'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'note_publications_visibility_check') THEN
+          ALTER TABLE note_publications
+            ADD CONSTRAINT note_publications_visibility_check CHECK (visibility IN ('private', 'community', 'public'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'events_visibility_check') THEN
+          ALTER TABLE events
+            ADD CONSTRAINT events_visibility_check CHECK (visibility IN ('public', 'private', 'community'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_messages_role_check') THEN
+          ALTER TABLE ai_messages
+            ADD CONSTRAINT ai_messages_role_check CHECK (role IN ('user', 'assistant', 'system'));
+        END IF;
+      END
+      $$;
+    `
   }
 ];
+
+export const migrationIds = migrations.map((migration) => migration.id);
+export const latestMigrationId = migrationIds.at(-1) ?? null;
+
+export type MigrationStatus = {
+  appliedCount: number;
+  currentMigrationId: string | null;
+  latestMigrationId: string | null;
+  pendingMigrationIds: string[];
+};
+
+export const getMigrationStatus = async (): Promise<MigrationStatus> => {
+  if (!hasDatabase()) {
+    return {
+      appliedCount: 0,
+      currentMigrationId: null,
+      latestMigrationId,
+      pendingMigrationIds: migrationIds
+    };
+  }
+
+  const result = await getPool().query<{ id: string }>(
+    `SELECT id FROM symposium_migrations WHERE id = ANY($1::text[]) ORDER BY applied_at ASC`,
+    [migrationIds]
+  );
+  const applied = new Set(result.rows.map((row) => row.id));
+  const appliedIds = migrationIds.filter((id) => applied.has(id));
+  return {
+    appliedCount: appliedIds.length,
+    currentMigrationId: appliedIds.at(-1) ?? null,
+    latestMigrationId,
+    pendingMigrationIds: migrationIds.filter((id) => !applied.has(id))
+  };
+};
 
 let migrationReady: Promise<void> | null = null;
 

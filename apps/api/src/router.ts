@@ -32,11 +32,14 @@ import {
   followProfile,
   getCommunity,
   getInitialState,
+  getPublicCommunity,
+  getPublicInitialState,
   getWorkspace,
   joinCommunityCall,
   joinOrRequestCommunity,
   listCommunityCalls,
   listCommunities,
+  listPublicCommunities,
   listConversations,
   listFollowing,
   listNotifications,
@@ -58,7 +61,7 @@ export const appRouter = router({
     syncUser: authedProcedure.mutation(({ ctx, input }) => syncUser(input, ctx.actor))
   }),
   bootstrap: router({
-    getInitialState: publicProcedure.query(() => getInitialState())
+    getInitialState: publicProcedure.query(({ ctx }) => getPublicInitialState(ctx.actor.handle))
   }),
   profiles: router({
     getMe: authedProcedure.query(async ({ ctx }) => {
@@ -73,13 +76,13 @@ export const appRouter = router({
   posts: router({
     getFeed: publicProcedure
       .input(z.object({ room: z.string().optional(), limit: z.number().int().positive().max(100).default(50) }).optional())
-      .query(async ({ input }) => {
-        const snapshot = await getInitialState();
+      .query(async ({ ctx, input }) => {
+        const snapshot = await getPublicInitialState(ctx.actor.handle);
         const items = input?.room ? snapshot.items.filter((item) => item.room === input.room) : snapshot.items;
         return items.slice(0, input?.limit ?? 50);
       }),
-    getDetail: publicProcedure.input(z.object({ id: z.string() })).query(async ({ input }) => {
-      const snapshot = await getInitialState();
+    getDetail: publicProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
+      const snapshot = await getPublicInitialState(ctx.actor.handle);
       return snapshot.items.find((item) => item.id === input.id) ?? null;
     }),
     create: authedProcedure.input(createPostInputSchema).mutation(({ ctx, input }) =>
@@ -103,8 +106,8 @@ export const appRouter = router({
     )
   }),
   comments: router({
-    list: publicProcedure.input(z.object({ postId: z.string() })).query(async ({ input }) => {
-      const snapshot = await getInitialState();
+    list: publicProcedure.input(z.object({ postId: z.string() })).query(async ({ ctx, input }) => {
+      const snapshot = await getPublicInitialState(ctx.actor.handle);
       return snapshot.items.find((item) => item.id === input.postId)?.comments ?? [];
     }),
     create: authedProcedure.input(z.object({ postId: z.string() }).merge(createCommentInputSchema)).mutation(({ ctx, input }) =>
@@ -117,21 +120,37 @@ export const appRouter = router({
     )
   }),
   communities: router({
-    list: publicProcedure.query(() => listCommunities()),
-    get: publicProcedure.input(z.object({ communityId: z.string() })).query(({ input }) => getCommunity(input.communityId)),
+    list: publicProcedure.query(() => listPublicCommunities()),
+    get: publicProcedure.input(z.object({ communityId: z.string() })).query(({ input }) => getPublicCommunity(input.communityId)),
     joinOrRequest: authedProcedure.input(joinCommunityInputSchema).mutation(({ ctx, input }) => joinOrRequestCommunity(input, ctx.actor)),
-    listCalls: publicProcedure.input(z.object({ communityId: z.string() })).query(({ input }) => listCommunityCalls(input.communityId)),
-    createCall: authedProcedure.input(createCommunityCallInputSchema).mutation(({ ctx, input }) => createCommunityCall(input, ctx.actor)),
+    listCalls: publicProcedure.input(z.object({ communityId: z.string() })).query(({ ctx, input }) =>
+      listCommunityCalls(input.communityId, ctx.actor)
+    ),
+    createCall: authedProcedure.input(createCommunityCallInputSchema).mutation(({ ctx, input }) =>
+      createCommunityCall(
+        input,
+        ctx.actor,
+        mutationContextFromRequest(ctx.req, "community.call.create", input)
+      )
+    ),
     joinCall: authedProcedure.input(callIdInputSchema).mutation(({ ctx, input }) => joinCommunityCall(input, ctx.actor)),
     endCall: authedProcedure.input(callIdInputSchema).mutation(({ ctx, input }) => endCommunityCall(input, ctx.actor))
   }),
   attachments: router({
-    createUpload: authedProcedure.input(createAttachmentUploadInputSchema).mutation(({ ctx, input }) => createAttachmentUpload(input, ctx.actor)),
+    createUpload: authedProcedure.input(createAttachmentUploadInputSchema).mutation(({ ctx, input }) =>
+      createAttachmentUpload(
+        input,
+        ctx.actor,
+        mutationContextFromRequest(ctx.req, "attachment.prepare", input)
+      )
+    ),
     confirmUpload: authedProcedure.input(confirmAttachmentInputSchema).mutation(({ ctx, input }) => confirmAttachment(input, ctx.actor))
   }),
   opportunities: router({
     list: publicProcedure.input(createOpportunityInputSchema.partial().optional()).query(({ input }) => listOpportunities(input)),
-    create: authedProcedure.input(createOpportunityInputSchema).mutation(({ ctx, input }) => createOpportunity(input, ctx.actor))
+    create: authedProcedure.input(createOpportunityInputSchema).mutation(({ ctx, input }) =>
+      createOpportunity(input, ctx.actor, mutationContextFromRequest(ctx.req, "opportunity.create", input))
+    )
   }),
   search: router({
     query: publicProcedure.input(searchInputSchema).query(({ input }) => search(input))
@@ -142,15 +161,23 @@ export const appRouter = router({
   }),
   messages: router({
     listConversations: authedProcedure.query(({ ctx }) => listConversations(ctx.actor)),
-    send: authedProcedure.input(sendMessageInputSchema).mutation(({ ctx, input }) => sendMessage(input, ctx.actor))
+    send: authedProcedure.input(sendMessageInputSchema).mutation(({ ctx, input }) =>
+      sendMessage(input, ctx.actor, mutationContextFromRequest(ctx.req, "message.send", input))
+    )
   }),
   notes: router({
     getWorkspace: authedProcedure.query(({ ctx }) => getWorkspace(ctx.actor)),
-    saveBlock: authedProcedure.input(saveNoteBlockInputSchema).mutation(({ ctx, input }) => saveNoteBlock(input, ctx.actor)),
-    publish: authedProcedure.input(publishNoteInputSchema).mutation(({ ctx, input }) => publishNote(input, ctx.actor))
+    saveBlock: authedProcedure.input(saveNoteBlockInputSchema).mutation(({ ctx, input }) =>
+      saveNoteBlock(input, ctx.actor, mutationContextFromRequest(ctx.req, "note.block.save", input))
+    ),
+    publish: authedProcedure.input(publishNoteInputSchema).mutation(({ ctx, input }) =>
+      publishNote(input, ctx.actor, mutationContextFromRequest(ctx.req, "note.publish", input))
+    )
   }),
   assistant: router({
-    ask: authedProcedure.input(assistantMessageInputSchema).mutation(({ ctx, input }) => askAssistant(input, ctx.actor))
+    ask: authedProcedure.input(assistantMessageInputSchema).mutation(({ ctx, input }) =>
+      askAssistant(input, ctx.actor, mutationContextFromRequest(ctx.req, "assistant.message", input))
+    )
   })
 });
 

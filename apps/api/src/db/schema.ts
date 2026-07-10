@@ -84,7 +84,9 @@ export const profileFollows = pgTable(
   (table) => [
     primaryKey({ columns: [table.followerHandle, table.followingHandle] }),
     index("profile_follows_following_idx").on(table.followingHandle),
-    index("profile_follows_follower_idx").on(table.followerHandle)
+    index("profile_follows_follower_idx").on(table.followerHandle),
+    check("profile_follows_no_self_check", sql`${table.followerHandle} <> ${table.followingHandle}`),
+    check("profile_follows_status_check", sql`${table.status} IN ('active', 'muted', 'blocked')`)
   ]
 );
 
@@ -125,7 +127,11 @@ export const communityMemberships = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.communityId, table.profileHandle] }),
-    index("community_memberships_profile_idx").on(table.profileHandle)
+    index("community_memberships_profile_idx").on(table.profileHandle),
+    check(
+      "community_memberships_status_check",
+      sql`${table.status} IN ('active', 'requested', 'invited', 'rejected', 'blocked', 'removed')`
+    )
   ]
 );
 
@@ -169,7 +175,9 @@ export const communityCalls = pgTable(
   (table) => [
     index("community_calls_community_idx").on(table.communityId),
     index("community_calls_status_idx").on(table.status),
-    index("community_calls_host_idx").on(table.hostHandle)
+    index("community_calls_host_idx").on(table.hostHandle),
+    check("community_calls_kind_check", sql`${table.kind} IN ('voice', 'video')`),
+    check("community_calls_status_check", sql`${table.status} IN ('scheduled', 'live', 'ended', 'cancelled')`)
   ]
 );
 
@@ -437,13 +445,17 @@ export const externalLinks = pgTable(
   (table) => [index("external_links_owner_idx").on(table.ownerType, table.ownerId)]
 );
 
-export const conversations = pgTable("conversations", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  kind: text("kind").default("direct").notNull(),
-  title: text("title"),
-  createdAt: createdAtColumn(),
-  updatedAt: updatedAtColumn()
-});
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    kind: text("kind").default("direct").notNull(),
+    title: text("title"),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [check("conversations_kind_check", sql`${table.kind} IN ('direct', 'group')`)]
+);
 
 export const conversationParticipants = pgTable(
   "conversation_participants",
@@ -478,8 +490,8 @@ export const messages = pgTable(
     updatedAt: updatedAtColumn()
   },
   (table) => [
-    index("messages_conversation_idx").on(table.conversationId),
-    index("messages_sender_idx").on(table.senderHandle)
+    index("messages_sender_idx").on(table.senderHandle),
+    index("messages_conversation_created_idx").on(table.conversationId, table.createdAt)
   ]
 );
 
@@ -526,7 +538,10 @@ export const aiMessages = pgTable(
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default(jsonObject).notNull(),
     createdAt: createdAtColumn()
   },
-  (table) => [index("ai_messages_conversation_idx").on(table.conversationId)]
+  (table) => [
+    index("ai_messages_conversation_created_idx").on(table.conversationId, table.createdAt),
+    check("ai_messages_role_check", sql`${table.role} IN ('user', 'assistant', 'system')`)
+  ]
 );
 
 export const workspaces = pgTable(
@@ -541,7 +556,8 @@ export const workspaces = pgTable(
   },
   (table) => [
     uniqueIndex("workspaces_owner_name_idx").on(table.ownerHandle, table.name),
-    index("workspaces_owner_idx").on(table.ownerHandle)
+    index("workspaces_owner_idx").on(table.ownerHandle),
+    check("workspaces_visibility_check", sql`${table.visibility} IN ('private', 'community', 'public')`)
   ]
 );
 
@@ -557,7 +573,10 @@ export const notes = pgTable(
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
-  (table) => [index("notes_workspace_idx").on(table.workspaceId)]
+  (table) => [
+    index("notes_workspace_updated_idx").on(table.workspaceId, table.updatedAt),
+    check("notes_visibility_check", sql`${table.visibility} IN ('private', 'community', 'public')`)
+  ]
 );
 
 export const noteBlocks = pgTable(
@@ -574,7 +593,9 @@ export const noteBlocks = pgTable(
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
-  (table) => [index("note_blocks_note_idx").on(table.noteId)]
+  (table) => [
+    index("note_blocks_note_updated_idx").on(table.noteId, table.updatedAt)
+  ]
 );
 
 export const notePublications = pgTable(
@@ -591,8 +612,9 @@ export const notePublications = pgTable(
   },
   (table) => [
     index("note_publications_note_idx").on(table.noteId),
-    index("note_publications_post_idx").on(table.postId),
-    index("note_publications_publisher_idx").on(table.publisherHandle)
+    uniqueIndex("note_publications_post_unique_idx").on(table.postId).where(sql`${table.postId} IS NOT NULL`),
+    index("note_publications_publisher_idx").on(table.publisherHandle),
+    check("note_publications_visibility_check", sql`${table.visibility} IN ('private', 'community', 'public')`)
   ]
 );
 
@@ -610,8 +632,8 @@ export const notifications = pgTable(
     createdAt: createdAtColumn()
   },
   (table) => [
-    index("notifications_profile_idx").on(table.profileHandle),
-    index("notifications_read_idx").on(table.readAt)
+    index("notifications_read_idx").on(table.readAt),
+    index("notifications_profile_created_idx").on(table.profileHandle, table.createdAt)
   ]
 );
 
@@ -621,6 +643,7 @@ export const events = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     kind: text("kind").notNull(),
     actorHandle: text("actor_handle"),
+    audienceHandles: jsonb("audience_handles").$type<string[]>().default(jsonArray).notNull(),
     subjectType: text("subject_type").notNull(),
     subjectId: text("subject_id").notNull(),
     visibility: text("visibility").default("public").notNull(),
@@ -632,7 +655,9 @@ export const events = pgTable(
     index("events_subject_idx").on(table.subjectType, table.subjectId),
     index("events_actor_idx").on(table.actorHandle),
     index("events_created_idx").on(table.createdAt),
-    index("events_delivery_idx").on(table.visibility, table.createdAt, table.id)
+    index("events_delivery_idx").on(table.visibility, table.createdAt, table.id),
+    index("events_audience_handles_idx").using("gin", table.audienceHandles),
+    check("events_visibility_check", sql`${table.visibility} IN ('public', 'private', 'community')`)
   ]
 );
 

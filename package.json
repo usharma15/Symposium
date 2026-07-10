@@ -14,6 +14,7 @@
     "api:typecheck": "tsc --noEmit -p tsconfig.api.json",
     "build": "next build",
     "core:check": "tsx scripts/symposiumCoreCheck.ts",
+    "infrastructure:check": "tsx scripts/infrastructureBoundaryCheck.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx apps/api/src/db/migrate.ts",
     "db:push": "drizzle-kit push",
@@ -26,7 +27,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "typecheck:all": "npm run typecheck && npm run api:typecheck",
     "deploy:api:check": "npm run api:preflight && npm run api:typecheck",
-    "verify": "npm run security:check && npm run core:check && npm run action:check && npm run attachment:check && npm run mutation:check && npm run profile:check && npm run typecheck:all && npm run build"
+    "verify": "npm run security:check && npm run infrastructure:check && npm run core:check && npm run action:check && npm run attachment:check && npm run mutation:check && npm run profile:check && npm run typecheck:all && npm run build"
   },
   "overrides": {
     "postcss": "8.5.15"

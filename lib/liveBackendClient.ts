@@ -40,7 +40,10 @@ export const proxyLiveBackend = async (path: string, options: LiveBackendOptions
     return new Response(text, {
       status: response.status,
       headers: {
-        "Content-Type": response.headers.get("content-type") ?? "application/json"
+        "Content-Type": response.headers.get("content-type") ?? "application/json",
+        ...(response.headers.get("x-request-id")
+          ? { "X-Request-Id": response.headers.get("x-request-id") as string }
+          : {})
       }
     });
   } catch (error) {
@@ -74,7 +77,10 @@ export const proxyLiveBackendStream = async (path: string) => {
         "Content-Type": response.headers.get("content-type") ?? "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
-        "X-Accel-Buffering": "no"
+        "X-Accel-Buffering": "no",
+        ...(response.headers.get("x-request-id")
+          ? { "X-Request-Id": response.headers.get("x-request-id") as string }
+          : {})
       }
     });
   } catch (error) {

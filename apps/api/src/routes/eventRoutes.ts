@@ -1,7 +1,10 @@
 import type { FastifyInstance } from "fastify";
+import type { OutgoingHttpHeaders } from "node:http";
 import { sendError } from "../http/errors";
-import { eventIsAfterCursor, listEventsSince, type StoredLiveEvent } from "../services/events";
+import { eventIsAfterCursor, listEventsSince, parseEventCursor, type StoredLiveEvent } from "../services/events";
 import { subscribeLocalLiveEvents } from "../services/liveBus";
+import { getActorFromRequest } from "../services/auth";
+import { cleanHandle } from "@/lib/symposiumCore";
 
 type EventQuery = {
   cursor?: string;
@@ -13,10 +16,34 @@ const limitFromQuery = (value?: string) => {
   return Number.isFinite(parsed) ? parsed : 50;
 };
 
+const activeStreamsByClient = new Map<string, number>();
+let activeStreamCount = 0;
+const maxStreamsPerClient = 5;
+const maxStreamsPerProcess = 500;
+
+const acquireStream = (clientKey: string) => {
+  const clientCount = activeStreamsByClient.get(clientKey) ?? 0;
+  if (clientCount >= maxStreamsPerClient || activeStreamCount >= maxStreamsPerProcess) return false;
+  activeStreamsByClient.set(clientKey, clientCount + 1);
+  activeStreamCount += 1;
+  return true;
+};
+
+const releaseStream = (clientKey: string) => {
+  const clientCount = activeStreamsByClient.get(clientKey) ?? 0;
+  if (clientCount <= 1) activeStreamsByClient.delete(clientKey);
+  else activeStreamsByClient.set(clientKey, clientCount - 1);
+  activeStreamCount = Math.max(0, activeStreamCount - 1);
+};
+
 export const registerEventRoutes = (app: FastifyInstance) => {
   app.get<{ Querystring: EventQuery }>("/v1/events", async (request, reply) => {
     try {
-      const events = await listEventsSince(request.query.cursor, limitFromQuery(request.query.limit));
+      if (request.query.cursor && !parseEventCursor(request.query.cursor)) {
+        return reply.status(400).send({ error: "Invalid event cursor.", requestId: request.id });
+      }
+      const actor = await getActorFromRequest(request);
+      const events = await listEventsSince(request.query.cursor, limitFromQuery(request.query.limit), actor.handle);
       const cursor = events.at(-1)?.cursor ?? request.query.cursor ?? null;
       return reply.send({ events, cursor });
     } catch (error) {
@@ -25,18 +52,37 @@ export const registerEventRoutes = (app: FastifyInstance) => {
   });
 
   app.get<{ Querystring: EventQuery }>("/v1/events/stream", async (request, reply) => {
+    const lastEventId = request.headers["last-event-id"];
+    let cursor = request.query.cursor ?? (Array.isArray(lastEventId) ? lastEventId[0] : lastEventId) ?? null;
+    if (cursor && !parseEventCursor(cursor)) {
+      return reply.status(400).send({ error: "Invalid event cursor.", requestId: request.id });
+    }
+    const actor = await getActorFromRequest(request);
+    const actorHandle = actor.handle ? cleanHandle(actor.handle) : null;
+    const clientKey = request.ip;
+    if (!acquireStream(clientKey)) {
+      return reply.status(429).send({ error: "Too many live event streams.", requestId: request.id });
+    }
+
     reply.hijack();
 
     const stream = reply.raw;
-    const lastEventId = request.headers["last-event-id"];
-    let cursor = request.query.cursor ?? (Array.isArray(lastEventId) ? lastEventId[0] : lastEventId) ?? null;
     let closed = false;
+    let flushing = false;
 
     const send = (eventName: string, data: unknown, id?: string) => {
       if (closed || stream.destroyed) return;
-      if (id) stream.write(`id: ${id}\n`);
-      stream.write(`event: ${eventName}\n`);
-      stream.write(`data: ${JSON.stringify(data)}\n\n`);
+      if (stream.writableLength > 1024 * 1024) {
+        stream.destroy();
+        return;
+      }
+      try {
+        if (id) stream.write(`id: ${id}\n`);
+        stream.write(`event: ${eventName}\n`);
+        stream.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        stream.destroy();
+      }
     };
 
     const sendLiveEvent = (event: StoredLiveEvent) => {
@@ -46,20 +92,39 @@ export const registerEventRoutes = (app: FastifyInstance) => {
     };
 
     const flushMissedEvents = async () => {
-      const events = await listEventsSince(cursor, limitFromQuery(request.query.limit));
-      for (const event of events) sendLiveEvent(event);
+      if (flushing || closed) return;
+      flushing = true;
+      try {
+        const events = await listEventsSince(cursor, limitFromQuery(request.query.limit), actorHandle);
+        for (const event of events) sendLiveEvent(event);
+      } finally {
+        flushing = false;
+      }
     };
 
     stream.writeHead(200, {
+      ...(reply.getHeaders() as OutgoingHttpHeaders),
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      "X-Request-Id": request.id,
+      "X-Content-Type-Options": "nosniff",
       "X-Accel-Buffering": "no"
     });
     stream.write("retry: 2000\n\n");
 
     const unsubscribe = subscribeLocalLiveEvents((event) => {
-      if ((event.visibility ?? "public") !== "public") return;
+      const visibility = event.visibility ?? "public";
+      if (
+        visibility !== "public" &&
+        !(
+          (visibility === "private" || visibility === "community") &&
+          actorHandle &&
+          (event.audienceHandles ?? []).some((handle) => cleanHandle(handle) === actorHandle)
+        )
+      ) {
+        return;
+      }
       sendLiveEvent(event);
     });
     const poll = setInterval(() => {
@@ -72,10 +137,12 @@ export const registerEventRoutes = (app: FastifyInstance) => {
     }, 15000);
 
     const cleanup = () => {
+      if (closed) return;
       closed = true;
       unsubscribe();
       clearInterval(poll);
       clearInterval(heartbeat);
+      releaseStream(clientKey);
     };
 
     request.raw.on("close", cleanup);

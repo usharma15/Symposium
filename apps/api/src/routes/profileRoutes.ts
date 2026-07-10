@@ -3,7 +3,7 @@ import { withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
 import {
   followProfile,
-  getInitialState,
+  getPublicInitialState,
   listFollowing,
   listProfileActivity,
   listProfileFollows,
@@ -32,7 +32,7 @@ export const registerProfileRoutes = (app: FastifyInstance) => {
 
   app.get("/v1/profiles", async (_request, reply) => {
     try {
-      const state = await getInitialState();
+      const state = await getPublicInitialState();
       return reply.send({ profiles: state.profiles });
     } catch (error) {
       return sendError(app, reply, error);

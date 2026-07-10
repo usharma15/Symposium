@@ -36,6 +36,9 @@ const envSchema = z.object({
   R2_ACCESS_KEY_ID: z.string().optional(),
   R2_SECRET_ACCESS_KEY: z.string().optional(),
   R2_PUBLIC_BASE_URL: z.string().url().optional().or(z.literal("")),
+  APP_VERSION: z.string().max(120).optional(),
+  RENDER_GIT_COMMIT: z.string().max(120).optional(),
+  VERCEL_GIT_COMMIT_SHA: z.string().max(120).optional(),
   OPENAI_API_KEY: z.string().optional(),
   SYMPOSIUM_AI_MODEL: z.string().default("gpt-5.4-mini")
 });

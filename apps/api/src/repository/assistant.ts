@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { TRPCError } from "@trpc/server";
 import {
   assistantMessageInputSchema,
   type AssistantResponseContract
 } from "../../../../packages/contracts/src";
 import { env } from "../config/env";
-import { getPool, hasDatabase } from "../db/client";
+import { hasDatabase } from "../db/client";
+import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import type { Actor } from "../services/auth";
+import { stageEvent } from "../services/events";
+import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
+import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
 const aiFallbackBody = (message: string) =>
@@ -17,7 +22,11 @@ const aiFallbackBody = (message: string) =>
     "Next live step: set an AI provider key and model policy, then this endpoint can return real assistant responses with explicit room/post/community/note context."
   ].join("\n");
 
-export const askAssistant = async (rawInput: unknown, actor: Actor): Promise<AssistantResponseContract> => {
+export const askAssistant = async (
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+): Promise<AssistantResponseContract> => {
   const input = assistantMessageInputSchema.parse(rawInput);
   const owner = await ensureProfileHandle(actorHandle(actor));
   const providerConfigured = Boolean(env.OPENAI_API_KEY);
@@ -41,10 +50,9 @@ export const askAssistant = async (rawInput: unknown, actor: Actor): Promise<Ass
   }
 
   await ensureLiveData();
-  const client = await getPool().connect();
-
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<AssistantResponseContract>(client, owner, mutation);
+    if (claim.replayed) return { value: claim.response };
     let conversationId = input.conversationId;
 
     if (!conversationId) {
@@ -60,6 +68,17 @@ export const askAssistant = async (rawInput: unknown, actor: Actor): Promise<Ass
         ]
       );
       conversationId = conversation.rows[0]!.id;
+    } else {
+      const ownedConversation = await client.query(
+        "SELECT id FROM ai_conversations WHERE id = $1 AND owner_handle = $2 FOR SHARE",
+        [conversationId, owner]
+      );
+      if (!ownedConversation.rowCount) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "AI conversation not found."
+        });
+      }
     }
 
     await client.query(
@@ -81,9 +100,7 @@ export const askAssistant = async (rawInput: unknown, actor: Actor): Promise<Ass
       conversationId,
       owner
     ]);
-    await client.query("COMMIT");
-
-    return {
+    const response: AssistantResponseContract = {
       conversationId,
       providerConfigured,
       status: providerConfigured ? "answered" : "provider_not_configured",
@@ -95,10 +112,26 @@ export const askAssistant = async (rawInput: unknown, actor: Actor): Promise<Ass
           : undefined
       }
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    await stageAuditLog(client, {
+      actorHandle: owner,
+      action: "assistant.message",
+      subjectType: "ai_conversation",
+      subjectId: conversationId,
+      metadata: mutationAuditMetadata(mutation, {
+        contextId: input.contextId,
+        contextType: input.contextType,
+        providerConfigured
+      })
+    });
+    await completeMutation(client, owner, mutation, response);
+    const event = await stageEvent(client, {
+      kind: "assistant.message.created",
+      actorHandle: owner,
+      subjectType: "ai_conversation",
+      subjectId: conversationId,
+      visibility: "private",
+      payload: { messageId: response.message.id, status: response.status }
+    });
+    return { value: response, events: [event] };
+  });
 };

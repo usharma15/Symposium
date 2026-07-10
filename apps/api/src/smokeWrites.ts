@@ -92,12 +92,18 @@ const requireCanonicalActivity = (label: string, value: unknown): CanonicalActiv
 const main = async () => {
   const bootstrap = await requestJson<{
     items?: Array<{ id?: string }>;
-    communities?: Array<{ id?: string }>;
+    communities?: Array<{ id?: string; visibility?: string }>;
+    profiles?: Record<string, unknown>;
   }>("GET", "/v1/bootstrap");
   assertOk("/v1/bootstrap", bootstrap);
 
   const seededPostId = requireId("Seeded post", bootstrap.body.items?.[0]?.id);
-  const communityId = requireId("Seeded community", bootstrap.body.communities?.[0]?.id);
+  const communityId = requireId(
+    "Seeded community",
+    bootstrap.body.communities?.find((community) => community.visibility === "public")?.id ??
+      bootstrap.body.communities?.[0]?.id
+  );
+  const alternateHandle = Object.keys(bootstrap.body.profiles ?? {}).find((handle) => handle !== smokeHandle);
   const stamp = new Date().toISOString();
 
   const createPostPayload = {
@@ -254,21 +260,48 @@ const main = async () => {
     throw new Error(`Comment idempotency replay diverged: ${JSON.stringify(replayedComment.body)}`);
   }
 
-  const call = await requestJson<{ call?: { id?: string } }>("POST", `/v1/communities/${communityId}/calls`, {
+  const callPayload = {
     title: `Smoke call ${stamp}`,
     kind: "voice",
     startsAt: stamp
-  });
+  };
+  const callKey = `smoke-call-${Date.now().toString(36)}`;
+  const call = await requestJson<{ call?: { id?: string } }>(
+    "POST",
+    `/v1/communities/${communityId}/calls`,
+    callPayload,
+    { "idempotency-key": callKey }
+  );
   assertOk("POST /v1/communities/:id/calls", call);
   const callId = requireId("Created call", call.body.call?.id);
+  const replayedCall = await requestJson<{ call?: { id?: string } }>(
+    "POST",
+    `/v1/communities/${communityId}/calls`,
+    callPayload,
+    { "idempotency-key": callKey }
+  );
+  assertOk("Replay community call", replayedCall);
+  if (replayedCall.body.call?.id !== callId) throw new Error("Community call replay diverged.");
 
   const joinedCall = await requestJson("POST", `/v1/calls/${callId}/join`);
   assertOk("POST /v1/calls/:id/join", joinedCall);
 
+  if (!smokeToken && alternateHandle) {
+    const unauthorizedEnd = await requestJson<{ error?: string }>(
+      "POST",
+      `/v1/calls/${callId}/end`,
+      {},
+      { "x-symposium-handle": alternateHandle, "x-symposium-name": "Boundary actor" }
+    );
+    if (unauthorizedEnd.status !== 403) {
+      throw new Error(`Non-host call end returned ${unauthorizedEnd.status}.`);
+    }
+  }
+
   const endedCall = await requestJson("POST", `/v1/calls/${callId}/end`);
   assertOk("POST /v1/calls/:id/end", endedCall);
 
-  const opportunity = await requestJson<{ opportunity?: { id?: string } }>("POST", "/v1/opportunities", {
+  const opportunityPayload = {
     title: `Smoke opportunity ${stamp}`,
     body: "Verifies opportunity creation through the REST API.",
     kind: "collaboration",
@@ -277,27 +310,154 @@ const main = async () => {
     location: "Remote",
     compensation: "Verification",
     tags: ["smoke"]
-  });
+  };
+  const opportunityKey = `smoke-opportunity-${Date.now().toString(36)}`;
+  const opportunity = await requestJson<{ opportunity?: { id?: string } }>(
+    "POST",
+    "/v1/opportunities",
+    opportunityPayload,
+    { "idempotency-key": opportunityKey }
+  );
   assertOk("POST /v1/opportunities", opportunity);
+  const opportunityId = requireId("Created opportunity", opportunity.body.opportunity?.id);
+  const replayedOpportunity = await requestJson<{ opportunity?: { id?: string } }>(
+    "POST",
+    "/v1/opportunities",
+    opportunityPayload,
+    { "idempotency-key": opportunityKey }
+  );
+  assertOk("Replay opportunity", replayedOpportunity);
+  if (replayedOpportunity.body.opportunity?.id !== opportunityId) throw new Error("Opportunity replay diverged.");
 
-  const block = await requestJson<{ block?: { id?: string } }>("POST", "/v1/notes/blocks", {
+  let messageId: string | undefined;
+  if (alternateHandle) {
+    const messagePayload = {
+      recipientHandle: alternateHandle,
+      body: `Smoke direct message ${stamp}`
+    };
+    const messageKey = `smoke-message-${Date.now().toString(36)}`;
+    const message = await requestJson<{
+      message?: { conversationId?: string; id?: string };
+    }>("POST", "/v1/messages", messagePayload, { "idempotency-key": messageKey });
+    assertOk("POST /v1/messages", message);
+    messageId = requireId("Created message", message.body.message?.id);
+    const conversationId = requireId("Created conversation", message.body.message?.conversationId);
+    const replayedMessage = await requestJson<{ message?: { id?: string } }>(
+      "POST",
+      "/v1/messages",
+      messagePayload,
+      { "idempotency-key": messageKey }
+    );
+    assertOk("Replay direct message", replayedMessage);
+    if (replayedMessage.body.message?.id !== messageId) throw new Error("Message replay diverged.");
+
+    if (!smokeToken) {
+      const outsiderHandle = Object.keys(bootstrap.body.profiles ?? {}).find(
+        (handle) => handle !== smokeHandle && handle !== alternateHandle
+      );
+      if (outsiderHandle) {
+        const foreignMessage = await requestJson<{ error?: string }>(
+          "POST",
+          "/v1/messages",
+          { conversationId, body: "Cross-conversation write attempt" },
+          { "x-symposium-handle": outsiderHandle, "x-symposium-name": "Boundary actor" }
+        );
+        if (foreignMessage.status !== 404) {
+          throw new Error(`Foreign conversation write returned ${foreignMessage.status}.`);
+        }
+      }
+    }
+  }
+
+  const blockPayload = {
     body: `Smoke note block ${stamp}`,
     visibility: "private"
-  });
+  };
+  const blockKey = `smoke-block-${Date.now().toString(36)}`;
+  const block = await requestJson<{ block?: { id?: string } }>(
+    "POST",
+    "/v1/notes/blocks",
+    blockPayload,
+    { "idempotency-key": blockKey }
+  );
   assertOk("POST /v1/notes/blocks", block);
+  const blockId = requireId("Created note block", block.body.block?.id);
+  const replayedBlock = await requestJson<{ block?: { id?: string } }>(
+    "POST",
+    "/v1/notes/blocks",
+    blockPayload,
+    { "idempotency-key": blockKey }
+  );
+  assertOk("Replay note block", replayedBlock);
+  if (replayedBlock.body.block?.id !== blockId) throw new Error("Note block replay diverged.");
 
-  const publication = await requestJson<{ item?: { id?: string } }>("POST", "/v1/notes/publish", {
+  if (!smokeToken && alternateHandle) {
+    const foreignBlock = await requestJson<{ error?: string }>(
+      "POST",
+      "/v1/notes/blocks",
+      { blockId, body: "Cross-owner write attempt", visibility: "private" },
+      { "x-symposium-handle": alternateHandle, "x-symposium-name": "Boundary actor" }
+    );
+    if (foreignBlock.status !== 404) throw new Error(`Foreign note block write returned ${foreignBlock.status}.`);
+  }
+
+  const publicationPayload = {
     title: `Smoke paper ${stamp}`,
     body: "Verifies note publishing can still create a paper-shaped post.",
     visibility: "public"
-  });
+  };
+  const publicationKey = `smoke-publication-${Date.now().toString(36)}`;
+  const publication = await requestJson<{ item?: { id?: string } }>(
+    "POST",
+    "/v1/notes/publish",
+    publicationPayload,
+    { "idempotency-key": publicationKey }
+  );
   assertOk("POST /v1/notes/publish", publication);
+  const publicationPostId = requireId("Published note post", publication.body.item?.id);
+  const replayedPublication = await requestJson<{ item?: { id?: string } }>(
+    "POST",
+    "/v1/notes/publish",
+    publicationPayload,
+    { "idempotency-key": publicationKey }
+  );
+  assertOk("Replay note publication", replayedPublication);
+  if (replayedPublication.body.item?.id !== publicationPostId) throw new Error("Note publication replay diverged.");
 
-  const assistant = await requestJson<{ conversationId?: string; status?: string }>("POST", "/v1/assistant/messages", {
+  const assistantPayload = {
     message: "Verify the assistant route after REST route module extraction.",
     contextType: "general"
-  });
+  };
+  const assistantKey = `smoke-assistant-${Date.now().toString(36)}`;
+  const assistant = await requestJson<{ conversationId?: string; message?: { id?: string }; status?: string }>(
+    "POST",
+    "/v1/assistant/messages",
+    assistantPayload,
+    { "idempotency-key": assistantKey }
+  );
   assertOk("POST /v1/assistant/messages", assistant);
+  const assistantConversationId = requireId("Assistant conversation", assistant.body.conversationId);
+  const assistantMessageId = requireId("Assistant message", assistant.body.message?.id);
+  const replayedAssistant = await requestJson<{ conversationId?: string; message?: { id?: string } }>(
+    "POST",
+    "/v1/assistant/messages",
+    assistantPayload,
+    { "idempotency-key": assistantKey }
+  );
+  assertOk("Replay assistant message", replayedAssistant);
+  if (replayedAssistant.body.message?.id !== assistantMessageId) throw new Error("Assistant replay diverged.");
+
+  if (!smokeToken && alternateHandle) {
+    const foreignAssistant = await requestJson<{ error?: string }>(
+      "POST",
+      "/v1/assistant/messages",
+      { conversationId: assistantConversationId, message: "Cross-owner write attempt", contextType: "general" },
+      { "x-symposium-handle": alternateHandle, "x-symposium-name": "Boundary actor" }
+    );
+    if (foreignAssistant.status !== 404) {
+      throw new Error(`Foreign assistant conversation write returned ${foreignAssistant.status}.`);
+    }
+  }
 
   console.log(
     JSON.stringify(
@@ -308,9 +468,10 @@ const main = async () => {
         seededPostId,
         createdPostId,
         callId,
-        opportunityId: opportunity.body.opportunity?.id,
-        noteBlockId: block.body.block?.id,
-        publicationPostId: publication.body.item?.id,
+        opportunityId,
+        messageId,
+        noteBlockId: blockId,
+        publicationPostId,
         assistantStatus: assistant.body.status
       },
       null,

@@ -2636,22 +2636,70 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const routePostRoom = (kind: PostDraft["kind"]): Exclude<RoomId, "hall" | "office"> =>
     kind === "paper" ? "library" : "amphitheater";
 
+  const prepareAttachmentUploadRequest = async (payload: Record<string, unknown>) => {
+    const idempotencyKey = clientMutationId("attachment-prepare");
+    let lastResponse: Response | undefined;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch("/api/attachments/upload", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKey
+          },
+          body: JSON.stringify(payload)
+        });
+        lastResponse = response;
+        if (response.ok || response.status < 500) return response;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastResponse) return lastResponse;
+    throw lastError instanceof Error ? lastError : new Error("Could not reach attachment storage.");
+  };
+
+  const confirmAttachmentUploadRequest = async (payload: Record<string, unknown>) => {
+    let lastResponse: Response | undefined;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        const response = await fetch("/api/attachments/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        lastResponse = response;
+        if (response.status === 409 && attempt < 5) {
+          const detail = (await response.clone().json().catch(() => null)) as { error?: string } | null;
+          if (detail?.error?.includes("already being verified")) {
+            await new Promise((resolve) => window.setTimeout(resolve, 300 * (attempt + 1)));
+            continue;
+          }
+        }
+        if (response.ok || response.status < 500) return response;
+      } catch (error) {
+        lastError = error;
+      }
+      if (attempt < 5) await new Promise((resolve) => window.setTimeout(resolve, 200 * (attempt + 1)));
+    }
+    if (lastResponse) return lastResponse;
+    throw lastError instanceof Error ? lastError : new Error("Could not confirm the attachment.");
+  };
+
   const uploadPostAttachment = async (file: File): Promise<InquiryAttachment> => {
     const contentType = inferAttachmentContentType(file.name, file.type);
     const validationError = validatePostAttachmentDetails(file.name, contentType, file.size);
     if (validationError) throw new Error(validationError);
 
     const metadata = await buildPostAttachmentMetadata(file, contentType);
-    const uploadResponse = await fetch("/api/attachments/upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const uploadResponse = await prepareAttachmentUploadRequest({
         actorHandle: currentProfile.handle,
         fileName: file.name,
         contentType,
         byteSize: file.size,
         ownerType: "post"
-      })
     });
 
     if (!uploadResponse.ok) {
@@ -2673,15 +2721,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       throw new Error("Could not upload this attachment.");
     }
 
-    const confirmResponse = await fetch("/api/attachments/confirm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const confirmResponse = await confirmAttachmentUploadRequest({
         actorHandle: currentProfile.handle,
         attachmentId: upload.attachmentId,
         byteSize: file.size,
         metadata
-      })
     });
     if (!confirmResponse.ok) {
       const error = (await confirmResponse.json().catch(() => null)) as { error?: string } | null;
@@ -2918,17 +2962,13 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     }
 
     setSyncStatus("Preparing profile photo");
-    const uploadResponse = await fetch("/api/attachments/upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const uploadResponse = await prepareAttachmentUploadRequest({
         actorHandle: currentProfile.handle,
         fileName: file.name,
         contentType: file.type,
         byteSize: file.size,
         ownerType: "profile",
         ownerId: currentProfile.handle
-      })
     });
 
     if (!uploadResponse.ok) {
@@ -2961,14 +3001,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       throw new Error("Could not upload the profile photo.");
     }
 
-    const confirmResponse = await fetch("/api/attachments/confirm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const confirmResponse = await confirmAttachmentUploadRequest({
         actorHandle: currentProfile.handle,
         attachmentId: upload.attachmentId,
         byteSize: file.size
-      })
     });
 
     if (!confirmResponse.ok) {

@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { bootstrapResponseSchema } from "../../../../packages/contracts/src";
 import { getRuntimeReadiness } from "../config/readiness";
 import { sendError } from "../http/errors";
-import { getInitialState } from "../repository/liveRepository";
+import { getPublicInitialState } from "../repository/liveRepository";
+import { getActorFromRequest } from "../services/auth";
 
 export const registerSystemRoutes = (app: FastifyInstance) => {
   app.get("/healthz", async () => ({
@@ -20,9 +21,10 @@ export const registerSystemRoutes = (app: FastifyInstance) => {
     }
   });
 
-  app.get("/v1/bootstrap", async (_request, reply) => {
+  app.get("/v1/bootstrap", async (request, reply) => {
     try {
-      const state = await getInitialState();
+      const actor = await getActorFromRequest(request);
+      const state = await getPublicInitialState(actor.handle);
       return reply.send(bootstrapResponseSchema.parse(state));
     } catch (error) {
       return sendError(app, reply, error);

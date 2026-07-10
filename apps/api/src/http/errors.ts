@@ -2,13 +2,14 @@ import { TRPCError } from "@trpc/server";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 
-const logRouteError = (app: FastifyInstance, error: unknown, status: number) => {
+const logRouteError = (app: FastifyInstance, reply: FastifyReply, error: unknown, status: number) => {
+  const context = { requestId: reply.request.id, status };
   if (status >= 500) {
-    app.log.error(error);
+    app.log.error({ ...context, err: error }, "Request failed");
     return;
   }
 
-  app.log.warn(error);
+  app.log.warn({ ...context, err: error }, "Request rejected");
 };
 
 export const sendError = (app: FastifyInstance, reply: FastifyReply, error: unknown) => {
@@ -24,17 +25,28 @@ export const sendError = (app: FastifyInstance, reply: FastifyReply, error: unkn
     };
 
     const status = statusByCode[error.code] ?? 500;
-    logRouteError(app, error, status);
-    return reply.status(status).send({ error: error.message });
+    logRouteError(app, reply, error, status);
+    return reply.status(status).send({ error: error.message, requestId: reply.request.id });
   }
 
   if (error instanceof ZodError) {
-    app.log.warn({ issues: error.issues }, "Invalid request payload");
-    return reply.status(400).send({ error: "Invalid request payload.", issues: error.issues });
+    app.log.warn({ issues: error.issues, requestId: reply.request.id }, "Invalid request payload");
+    return reply.status(400).send({ error: "Invalid request payload.", issues: error.issues, requestId: reply.request.id });
   }
 
-  const message = error instanceof Error ? error.message : "Unknown backend error.";
-  const status = message.includes("required") ? 400 : 500;
-  logRouteError(app, error, status);
-  return reply.status(status).send({ error: message });
+  if (
+    error &&
+    typeof error === "object" &&
+    "statusCode" in error &&
+    Number((error as { statusCode?: unknown }).statusCode) === 413
+  ) {
+    logRouteError(app, reply, error, 413);
+    return reply.status(413).send({ error: "Request body is too large.", requestId: reply.request.id });
+  }
+
+  logRouteError(app, reply, error, 500);
+  return reply.status(500).send({
+    error: "The live service could not complete this request.",
+    requestId: reply.request.id
+  });
 };

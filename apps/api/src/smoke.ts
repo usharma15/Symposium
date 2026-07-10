@@ -22,10 +22,18 @@ const main = async () => {
     strict?: boolean;
     checks?: unknown[];
     issues?: unknown[];
+    migrations?: { currentMigrationId?: string | null; latestMigrationId?: string | null; pendingMigrationIds?: string[] };
   }>("/readyz");
 
   if (readiness.status !== 200 || !readiness.body.ok || !Array.isArray(readiness.body.checks)) {
     throw new Error(`/readyz failed with ${readiness.status}: ${JSON.stringify(readiness.body)}`);
+  }
+  if (
+    readiness.body.strict &&
+    (readiness.body.migrations?.currentMigrationId !== readiness.body.migrations?.latestMigrationId ||
+      readiness.body.migrations?.pendingMigrationIds?.length)
+  ) {
+    throw new Error(`/readyz reported pending migrations: ${JSON.stringify(readiness.body.migrations)}`);
   }
 
   const bootstrap = await readJson<{
@@ -52,12 +60,14 @@ const main = async () => {
     );
   }
 
-  const communities = await readJson<{ communities?: Array<{ id?: string }> }>("/v1/communities");
+  const communities = await readJson<{ communities?: Array<{ id?: string; visibility?: string }> }>("/v1/communities");
   if (communities.status !== 200 || !communities.body.communities?.length) {
     throw new Error(`/v1/communities failed with ${communities.status}: ${JSON.stringify(communities.body)}`);
   }
 
-  const firstCommunityId = communities.body.communities[0]?.id;
+  const firstCommunityId =
+    communities.body.communities.find((community) => community.visibility === "public")?.id ??
+    communities.body.communities[0]?.id;
   if (!firstCommunityId) throw new Error("/v1/communities did not return a community id.");
 
   const calls = await readJson<{ calls?: unknown[] }>(`/v1/communities/${firstCommunityId}/calls`);
@@ -89,6 +99,7 @@ const main = async () => {
         service: health.body.service,
         readiness: readiness.body.status,
         strict: readiness.body.strict,
+        migration: readiness.body.migrations?.currentMigrationId,
         profiles: profileCount,
         items: itemCount,
         communities: communityCount,

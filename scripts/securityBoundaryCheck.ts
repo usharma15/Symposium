@@ -6,7 +6,8 @@ import {
   localPreviewRouteUnavailableResponse
 } from "@/lib/runtimeSafety";
 import { actorHandle } from "@/apps/api/src/repository/foundation";
-import { upsertProfile } from "@/apps/api/src/repository/liveRepository";
+import { joinOrRequestCommunity, search, upsertProfile } from "@/apps/api/src/repository/liveRepository";
+import { getPublicInitialState } from "@/apps/api/src/repository/foundation";
 import { readJson } from "@/lib/api";
 
 const main = async () => {
@@ -37,6 +38,32 @@ const main = async () => {
     ),
     null
   );
+
+  const publicState = await getPublicInitialState();
+  assert.ok(Object.values(publicState.profiles).every((person) => person.email === undefined));
+  assert.ok(publicState.items.every((item) => item.room !== "office" && item.kind !== "draft"));
+  assert.ok(publicState.items.every((item) => (item.savedBy ?? []).length === 0));
+  assert.ok(
+    (publicState.communities ?? [])
+      .filter((community) => community.visibility === "private")
+      .every((community) => community.memberHandles.length === 0)
+  );
+  const searchResults = await search({ query: "private", limit: 20 });
+  assert.ok(searchResults.profiles.every((person) => person.email === undefined));
+  assert.ok(searchResults.posts.every((item) => (item.savedBy ?? []).length === 0));
+  assert.ok(
+    searchResults.communities
+      .filter((community) => community.visibility === "private")
+      .every((community) => community.memberHandles.length === 0)
+  );
+  const privateCommunity = publicState.communities?.find((community) => community.visibility === "private");
+  assert.ok(privateCommunity);
+  const privateRequest = await joinOrRequestCommunity(
+    { communityId: privateCommunity.id },
+    { handle: "@boundary_requester", isAuthenticated: true, source: "dev" }
+  );
+  assert.equal(privateRequest.status, "requested");
+  assert.deepEqual(privateRequest.community.memberHandles, []);
 
   assert.equal(
     actorHandle({ handle: "@verified", isAuthenticated: true, source: "clerk" }, "@attacker"),
@@ -129,6 +156,7 @@ const main = async () => {
           "local-only route contract",
           "production route enforcement",
           "bounded JSON request parsing",
+          "public bootstrap, search, and private-community projection",
           "server-derived mutation identity",
           "profile ownership enforcement",
           "browser security headers"

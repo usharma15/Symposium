@@ -1,6 +1,13 @@
 import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool } from "../db/client";
 import {
+  getMigrationStatus,
+  latestMigrationId,
+  migrationIds,
+  type MigrationStatus
+} from "../db/migrate";
+import { getMaintenanceStatus } from "../services/maintenance";
+import {
   databaseUrl,
   env,
   hasR2Config,
@@ -26,6 +33,9 @@ export type RuntimeReadiness = {
   checkedAt: string;
   checks: RuntimeCheck[];
   issues: string[];
+  maintenance: ReturnType<typeof getMaintenanceStatus>;
+  migrations: MigrationStatus;
+  release: string | null;
 };
 
 const localOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
@@ -51,6 +61,12 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
   const ownerBindingReady = ownerHandle !== "@udayan" || Boolean(env.SYMPOSIUM_OWNER_CLERK_USER_ID);
   const issues = [...deploymentEnvIssues()];
   const checks: RuntimeCheck[] = [];
+  let migrations: MigrationStatus = {
+    appliedCount: 0,
+    currentMigrationId: null,
+    latestMigrationId,
+    pendingMigrationIds: databaseUrl ? migrationIds : []
+  };
 
   const databaseCheck = requiredCheck(
     "database",
@@ -64,6 +80,12 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
     try {
       await getPool().query("SELECT 1");
       databaseCheck.detail = "connection verified";
+      migrations = await getMigrationStatus();
+      if (migrations.pendingMigrationIds.length) {
+        databaseCheck.ok = false;
+        databaseCheck.detail = `${migrations.pendingMigrationIds.length} migration(s) pending`;
+        issues.push("Database migrations are not current.");
+      }
     } catch {
       databaseCheck.ok = false;
       databaseCheck.detail = "connection failed";
@@ -120,6 +142,13 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
       strict,
       hasR2Config ? "configured" : "missing"
     ),
+    requiredCheck(
+      "r2_public_url",
+      "Public attachment delivery URL",
+      Boolean(env.R2_PUBLIC_BASE_URL),
+      strict,
+      env.R2_PUBLIC_BASE_URL ? "configured" : "missing"
+    ),
     {
       key: "owner_binding",
       label: "Reserved owner handle binding",
@@ -151,6 +180,9 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
     strict,
     checkedAt: new Date().toISOString(),
     checks,
-    issues: uniqueIssues
+    issues: uniqueIssues,
+    maintenance: getMaintenanceStatus(),
+    migrations,
+    release: env.APP_VERSION ?? env.RENDER_GIT_COMMIT ?? env.VERCEL_GIT_COMMIT_SHA ?? null
   };
 };

@@ -22,6 +22,7 @@ type UploadBody = {
 const allowedImageTypes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/avif"]);
 
 export async function POST(request: Request) {
+  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const body = await readJson<UploadBody>(request);
 
   if (!body) {
@@ -60,7 +61,8 @@ export async function POST(request: Request) {
       ownerType,
       ownerId: body.ownerId
     },
-    actorHandle: body.actorHandle
+    actorHandle: body.actorHandle,
+    idempotencyKey
   });
   if (live) return live;
 

@@ -9,16 +9,18 @@ import {
   createPost,
   deleteComment,
   deletePost,
-  getInitialState,
+  getPublicInitialState,
   updateComment,
   updatePost
 } from "../repository/liveRepository";
+import { getActorFromRequest } from "../services/auth";
 import type { RouteParams } from "./types";
 
 export const registerPostRoutes = (app: FastifyInstance) => {
-  app.get("/v1/posts", async (_request, reply) => {
+  app.get("/v1/posts", async (request, reply) => {
     try {
-      const state = await getInitialState();
+      const actor = await getActorFromRequest(request);
+      const state = await getPublicInitialState(actor.handle);
       return reply.send({ items: state.items });
     } catch (error) {
       return sendError(app, reply, error);

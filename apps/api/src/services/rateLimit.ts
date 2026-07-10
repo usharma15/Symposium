@@ -27,8 +27,7 @@ export const rateLimit = async (
 
   if (redis) {
     try {
-      const count = await redis.incr(key);
-      if (count === 1) await redis.expire(key, windowSeconds);
+      const [count] = await redis.multi().incr(key).expire(key, windowSeconds, "NX").exec();
       if (count > limit) {
         throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Rate limit exceeded." });
       }

@@ -206,10 +206,10 @@ export const researchCommunitySchema = z.object({
 });
 
 export const authSyncInputSchema = z.object({
-  clerkUserId: z.string().optional(),
+  clerkUserId: z.string().trim().min(1).max(200).optional(),
   email: z.string().email().optional(),
-  name: z.string().optional(),
-  handle: z.string().optional(),
+  name: z.string().trim().min(1).max(160).optional(),
+  handle: z.string().trim().min(1).max(80).optional(),
   imageUrl: z.string().url().optional()
 });
 
@@ -262,7 +262,7 @@ export const canonicalActionActivitySchema = z.object({
 });
 
 export const profileActivityQuerySchema = z.object({
-  cursor: z.string().optional(),
+  cursor: z.string().max(300).optional(),
   limit: z.coerce.number().int().positive().max(500).default(200)
 });
 
@@ -272,21 +272,21 @@ export const profileActivityResponseSchema = z.object({
 });
 
 export const joinCommunityInputSchema = z.object({
-  communityId: z.string().min(1)
+  communityId: z.string().trim().min(1).max(120)
 });
 
 export const followProfileInputSchema = z.object({
-  targetHandle: z.string().trim().min(1),
+  targetHandle: z.string().trim().min(1).max(80),
   status: followStatusSchema.default("active")
 });
 
 export const unfollowProfileInputSchema = z.object({
-  targetHandle: z.string().trim().min(1),
-  actorHandle: z.string().optional()
+  targetHandle: z.string().trim().min(1).max(80),
+  actorHandle: z.string().trim().max(80).optional()
 });
 
 export const createCommunityCallInputSchema = z.object({
-  communityId: z.string().min(1),
+  communityId: z.string().trim().min(1).max(120),
   title: z.string().trim().min(1).max(160),
   kind: liveCallKindSchema.default("voice"),
   startsAt: z.string().datetime().optional(),
@@ -295,7 +295,7 @@ export const createCommunityCallInputSchema = z.object({
 });
 
 export const callIdInputSchema = z.object({
-  callId: z.string().min(1)
+  callId: z.string().uuid()
 });
 
 export const createOpportunityInputSchema = z.object({
@@ -329,35 +329,35 @@ export const searchInputSchema = z.object({
 });
 
 export const sendMessageInputSchema = z.object({
-  conversationId: z.string().optional(),
-  recipientHandle: z.string().optional(),
+  conversationId: z.string().uuid().optional(),
+  recipientHandle: z.string().trim().min(1).max(80).optional(),
   body: z.string().trim().min(1).max(8000)
 });
 
 export const saveNoteBlockInputSchema = z.object({
-  workspaceId: z.string().optional(),
-  noteId: z.string().optional(),
-  blockId: z.string().optional(),
+  workspaceId: z.string().uuid().optional(),
+  noteId: z.string().uuid().optional(),
+  blockId: z.string().uuid().optional(),
   body: z.string().max(50000),
   visibility: z.enum(["private", "community", "public"]).default("private")
 });
 
 export const publishNoteInputSchema = z.object({
-  noteId: z.string().optional(),
+  noteId: z.string().uuid().optional(),
   title: z.string().trim().min(1).max(240).optional(),
-  body: z.string().trim().min(1).max(50000).optional(),
+  body: z.string().trim().min(1).max(20000).optional(),
   visibility: z.enum(["private", "community", "public"]).default("public")
 });
 
 export const assistantMessageInputSchema = z.object({
-  conversationId: z.string().optional(),
+  conversationId: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(12000),
   contextType: z.enum(["general", "room", "post", "community", "note"]).default("general"),
-  contextId: z.string().optional()
+  contextId: z.string().trim().min(1).max(240).optional()
 });
 
 export const markNotificationInputSchema = z.object({
-  notificationId: z.string().min(1)
+  notificationId: z.string().uuid()
 });
 
 export const profileFollowSchema = z.object({
