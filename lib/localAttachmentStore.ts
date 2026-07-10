@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { validateAttachmentContentSignature } from "@/lib/attachmentRules";
 
 type LocalAttachmentOwnerType = "post" | "message" | "note" | "profile";
 type LocalAttachmentStatus = "pending" | "uploaded";
@@ -92,7 +93,13 @@ const loadStore = async () => {
 
 const saveStore = async (store: LocalAttachmentStore) => {
   await ensureStoreDirectory();
-  await writeFile(indexPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  const temporaryPath = `${indexPath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+    await rename(temporaryPath, indexPath);
+  } finally {
+    await unlink(temporaryPath).catch(() => undefined);
+  }
 };
 
 const sanitizeFileName = (fileName: string) => {
@@ -150,8 +157,17 @@ export const writeLocalAttachmentFile = async (attachmentId: string, bytes: Buff
     if (bytes.byteLength !== record.byteSize) {
       throw new LocalAttachmentStoreError("Uploaded attachment size did not match the prepared upload.", 400);
     }
+    const signatureError = validateAttachmentContentSignature(record.contentType, bytes.slice(0, 65_536));
+    if (signatureError) throw new LocalAttachmentStoreError(signatureError, 400);
 
-    await writeFile(recordFilePath(record), bytes);
+    const filePath = recordFilePath(record);
+    const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporaryPath, bytes);
+      await rename(temporaryPath, filePath);
+    } finally {
+      await unlink(temporaryPath).catch(() => undefined);
+    }
     const updatedRecord: LocalAttachmentRecord = {
       ...record,
       status: "uploaded",

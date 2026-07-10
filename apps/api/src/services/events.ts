@@ -1,5 +1,6 @@
 import { getPool, hasDatabase } from "../db/client";
 import { randomUUID } from "node:crypto";
+import type { PoolClient } from "pg";
 import { publishLocalLiveEvent } from "./liveBus";
 import { getRedis } from "./redis";
 
@@ -57,6 +58,52 @@ const rowToEvent = (row: EventRow): StoredLiveEvent => ({
   cursor: eventCursor(row.createdAt, row.id)
 });
 
+const insertStoredEvent = async (queryable: Pick<PoolClient, "query">, event: LiveEvent) => {
+  const result = await queryable.query<EventRow>(
+    `INSERT INTO events (kind, actor_handle, subject_type, subject_id, visibility, payload)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING
+       id::text,
+       kind,
+       actor_handle AS "actorHandle",
+       subject_type AS "subjectType",
+       subject_id AS "subjectId",
+       visibility,
+       payload,
+       created_at AS "createdAt"`,
+    [
+      event.kind,
+      event.actorHandle ?? null,
+      event.subjectType,
+      event.subjectId,
+      event.visibility ?? "public",
+      JSON.stringify(event.payload ?? {})
+    ]
+  );
+  return rowToEvent(result.rows[0]);
+};
+
+export const stageEvent = (client: PoolClient, event: LiveEvent) => insertStoredEvent(client, event);
+
+export const publishStoredEvent = async (stored: StoredLiveEvent) => {
+  try {
+    publishLocalLiveEvent(stored);
+  } catch (error) {
+    console.warn("SYMPOSIUM local event publish failed; durable polling will recover it.", error);
+  }
+
+  const redis = getRedis();
+  if (redis) {
+    try {
+      await redis.publish("symposium:events", stored);
+    } catch (error) {
+      console.warn("SYMPOSIUM Redis event publish failed.", error);
+    }
+  }
+
+  return stored;
+};
+
 export const listEventsSince = async (cursor?: string | null, limit = 50): Promise<StoredLiveEvent[]> => {
   if (!hasDatabase()) return [];
 
@@ -109,28 +156,7 @@ export const emitEvent = async (event: LiveEvent) => {
   let stored: StoredLiveEvent;
 
   if (hasDatabase()) {
-    const result = await getPool().query<EventRow>(
-      `INSERT INTO events (kind, actor_handle, subject_type, subject_id, visibility, payload)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING
-         id::text,
-         kind,
-         actor_handle AS "actorHandle",
-         subject_type AS "subjectType",
-         subject_id AS "subjectId",
-         visibility,
-         payload,
-         created_at AS "createdAt"`,
-      [
-        event.kind,
-        event.actorHandle ?? null,
-        event.subjectType,
-        event.subjectId,
-        event.visibility ?? "public",
-        JSON.stringify(event.payload ?? {})
-      ]
-    );
-    stored = rowToEvent(result.rows[0]);
+    stored = await insertStoredEvent(getPool(), event);
   } else {
     const createdAt = new Date().toISOString();
     const id = randomUUID();
@@ -144,16 +170,5 @@ export const emitEvent = async (event: LiveEvent) => {
     };
   }
 
-  publishLocalLiveEvent(stored);
-
-  const redis = getRedis();
-  if (redis) {
-    try {
-      await redis.publish("symposium:events", stored);
-    } catch (error) {
-      console.warn("SYMPOSIUM Redis event publish failed.", error);
-    }
-  }
-
-  return stored;
+  return publishStoredEvent(stored);
 };

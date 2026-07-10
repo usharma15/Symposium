@@ -19,13 +19,15 @@ const authHeaders = () =>
 const requestJson = async <T>(
   method: "GET" | "POST",
   path: string,
-  body?: unknown
+  body?: unknown,
+  extraHeaders: Record<string, string> = {}
 ): Promise<{ status: number; body: T }> => {
   const headers = body === undefined
     ? authHeaders()
     : {
         "content-type": "application/json",
-        ...authHeaders()
+        ...authHeaders(),
+        ...extraHeaders
       };
   const response = await fetch(`${baseUrl}${path}`, {
     method,
@@ -98,20 +100,50 @@ const main = async () => {
   const communityId = requireId("Seeded community", bootstrap.body.communities?.[0]?.id);
   const stamp = new Date().toISOString();
 
-  const createdPost = await requestJson<{ item?: { id?: string; savedBy?: string[]; forkedBy?: string[] } }>("POST", "/v1/posts", {
+  const createPostPayload = {
     title: `Smoke write verification ${stamp}`,
     body: "Verifies the SYMPOSIUM REST write route wiring after backend refactors.",
     kind: "thought",
     room: "symposium"
-  });
+  };
+  const createPostKey = `smoke-post-${Date.now().toString(36)}`;
+  const createdPost = await requestJson<{ item?: { id?: string; savedBy?: string[]; forkedBy?: string[] } }>(
+    "POST",
+    "/v1/posts",
+    createPostPayload,
+    { "idempotency-key": createPostKey }
+  );
   assertOk("POST /v1/posts", createdPost);
   const createdPostId = requireId("Created post", createdPost.body.item?.id);
 
+  const replayedPost = await requestJson<{ item?: { id?: string } }>(
+    "POST",
+    "/v1/posts",
+    createPostPayload,
+    { "idempotency-key": createPostKey }
+  );
+  assertOk("Replay POST /v1/posts", replayedPost);
+  if (replayedPost.body.item?.id !== createdPostId) {
+    throw new Error(`Post idempotency replay diverged: ${JSON.stringify(replayedPost.body)}`);
+  }
+
+  const conflictingPost = await requestJson<{ error?: string }>(
+    "POST",
+    "/v1/posts",
+    { ...createPostPayload, title: `${createPostPayload.title} conflict` },
+    { "idempotency-key": createPostKey }
+  );
+  if (conflictingPost.status !== 409) {
+    throw new Error(`Conflicting idempotency payload returned ${conflictingPost.status}.`);
+  }
+
   const verifyPostActionPersistence = async (action: "save" | "fork", key: ActionListKey) => {
+    const activationKey = `smoke-${action}-${Date.now().toString(36)}`;
     const activated = await requestJson<{ item?: Record<string, unknown>; activity?: unknown }>(
       "POST",
       `/v1/posts/${createdPostId}/actions`,
-      { action, active: true }
+      { action, active: true },
+      { "idempotency-key": activationKey }
     );
     assertOk(`Activate ${action}`, activated);
     const activeActivity = requireCanonicalActivity(`Activate ${action}`, activated.body.activity);
@@ -126,6 +158,18 @@ const main = async () => {
     const activeHandles = requireActionList(`Activate ${action}`, activated.body.item, key);
     if (activeHandles.length !== 1) {
       throw new Error(`Activate ${action} returned an unexpected ${key}: ${JSON.stringify(activeHandles)}`);
+    }
+
+    const replayedActivation = await requestJson<{ item?: Record<string, unknown>; activity?: unknown }>(
+      "POST",
+      `/v1/posts/${createdPostId}/actions`,
+      { action, active: true },
+      { "idempotency-key": activationKey }
+    );
+    assertOk(`Replay ${action}`, replayedActivation);
+    const replayedActivity = requireCanonicalActivity(`Replay ${action}`, replayedActivation.body.activity);
+    if (replayedActivity.revision !== activeActivity.revision) {
+      throw new Error(`${action} replay advanced revision: ${JSON.stringify(replayedActivity)}`);
     }
 
     const persistedActive = await requestJson<{ items?: Array<Record<string, unknown>> }>("GET", "/v1/bootstrap");
@@ -186,11 +230,29 @@ const main = async () => {
   await verifyPostActionPersistence("save", "savedBy");
   await verifyPostActionPersistence("fork", "forkedBy");
 
-  const comment = await requestJson<{ comment?: { id?: string } }>("POST", `/v1/posts/${seededPostId}/comments`, {
+  const commentPayload = {
     body: `Smoke comment verification ${stamp}`,
     stance: "Verification"
-  });
+  };
+  const commentKey = `smoke-comment-${Date.now().toString(36)}`;
+  const comment = await requestJson<{ comment?: { id?: string } }>(
+    "POST",
+    `/v1/posts/${seededPostId}/comments`,
+    commentPayload,
+    { "idempotency-key": commentKey }
+  );
   assertOk("POST /v1/posts/:id/comments", comment);
+  const commentId = requireId("Created comment", comment.body.comment?.id);
+  const replayedComment = await requestJson<{ comment?: { id?: string } }>(
+    "POST",
+    `/v1/posts/${seededPostId}/comments`,
+    commentPayload,
+    { "idempotency-key": commentKey }
+  );
+  assertOk("Replay POST /v1/posts/:id/comments", replayedComment);
+  if (replayedComment.body.comment?.id !== commentId) {
+    throw new Error(`Comment idempotency replay diverged: ${JSON.stringify(replayedComment.body)}`);
+  }
 
   const call = await requestJson<{ call?: { id?: string } }>("POST", `/v1/communities/${communityId}/calls`, {
     title: `Smoke call ${stamp}`,

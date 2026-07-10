@@ -53,7 +53,18 @@ import {
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
-import { emitEvent } from "../services/events";
+import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
+import {
+  emitEvent,
+  publishStoredEvent,
+  stageEvent,
+  type StoredLiveEvent
+} from "../services/events";
+import {
+  claimMutation,
+  completeMutation,
+  type MutationContext
+} from "../services/mutations";
 import { buildLegacyProfileActivity } from "@/lib/profileActivity";
 import {
   decodeActivityCursor,
@@ -140,14 +151,19 @@ const resolveSyncedHandle = async (client: PoolClient, desiredHandle: string, cl
   });
 };
 
-export const upsertProfile = async (rawInput: unknown, actor?: Actor) => {
+export const upsertProfile = async (rawInput: unknown, actor: Actor) => {
   const input = createProfileInputSchema.parse(rawInput);
   const person = normalizeProfile(input);
+  const writerHandle = actorHandle(actor, person.handle);
+  if (cleanHandle(person.handle) !== cleanHandle(writerHandle)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Profiles can only be updated by their owner." });
+  }
 
   if (!hasDatabase()) return person;
   await ensureLiveData();
 
   const client = await getPool().connect();
+  let stagedEvent: StoredLiveEvent | undefined;
   try {
     await client.query("BEGIN");
     await insertProfile(client, person);
@@ -159,11 +175,20 @@ export const upsertProfile = async (rawInput: unknown, actor?: Actor) => {
       "UPDATE comments SET author_name = $2, updated_at = now() WHERE author_handle = $1",
       [person.handle, person.name]
     );
-    await client.query(
-      `INSERT INTO audit_logs (actor_handle, action, subject_type, subject_id, metadata)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [actor?.handle ?? person.handle, "profile.upsert", "profile", person.handle, JSON.stringify({ source: actor?.source ?? "api" })]
-    );
+    await stageAuditLog(client, {
+      actorHandle: writerHandle,
+      action: "profile.upsert",
+      subjectType: "profile",
+      subjectId: person.handle,
+      metadata: { source: actor.source }
+    });
+    stagedEvent = await stageEvent(client, {
+      kind: "profile.updated",
+      actorHandle: writerHandle,
+      subjectType: "profile",
+      subjectId: person.handle,
+      payload: { profile: person }
+    });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -172,13 +197,7 @@ export const upsertProfile = async (rawInput: unknown, actor?: Actor) => {
     client.release();
   }
 
-  await emitEvent({
-    kind: "profile.updated",
-    actorHandle: actor?.handle ?? person.handle,
-    subjectType: "profile",
-    subjectId: person.handle,
-    payload: { profile: person }
-  });
+  if (stagedEvent) await publishStoredEvent(stagedEvent);
 
   return person;
 };
@@ -209,6 +228,8 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
 
   await ensureLiveData();
   const client = await getPool().connect();
+  let syncedProfile: ResearchProfileContract | undefined;
+  let stagedEvent: StoredLiveEvent | undefined;
 
   try {
     await client.query("BEGIN");
@@ -257,17 +278,37 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
       fields: existing?.fields ?? ["Inquiry"]
     });
     await insertProfile(client, person, user.rows[0]?.id);
+    syncedProfile = person;
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "auth.sync",
+      subjectType: "profile",
+      subjectId: handle,
+      metadata: { source: actor.source }
+    });
+    stagedEvent = await stageEvent(client, {
+      kind: "profile.updated",
+      actorHandle: handle,
+      subjectType: "profile",
+      subjectId: handle,
+      payload: { profile: person }
+    });
     await client.query("COMMIT");
-    return person;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
   } finally {
     client.release();
   }
+
+  if (stagedEvent) await publishStoredEvent(stagedEvent);
+  if (!syncedProfile) {
+    throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The synchronized profile was not returned." });
+  }
+  return syncedProfile;
 };
 
-export const createPost = async (rawInput: unknown, actor: Actor) => {
+export const createPost = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = createPostInputSchema.parse(rawInput);
   const snapshot = await getInitialState();
   const handle = actorHandle(actor, input.authorHandle);
@@ -321,9 +362,15 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
 
   const client = await getPool().connect();
   let attachedRows: AttachmentRow[] = [];
+  let stagedEvent: StoredLiveEvent | undefined;
 
   try {
     await client.query("BEGIN");
+    const claim = await claimMutation<InquiryItemContract>(client, handle, mutation);
+    if (claim.replayed) {
+      await client.query("COMMIT");
+      return claim.response;
+    }
     await client.query(
       `INSERT INTO posts (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
@@ -405,6 +452,26 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
       attachedRows = requestedAttachmentIds.map((id) => rowById.get(id)).filter((row): row is AttachmentRow => Boolean(row));
     }
 
+    item.attachments = attachedRows.map(rowToAttachment);
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "post.create",
+      subjectType: "post",
+      subjectId: item.id,
+      metadata: mutationAuditMetadata(mutation, {
+        attachmentCount: item.attachments.length,
+        kind: item.kind,
+        room: item.room
+      })
+    });
+    await completeMutation(client, handle, mutation, item);
+    stagedEvent = await stageEvent(client, {
+      kind: "post.created",
+      actorHandle: item.authorHandle,
+      subjectType: "post",
+      subjectId: item.id,
+      payload: { item, room: item.room, kind: item.kind, title: item.title }
+    });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -413,15 +480,7 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
     client.release();
   }
 
-  item.attachments = attachedRows.map(rowToAttachment);
-
-  await emitEvent({
-    kind: "post.created",
-    actorHandle: item.authorHandle,
-    subjectType: "post",
-    subjectId: item.id,
-    payload: { item, room: item.room, kind: item.kind, title: item.title }
-  });
+  if (stagedEvent) await publishStoredEvent(stagedEvent);
 
   return item;
 };
@@ -473,7 +532,12 @@ const recordContentView = async (
   return (result.rowCount ?? 0) > 0;
 };
 
-export const addComment = async (postId: string, rawInput: unknown, actor: Actor) => {
+export const addComment = async (
+  postId: string,
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+) => {
   const input = createCommentInputSchema.parse(rawInput);
   const snapshot = await getInitialState();
   const existing = snapshot.items.find((item) => item.id === postId);
@@ -525,9 +589,18 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
   await ensureLiveData();
   const client = await getPool().connect();
   let updatedItem: InquiryItemContract | null = null;
+  let stagedEvent: StoredLiveEvent | undefined;
 
   try {
     await client.query("BEGIN");
+    const claim = await claimMutation<{
+      comment: InquiryCommentContract;
+      item: InquiryItemContract;
+    }>(client, handle, mutation);
+    if (claim.replayed) {
+      await client.query("COMMIT");
+      return claim.response;
+    }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
         id,
@@ -639,6 +712,24 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
       appended.comments
     );
 
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "comment.create",
+      subjectType: "comment",
+      subjectId: comment.id as string,
+      metadata: mutationAuditMetadata(mutation, {
+        parentId: comment.parentId,
+        postId
+      })
+    });
+    await completeMutation(client, handle, mutation, { comment, item: updatedItem });
+    stagedEvent = await stageEvent(client, {
+      kind: "comment.created",
+      actorHandle: comment.authorHandle,
+      subjectType: "post",
+      subjectId: postId,
+      payload: { comment, item: updatedItem, commentId: comment.id, parentId: comment.parentId }
+    });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -647,13 +738,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
     client.release();
   }
 
-  await emitEvent({
-    kind: "comment.created",
-    actorHandle: comment.authorHandle,
-    subjectType: "post",
-    subjectId: postId,
-    payload: { comment, item: updatedItem, commentId: comment.id, parentId: comment.parentId }
-  });
+  if (stagedEvent) await publishStoredEvent(stagedEvent);
 
   return { comment, item: updatedItem };
 };
@@ -661,7 +746,8 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
 export const applyPostAction = async (
   postId: string,
   rawInput: unknown,
-  actor: Actor
+  actor: Actor,
+  mutation?: MutationContext
 ): Promise<ActionMutationResult> => {
   const input: PostActionInputContract = postActionInputSchema.parse(rawInput);
   const handle = actorHandle(actor, input.actorHandle);
@@ -683,10 +769,16 @@ export const applyPostAction = async (
 
   const client = await getPool().connect();
   let updated: InquiryItemContract;
+  let stagedEvent: StoredLiveEvent | undefined;
   let activity: CanonicalActionActivityContract | undefined;
 
   try {
     await client.query("BEGIN");
+    const claim = await claimMutation<ActionMutationResult>(client, handle, mutation);
+    if (claim.replayed) {
+      await client.query("COMMIT");
+      return claim.response;
+    }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
         id,
@@ -750,6 +842,7 @@ export const applyPostAction = async (
     const existing = rowToItem(row, commentsByPost.get(postId) ?? []);
     if (isDeletedPost(existing)) {
       updated = existing;
+      await completeMutation(client, handle, mutation, { item: updated });
       await client.query("COMMIT");
       return { item: updated };
     }
@@ -759,6 +852,7 @@ export const applyPostAction = async (
       !(await recordContentView(client, "post", postId, handle, input.trigger, input.surface))
     ) {
       updated = existing;
+      await completeMutation(client, handle, mutation, { item: updated });
       await client.query("COMMIT");
       return { item: updated };
     }
@@ -822,6 +916,23 @@ export const applyPostAction = async (
       ]
     );
 
+    if (input.action !== "read") {
+      await stageAuditLog(client, {
+        actorHandle: handle,
+        action: `post.${input.action}`,
+        subjectType: "post",
+        subjectId: postId,
+        metadata: mutationAuditMetadata(mutation, { active: activity?.active })
+      });
+    }
+    await completeMutation(client, handle, mutation, { item: updated, activity });
+    stagedEvent = await stageEvent(client, {
+      kind: `post.${input.action}`,
+      actorHandle: handle,
+      subjectType: "post",
+      subjectId: postId,
+      payload: { action: input.action, active: activity?.active, activity, item: updated }
+    });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -830,13 +941,7 @@ export const applyPostAction = async (
     client.release();
   }
 
-  await emitEvent({
-    kind: `post.${input.action}`,
-    actorHandle: handle,
-    subjectType: "post",
-    subjectId: postId,
-    payload: { action: input.action, active: activity?.active, activity, item: updated }
-  });
+  if (stagedEvent) await publishStoredEvent(stagedEvent);
 
   return { item: updated, activity };
 };
@@ -862,6 +967,7 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
   await ensureLiveData();
   const client = await getPool().connect();
   let updated: InquiryItemContract;
+  let stagedEvent: StoredLiveEvent | undefined;
 
   try {
     await client.query("BEGIN");
@@ -923,6 +1029,20 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
       commentsByPost.get(postId) ?? []
     );
 
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "post.update",
+      subjectType: "post",
+      subjectId: postId,
+      metadata: { editedAt }
+    });
+    stagedEvent = await stageEvent(client, {
+      kind: "post.updated",
+      actorHandle: handle,
+      subjectType: "post",
+      subjectId: postId,
+      payload: { item: updated }
+    });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -931,13 +1051,7 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
     client.release();
   }
 
-  await emitEvent({
-    kind: "post.updated",
-    actorHandle: handle,
-    subjectType: "post",
-    subjectId: postId,
-    payload: { item: updated }
-  });
+  if (stagedEvent) await publishStoredEvent(stagedEvent);
 
   return updated;
 };
@@ -960,6 +1074,7 @@ export const deletePost = async (postId: string, actor: Actor) => {
   const client = await getPool().connect();
   let deleted: InquiryItemContract | null = null;
   let didDelete = false;
+  let stagedEvent: StoredLiveEvent | undefined;
 
   try {
     await client.query("BEGIN");
@@ -1071,6 +1186,20 @@ export const deletePost = async (postId: string, actor: Actor) => {
         [postId]
       );
       didDelete = true;
+      await stageAuditLog(client, {
+        actorHandle: handle,
+        action: "post.delete",
+        subjectType: "post",
+        subjectId: postId,
+        metadata: { deletedAt: deletedPost.deletedAt }
+      });
+      stagedEvent = await stageEvent(client, {
+        kind: "post.deleted",
+        actorHandle: handle,
+        subjectType: "post",
+        subjectId: postId,
+        payload: { itemId: postId, item: deleted }
+      });
       await client.query("COMMIT");
     }
   } catch (error) {
@@ -1082,15 +1211,7 @@ export const deletePost = async (postId: string, actor: Actor) => {
 
   if (!deleted) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
 
-  if (didDelete) {
-    await emitEvent({
-      kind: "post.deleted",
-      actorHandle: handle,
-      subjectType: "post",
-      subjectId: postId,
-      payload: { itemId: postId, item: deleted }
-    });
-  }
+  if (didDelete && stagedEvent) await publishStoredEvent(stagedEvent);
 
   return deleted;
 };
@@ -1123,6 +1244,7 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
   await ensureLiveData();
   const client = await getPool().connect();
   let updatedItem: InquiryItemContract;
+  let stagedEvent: StoredLiveEvent | undefined;
 
   try {
     await client.query("BEGIN");
@@ -1180,6 +1302,20 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
     );
 
     updatedItem = rowToItem(row, mapped.comments);
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "comment.update",
+      subjectType: "comment",
+      subjectId: commentId,
+      metadata: { editedAt, postId }
+    });
+    stagedEvent = await stageEvent(client, {
+      kind: "comment.updated",
+      actorHandle: handle,
+      subjectType: "comment",
+      subjectId: commentId,
+      payload: { item: updatedItem, commentId }
+    });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1188,13 +1324,7 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
     client.release();
   }
 
-  await emitEvent({
-    kind: "comment.updated",
-    actorHandle: handle,
-    subjectType: "comment",
-    subjectId: commentId,
-    payload: { item: updatedItem, commentId }
-  });
+  if (stagedEvent) await publishStoredEvent(stagedEvent);
 
   return updatedItem;
 };
@@ -1222,6 +1352,7 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
   const client = await getPool().connect();
   let updatedItem: InquiryItemContract;
   let didDelete = false;
+  let stagedEvent: StoredLiveEvent | undefined;
 
   try {
     await client.query("BEGIN");
@@ -1299,6 +1430,20 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
 
       updatedItem = rowToItem(row, mapped.comments);
       didDelete = true;
+      await stageAuditLog(client, {
+        actorHandle: handle,
+        action: "comment.delete",
+        subjectType: "comment",
+        subjectId: commentId,
+        metadata: { deletedAt, postId }
+      });
+      stagedEvent = await stageEvent(client, {
+        kind: "comment.deleted",
+        actorHandle: handle,
+        subjectType: "comment",
+        subjectId: commentId,
+        payload: { item: updatedItem, commentId }
+      });
       await client.query("COMMIT");
     }
   } catch (error) {
@@ -1308,15 +1453,7 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
     client.release();
   }
 
-  if (didDelete) {
-    await emitEvent({
-      kind: "comment.deleted",
-      actorHandle: handle,
-      subjectType: "comment",
-      subjectId: commentId,
-      payload: { item: updatedItem, commentId }
-    });
-  }
+  if (didDelete && stagedEvent) await publishStoredEvent(stagedEvent);
 
   return updatedItem;
 };
@@ -1325,7 +1462,8 @@ export const applyCommentAction = async (
   postId: string,
   commentId: string,
   rawInput: unknown,
-  actor: Actor
+  actor: Actor,
+  mutation?: MutationContext
 ): Promise<ActionMutationResult> => {
   const input: PostActionInputContract = commentActionInputSchema.parse(rawInput);
   const handle = actorHandle(actor, input.actorHandle);
@@ -1352,9 +1490,15 @@ export const applyCommentAction = async (
   let updatedItem: InquiryItemContract;
   let updatedComment: InquiryCommentContract | undefined;
   let activity: CanonicalActionActivityContract | undefined;
+  let stagedEvent: StoredLiveEvent | undefined;
 
   try {
     await client.query("BEGIN");
+    const claim = await claimMutation<ActionMutationResult>(client, handle, mutation);
+    if (claim.replayed) {
+      await client.query("COMMIT");
+      return claim.response;
+    }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
         id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
@@ -1387,6 +1531,7 @@ export const applyCommentAction = async (
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) {
       updatedItem = rowToItem(row, existingComments);
+      await completeMutation(client, handle, mutation, { item: updatedItem });
       await client.query("COMMIT");
       return { item: updatedItem };
     }
@@ -1396,6 +1541,7 @@ export const applyCommentAction = async (
       !(await recordContentView(client, "comment", commentId, handle, input.trigger, input.surface))
     ) {
       updatedItem = rowToItem(row, existingComments);
+      await completeMutation(client, handle, mutation, { item: updatedItem });
       await client.query("COMMIT");
       return { item: updatedItem };
     }
@@ -1446,6 +1592,23 @@ export const applyCommentAction = async (
     );
 
     updatedItem = rowToItem(row, mapped.comments);
+    if (input.action !== "read") {
+      await stageAuditLog(client, {
+        actorHandle: handle,
+        action: `comment.${input.action}`,
+        subjectType: "comment",
+        subjectId: commentId,
+        metadata: mutationAuditMetadata(mutation, { active: activity?.active, postId })
+      });
+    }
+    await completeMutation(client, handle, mutation, { item: updatedItem, activity });
+    stagedEvent = await stageEvent(client, {
+      kind: `comment.${input.action}`,
+      actorHandle: handle,
+      subjectType: "comment",
+      subjectId: commentId,
+      payload: { action: input.action, active: activity?.active, activity, item: updatedItem, commentId }
+    });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1454,13 +1617,7 @@ export const applyCommentAction = async (
     client.release();
   }
 
-  await emitEvent({
-    kind: `comment.${input.action}`,
-    actorHandle: handle,
-    subjectType: "comment",
-    subjectId: commentId,
-    payload: { action: input.action, active: activity?.active, activity, item: updatedItem, commentId }
-  });
+  if (stagedEvent) await publishStoredEvent(stagedEvent);
 
   return { item: updatedItem, activity };
 };

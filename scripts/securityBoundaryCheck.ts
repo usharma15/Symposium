@@ -5,6 +5,9 @@ import {
   localDataFallbackAllowed,
   localPreviewRouteUnavailableResponse
 } from "@/lib/runtimeSafety";
+import { actorHandle } from "@/apps/api/src/repository/foundation";
+import { upsertProfile } from "@/apps/api/src/repository/liveRepository";
+import { readJson } from "@/lib/api";
 
 const main = async () => {
   assert.equal(localDataFallbackAllowed("development"), true);
@@ -20,6 +23,47 @@ const main = async () => {
   assert.equal(localOnly.status, 404);
   assert.equal(localOnly.headers.get("cache-control"), "no-store");
   assert.deepEqual(await localOnly.json(), { error: "Not found." });
+
+  assert.deepEqual(
+    await readJson<{ safe: boolean }>(
+      new Request("http://localhost/json", { method: "POST", body: JSON.stringify({ safe: true }) })
+    ),
+    { safe: true }
+  );
+  assert.equal(
+    await readJson(
+      new Request("http://localhost/json", { method: "POST", body: JSON.stringify({ oversized: "x".repeat(100) }) }),
+      32
+    ),
+    null
+  );
+
+  assert.equal(
+    actorHandle({ handle: "@verified", isAuthenticated: true, source: "clerk" }, "@attacker"),
+    "@verified"
+  );
+  assert.throws(
+    () => actorHandle({ isAuthenticated: true, source: "clerk" }, "@attacker"),
+    /must be synchronized/
+  );
+  assert.equal(
+    actorHandle({ isAuthenticated: true, source: "dev" }, "@local-preview"),
+    "@local_preview"
+  );
+  await assert.rejects(
+    upsertProfile(
+      {
+        name: "Victim",
+        handle: "@victim",
+        role: "Researcher",
+        location: "Symposium",
+        bio: "Ownership boundary test.",
+        fields: ["Security"]
+      },
+      { handle: "@attacker", isAuthenticated: true, source: "clerk" }
+    ),
+    /only be updated by their owner/
+  );
 
   // @ts-expect-error Next's JavaScript config intentionally has no TypeScript declaration file.
   const { default: nextConfig } = await import("../next.config.mjs");
@@ -84,6 +128,9 @@ const main = async () => {
           "503 response contract",
           "local-only route contract",
           "production route enforcement",
+          "bounded JSON request parsing",
+          "server-derived mutation identity",
+          "profile ownership enforcement",
           "browser security headers"
         ]
       },

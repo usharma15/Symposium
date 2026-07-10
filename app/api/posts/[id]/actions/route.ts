@@ -13,6 +13,7 @@ const actions: PostAction[] = ["signal", "save", "fork", "read"];
 
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
+  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const body = await readJson<{ action?: string; actorHandle?: string; active?: boolean; trigger?: string; surface?: string }>(request);
 
   if (!body) {
@@ -29,7 +30,8 @@ export async function POST(request: Request, context: Context) {
   const live = await proxyLiveBackend(`/v1/posts/${id}/actions`, {
     method: "POST",
     body,
-    actorHandle: body.actorHandle ? String(body.actorHandle) : undefined
+    actorHandle: body.actorHandle ? String(body.actorHandle) : undefined,
+    idempotencyKey
   });
   if (live) return live;
 

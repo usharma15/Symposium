@@ -16,6 +16,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const body = await readJson<Partial<CreatePostInput> & { authorHandle?: string }>(request);
 
   if (!body) {
@@ -41,7 +42,8 @@ export async function POST(request: Request) {
   const live = await proxyLiveBackend("/v1/posts", {
     method: "POST",
     body: { ...input, authorHandle: body.authorHandle },
-    actorHandle: body.authorHandle ? String(body.authorHandle) : undefined
+    actorHandle: body.authorHandle ? String(body.authorHandle) : undefined,
+    idempotencyKey
   });
   if (live) return live;
 

@@ -51,6 +51,7 @@ import {
   upsertProfile
 } from "./repository/liveRepository";
 import { authedProcedure, publicProcedure, router } from "./trpc";
+import { mutationContextFromRequest } from "./services/mutations";
 
 export const appRouter = router({
   auth: router({
@@ -81,12 +82,24 @@ export const appRouter = router({
       const snapshot = await getInitialState();
       return snapshot.items.find((item) => item.id === input.id) ?? null;
     }),
-    create: authedProcedure.input(createPostInputSchema).mutation(({ ctx, input }) => createPost(input, ctx.actor)),
+    create: authedProcedure.input(createPostInputSchema).mutation(({ ctx, input }) =>
+      createPost(input, ctx.actor, mutationContextFromRequest(ctx.req, "post.create", input))
+    ),
     react: authedProcedure.input(z.object({ postId: z.string() }).merge(postActionInputSchema)).mutation(({ ctx, input }) =>
-      applyPostAction(input.postId, input, ctx.actor)
+      applyPostAction(
+        input.postId,
+        input,
+        ctx.actor,
+        mutationContextFromRequest(ctx.req, "post.action", input)
+      )
     ),
     save: authedProcedure.input(z.object({ postId: z.string(), actorHandle: z.string().optional(), active: z.boolean().optional() })).mutation(({ ctx, input }) =>
-      applyPostAction(input.postId, { action: "save", actorHandle: input.actorHandle, active: input.active }, ctx.actor)
+      applyPostAction(
+        input.postId,
+        { action: "save", actorHandle: input.actorHandle, active: input.active },
+        ctx.actor,
+        mutationContextFromRequest(ctx.req, "post.action", { ...input, action: "save" })
+      )
     )
   }),
   comments: router({
@@ -95,7 +108,12 @@ export const appRouter = router({
       return snapshot.items.find((item) => item.id === input.postId)?.comments ?? [];
     }),
     create: authedProcedure.input(z.object({ postId: z.string() }).merge(createCommentInputSchema)).mutation(({ ctx, input }) =>
-      addComment(input.postId, input, ctx.actor)
+      addComment(
+        input.postId,
+        input,
+        ctx.actor,
+        mutationContextFromRequest(ctx.req, "comment.create", input)
+      )
     )
   }),
   communities: router({

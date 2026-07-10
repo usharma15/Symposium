@@ -11,6 +11,7 @@ type Context = {
 
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
+  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const body = await readJson<Partial<CreateCommentInput> & { authorHandle?: string }>(request);
 
   if (!body) {
@@ -30,7 +31,8 @@ export async function POST(request: Request, context: Context) {
   const live = await proxyLiveBackend(`/v1/posts/${id}/comments`, {
     method: "POST",
     body: { ...input, authorHandle: body.authorHandle },
-    actorHandle: body.authorHandle ? String(body.authorHandle) : undefined
+    actorHandle: body.authorHandle ? String(body.authorHandle) : undefined,
+    idempotencyKey
   });
   if (live) return live;
 

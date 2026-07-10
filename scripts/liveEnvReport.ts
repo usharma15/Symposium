@@ -114,6 +114,13 @@ const backend = section([
     hasR2Config ? "configured" : "missing"
   ),
   check(
+    "R2_PUBLIC_BASE_URL",
+    "Public attachment delivery URL",
+    isSet(env.R2_PUBLIC_BASE_URL),
+    isSet(env.R2_PUBLIC_BASE_URL),
+    env.R2_PUBLIC_BASE_URL ? "configured" : "missing"
+  ),
+  check(
     "SYMPOSIUM_OWNER_CLERK_USER_ID",
     "Reserved owner handle binding",
     ownerBindingReady,
@@ -160,13 +167,6 @@ const optional = section([
     true,
     isSet(process.env.SYMPOSIUM_AI_MODEL),
     process.env.SYMPOSIUM_AI_MODEL ? "configured" : "defaulted"
-  ),
-  check(
-    "R2_PUBLIC_BASE_URL",
-    "Public upload base URL",
-    true,
-    isSet(env.R2_PUBLIC_BASE_URL),
-    env.R2_PUBLIC_BASE_URL ? "configured" : "not public"
   ),
   check(
     "CLERK_JWT_AUDIENCE",

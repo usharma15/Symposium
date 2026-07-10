@@ -77,7 +77,26 @@ export const inquirySignalSchema = z.object({
   value: z.string()
 });
 
-export const attachmentMetadataSchema = z.record(z.string(), z.unknown()).default({});
+const attachmentMetadataDepth = (value: unknown, depth = 0): number => {
+  if (!value || typeof value !== "object") return depth;
+  const entries = Array.isArray(value) ? value : Object.values(value);
+  return entries.reduce((maximum, entry) => Math.max(maximum, attachmentMetadataDepth(entry, depth + 1)), depth);
+};
+
+export const attachmentMetadataSchema = z
+  .record(z.string().min(1).max(80), z.unknown())
+  .superRefine((metadata, context) => {
+    if (Object.keys(metadata).length > 64) {
+      context.addIssue({ code: "custom", message: "Attachment metadata can contain at most 64 fields." });
+    }
+    if (attachmentMetadataDepth(metadata) > 8) {
+      context.addIssue({ code: "custom", message: "Attachment metadata is nested too deeply." });
+    }
+    if (new TextEncoder().encode(JSON.stringify(metadata)).byteLength > 64 * 1024) {
+      context.addIssue({ code: "custom", message: "Attachment metadata must be 64 KB or smaller." });
+    }
+  })
+  .default({});
 
 export const inquiryAttachmentSchema = z.object({
   id: z.string().min(1),
@@ -295,11 +314,11 @@ export const createAttachmentUploadInputSchema = z.object({
   contentType: z.string().min(1).max(160),
   byteSize: z.number().int().positive().max(50 * 1024 * 1024),
   ownerType: z.enum(["post", "message", "note", "profile"]),
-  ownerId: z.string().optional()
+  ownerId: z.string().trim().min(1).max(200).optional()
 });
 
 export const confirmAttachmentInputSchema = z.object({
-  attachmentId: z.string().min(1),
+  attachmentId: z.string().uuid(),
   byteSize: z.number().int().positive().optional(),
   metadata: attachmentMetadataSchema.optional()
 });

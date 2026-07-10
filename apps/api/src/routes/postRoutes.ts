@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
+import { mutationContextFromRequest } from "../services/mutations";
 import {
   addComment,
   applyCommentAction,
@@ -27,7 +28,8 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.post("/v1/posts", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const item = await createPost(request.body, actor);
+      const mutation = mutationContextFromRequest(request, "post.create", request.body);
+      const item = await createPost(request.body, actor, mutation);
       return reply.send({ item });
     } catch (error) {
       return sendError(app, reply, error);
@@ -57,7 +59,11 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.post<{ Params: RouteParams }>("/v1/posts/:id/comments", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const result = await addComment(request.params.id, request.body, actor);
+      const mutation = mutationContextFromRequest(request, "comment.create", {
+        postId: request.params.id,
+        body: request.body
+      });
+      const result = await addComment(request.params.id, request.body, actor, mutation);
       return reply.send(result);
     } catch (error) {
       return sendError(app, reply, error);
@@ -87,7 +93,11 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.post<{ Params: RouteParams }>("/v1/posts/:id/actions", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const result = await applyPostAction(request.params.id, request.body, actor);
+      const mutation = mutationContextFromRequest(request, "post.action", {
+        postId: request.params.id,
+        body: request.body
+      });
+      const result = await applyPostAction(request.params.id, request.body, actor, mutation);
       return reply.send(result);
     } catch (error) {
       return sendError(app, reply, error);
@@ -97,7 +107,18 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.post<{ Params: RouteParams & { commentId: string } }>("/v1/posts/:id/comments/:commentId/actions", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const result = await applyCommentAction(request.params.id, request.params.commentId, request.body, actor);
+      const mutation = mutationContextFromRequest(request, "comment.action", {
+        postId: request.params.id,
+        commentId: request.params.commentId,
+        body: request.body
+      });
+      const result = await applyCommentAction(
+        request.params.id,
+        request.params.commentId,
+        request.body,
+        actor,
+        mutation
+      );
       return reply.send(result);
     } catch (error) {
       return sendError(app, reply, error);

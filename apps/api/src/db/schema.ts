@@ -368,7 +368,8 @@ export const contentViews = pgTable(
       table.bucketStart
     ),
     index("content_views_target_idx").on(table.targetType, table.targetId),
-    index("content_views_actor_idx").on(table.actorHandle)
+    index("content_views_actor_idx").on(table.actorHandle),
+    index("content_views_created_idx").on(table.createdAt)
   ]
 );
 
@@ -381,17 +382,25 @@ export const attachments = pgTable(
     uploaderHandle: text("uploader_handle").references(() => profiles.handle, { onDelete: "set null" }),
     bucket: text("bucket").notNull(),
     objectKey: text("object_key").notNull(),
+    uploadObjectKey: text("upload_object_key").notNull(),
     fileName: text("file_name").notNull(),
     contentType: text("content_type").notNull(),
     byteSize: integer("byte_size").notNull(),
     status: text("status").default("pending").notNull(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default(jsonObject).notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
   (table) => [
     uniqueIndex("attachments_object_key_idx").on(table.objectKey),
-    index("attachments_owner_idx").on(table.ownerType, table.ownerId)
+    uniqueIndex("attachments_upload_object_key_idx").on(table.uploadObjectKey),
+    index("attachments_owner_idx").on(table.ownerType, table.ownerId),
+    index("attachments_uploader_status_idx").on(table.uploaderHandle, table.status, table.createdAt),
+    index("attachments_status_updated_idx").on(table.status, table.updatedAt),
+    check("attachments_owner_type_check", sql`${table.ownerType} IN ('post', 'message', 'note', 'profile')`),
+    check("attachments_status_check", sql`${table.status} IN ('pending', 'verifying', 'uploaded', 'previewed', 'failed')`),
+    check("attachments_byte_size_check", sql`${table.byteSize} > 0 AND ${table.byteSize} <= 52428800`)
   ]
 );
 
@@ -621,7 +630,37 @@ export const events = pgTable(
   (table) => [
     index("events_kind_idx").on(table.kind),
     index("events_subject_idx").on(table.subjectType, table.subjectId),
-    index("events_actor_idx").on(table.actorHandle)
+    index("events_actor_idx").on(table.actorHandle),
+    index("events_created_idx").on(table.createdAt),
+    index("events_delivery_idx").on(table.visibility, table.createdAt, table.id)
+  ]
+);
+
+export const mutationReceipts = pgTable(
+  "mutation_receipts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    actorHandle: text("actor_handle")
+      .notNull()
+      .references(() => profiles.handle, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    status: text("status").default("pending").notNull(),
+    response: jsonb("response").$type<unknown>(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("mutation_receipts_unique_idx").on(table.actorHandle, table.scope, table.idempotencyKey),
+    index("mutation_receipts_actor_idx").on(table.actorHandle, table.createdAt),
+    index("mutation_receipts_created_idx").on(table.createdAt),
+    check("mutation_receipts_status_check", sql`${table.status} IN ('pending', 'completed')`),
+    check(
+      "mutation_receipts_idempotency_key_check",
+      sql`char_length(${table.idempotencyKey}) BETWEEN 8 AND 200`
+    ),
+    check("mutation_receipts_request_hash_check", sql`char_length(${table.requestHash}) = 64`)
   ]
 );
 
@@ -637,7 +676,10 @@ export const auditLogs = pgTable(
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default(jsonObject).notNull(),
     createdAt: createdAtColumn()
   },
-  (table) => [index("audit_logs_subject_idx").on(table.subjectType, table.subjectId)]
+  (table) => [
+    index("audit_logs_subject_idx").on(table.subjectType, table.subjectId),
+    index("audit_logs_actor_idx").on(table.actorHandle, table.createdAt)
+  ]
 );
 
 export const moderationReports = pgTable(

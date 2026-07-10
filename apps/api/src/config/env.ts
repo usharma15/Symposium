@@ -35,7 +35,7 @@ const envSchema = z.object({
   R2_BUCKET: z.string().optional(),
   R2_ACCESS_KEY_ID: z.string().optional(),
   R2_SECRET_ACCESS_KEY: z.string().optional(),
-  R2_PUBLIC_BASE_URL: z.string().optional(),
+  R2_PUBLIC_BASE_URL: z.string().url().optional().or(z.literal("")),
   OPENAI_API_KEY: z.string().optional(),
   SYMPOSIUM_AI_MODEL: z.string().default("gpt-5.4-mini")
 });

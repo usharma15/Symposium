@@ -814,6 +814,89 @@ const migrations: Migration[] = [
         active = true,
         updated_at = GREATEST(comment_actions.updated_at, EXCLUDED.updated_at);
     `
+  },
+  {
+    id: "0010_transactional_mutation_envelope",
+    sql: `
+      CREATE TABLE IF NOT EXISTS mutation_receipts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        actor_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        scope TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        response JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (actor_handle, scope, idempotency_key),
+        CHECK (status IN ('pending', 'completed')),
+        CHECK (char_length(idempotency_key) BETWEEN 8 AND 200),
+        CHECK (char_length(request_hash) = 64)
+      );
+
+      CREATE INDEX IF NOT EXISTS mutation_receipts_actor_idx
+        ON mutation_receipts (actor_handle, created_at DESC);
+      CREATE INDEX IF NOT EXISTS mutation_receipts_created_idx
+        ON mutation_receipts (created_at);
+      CREATE INDEX IF NOT EXISTS events_delivery_idx
+        ON events (visibility, created_at, id);
+      CREATE INDEX IF NOT EXISTS audit_logs_actor_idx
+        ON audit_logs (actor_handle, created_at DESC);
+    `
+  },
+  {
+    id: "0011_verified_attachment_staging",
+    sql: `
+      ALTER TABLE attachments ADD COLUMN IF NOT EXISTS upload_object_key TEXT;
+      ALTER TABLE attachments ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
+
+      UPDATE attachments
+      SET upload_object_key = object_key
+      WHERE upload_object_key IS NULL;
+
+      UPDATE attachments
+      SET verified_at = updated_at
+      WHERE verified_at IS NULL AND status IN ('uploaded', 'previewed');
+
+      ALTER TABLE attachments ALTER COLUMN upload_object_key SET NOT NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS attachments_upload_object_key_idx
+        ON attachments (upload_object_key);
+      CREATE INDEX IF NOT EXISTS attachments_uploader_status_idx
+        ON attachments (uploader_handle, status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS attachments_status_updated_idx
+        ON attachments (status, updated_at);
+      CREATE INDEX IF NOT EXISTS content_views_created_idx
+        ON content_views (created_at);
+      CREATE INDEX IF NOT EXISTS events_created_idx
+        ON events (created_at);
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'attachments_status_check'
+        ) THEN
+          ALTER TABLE attachments
+            ADD CONSTRAINT attachments_status_check
+            CHECK (status IN ('pending', 'verifying', 'uploaded', 'previewed', 'failed'));
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'attachments_byte_size_check'
+        ) THEN
+          ALTER TABLE attachments
+            ADD CONSTRAINT attachments_byte_size_check
+            CHECK (byte_size > 0 AND byte_size <= 52428800);
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'attachments_owner_type_check'
+        ) THEN
+          ALTER TABLE attachments
+            ADD CONSTRAINT attachments_owner_type_check
+            CHECK (owner_type IN ('post', 'message', 'note', 'profile'));
+        END IF;
+      END
+      $$;
+    `
   }
 ];
 

@@ -9,6 +9,8 @@ type MemoryBucket = {
 };
 
 const memoryBuckets = new Map<string, MemoryBucket>();
+let memoryOperations = 0;
+let lastRedisWarningAt = 0;
 
 const clientIp = (request: FastifyRequest) =>
   request.ip || String(request.headers["x-forwarded-for"] ?? "unknown").split(",")[0]?.trim() || "unknown";
@@ -24,15 +26,30 @@ export const rateLimit = async (
   const redis = getRedis();
 
   if (redis) {
-    const count = await redis.incr(key);
-    if (count === 1) await redis.expire(key, windowSeconds);
-    if (count > limit) {
-      throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Rate limit exceeded." });
+    try {
+      const count = await redis.incr(key);
+      if (count === 1) await redis.expire(key, windowSeconds);
+      if (count > limit) {
+        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Rate limit exceeded." });
+      }
+      return;
+    } catch (error) {
+      if (error instanceof TRPCError) throw error;
+      const now = Date.now();
+      if (now - lastRedisWarningAt > 60_000) {
+        lastRedisWarningAt = now;
+        console.warn("SYMPOSIUM shared rate limiter unavailable; using the process-local limiter.", error);
+      }
     }
-    return;
   }
 
   const now = Date.now();
+  memoryOperations += 1;
+  if (memoryOperations % 256 === 0) {
+    for (const [bucketKey, bucket] of memoryBuckets) {
+      if (bucket.resetAt <= now) memoryBuckets.delete(bucketKey);
+    }
+  }
   const current = memoryBuckets.get(key);
   if (!current || current.resetAt <= now) {
     memoryBuckets.set(key, { count: 1, resetAt: now + windowSeconds * 1000 });

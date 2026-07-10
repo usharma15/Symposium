@@ -1,5 +1,9 @@
 import { jsonError, readJson } from "@/lib/api";
-import { inferAttachmentContentType, validatePostAttachmentDetails } from "@/lib/attachmentRules";
+import {
+  inferAttachmentContentType,
+  validateAttachmentNameAndContentType,
+  validatePostAttachmentDetails
+} from "@/lib/attachmentRules";
 import { createLocalAttachmentUpload } from "@/lib/localAttachmentStore";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 
@@ -28,6 +32,10 @@ export async function POST(request: Request) {
   const contentType = inferAttachmentContentType(String(body.fileName ?? ""), String(body.contentType ?? ""));
   const byteSize = Number(body.byteSize ?? 0);
 
+  if (ownerType !== "post" && ownerType !== "profile") {
+    return jsonError("Private attachment delivery is not enabled for message or note uploads yet.", 412);
+  }
+
   if (ownerType === "profile") {
     if (!body.fileName || !allowedImageTypes.has(contentType)) {
       return jsonError("Choose a PNG, JPG, JPEG, WEBP, GIF, or AVIF image.", 400);
@@ -36,6 +44,8 @@ export async function POST(request: Request) {
     if (!Number.isFinite(byteSize) || byteSize <= 0 || byteSize > 5 * 1024 * 1024) {
       return jsonError("Profile photos must be 5 MB or smaller.", 400);
     }
+    const nameTypeError = validateAttachmentNameAndContentType(String(body.fileName), contentType);
+    if (nameTypeError) return jsonError(nameTypeError, 400);
   } else {
     const validationError = validatePostAttachmentDetails(String(body.fileName ?? ""), contentType, byteSize);
     if (validationError) return jsonError(validationError, 400);

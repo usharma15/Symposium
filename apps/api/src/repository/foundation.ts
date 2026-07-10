@@ -22,6 +22,7 @@ import { cleanHandle } from "@/lib/symposiumCore";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { ensureDatabase } from "../db/migrate";
+import type { Actor } from "../services/auth";
 
 export const defaultProfile = profile;
 
@@ -123,8 +124,21 @@ export const normalizeProfile = (input: CreateProfileInputContract): ResearchPro
   fields: input.fields.map((field) => field.trim()).filter(Boolean).slice(0, 8)
 });
 
-export const actorHandle = (actor: { handle?: string }, requestedHandle?: string) =>
-  actor.handle ?? (requestedHandle ? cleanHandle(requestedHandle) : defaultProfile.handle);
+export const actorHandle = (
+  actor: Pick<Actor, "handle" | "isAuthenticated" | "source">,
+  requestedHandle?: string
+) => {
+  if (actor.handle) return cleanHandle(actor.handle);
+
+  if (actor.source === "dev") {
+    return requestedHandle ? cleanHandle(requestedHandle) : defaultProfile.handle;
+  }
+
+  throw new TRPCError({
+    code: "UNAUTHORIZED",
+    message: "Your authenticated account must be synchronized before it can write to Symposium."
+  });
+};
 
 export const ensureProfileHandle = async (handle: string) => {
   const clean = cleanHandle(handle);

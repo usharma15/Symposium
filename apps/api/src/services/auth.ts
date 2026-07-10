@@ -58,7 +58,7 @@ export const getActorFromRequest = async (request: FastifyRequest): Promise<Acto
 
     const email = typeof payload.email === "string" ? payload.email : undefined;
     const syncedHandle = payload.sub ? await getSyncedUserHandle(payload.sub) : undefined;
-    const handle = syncedHandle ?? (typeof payload.username === "string" ? cleanHandle(payload.username) : undefined);
+    const handle = syncedHandle;
     const name = typeof payload.name === "string" ? payload.name : undefined;
     const imageUrl = typeof payload.picture === "string" ? payload.picture : undefined;
 

@@ -47,6 +47,10 @@ export const deploymentEnvIssues = () => {
     issues.push("R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY are required for live attachments.");
   }
 
+  if (!env.R2_PUBLIC_BASE_URL) {
+    issues.push("R2_PUBLIC_BASE_URL is required for persistent public post and profile attachments.");
+  }
+
   const ownerHandle = cleanHandle(env.SYMPOSIUM_OWNER_HANDLE);
   if (ownerHandle === "@udayan" && !env.SYMPOSIUM_OWNER_CLERK_USER_ID) {
     issues.push("Set SYMPOSIUM_OWNER_CLERK_USER_ID before the owner handle is allowed to bind to a Clerk account.");

@@ -223,6 +223,12 @@ type AttachmentUploadResponse = {
   publicUrl?: string | null;
 };
 
+type AttachmentConfirmResponse = {
+  attachmentId?: string;
+  publicUrl?: string | null;
+  status?: string;
+};
+
 type AttachmentPreviewTarget = {
   itemId: string;
   attachmentId: string;
@@ -725,6 +731,13 @@ const communitySearchText = (community: ResearchCommunity) =>
 const clientId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
+const clientMutationId = (scope: string) =>
+  `symposium:${scope}:${
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : clientId("mutation")
+  }`;
+
 const commentSegmentStackKey = (itemId: string, rootCommentId?: string | null) =>
   `${itemId}:${rootCommentId ?? "root-comment"}`;
 
@@ -1145,6 +1158,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const canonicalActionRevisionRef = useRef<Record<string, number>>({});
   const pendingCanonicalActionKeysRef = useRef(new Set<string>());
   const profileActivityRequestRef = useRef<Record<string, number>>({});
+  const retryMutationKeysRef = useRef<Record<string, string>>({});
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
   const liveEventCursorRef = useRef("");
   const liveRefreshTimerRef = useRef<number | null>(null);
@@ -2673,13 +2687,16 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       const error = (await confirmResponse.json().catch(() => null)) as { error?: string } | null;
       throw new Error(error?.error ?? "Could not confirm this attachment.");
     }
+    const confirmed = (await confirmResponse.json()) as AttachmentConfirmResponse;
+    const publicUrl = confirmed.publicUrl ?? upload.publicUrl;
+    if (!publicUrl) throw new Error("The confirmed attachment does not have a persistent public URL.");
 
     return {
       id: upload.attachmentId,
       fileName: file.name,
       contentType,
       byteSize: file.size,
-      url: upload.publicUrl,
+      url: publicUrl,
       status: "uploaded",
       kind: attachmentKindForContentType(contentType),
       metadata,
@@ -2687,16 +2704,34 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     };
   };
 
+  const retryMutationKey = (scope: string, fingerprint: string) => {
+    const key = `${scope}:${fingerprint}`;
+    const current = retryMutationKeysRef.current[key];
+    if (current) return { fingerprintKey: key, idempotencyKey: current };
+    const idempotencyKey = clientMutationId(scope);
+    retryMutationKeysRef.current[key] = idempotencyKey;
+    return { fingerprintKey: key, idempotencyKey };
+  };
+
+  const clearRetryMutationKey = (fingerprintKey: string) => {
+    delete retryMutationKeysRef.current[fingerprintKey];
+  };
+
   const createPost = async ({ title, body, kind, attachments }: PostDraft) => {
     const routedRoom = routePostRoom(kind);
     const createdAt = new Date().toISOString();
+    const postPayload = { title, body, kind, room: routedRoom, authorHandle: currentProfile.handle, attachments };
+    const mutation = retryMutationKey("post-create", JSON.stringify(postPayload));
     setSyncStatus("Posting");
     let response: Response;
     try {
       response = await fetch("/api/posts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, body, kind, room: routedRoom, authorHandle: currentProfile.handle, attachments })
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": mutation.idempotencyKey
+        },
+        body: JSON.stringify(postPayload)
       });
     } catch {
       setSyncStatus("Post could not reach the live service");
@@ -2705,11 +2740,13 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
     if (!response.ok) {
       const error = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (response.status < 500 && response.status !== 409) clearRetryMutationKey(mutation.fingerprintKey);
       setSyncStatus(error?.error ?? "Post could not be saved");
       return false;
     }
 
     const data = (await response.json()) as { item: InquiryItem };
+    clearRetryMutationKey(mutation.fingerprintKey);
     const committedItem = { ...data.item, createdAt: data.item.createdAt ?? createdAt };
     const nextItems = sortByPublishedRecency([committedItem, ...items.filter((item) => item.id !== committedItem.id)]);
     touchActivity(committedItem.id);
@@ -2789,14 +2826,24 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setSyncStatus(message);
     };
 
+    const commentPayload = { body, stance, parentId: parentId ?? null, authorHandle: currentProfile.handle };
+    const mutation = retryMutationKey(
+      "comment-create",
+      JSON.stringify({ itemId, ...commentPayload })
+    );
+
     try {
       const response = await fetch(`/api/posts/${itemId}/comments`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body, stance, parentId: parentId ?? null, authorHandle: currentProfile.handle })
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": mutation.idempotencyKey
+        },
+        body: JSON.stringify(commentPayload)
       });
       if (!response.ok) {
         const errorData = (await response.json().catch(() => ({}))) as { error?: string };
+        if (response.status < 500 && response.status !== 409) clearRetryMutationKey(mutation.fingerprintKey);
         rollbackOptimisticComment(
           errorData.error ?? (parentId ? "Reply could not be saved" : "Comment could not be saved")
         );
@@ -2804,6 +2851,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       }
 
       const data = (await response.json().catch(() => ({}))) as { comment?: InquiryComment; item?: InquiryItem };
+      clearRetryMutationKey(mutation.fingerprintKey);
       if (data.item) {
         const currentItem = itemsRef.current.find((item) => item.id === itemId);
         const committedItem = preservePublishedPosition(
@@ -2927,8 +2975,12 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       throw new Error("Could not confirm the profile photo upload.");
     }
 
+    const confirmed = (await confirmResponse.json()) as AttachmentConfirmResponse;
+    const publicUrl = confirmed.publicUrl ?? upload.publicUrl;
+    if (!publicUrl) throw new Error("The confirmed profile photo does not have a persistent URL.");
+
     setSyncStatus("Profile photo ready");
-    return upload.publicUrl;
+    return publicUrl;
   };
 
   const saveProfileSettings = async (draft: ProfileSettingsDraft) => {
@@ -3053,6 +3105,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const actionKey = `${itemId}:${action}:${actorHandle}`;
     const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
     actionVersionsRef.current[actionKey] = version;
+    const mutationKey = clientMutationId("post-action");
 
     const previousItems = itemsRef.current;
     let actionApplied = false;
@@ -3094,7 +3147,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     try {
       const response = await fetch(`/api/posts/${itemId}/actions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": mutationKey },
         body: JSON.stringify({ action, actorHandle, active: desiredActive, trigger: options.trigger, surface: options.surface })
       });
 
@@ -3197,6 +3250,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const actionKey = `${itemId}:${commentId}:${action}:${actorHandle}`;
     const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
     actionVersionsRef.current[actionKey] = version;
+    const mutationKey = clientMutationId("comment-action");
 
     const previousItems = itemsRef.current;
     let actionApplied = false;
@@ -3242,7 +3296,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     try {
       const response = await fetch(`/api/posts/${itemId}/comments/${commentId}/actions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": mutationKey },
         body: JSON.stringify({ action, actorHandle, active: desiredActive, trigger: options.trigger, surface: options.surface })
       });
 

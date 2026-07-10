@@ -65,7 +65,7 @@ R2_ACCOUNT_ID=...
 R2_BUCKET=symposium-uploads
 R2_ACCESS_KEY_ID=...
 R2_SECRET_ACCESS_KEY=...
-R2_PUBLIC_BASE_URL=
+R2_PUBLIC_BASE_URL=https://your-public-r2-domain.example
 OPENAI_API_KEY=
 SYMPOSIUM_AI_MODEL=gpt-5.4-mini
 ```
@@ -122,6 +122,7 @@ With `SYMPOSIUM_STRICT_ENV=true`, the API refuses to start unless the live provi
 - dev actor fallback disabled.
 - Upstash Redis config.
 - Cloudflare R2 config.
+- a public R2 delivery base URL for post and profile attachments.
 - owner Clerk user mapping for the reserved `@udayan` handle.
 
 For a smoke test against a running API:
@@ -168,6 +169,7 @@ The runner creates the live relational graph:
 - opportunity/job posts
 - AI tablet conversations and messages
 - notifications, events, audit logs, moderation reports
+- mutation receipts for idempotent post/comment creates and actions
 - credit accounts, ledger entries, bounties, pledges
 
 On first boot, the backend seeds the current mock SYMPOSIUM world into Postgres so the interface does not become empty.
@@ -177,10 +179,13 @@ On first boot, the backend seeds the current mock SYMPOSIUM world into Postgres 
 Implemented now:
 
 - Render-ready API service
-- Clerk-aware actor layer
+- Clerk-aware actor layer with server-bound profile ownership
 - Neon/Postgres schema and migrations
-- Upstash-ready rate limiting and event publishing
-- R2 signed upload flow
+- shared Upstash rate limiting with a bounded local outage fallback
+- transactionally staged database events and audit records with after-commit live publication
+- end-to-end idempotency keys for post/comment creates and canonical actions
+- verified R2 staging uploads promoted to immutable public objects only after size, MIME, signature, and DOCX-structure checks
+- batched retention maintenance for replay receipts, live events, view dedupe rows, and expired attachment states
 - tRPC-style typed procedure router
 - REST compatibility routes for the current Next frontend
 - current seed data ported into the live schema
@@ -195,6 +200,8 @@ Implemented now:
 
 Still intentionally next:
 
+- protected delivery for private message/note attachments; those upload classes currently fail closed
+- an R2 lifecycle rule that expires objects under `pending/` after one day as a final orphan-upload backstop
 - actual model execution for AI tablet once provider policy/key is set
 - full note/workspace UI wiring
 - production moderation/admin screens

@@ -8,6 +8,7 @@ type LiveBackendOptions = {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
   actorHandle?: string;
+  idempotencyKey?: string;
 };
 
 export const hasLiveBackend = Boolean(backendUrl);
@@ -29,7 +30,8 @@ export const proxyLiveBackend = async (path: string, options: LiveBackendOptions
       headers: {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(options.actorHandle ? { "x-symposium-handle": options.actorHandle } : {})
+        ...(options.actorHandle ? { "x-symposium-handle": options.actorHandle } : {}),
+        ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {})
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
       cache: "no-store"

@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "action:check": "tsx scripts/actionLedgerCheck.ts",
+    "attachment:check": "tsx scripts/attachmentSecurityCheck.ts",
     "dev": "WATCHPACK_POLLING=true next dev --webpack",
     "api:dev": "tsx watch apps/api/src/server.ts",
     "api:preflight": "tsx apps/api/src/config/preflight.ts",
@@ -18,13 +19,14 @@
     "db:push": "drizzle-kit push",
     "live:env:report": "tsx scripts/liveEnvReport.ts",
     "live:env:check": "tsx scripts/liveEnvReport.ts --strict",
+    "mutation:check": "tsx scripts/mutationEnvelopeCheck.ts",
     "profile:check": "tsx scripts/profileActivityCheck.ts",
     "security:check": "tsx scripts/securityBoundaryCheck.ts",
     "start": "next start",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "typecheck:all": "npm run typecheck && npm run api:typecheck",
     "deploy:api:check": "npm run api:preflight && npm run api:typecheck",
-    "verify": "npm run security:check && npm run core:check && npm run action:check && npm run profile:check && npm run typecheck:all && npm run build"
+    "verify": "npm run security:check && npm run core:check && npm run action:check && npm run attachment:check && npm run mutation:check && npm run profile:check && npm run typecheck:all && npm run build"
   },
   "overrides": {
     "postcss": "8.5.15"

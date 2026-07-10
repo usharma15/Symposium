@@ -15,6 +15,7 @@ import { registerProfileRoutes } from "./routes/profileRoutes";
 import { registerSystemRoutes } from "./routes/systemRoutes";
 import { registerWorkspaceRoutes } from "./routes/workspaceRoutes";
 import { createContext } from "./trpc";
+import { startDatabaseMaintenance, stopDatabaseMaintenance } from "./services/maintenance";
 
 export const buildApp = async () => {
   const app = Fastify({
@@ -52,6 +53,10 @@ const start = async () => {
   assertDeploymentEnv();
   const app = await buildApp();
   await ensureDatabase();
+  startDatabaseMaintenance();
+  app.addHook("onClose", async () => {
+    stopDatabaseMaintenance();
+  });
   await app.listen({ host: env.HOST, port: env.PORT });
 };
 
