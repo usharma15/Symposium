@@ -117,7 +117,24 @@ const main = async () => {
     delete mutableEnv.SYMPOSIUM_API_URL;
     console.error = () => undefined;
 
-    const { proxyLiveBackend } = await import("@/lib/liveBackendClient");
+    const { liveBackendResponseHeaders, proxyLiveBackend } = await import("@/lib/liveBackendClient");
+    const forwardedHeaders = liveBackendResponseHeaders(
+      new Response(null, {
+        headers: {
+          "cache-control": "public, max-age=3600",
+          "content-type": "application/json",
+          vary: "Origin, authorization",
+          "x-request-id": "req-live-boundary"
+        }
+      })
+    );
+    assert.equal(forwardedHeaders.get("cache-control"), "no-store");
+    assert.equal(forwardedHeaders.get("x-request-id"), "req-live-boundary");
+    assert.equal(forwardedHeaders.get("vary"), "Origin, authorization, Cookie");
+    assert.equal(
+      liveBackendResponseHeaders(new Response(null)).get("cache-control"),
+      "no-store"
+    );
     const proxied = await proxyLiveBackend("/v1/bootstrap");
     assert.ok(proxied);
     assert.equal(proxied.status, 503);
@@ -159,6 +176,7 @@ const main = async () => {
           "public bootstrap, search, and private-community projection",
           "server-derived mutation identity",
           "profile ownership enforcement",
+          "live bridge cache isolation",
           "browser security headers"
         ]
       },

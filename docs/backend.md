@@ -7,6 +7,15 @@ This repo now has two runtime surfaces:
 
 The existing Next API routes remain in place as a bridge. When `SYMPOSIUM_API_URL` is set on Vercel, those routes proxy to the Render backend. When it is not set, local development keeps using the existing `.data/symposium.json` fallback.
 
+Current production endpoints:
+
+- Web: `https://symposium-flax.vercel.app`
+- API: `https://symposium-api-ue3p.onrender.com`
+- Liveness: `https://symposium-api-ue3p.onrender.com/healthz`
+- Readiness: `https://symposium-api-ue3p.onrender.com/readyz`
+
+The production bridge forces `Cache-Control: no-store` and varies responses by authorization and cookie state. This is enforced at the Vercel boundary even if an upstream response later supplies a cacheable directive.
+
 ## Local API
 
 ```bash
@@ -210,6 +219,7 @@ Implemented now:
 - server-side ownership and membership boundaries across Office/drafts, communities/calls, DMs, notifications, workspaces/notes, and AI conversations
 - migration/readiness/release/maintenance observability plus structured request correlation
 - verified R2 staging uploads promoted to immutable public objects only after size, MIME, signature, and DOCX-structure checks
+- an enabled R2 lifecycle rule that deletes abandoned `pending/` upload objects after one day
 - batched retention maintenance for replay receipts, live events, view dedupe rows, and expired attachment states
 - tRPC-style typed procedure router
 - REST compatibility routes for the current Next frontend
@@ -226,11 +236,16 @@ Implemented now:
 Still intentionally next:
 
 - protected delivery for private message/note attachments; those upload classes currently fail closed
-- an R2 lifecycle rule that expires objects under `pending/` after one day as a final orphan-upload backstop
 - actual model execution for AI tablet once provider policy/key is set
 - full note/workspace UI wiring
 - production moderation/admin screens
 - payment provider integration after the internal credit ledger is exercised
+
+Current provider-plan boundaries:
+
+- Neon Free provides a six-hour point-in-time restore window. One manual production snapshot is retained without expiry; scheduled snapshots require a paid plan.
+- Upstash Redis is an acceleration layer for shared rate limits and event publication, not a source of truth. Eviction is disabled, and Postgres-backed polling recovers live events if Redis is unavailable.
+- R2 currently delivers public attachment objects through Cloudflare's rate-limited `r2.dev` URL. Moving to a production custom domain requires choosing a domain on a Cloudflare-managed zone.
 
 ## First Live Provider Sequence
 
