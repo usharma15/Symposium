@@ -16,6 +16,7 @@
     "api:typecheck": "tsc --noEmit -p tsconfig.api.json",
     "build": "next build",
     "core:check": "tsx scripts/symposiumCoreCheck.ts",
+    "entities:check": "tsx scripts/entityStoreCheck.ts",
     "infrastructure:check": "tsx scripts/infrastructureBoundaryCheck.ts",
     "identity:check": "tsx scripts/identitySelectionCheck.ts",
     "item-mutation:check": "tsx scripts/itemMutationGuardCheck.ts",
@@ -26,13 +27,15 @@
     "live:env:check": "tsx scripts/liveEnvReport.ts --strict",
     "mutation:check": "tsx scripts/mutationEnvelopeCheck.ts",
     "profile:check": "tsx scripts/profileActivityCheck.ts",
+    "reconciliation:check": "tsx scripts/inquiryReconciliationCheck.ts",
     "routing:check": "tsx scripts/canonicalRouteCheck.ts",
     "security:check": "tsx scripts/securityBoundaryCheck.ts",
+    "styles:check": "tsx scripts/styleLayerCheck.ts",
     "start": "next start",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "typecheck:all": "npm run typecheck && npm run api:typecheck",
     "deploy:api:check": "npm run api:preflight && npm run api:typecheck",
-    "verify": "npm run architecture:check && npm run security:check && npm run infrastructure:check && npm run routing:check && npm run core:check && npm run action:check && npm run action-state:check && npm run identity:check && npm run item-mutation:check && npm run attachment:check && npm run mutation:check && npm run profile:check && npm run typecheck:all && npm run build"
+    "verify": "npm run architecture:check && npm run styles:check && npm run security:check && npm run infrastructure:check && npm run routing:check && npm run entities:check && npm run core:check && npm run action:check && npm run action-state:check && npm run reconciliation:check && npm run identity:check && npm run item-mutation:check && npm run attachment:check && npm run mutation:check && npm run profile:check && npm run typecheck:all && npm run build"
   },
   "overrides": {
     "postcss": "8.5.15"

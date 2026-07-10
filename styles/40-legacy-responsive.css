@@ -1,0 +1,202 @@
+/* Responsive rules for the established presentation layer. */
+
+@media (max-width: 1120px) {
+  .detail-layout,
+  .room-header {
+    grid-template-columns: 1fr;
+  }
+
+  .hall-world {
+    min-height: 640px;
+  }
+
+  .room-render {
+    min-height: 560px;
+  }
+
+  .room-header > .room-seal {
+    display: none;
+  }
+
+  .folder-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detail-side {
+    position: static;
+  }
+}
+
+@media (max-width: 850px) {
+  .hall-layout {
+    min-height: 0;
+  }
+
+  .hall-world {
+    display: grid;
+    align-content: end;
+    gap: 10px;
+    min-height: 600px;
+    padding: 14px;
+  }
+
+  .hall-vault,
+  .hall-floor,
+  .library-stair {
+    display: none;
+  }
+
+  .hall-door,
+  .hall-door-office,
+  .hall-door-amphitheater,
+  .hall-door-library,
+  .hall-door-symposium,
+  .hall-door-library:hover {
+    position: static;
+    width: min(100%, 340px);
+    transform: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    --brand-nav-slot: 112px;
+    top: 10px;
+    left: 14px;
+    right: 14px;
+  }
+
+  .brand {
+    min-width: 0;
+    max-width: 112px;
+  }
+
+  .brand small,
+  .profile-button span,
+  .pocket span,
+  .movement-pad,
+  .sync-status {
+    display: none;
+  }
+
+  .stage {
+    width: calc(100vw - 20px);
+    padding: 78px 0 96px;
+  }
+
+  .world-rail {
+    left: 10px;
+    right: 10px;
+    top: auto;
+    bottom: 10px;
+    width: auto;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .rail-button {
+    min-height: 50px;
+  }
+
+  .room-header,
+  .room-render-content,
+  .detail-main,
+  .profile-hero {
+    padding: 22px;
+  }
+
+  .room-render {
+    min-height: 560px;
+  }
+
+  .room-render-content {
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+    width: auto;
+  }
+
+  .room-render-office .room-render-content {
+    top: 14px;
+    width: auto;
+  }
+
+  .room-render .room-seal {
+    display: none;
+  }
+
+  .render-hotspot-exit {
+    top: 14px;
+  }
+
+  .render-hotspot-notes {
+    left: 14px;
+    bottom: 178px;
+  }
+
+  .render-hotspot-saved {
+    right: 14px;
+    bottom: 178px;
+  }
+
+  .feed-toolbar {
+    position: static;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .composer-topline,
+  .comment-composer div {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .post-composer select,
+  .comment-composer select {
+    width: 100%;
+    max-width: none;
+  }
+
+  .search-box,
+  .feed-stream,
+  .folder-row,
+  .post-composer {
+    width: 100%;
+  }
+
+  .feed-post {
+    padding: 14px 12px;
+  }
+
+  .social-actions {
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding-bottom: 2px;
+  }
+
+  .folder-row {
+    grid-template-columns: 1fr;
+  }
+
+  .side-panel {
+    top: 74px;
+    bottom: 74px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+  }
+
+  .profile-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-hero h1 {
+    font-size: 2.2rem;
+  }
+
+  .pocket {
+    bottom: 70px;
+    width: 46px;
+    justify-content: center;
+    padding: 0;
+  }
+}

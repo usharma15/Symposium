@@ -97,17 +97,34 @@ The item mutation guard records per-item epochs and pending mutations, including
 
 Optimistic action membership and metrics use a clock-independent action-state guard. Stale live events remain unable to reverse the latest local intent, regardless of request duration. Protection is retired only when a bootstrap request that began after the mutation confirms both membership and metric direction. This avoids timer-based snap-back while still allowing later canonical changes to converge.
 
+The client collection is normalized into `byId` plus stable order before it reaches the shell. Synchronous refs and React state are updated through one entity-store boundary, so mutation handlers, live events, bootstrap replacement, persistence, and rendering cannot maintain divergent copies. Action reconciliation is owned by `features/live-sync/inquiryActionReconciler.ts`, not by UI components.
+
+## Frontend ownership
+
+`SymposiumV0.tsx` is the application controller: authentication lifecycle, route-level state, mutation orchestration, live-event subscription, persistence calls, and composition. Rendering and feature policy are owned below it:
+
+- `features/posts`: composers, feed cards, detail views, edit surfaces, post action presentation
+- `features/comments`: discussion trees, reply-window paging, comment ownership and actions
+- `features/attachments`: metadata generation, carousel, document/media previews, zoom and fullscreen
+- `features/profiles`: activity projection, privacy-aware tabs, social graph and settings
+- `features/communities`, `features/rooms`, `features/workspace`, `features/messages`, `features/search`: their respective surfaces
+- `features/entities`, `features/live-sync`, `features/navigation`, `features/actions`: shared client invariants and contracts
+
+Feature modules cannot import the application shell or Next routes, must stay bounded in size, and must form an acyclic dependency graph. These constraints are executable architecture checks.
+
+`app/globals.css` is an ordered manifest. Styles are split into numbered foundation, established, immersive, overlay, and responsive layers under `styles/`. Numbering preserves the proven cascade while each layer declares ownership and has an enforced size ceiling.
+
 ## Extraction order
 
-1. Characterization checks and mutation-safe inbound reconciliation.
-2. Canonical URL routing and shell/navigation separation.
-3. Shared normalized entity store and live-sync controller.
-4. Comment tree and composer extraction.
-5. Attachment gallery, viewer, uploader, and ownership extraction.
-6. Post composer/detail/feed extraction.
-7. Profile activity and social graph extraction.
-8. Workspace/notes wiring and shared editor foundation.
-9. Layer `globals.css` into tokens, foundations, layout, shared components, and feature styles as each feature is extracted.
+1. Characterization checks and mutation-safe inbound reconciliation. Complete.
+2. Canonical URL routing and shell/navigation separation. Complete for current surfaces.
+3. Shared normalized entity store and live-sync controller. Complete for current inquiry entities and action reconciliation.
+4. Comment tree and composer extraction. Complete.
+5. Attachment gallery, viewer, uploader, and ownership extraction. Client domain complete; future owner types remain additive backend work.
+6. Post composer/detail/feed extraction. Complete.
+7. Profile activity and social graph extraction. Complete.
+8. Workspace/notes wiring and shared editor foundation. Presentation extracted; durable document/editor contract remains next-stage work.
+9. Layer `globals.css` into tokens, foundations, layout, shared components, and feature styles. Complete with cascade-preserving layers.
 10. Split the backend live repository by domain while retaining the shared transaction kernel.
 
 ## Checkpoint gates
