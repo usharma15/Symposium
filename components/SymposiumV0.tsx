@@ -113,9 +113,16 @@ import {
   captureItemMutationSnapshot,
   completeItemMutation,
   createItemMutationGuard,
+  itemChangedSinceSnapshot,
   itemMutationIsPending,
   reconcileItemsAgainstMutations
 } from "@/features/live-sync/itemMutationGuard";
+import {
+  clearActionStateProtection,
+  createActionStateGuard,
+  protectActionState,
+  protectedActionState
+} from "@/features/live-sync/actionStateGuard";
 import { selectActiveProfile } from "@/features/identity/selectActiveProfile";
 
 type Theme = "day" | "night";
@@ -775,7 +782,6 @@ const parseCommentSegmentStack = (value: string | undefined) => {
 
 const collapsedBodyLength = 500;
 const bodyExpansionStep = 2000;
-const actionStateProtectionMs = 5000;
 const qualifiedViewVisibleRatio = 0.6;
 const qualifiedViewDelayMs = 5000;
 const viewDedupeWindowMs = 60 * 60 * 1000;
@@ -1159,9 +1165,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const commentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const visibleCommentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const actionVersionsRef = useRef<Record<string, number>>({});
-  const actionDesiredStateRef = useRef<Record<string, boolean | undefined>>({});
-  const actionMetricStateRef = useRef<Record<string, ProtectedActionMetricState>>({});
-  const actionProtectionUntilRef = useRef<Record<string, number>>({});
+  const actionStateGuardRef = useRef(createActionStateGuard<ProtectedActionMetricState>());
   const viewDedupeRef = useRef<Record<string, number>>({});
   const activityRecencyRef = useRef(activityRecency);
   const profileActivityByHandleRef = useRef(profileActivityByHandle);
@@ -1466,47 +1470,18 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     desired: boolean | undefined,
     metricState?: ProtectedActionMetricState
   ) => {
-    if (desired === undefined) delete actionDesiredStateRef.current[key];
-    else actionDesiredStateRef.current[key] = desired;
-
-    if (metricState) actionMetricStateRef.current[key] = metricState;
-    else delete actionMetricStateRef.current[key];
-
-    if (desired === undefined && !metricState) {
-      delete actionProtectionUntilRef.current[key];
-      return;
-    }
-
-    actionProtectionUntilRef.current[key] = Date.now() + actionStateProtectionMs;
+    protectActionState(actionStateGuardRef.current, key, desired, metricState);
   };
 
   const clearDesiredActionState = (key: string) => {
-    delete actionDesiredStateRef.current[key];
-    delete actionMetricStateRef.current[key];
-    delete actionProtectionUntilRef.current[key];
+    clearActionStateProtection(actionStateGuardRef.current, key);
   };
 
-  const protectedDesiredActionState = (key: string) => {
-    const desired = actionDesiredStateRef.current[key];
-    if (desired === undefined) return undefined;
+  const protectedDesiredActionState = (key: string) =>
+    protectedActionState(actionStateGuardRef.current, key)?.desired;
 
-    const protectedUntil = actionProtectionUntilRef.current[key] ?? 0;
-    if (protectedUntil >= Date.now()) return desired;
-
-    clearDesiredActionState(key);
-    return undefined;
-  };
-
-  const protectedActionMetricState = (key: string) => {
-    const metricState = actionMetricStateRef.current[key];
-    if (!metricState) return undefined;
-
-    const protectedUntil = actionProtectionUntilRef.current[key] ?? 0;
-    if (protectedUntil >= Date.now()) return metricState;
-
-    clearDesiredActionState(key);
-    return undefined;
-  };
+  const protectedActionMetricState = (key: string) =>
+    protectedActionState(actionStateGuardRef.current, key)?.metric;
 
   const refreshData = async (preferredHandle = currentProfile.handle) => {
     const mutationSnapshot = captureItemMutationSnapshot(itemMutationGuardRef.current);
@@ -1529,6 +1504,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     });
 
     const normalizedItems = sortByPublishedRecency(normalizeClientSeedTimes(data.items));
+    for (const incoming of normalizedItems) {
+      if (!itemChangedSinceSnapshot(itemMutationGuardRef.current, mutationSnapshot, incoming.id)) {
+        settleFreshItemActionState(incoming, nextProfile.handle);
+      }
+    }
     const mutationSafeItems = sortByPublishedRecency(
       reconcileItemsAgainstMutations(
         normalizedItems,
@@ -1677,6 +1657,49 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       value: nextValue,
       mode: metricNumber(nextValue) < metricNumber(previousValue) ? "ceiling" : "floor"
     };
+  };
+
+  const actionProtectionMatchesIncoming = (
+    key: string,
+    active: boolean | undefined,
+    metrics: Partial<Record<ActionMetricKey, string>>
+  ) => {
+    const desired = protectedDesiredActionState(key);
+    if (desired !== undefined && active !== desired) return false;
+
+    const metricState = protectedActionMetricState(key);
+    if (!metricState) return desired !== undefined;
+    const incomingValue = metrics[metricState.metric] ?? "0";
+    return protectedMetricValue(incomingValue, metricState) === incomingValue;
+  };
+
+  const settleFreshCommentActionState = (
+    itemId: string,
+    comments: InquiryComment[],
+    handle: string
+  ) => {
+    for (const comment of comments) {
+      if (!comment.id || isDeletedComment(comment)) continue;
+      const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
+      for (const action of metricActions) {
+        const key = `${itemId}:${comment.id}:${action}:${handle}`;
+        if (actionProtectionMatchesIncoming(key, commentActionActive(comment, action, handle), metrics)) {
+          clearDesiredActionState(key);
+        }
+      }
+      settleFreshCommentActionState(itemId, comment.replies ?? [], handle);
+    }
+  };
+
+  const settleFreshItemActionState = (item: InquiryItem, handle: string) => {
+    if (isDeletedPost(item)) return;
+    for (const action of metricActions) {
+      const key = `${item.id}:${action}:${handle}`;
+      if (actionProtectionMatchesIncoming(key, itemActionActive(item, action, handle), item.metrics)) {
+        clearDesiredActionState(key);
+      }
+    }
+    settleFreshCommentActionState(item.id, item.comments ?? [], handle);
   };
 
   const applyProtectedPostMetricState = (incoming: InquiryItem, current: InquiryItem | undefined, handle: string) => {
@@ -3199,6 +3222,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       if (isViewAction) releaseClientViewClaim("post", itemId);
       return;
     }
+    beginItemMutation(itemMutationGuardRef.current, itemId);
     setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
     if (!isViewAction && desiredActive !== undefined) {
       previousCanonicalActivity = stageOptimisticCanonicalActivity(
@@ -3305,6 +3329,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Action could not sync");
+    } finally {
+      completeItemMutation(itemMutationGuardRef.current, itemId);
     }
   };
 
@@ -3349,6 +3375,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       if (isViewAction) releaseClientViewClaim("comment", commentId);
       return;
     }
+    beginItemMutation(itemMutationGuardRef.current, itemId);
     setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
     if (!isViewAction && desiredActive !== undefined) {
       previousCanonicalActivity = stageOptimisticCanonicalActivity(
@@ -3447,6 +3474,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Comment action could not sync");
+    } finally {
+      completeItemMutation(itemMutationGuardRef.current, itemId);
     }
   };
 

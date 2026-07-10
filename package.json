@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "action:check": "tsx scripts/actionLedgerCheck.ts",
+    "action-state:check": "tsx scripts/actionStateGuardCheck.ts",
     "architecture:check": "tsx scripts/architectureBoundaryCheck.ts",
     "attachment:check": "tsx scripts/attachmentSecurityCheck.ts",
     "dev": "WATCHPACK_POLLING=true next dev --webpack",
@@ -30,7 +31,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "typecheck:all": "npm run typecheck && npm run api:typecheck",
     "deploy:api:check": "npm run api:preflight && npm run api:typecheck",
-    "verify": "npm run architecture:check && npm run security:check && npm run infrastructure:check && npm run core:check && npm run action:check && npm run identity:check && npm run item-mutation:check && npm run attachment:check && npm run mutation:check && npm run profile:check && npm run typecheck:all && npm run build"
+    "verify": "npm run architecture:check && npm run security:check && npm run infrastructure:check && npm run core:check && npm run action:check && npm run action-state:check && npm run identity:check && npm run item-mutation:check && npm run attachment:check && npm run mutation:check && npm run profile:check && npm run typecheck:all && npm run build"
   },
   "overrides": {
     "postcss": "8.5.15"

@@ -91,7 +91,9 @@ Inbound state has three classes:
 2. Live events are monotonic hints or complete entities when privacy allows.
 3. Bootstrap is a canonical snapshot, but a request that began before a local content mutation must not erase optimistic or newly committed state.
 
-The item mutation guard records per-item epochs and pending mutations. Bootstrap reconciliation preserves an item when the item is currently mutating or changed after that bootstrap request began, then converges on the next fresh snapshot. This is the first extracted live-sync invariant.
+The item mutation guard records per-item epochs and pending mutations, including post and comment actions. Bootstrap reconciliation preserves an item when the item is currently mutating or changed after that bootstrap request began, then converges on the next fresh snapshot.
+
+Optimistic action membership and metrics use a clock-independent action-state guard. Stale live events remain unable to reverse the latest local intent, regardless of request duration. Protection is retired only when a bootstrap request that began after the mutation confirms both membership and metric direction. This avoids timer-based snap-back while still allowing later canonical changes to converge.
 
 ## Extraction order
 
