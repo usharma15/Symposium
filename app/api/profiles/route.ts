@@ -26,6 +26,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const body = await readJson<Partial<CreateProfileInput>>(request);
 
   if (!body) {
@@ -52,7 +53,8 @@ export async function POST(request: Request) {
   const live = await proxyLiveBackend("/v1/profiles", {
     method: "POST",
     body: input,
-    actorHandle: input.handle
+    actorHandle: input.handle,
+    idempotencyKey
   });
   if (live) return live;
 

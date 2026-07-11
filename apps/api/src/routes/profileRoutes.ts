@@ -11,6 +11,7 @@ import {
 import { getPublicInitialState } from "../repository/foundation";
 import { syncUser, upsertProfile } from "../repository/identity";
 import { getActorFromRequest } from "../services/auth";
+import { mutationContextFromRequest } from "../services/mutations";
 import type { HandleParams } from "./types";
 
 type ProfileActivityQuery = {
@@ -41,7 +42,8 @@ export const registerProfileRoutes = (app: FastifyInstance) => {
   app.post("/v1/profiles", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const profile = await upsertProfile(request.body, actor);
+      const mutation = mutationContextFromRequest(request, "profile.upsert", request.body);
+      const profile = await upsertProfile(request.body, actor, mutation);
       return reply.send({ profile });
     } catch (error) {
       return sendError(app, reply, error);
@@ -83,7 +85,9 @@ export const registerProfileRoutes = (app: FastifyInstance) => {
   app.post<{ Params: HandleParams }>("/v1/profiles/:handle/follow", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const follow = await followProfile({ ...(request.body ?? {}), targetHandle: request.params.handle }, actor);
+      const input = { ...(request.body ?? {}), targetHandle: request.params.handle };
+      const mutation = mutationContextFromRequest(request, "profile.follow", input);
+      const follow = await followProfile(input, actor, mutation);
       return reply.send({ follow });
     } catch (error) {
       return sendError(app, reply, error);
@@ -93,7 +97,9 @@ export const registerProfileRoutes = (app: FastifyInstance) => {
   app.delete<{ Params: HandleParams }>("/v1/profiles/:handle/follow", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const follow = await unfollowProfile({ ...(request.body ?? {}), targetHandle: request.params.handle }, actor);
+      const input = { ...(request.body ?? {}), targetHandle: request.params.handle };
+      const mutation = mutationContextFromRequest(request, "profile.unfollow", input);
+      const follow = await unfollowProfile(input, actor, mutation);
       return reply.send({ follow });
     } catch (error) {
       return sendError(app, reply, error);

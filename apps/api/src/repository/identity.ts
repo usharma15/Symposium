@@ -9,8 +9,9 @@ import { cleanHandle } from "@/lib/symposiumCore";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
-import { stageAuditLog } from "../services/audit";
+import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
+import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import {
   actorHandle,
   ensureLiveData,
@@ -66,7 +67,7 @@ const resolveSyncedHandle = async (client: PoolClient, desiredHandle: string, cl
   });
 };
 
-export const upsertProfile = async (rawInput: unknown, actor: Actor) => {
+export const upsertProfile = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = createProfileInputSchema.parse(rawInput);
   const person = normalizeProfile(input);
   const writerHandle = actorHandle(actor, person.handle);
@@ -79,9 +80,16 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor) => {
 
   const client = await getPool().connect();
   let stagedEvent: StoredLiveEvent | undefined;
+  let storedProfile: ResearchProfileContract | undefined;
   try {
     await client.query("BEGIN");
+    const claim = await claimMutation<ResearchProfileContract>(client, writerHandle, mutation);
+    if (claim.replayed) {
+      await client.query("COMMIT");
+      return claim.response;
+    }
     const storedPerson = await insertProfile(client, person);
+    storedProfile = storedPerson;
     await client.query(
       `UPDATE posts
        SET author_name = $2, revision = revision + 1, updated_at = now()
@@ -107,8 +115,9 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor) => {
       action: "profile.upsert",
       subjectType: "profile",
       subjectId: person.handle,
-      metadata: { source: actor.source }
+      metadata: mutationAuditMetadata(mutation, { source: actor.source })
     });
+    await completeMutation(client, writerHandle, mutation, storedPerson);
     stagedEvent = await stageEvent(client, {
       kind: "profile.updated",
       actorHandle: writerHandle,
@@ -126,13 +135,7 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor) => {
 
   if (stagedEvent) await publishStoredEvent(stagedEvent);
 
-  const stored = await getPool().query<ResearchProfileContract>(
-    `SELECT handle, email, name, avatar_url AS "avatarUrl", likes_public AS "likesPublic",
-      reshares_public AS "resharesPublic", role, location, bio, fields, revision
-     FROM profiles WHERE handle = $1 LIMIT 1`,
-    [person.handle]
-  );
-  return stored.rows[0] ?? person;
+  return storedProfile ?? person;
 };
 
 export const syncUser = async (rawInput: unknown, actor: Actor) => {

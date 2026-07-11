@@ -65,7 +65,20 @@ import {
   type CrossTabItemMessage
 } from "@/features/live-sync/crossTabItemSync";
 import { createItemMutationCoordinator } from "@/features/mutations/itemMutationCoordinator";
-import { compareEntityRevisions, incomingEntityIsStale } from "@/features/live-sync/entityRevision";
+import { compareEntityRevisions } from "@/features/live-sync/entityRevision";
+import {
+  createFollowMutationCoordinator,
+  type RevisionedFollowRecord
+} from "@/features/live-sync/followMutationCoordinator";
+import { useCrossTabItemTransport } from "@/features/live-sync/useCrossTabItemTransport";
+import { useLiveEventStream } from "@/features/live-sync/useLiveEventStream";
+import {
+  createClientMutationId,
+  createRetryMutationRegistry,
+  shouldRetainRetryMutation,
+  symposiumApi,
+  SymposiumApiError
+} from "@/features/api/symposiumApiClient";
 import {
   createInquiryActionReconciler,
   type ProtectedActionMetricState
@@ -130,6 +143,7 @@ import {
   type ProfileSocialLists,
   type ProfileTab
 } from "@/features/profiles/ProfileViews";
+import { profileAvatarForPersistence } from "@/features/profiles/profilePersistence";
 import {
   CommunitiesDirectoryView,
   SelectedCommunityView
@@ -148,12 +162,24 @@ import { useCanonicalBrowserHistory } from "@/features/navigation/useCanonicalBr
 import { useBrowserSessionEntrance } from "@/features/entrance/useBrowserSessionEntrance";
 import { entryModeForBrowserSession } from "@/features/entrance/browserSession";
 import {
+  normalizeClientSeedTimes,
+  preservePublishedPosition
+} from "@/features/bootstrap/clientItemNormalization";
+import {
   persistCachedBootstrap,
   readCachedBootstrapSnapshot,
   resolveCachedBootstrap
 } from "@/features/bootstrap/cachedBootstrap";
+import {
+  communityRenders,
+  entranceRenders,
+  getThemePreloadRenders,
+  patronageRenders,
+  roomRenders,
+  useSymposiumRenderPreload,
+  type Theme
+} from "@/features/rooms/roomRenderAssets";
 
-type Theme = "day" | "night";
 type EntryMode = "loading" | "approach" | "auth" | "complete";
 type ViewTargetType = "post" | "comment";
 type EditingCommentTarget = {
@@ -161,13 +187,7 @@ type EditingCommentTarget = {
   commentId: string;
 };
 
-type ProfileFollowRecord = {
-  followerHandle?: string;
-  followingHandle?: string;
-  status?: string;
-  revision?: number;
-  updatedAt?: string;
-};
+type ProfileFollowRecord = RevisionedFollowRecord;
 
 type ProfileFollowResponse = {
   following?: ProfileFollowRecord[];
@@ -179,8 +199,11 @@ type AttachmentPreviewTarget = {
   attachmentId: string;
 };
 
+type ProfileSyncEntity = ResearchProfile & { id: string };
+
 type LiveEventPayload = {
   item?: unknown;
+  profile?: unknown;
   follow?: ProfileFollowRecord;
   action?: PostAction;
   activity?: unknown;
@@ -220,91 +243,10 @@ const liveStatus = {
   legacyConnected: "Live updates connected"
 } as const;
 
-const entranceRenders: Record<Theme, string> = {
-  day: "/symposium-renders/entrance.png",
-  night: "/symposium-renders/entrance-night.png"
-};
-
-const roomRenders: Record<Theme, Record<RoomId, string>> = {
-  day: {
-    hall: "/symposium-renders/main-hall-updated.png",
-    office: "/symposium-renders/office.png",
-    symposium: "/symposium-renders/symposium.png",
-    library: "/symposium-renders/library-1.png",
-    amphitheater: "/symposium-renders/amphitheatre-2.png",
-    funding: "/symposium-renders/patronage.png",
-    communities: "/symposium-renders/communities.png",
-    opportunities: "/symposium-renders/opportunities.png"
-  },
-  night: {
-    hall: "/symposium-renders/main-hall-night.png",
-    office: "/symposium-renders/office-night.png",
-    symposium: "/symposium-renders/symposium-night.png",
-    library: "/symposium-renders/library-night.png",
-    amphitheater: "/symposium-renders/amphitheatre-night.png",
-    funding: "/symposium-renders/patronage-night.png",
-    communities: "/symposium-renders/communities-night.png",
-    opportunities: "/symposium-renders/opportunities-night.png"
-  }
-};
-
-const patronageRenders: Record<Theme, Record<PatronageMode, string>> = {
-  day: {
-    lobby: "/symposium-renders/patronage.png",
-    civic: "/symposium-renders/patronage-civic.png",
-    private: "/symposium-renders/patronage-private.png"
-  },
-  night: {
-    lobby: "/symposium-renders/patronage-night.png",
-    civic: "/symposium-renders/patronage-civic-night.png",
-    private: "/symposium-renders/patronage-private-night.png"
-  }
-};
-
-const communityRenders: Record<Theme, { directory: string; selected: string }> = {
-  day: {
-    directory: "/symposium-renders/communities.png",
-    selected: "/symposium-renders/community-selected.png"
-  },
-  night: {
-    directory: "/symposium-renders/communities-night.png",
-    selected: "/symposium-renders/community-selected-night.png"
-  }
-};
-
-const preloadRenders = Array.from(
-  new Set([
-    ...Object.values(entranceRenders),
-    ...Object.values(roomRenders.day),
-    ...Object.values(roomRenders.night),
-    ...Object.values(patronageRenders.day),
-    ...Object.values(patronageRenders.night),
-    ...Object.values(communityRenders.day),
-    ...Object.values(communityRenders.night)
-  ])
-);
-
-const getThemePreloadRenders = (theme: Theme) =>
-  Array.from(
-    new Set([
-      entranceRenders[theme],
-      ...Object.values(roomRenders[theme]),
-      ...Object.values(patronageRenders[theme]),
-      ...Object.values(communityRenders[theme])
-    ])
-  );
-
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
 
 const clientId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-
-const clientMutationId = (scope: string) =>
-  `symposium:${scope}:${
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : clientId("mutation")
-  }`;
 
 const cloneCommentSegmentStacks = (stacks: CommentSegmentStacks): CommentSegmentStacks =>
   Object.fromEntries(Object.entries(stacks).map(([key, stack]) => [key, [...stack]]));
@@ -320,45 +262,6 @@ const parseCommentSegmentStack = (value: string | undefined) => {
 };
 
 const viewDedupeWindowMs = 60 * 60 * 1000;
-
-function useSymposiumRenderPreload(primaryRenders: string[], activeRender: string) {
-  const imageCacheRef = useRef<Record<string, HTMLImageElement>>({});
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const cache = imageCacheRef.current;
-    const preloadSource = (source: string, priority: "high" | "low") => {
-      if (cache[source]) return;
-      const image = new window.Image();
-      image.decoding = "async";
-      image.setAttribute("fetchpriority", priority);
-      image.src = source;
-      cache[source] = image;
-    };
-
-    const urgentRenders = Array.from(new Set([activeRender, ...primaryRenders]));
-    urgentRenders.forEach((source) => preloadSource(source, "high"));
-
-    const remainingRenders = preloadRenders.filter((source) => !urgentRenders.includes(source));
-    const preloadRemainingRenders = () => {
-      remainingRenders.forEach((source) => preloadSource(source, "low"));
-    };
-    const idleWindow = window as Window &
-      typeof globalThis & {
-        requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
-        cancelIdleCallback?: (handle: number) => void;
-      };
-
-    if (idleWindow.requestIdleCallback) {
-      const idleId = idleWindow.requestIdleCallback(preloadRemainingRenders, { timeout: 2500 });
-      return () => idleWindow.cancelIdleCallback?.(idleId);
-    }
-
-    const timeoutId = window.setTimeout(preloadRemainingRenders, 900);
-    return () => window.clearTimeout(timeoutId);
-  }, [activeRender, primaryRenders]);
-}
 
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
   return findCommentInTree(comments, id) ?? undefined;
@@ -382,64 +285,21 @@ const isLiveInquiryItem = (value: unknown): value is InquiryItem =>
   typeof (value as InquiryItem).room === "string" &&
   typeof (value as InquiryItem).metrics === "object";
 
-const clientSeedItemById = new Map(inquiryItems.map((item) => [item.id, item]));
-const clientSeedCommentById = new Map<string, InquiryComment>();
-for (const item of inquiryItems) {
-  const visit = (comments: InquiryComment[]) => {
-    for (const comment of comments) {
-      if (comment.id) clientSeedCommentById.set(comment.id, comment);
-      visit(comment.replies ?? []);
-    }
-  };
-  visit(item.comments);
-}
+const isLiveResearchProfile = (value: unknown): value is ResearchProfile =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as ResearchProfile).handle === "string" &&
+  typeof (value as ResearchProfile).name === "string" &&
+  Array.isArray((value as ResearchProfile).fields);
 
-const legacyLiveSeedCreatedAt = (id?: string, offsetMinutes = 0) => {
-  const match = id?.match(/^live-(\d+)-/);
-  if (!match) return undefined;
-  const index = Number(match[1]);
-  if (!Number.isFinite(index)) return undefined;
-  return new Date(Date.UTC(2026, 5, 18, 12, 0, 0) - (index * 19 + offsetMinutes) * 60 * 1000).toISOString();
-};
+const isCrossTabInquiryItemMessage = (value: unknown): value is CrossTabItemMessage<InquiryItem> =>
+  isCrossTabItemMessage<InquiryItem>(value);
 
-const stableSeedCreatedAt = (createdAt: string | undefined, fallback?: string) => {
-  if (createdAt && !Number.isNaN(Date.parse(createdAt))) return createdAt;
-  return fallback ?? createdAt;
-};
+const isCrossTabProfileMessage = (value: unknown): value is CrossTabItemMessage<ProfileSyncEntity> =>
+  isCrossTabItemMessage<ProfileSyncEntity>(value);
 
-const normalizeClientSeedCommentTimes = (comments: InquiryComment[]): InquiryComment[] =>
-  comments.map((comment) => ({
-    ...comment,
-    createdAt: stableSeedCreatedAt(
-      comment.id ? clientSeedCommentById.get(comment.id)?.createdAt ?? comment.createdAt : comment.createdAt,
-      legacyLiveSeedCreatedAt(comment.id, 1)
-    ),
-    replies: normalizeClientSeedCommentTimes(comment.replies ?? [])
-  }));
-
-const normalizeClientSeedTimes = (items: InquiryItem[]): InquiryItem[] =>
-  items.map((item) => {
-    const seedItem = clientSeedItemById.get(item.id);
-    return {
-      ...item,
-      createdAt: stableSeedCreatedAt(seedItem?.createdAt ?? item.createdAt, legacyLiveSeedCreatedAt(item.id)),
-      comments: normalizeClientSeedCommentTimes(item.comments ?? [])
-    };
-  });
-
-const normalizeClientItem = (item: InquiryItem) => normalizeClientSeedTimes([item])[0] ?? item;
-
-const preservePublishedPosition = (incoming: InquiryItem, existing?: InquiryItem): InquiryItem => {
-  const normalized = normalizeClientItem(incoming);
-  if (!existing) return normalized;
-
-  return {
-    ...normalized,
-    date: existing.date,
-    createdAt: existing.createdAt,
-    attachments: normalized.attachments ?? existing.attachments
-  };
-};
+const profileSyncEntity = (person: ResearchProfile): ProfileSyncEntity => ({ ...person, id: person.handle });
+const researchProfileFromSyncEntity = ({ id: _id, ...person }: ProfileSyncEntity): ResearchProfile => person;
 
 const localPreviewAuth: SymposiumAuthState = {
   clerkEnabled: false,
@@ -585,14 +445,14 @@ function SymposiumExperience({
   const canonicalActionRevisionRef = useRef<Record<string, number>>({});
   const pendingCanonicalActionKeysRef = useRef(new Set<string>());
   const profileActivityRequestRef = useRef<Record<string, number>>({});
-  const retryMutationKeysRef = useRef<Record<string, string>>({});
+  const retryMutationRegistryRef = useRef(createRetryMutationRegistry());
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
-  const liveEventCursorRef = useRef("");
   const liveRefreshTimerRef = useRef<number | null>(null);
   const itemMutationCoordinatorRef = useRef(createItemMutationCoordinator<InquiryItem>());
-  const followRevisionRef = useRef<Record<string, number>>({});
-  const crossTabChannelRef = useRef<BroadcastChannel | null>(null);
+  const profileMutationCoordinatorRef = useRef(createItemMutationCoordinator<ProfileSyncEntity>());
+  const followMutationCoordinatorRef = useRef(createFollowMutationCoordinator());
   const lastPersistedItemsRef = useRef<InquiryItem[]>(inquiryItems);
+  const lastPersistedProfilesRef = useRef<ProfileSyncEntity[]>([]);
   const authenticatedProfileHandleRef = useRef<string | null>(null);
   const entranceStartedAtRef = useRef<number | null>(null);
   const entryAuthStateRef = useRef({ browserSignedIn: Boolean(isSignedIn), profileSynced: signedIn });
@@ -806,7 +666,7 @@ function SymposiumExperience({
     nextItems = items,
     nextProfiles = profiles,
     nextProfile = currentProfile,
-    options?: { broadcastItemIds?: string[] }
+    options?: { broadcastItemIds?: string[]; broadcastProfileHandles?: string[] }
   ) => {
     persistCachedBootstrap(
       window.localStorage,
@@ -820,17 +680,26 @@ function SymposiumExperience({
       options?.broadcastItemIds
     );
     lastPersistedItemsRef.current = nextItems;
+    const profileEntities = Object.values(nextProfiles).map(profileSyncEntity);
+    const profileMessages = profileMutationCoordinatorRef.current.publishChanges(
+      profileEntities,
+      lastPersistedProfilesRef.current,
+      options?.broadcastProfileHandles
+    );
+    lastPersistedProfilesRef.current = profileEntities;
 
     for (const message of messages) {
-      crossTabChannelRef.current?.postMessage(message);
-      window.localStorage.setItem("symposium-cross-tab-item", JSON.stringify(message));
+      publishCrossTabItem(message);
+    }
+    for (const message of profileMessages) {
+      publishCrossTabProfile(message);
     }
   };
 
-  useEffect(() => {
-    const receive = (value: unknown) => {
-      if (!isCrossTabItemMessage<InquiryItem>(value)) return;
-      const message = value as CrossTabItemMessage<InquiryItem>;
+  const publishCrossTabItem = useCrossTabItemTransport<CrossTabItemMessage<InquiryItem>>({
+    channelName: "symposium-item-sync-v1",
+    isMessage: isCrossTabInquiryItemMessage,
+    onMessage: (message) => {
       const received = itemMutationCoordinatorRef.current.receive(message, itemsRef.current);
       if (!received.accepted) return;
       const nextItems = sortByPublishedRecency(received.items);
@@ -841,8 +710,49 @@ function SymposiumExperience({
         { items: nextItems, profiles: profilesRef.current },
         currentProfileRef.current.handle
       );
-    };
+    },
+    storageKey: "symposium-cross-tab-item"
+  });
 
+  const publishCrossTabProfile = useCrossTabItemTransport<CrossTabItemMessage<ProfileSyncEntity>>({
+    channelName: "symposium-profile-sync-v1",
+    isMessage: isCrossTabProfileMessage,
+    onMessage: (message) => {
+      const currentEntities = Object.values(profilesRef.current).map(profileSyncEntity);
+      const received = profileMutationCoordinatorRef.current.receive(message, currentEntities);
+      if (!received.accepted) return;
+      const nextProfiles = Object.fromEntries(
+        received.items.map((entity) => [entity.handle, researchProfileFromSyncEntity(entity)])
+      );
+      const currentHandle = currentProfileRef.current.handle;
+      const previousCurrent = profilesRef.current[currentHandle];
+      const nextCurrent = nextProfiles[currentHandle] ?? currentProfileRef.current;
+      profilesRef.current = nextProfiles;
+      currentProfileRef.current = nextCurrent;
+      setProfiles(nextProfiles);
+      setCurrentProfile(nextCurrent);
+      lastPersistedProfilesRef.current = received.items;
+
+      let nextItems = itemsRef.current;
+      if (JSON.stringify(previousCurrent) !== JSON.stringify(nextCurrent)) {
+        nextItems = itemsRef.current.map((item) => ({
+          ...item,
+          author: item.authorHandle === nextCurrent.handle ? nextCurrent.name : item.author,
+          comments: updateCommentsForProfile(item.comments, nextCurrent)
+        }));
+        replaceItems(nextItems);
+        lastPersistedItemsRef.current = nextItems;
+      }
+      persistCachedBootstrap(
+        window.localStorage,
+        { items: nextItems, profiles: nextProfiles },
+        nextCurrent.handle
+      );
+    },
+    storageKey: "symposium-cross-tab-profile"
+  });
+
+  useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (!event.key || !event.newValue) return;
       if (
@@ -851,7 +761,8 @@ function SymposiumExperience({
       ) {
         const handle = event.key.slice("symposium-following-".length);
         try {
-          const nextHandles = (JSON.parse(event.newValue) as string[]).map(cleanHandle).filter(Boolean);
+          const storedHandles = (JSON.parse(event.newValue) as string[]).map(cleanHandle).filter(Boolean);
+          const nextHandles = followMutationCoordinatorRef.current.protectFollowing(handle, storedHandles);
           setProfileSocialLists((current) => ({
             ...current,
             [handle]: { following: nextHandles, followers: current[handle]?.followers ?? [] }
@@ -867,23 +778,18 @@ function SymposiumExperience({
         if (!snapshot) return;
         const currentHandle = currentProfileRef.current.handle;
         const previousCurrent = profilesRef.current[currentHandle];
-        const protectedAt = Number(
-          window.localStorage.getItem(`symposium-profile-protected:${currentHandle}`) ?? 0
-        );
         const revisionSafeProfiles = Object.fromEntries(
           Object.entries(snapshot.profiles).map(([handle, incoming]) => [
             handle,
-            incomingEntityIsStale(incoming, profilesRef.current[handle])
-              ? profilesRef.current[handle]
-              : incoming
+            researchProfileFromSyncEntity(
+              profileMutationCoordinatorRef.current.protectIncomingItem(
+                profileSyncEntity(incoming),
+                profilesRef.current[handle] ? profileSyncEntity(profilesRef.current[handle]) : undefined
+              )
+            )
           ])
         );
-        const currentCanonicalIsNewer =
-          (compareEntityRevisions(revisionSafeProfiles[currentHandle], currentProfileRef.current) ?? 0) > 0;
-        const nextProfiles =
-          Date.now() - protectedAt < 8_000 && !currentCanonicalIsNewer
-            ? { ...revisionSafeProfiles, [currentHandle]: currentProfileRef.current }
-            : revisionSafeProfiles;
+        const nextProfiles = revisionSafeProfiles;
         profilesRef.current = nextProfiles;
         setProfiles(nextProfiles);
         const current = nextProfiles[currentHandle];
@@ -902,23 +808,12 @@ function SymposiumExperience({
         }
         return;
       }
-      if (event.key !== "symposium-cross-tab-item") return;
-      try {
-        receive(JSON.parse(event.newValue));
-      } catch {
-        // Ignore malformed or legacy cross-tab payloads.
-      }
     };
 
-    const channel = "BroadcastChannel" in window ? new BroadcastChannel("symposium-item-sync-v1") : null;
-    crossTabChannelRef.current = channel;
-    if (channel) channel.onmessage = (event) => receive(event.data);
     window.addEventListener("storage", handleStorage);
 
     return () => {
       window.removeEventListener("storage", handleStorage);
-      channel?.close();
-      if (crossTabChannelRef.current === channel) crossTabChannelRef.current = null;
     };
   }, []);
 
@@ -934,10 +829,7 @@ function SymposiumExperience({
     }
   };
 
-  const persistLocalFollowing = (handle: string, handles: string[], protect = false) => {
-    if (protect) {
-      window.localStorage.setItem(`symposium-following-lease:${handle}`, String(Date.now()));
-    }
+  const persistLocalFollowing = (handle: string, handles: string[]) => {
     window.localStorage.setItem(
       followingStorageKey(handle),
       JSON.stringify(Array.from(new Set(handles.map(cleanHandle).filter(Boolean))))
@@ -954,37 +846,50 @@ function SymposiumExperience({
     }));
   };
 
-  const followRevisionKey = (record: ProfileFollowRecord) =>
-    `${cleanHandle(String(record.followerHandle ?? ""))}:${cleanHandle(String(record.followingHandle ?? ""))}`;
-
   const captureFollowRevisions = (data: ProfileFollowResponse) => {
     for (const record of [...(data.following ?? []), ...(data.followers ?? [])]) {
-      const key = followRevisionKey(record);
-      const revision = Number(record.revision ?? 0);
-      if (key !== ":" && Number.isInteger(revision) && revision > (followRevisionRef.current[key] ?? 0)) {
-        followRevisionRef.current[key] = revision;
-      }
+      followMutationCoordinatorRef.current.observe({
+        ...record,
+        followerHandle: cleanHandle(String(record.followerHandle ?? "")),
+        followingHandle: cleanHandle(String(record.followingHandle ?? ""))
+      });
     }
   };
 
-  const socialListsFromResponse = (data: ProfileFollowResponse): ProfileSocialLists => ({
-    following: Array.from(
+  const socialListsFromResponse = (data: ProfileFollowResponse, ownerHandle: string): ProfileSocialLists => {
+    const coordinator = followMutationCoordinatorRef.current;
+    const normalizedOwner = cleanHandle(ownerHandle);
+    const following = Array.from(
       new Set(
-        (data.following ?? [])
-          .filter((follow) => follow.status === "active")
-          .map((follow) => cleanHandle(String(follow.followingHandle ?? "")))
-          .filter(Boolean)
+        (data.following ?? []).flatMap((follow) => {
+          const normalized = {
+            ...follow,
+            followerHandle: cleanHandle(String(follow.followerHandle ?? "")),
+            followingHandle: cleanHandle(String(follow.followingHandle ?? ""))
+          };
+          if (!coordinator.observe(normalized) || normalized.status !== "active") return [];
+          return normalized.followingHandle ? [normalized.followingHandle] : [];
+        })
       )
-    ),
-    followers: Array.from(
+    );
+    const followers = Array.from(
       new Set(
-        (data.followers ?? [])
-          .filter((follow) => follow.status === "active")
-          .map((follow) => cleanHandle(String(follow.followerHandle ?? "")))
-          .filter(Boolean)
+        (data.followers ?? []).flatMap((follow) => {
+          const normalized = {
+            ...follow,
+            followerHandle: cleanHandle(String(follow.followerHandle ?? "")),
+            followingHandle: cleanHandle(String(follow.followingHandle ?? ""))
+          };
+          if (!coordinator.observe(normalized) || normalized.status !== "active") return [];
+          return normalized.followerHandle ? [normalized.followerHandle] : [];
+        })
       )
-    )
-  });
+    );
+    return {
+      following: coordinator.protectFollowing(normalizedOwner, following),
+      followers: coordinator.protectFollowers(normalizedOwner, followers)
+    };
+  };
 
   const markLiveDataConnected = () => {
     setSyncStatus((status) =>
@@ -1009,31 +914,25 @@ function SymposiumExperience({
 
   const refreshData = async (preferredHandle = currentProfile.handle) => {
     const mutationSnapshot = itemMutationCoordinatorRef.current.capture();
-    const response = await fetch("/api/bootstrap", { cache: "no-store" });
-    if (!response.ok) throw new Error("Could not load Symposium data.");
-    const data = (await response.json()) as {
+    const data = await symposiumApi.request<{
       items: InquiryItem[];
       profiles: Record<string, ResearchProfile>;
       defaultProfile: ResearchProfile;
-    };
+    }>("/api/bootstrap", { cache: "no-store" });
     let loadedProfiles = Object.keys(data.profiles).length
       ? data.profiles
       : { [data.defaultProfile.handle]: data.defaultProfile };
     loadedProfiles = Object.fromEntries(
       Object.entries(loadedProfiles).map(([handle, incoming]) => [
         handle,
-        incomingEntityIsStale(incoming, profilesRef.current[handle]) ? profilesRef.current[handle] : incoming
+        researchProfileFromSyncEntity(
+          profileMutationCoordinatorRef.current.protectIncomingItem(
+            profileSyncEntity(incoming),
+            profilesRef.current[handle] ? profileSyncEntity(profilesRef.current[handle]) : undefined
+          )
+        )
       ])
     );
-    const protectedProfileHandle = currentProfileRef.current.handle;
-    const profileProtectedAt = Number(
-      window.localStorage.getItem(`symposium-profile-protected:${protectedProfileHandle}`) ?? 0
-    );
-    const canonicalProfileIsNewer =
-      (compareEntityRevisions(loadedProfiles[protectedProfileHandle], currentProfileRef.current) ?? 0) > 0;
-    if (Date.now() - profileProtectedAt < 8_000 && !canonicalProfileIsNewer) {
-      loadedProfiles = { ...loadedProfiles, [protectedProfileHandle]: currentProfileRef.current };
-    }
     const nextProfile = selectActiveProfile({
       profiles: loadedProfiles,
       defaultProfile: data.defaultProfile,
@@ -1073,19 +972,13 @@ function SymposiumExperience({
     const cached = readLocalFollowing(actorHandle);
     if (cached.length) setFollowingHandles(cached);
 
-    const response = await fetch(`/api/follows?actorHandle=${encodeURIComponent(actorHandle)}`, { cache: "no-store" });
-    if (!response.ok) return;
-
-    const data = (await response.json()) as ProfileFollowResponse;
+    const data = await symposiumApi.request<ProfileFollowResponse>(
+      `/api/follows?actorHandle=${encodeURIComponent(actorHandle)}`,
+      { cache: "no-store" }
+    );
     captureFollowRevisions(data);
-    const lists = socialListsFromResponse(data);
+    const lists = socialListsFromResponse(data, actorHandle);
     const remoteHandles = lists.following;
-    const protectedAt = Number(window.localStorage.getItem(`symposium-following-lease:${actorHandle}`) ?? 0);
-    if (Date.now() - protectedAt < 8_000 && JSON.stringify(remoteHandles) !== JSON.stringify(cached)) {
-      setFollowingHandles(cached);
-      applySocialLists(actorHandle, { ...lists, following: cached });
-      return;
-    }
 
     setFollowingHandles(remoteHandles);
     applySocialLists(actorHandle, lists);
@@ -1096,12 +989,12 @@ function SymposiumExperience({
     const normalizedHandle = cleanHandle(handle);
     if (!normalizedHandle) return;
 
-    const response = await fetch(`/api/profiles/${encodeURIComponent(normalizedHandle)}/follows`, { cache: "no-store" });
-    if (!response.ok) return;
-
-    const data = (await response.json()) as ProfileFollowResponse;
+    const data = await symposiumApi.request<ProfileFollowResponse>(
+      `/api/profiles/${encodeURIComponent(normalizedHandle)}/follows`,
+      { cache: "no-store" }
+    );
     captureFollowRevisions(data);
-    applySocialLists(normalizedHandle, socialListsFromResponse(data));
+    applySocialLists(normalizedHandle, socialListsFromResponse(data, normalizedHandle));
   };
 
   const mergeLiveItem = (incoming: InquiryItem) => {
@@ -1130,24 +1023,59 @@ function SymposiumExperience({
     return true;
   };
 
+  const mergeLiveProfile = (incoming: ResearchProfile) => {
+    const handle = cleanHandle(incoming.handle);
+    if (!handle || handle === "@") return false;
+    const current = profilesRef.current[handle];
+    const protectedEntity = profileMutationCoordinatorRef.current.protectIncomingItem(
+      profileSyncEntity({ ...incoming, handle }),
+      current ? profileSyncEntity(current) : undefined
+    );
+    const nextProfile = researchProfileFromSyncEntity(protectedEntity);
+    if (current && JSON.stringify(current) === JSON.stringify(nextProfile)) return false;
+    if ((compareEntityRevisions(nextProfile, current) ?? 0) > 0) {
+      profileMutationCoordinatorRef.current.complete(handle);
+    }
+
+    const nextProfiles = { ...profilesRef.current, [handle]: nextProfile };
+    const nextItems = itemsRef.current.map((item) => ({
+      ...item,
+      author: item.authorHandle === handle ? nextProfile.name : item.author,
+      comments: updateCommentsForProfile(item.comments, nextProfile)
+    }));
+    profilesRef.current = nextProfiles;
+    setProfiles(nextProfiles);
+    if (currentProfileRef.current.handle === handle) {
+      currentProfileRef.current = nextProfile;
+      setCurrentProfile(nextProfile);
+    }
+    replaceItems(nextItems);
+    persistLocalSnapshot(nextItems, nextProfiles, currentProfileRef.current, {
+      broadcastProfileHandles: [handle]
+    });
+    return true;
+  };
+
   const mergeLiveFollow = (record: ProfileFollowRecord | undefined, active: boolean) => {
     const followerHandle = cleanHandle(String(record?.followerHandle ?? ""));
     const followingHandle = cleanHandle(String(record?.followingHandle ?? ""));
     if (!followerHandle || !followingHandle || followerHandle === "@" || followingHandle === "@") return;
-    const revisionKey = followRevisionKey(record ?? {});
-    const revision = Number(record?.revision ?? 0);
-    if (Number.isInteger(revision) && revision > 0) {
-      if (revision < (followRevisionRef.current[revisionKey] ?? 0)) return;
-      followRevisionRef.current[revisionKey] = revision;
-    }
+    const normalizedRecord = {
+      ...record,
+      followerHandle,
+      followingHandle,
+      status: record?.status ?? (active ? "active" : "none")
+    };
+    if (!followMutationCoordinatorRef.current.observe(normalizedRecord)) return;
+    const canonicalActive = normalizedRecord.status === "active";
 
     setProfileSocialLists((current) => {
       const followerLists = current[followerHandle] ?? { following: [], followers: [] };
       const followingLists = current[followingHandle] ?? { following: [], followers: [] };
-      const nextFollowerFollowing = active
+      const nextFollowerFollowing = canonicalActive
         ? Array.from(new Set([...followerLists.following, followingHandle]))
         : followerLists.following.filter((handle) => handle !== followingHandle);
-      const nextFollowingFollowers = active
+      const nextFollowingFollowers = canonicalActive
         ? Array.from(new Set([...followingLists.followers, followerHandle]))
         : followingLists.followers.filter((handle) => handle !== followerHandle);
 
@@ -1162,7 +1090,7 @@ function SymposiumExperience({
       setFollowingHandles((currentHandles) => {
         const storedHandles = readLocalFollowing(followerHandle);
         const merged = Array.from(new Set([...currentHandles, ...storedHandles]));
-        const next = active
+        const next = canonicalActive
           ? Array.from(new Set([...merged, followingHandle]))
           : merged.filter((handle) => handle !== followingHandle);
         persistLocalFollowing(followerHandle, next);
@@ -1190,8 +1118,6 @@ function SymposiumExperience({
   };
 
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
-    if (event.cursor) liveEventCursorRef.current = event.cursor;
-
     const payload = event.payload ?? {};
     if (event.kind === "post.deleted") {
       if (isLiveInquiryItem(payload.item)) {
@@ -1211,6 +1137,11 @@ function SymposiumExperience({
 
     if (payload.follow || event.kind === "profile.followed" || event.kind === "profile.unfollowed") {
       mergeLiveFollow(payload.follow, event.kind !== "profile.unfollowed");
+    }
+
+    if (event.kind === "profile.updated" && isLiveResearchProfile(payload.profile)) {
+      mergeLiveProfile(payload.profile);
+      return;
     }
 
     if (isLiveInquiryItem(payload.item)) {
@@ -1269,19 +1200,6 @@ function SymposiumExperience({
     }
   };
 
-  const fetchLiveEvents = async () => {
-    const cursor = liveEventCursorRef.current;
-    const response = await fetch(`/api/events${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, {
-      cache: "no-store"
-    });
-    if (!response.ok) return;
-
-    const data = (await response.json()) as { events?: SymposiumLiveEvent[]; cursor?: string | null };
-    for (const event of data.events ?? []) mergeLiveEvent(event);
-    if (data.cursor) liveEventCursorRef.current = data.cursor;
-    markLiveDataConnected();
-  };
-
   const applyInitialRouteState = () => {
     const snapshot = snapshotForCanonicalRoute(initialRoute);
     setActiveRoom(snapshot.activeRoom);
@@ -1316,61 +1234,23 @@ function SymposiumExperience({
     setCurrentProfile(cached.currentProfile);
   };
 
-  useEffect(() => {
-    if (entryMode === "loading") return undefined;
+  useLiveEventStream<SymposiumLiveEvent>({
+    enabled: entryMode !== "loading",
+    onConnected: markLiveDataConnected,
+    onEvent: mergeLiveEvent,
+    onMalformedEvent: scheduleLiveRefresh,
+    onReconnecting: markLiveUpdatesReconnecting
+  });
 
-    let closed = false;
-    let pollTimer: number | null = null;
-    let source: EventSource | null = null;
-
-    const startPolling = () => {
-      if (pollTimer) return;
-      void fetchLiveEvents().catch(() => undefined);
-      pollTimer = window.setInterval(() => {
-        if (!closed) void fetchLiveEvents().catch(() => undefined);
-      }, 2500);
-    };
-
-    startPolling();
-
-    if ("EventSource" in window) {
-      const cursor = liveEventCursorRef.current;
-      source = new EventSource(`/api/events/stream${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
-      source.onopen = () => {
-        if (!closed) markLiveDataConnected();
-      };
-      source.addEventListener("symposium-ready", () => {
-        if (!closed) markLiveDataConnected();
-      });
-      source.addEventListener("symposium-heartbeat", () => {
-        if (!closed) markLiveDataConnected();
-      });
-      source.addEventListener("symposium-event", (message) => {
-        if (closed) return;
-        try {
-          mergeLiveEvent(JSON.parse((message as MessageEvent<string>).data) as SymposiumLiveEvent);
-        } catch {
-          scheduleLiveRefresh();
-        }
-      });
-      source.onerror = () => {
-        if (!closed) {
-          markLiveUpdatesReconnecting();
-          startPolling();
-        }
-      };
-    }
-
-    return () => {
-      closed = true;
-      source?.close();
-      if (pollTimer) window.clearInterval(pollTimer);
+  useEffect(
+    () => () => {
       if (liveRefreshTimerRef.current) {
         window.clearTimeout(liveRefreshTimerRef.current);
         liveRefreshTimerRef.current = null;
       }
-    };
-  }, [entryMode]);
+    },
+    []
+  );
 
   useEffect(() => {
     if (shouldPlayEntrance === null) return;
@@ -1476,16 +1356,9 @@ function SymposiumExperience({
     const syncAccount = async () => {
       setSyncStatus("Syncing account");
       setAuthError("");
-      const response = await fetch("/api/auth/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
+      const data = await symposiumApi.request<{ profile: ResearchProfile }>("/api/auth/sync", {
+        method: "POST"
       });
-
-      if (!response.ok) {
-        throw new Error("Could not sync your Symposium account.");
-      }
-
-      const data = (await response.json()) as { profile: ResearchProfile };
       if (cancelled) return;
 
       authenticatedProfileHandleRef.current = data.profile.handle;
@@ -1690,12 +1563,10 @@ function SymposiumExperience({
     do {
       const params = new URLSearchParams({ limit: "500", actorHandle });
       if (cursor) params.set("cursor", cursor);
-      const response = await fetch(
+      const data = await symposiumApi.request<Partial<ProfileActivityResponseContract>>(
         `/api/profiles/${encodeURIComponent(clean)}/activity?${params.toString()}`,
         { cache: "no-store" }
       );
-      if (!response.ok) return;
-      const data = (await response.json()) as Partial<ProfileActivityResponseContract>;
       entries.push(...(data.entries ?? []).filter(isCanonicalActionActivity));
       const nextCursor = typeof data.nextCursor === "string" ? data.nextCursor : null;
       if (!nextCursor || seenCursors.has(nextCursor)) {
@@ -2104,22 +1975,17 @@ function SymposiumExperience({
     return uploadConfirmedPostAttachment({
       actorHandle: currentProfile.handle,
       file,
-      idempotencyKey: clientMutationId("attachment-prepare"),
+      idempotencyKey: createClientMutationId("attachment-prepare"),
       metadata
     });
   };
 
   const retryMutationKey = (scope: string, fingerprint: string) => {
-    const key = `${scope}:${fingerprint}`;
-    const current = retryMutationKeysRef.current[key];
-    if (current) return { fingerprintKey: key, idempotencyKey: current };
-    const idempotencyKey = clientMutationId(scope);
-    retryMutationKeysRef.current[key] = idempotencyKey;
-    return { fingerprintKey: key, idempotencyKey };
+    return retryMutationRegistryRef.current.acquire(scope, fingerprint);
   };
 
   const clearRetryMutationKey = (fingerprintKey: string) => {
-    delete retryMutationKeysRef.current[fingerprintKey];
+    retryMutationRegistryRef.current.clear(fingerprintKey);
   };
 
   const createPost = async ({ title, body, kind, attachments }: PostDraft) => {
@@ -2135,29 +2001,25 @@ function SymposiumExperience({
     };
     const mutation = retryMutationKey("post-create", JSON.stringify(postPayload));
     setSyncStatus("Posting");
-    let response: Response;
+    let data: { item: InquiryItem };
     try {
-      response = await fetch("/api/posts", {
+      data = await symposiumApi.request<{ item: InquiryItem }>("/api/posts", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": mutation.idempotencyKey
-        },
-        body: JSON.stringify(postPayload)
+        idempotencyKey: mutation.idempotencyKey,
+        body: postPayload
       });
-    } catch {
-      setSyncStatus("Post could not reach the live service");
-      return { ok: false as const, error: "Post could not reach the live service" };
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) clearRetryMutationKey(mutation.fingerprintKey);
+      const message =
+        error instanceof SymposiumApiError && error.status === null
+          ? "Post could not reach the live service"
+          : error instanceof Error
+            ? error.message
+            : "Post could not be saved";
+      setSyncStatus(message);
+      return { ok: false as const, error: message };
     }
 
-    if (!response.ok) {
-      const error = (await response.json().catch(() => null)) as { error?: string } | null;
-      if (response.status < 500 && response.status !== 409) clearRetryMutationKey(mutation.fingerprintKey);
-      setSyncStatus(error?.error ?? "Post could not be saved");
-      return { ok: false as const, error: error?.error ?? "Post could not be saved" };
-    }
-
-    const data = (await response.json()) as { item: InquiryItem };
     clearRetryMutationKey(mutation.fingerprintKey);
     const existingCommittedItem = itemsRef.current.find((item) => item.id === data.item.id);
     const committedItem = reconcileCommittedItem(
@@ -2248,24 +2110,14 @@ function SymposiumExperience({
     );
 
     try {
-      const response = await fetch(`/api/posts/${itemId}/comments`, {
+      const data = await symposiumApi.request<{ comment?: InquiryComment; item?: InquiryItem }>(
+        `/api/posts/${itemId}/comments`,
+        {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": mutation.idempotencyKey
-        },
-        body: JSON.stringify(commentPayload)
-      });
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as { error?: string };
-        if (response.status < 500 && response.status !== 409) clearRetryMutationKey(mutation.fingerprintKey);
-        rollbackOptimisticComment(
-          errorData.error ?? (parentId ? "Reply could not be saved" : "Comment could not be saved")
-        );
-        return;
-      }
-
-      const data = (await response.json().catch(() => ({}))) as { comment?: InquiryComment; item?: InquiryItem };
+        idempotencyKey: mutation.idempotencyKey,
+        body: commentPayload
+        }
+      );
       clearRetryMutationKey(mutation.fingerprintKey);
       if (data.item) {
         const currentItem = itemsRef.current.find((item) => item.id === itemId);
@@ -2281,10 +2133,19 @@ function SymposiumExperience({
         replaceCanonicalRoute({ kind: "post", postId: itemId, commentId: committedCommentId });
       }
       setSyncStatus(parentId ? "Reply saved" : "Comment saved");
-    } catch {
-      rollbackOptimisticComment(
-        parentId ? "Reply could not reach the live service" : "Comment could not reach the live service"
-      );
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) clearRetryMutationKey(mutation.fingerprintKey);
+      const message =
+        error instanceof SymposiumApiError && error.status === null
+          ? parentId
+            ? "Reply could not reach the live service"
+            : "Comment could not reach the live service"
+          : error instanceof Error
+            ? error.message
+            : parentId
+              ? "Reply could not be saved"
+              : "Comment could not be saved";
+      rollbackOptimisticComment(message);
     } finally {
       itemMutationCoordinatorRef.current.complete(itemId);
     }
@@ -2334,7 +2195,7 @@ function SymposiumExperience({
         byteSize: file.size,
         ownerType: "profile",
         ownerId: currentProfile.handle
-    }, clientMutationId("attachment-prepare"));
+    }, createClientMutationId("attachment-prepare"));
 
     if (!uploadResponse.ok) {
       const error = (await uploadResponse.json().catch(() => null)) as { error?: string } | null;
@@ -2385,6 +2246,9 @@ function SymposiumExperience({
   };
 
   const saveProfileSettings = async (draft: ProfileSettingsDraft) => {
+    const previousProfile = currentProfileRef.current;
+    const previousProfiles = profilesRef.current;
+    const previousItems = itemsRef.current;
     const cleanName = draft.name.trim() || currentProfile.name;
     const updatedProfile: ResearchProfile = {
       ...currentProfile,
@@ -2401,8 +2265,7 @@ function SymposiumExperience({
       comments: updateCommentsForProfile(item.comments, updatedProfile)
     }));
 
-    window.localStorage.setItem(`symposium-profile-protected:${updatedProfile.handle}`, String(Date.now()));
-
+    profileMutationCoordinatorRef.current.begin(updatedProfile.handle);
     setCurrentProfile(updatedProfile);
     setProfiles(nextProfiles);
     replaceItems(nextItems);
@@ -2412,27 +2275,33 @@ function SymposiumExperience({
     persistLocalSnapshot(nextItems, nextProfiles, updatedProfile);
     setSettingsOpen(false);
     setSyncStatus("Saving profile settings");
+    const profilePayload = {
+      name: updatedProfile.name,
+      handle: updatedProfile.handle,
+      email: updatedProfile.email,
+      avatarUrl: profileAvatarForPersistence(updatedProfile.avatarUrl),
+      likesPublic: updatedProfile.likesPublic,
+      resharesPublic: updatedProfile.resharesPublic,
+      role: updatedProfile.role,
+      location: updatedProfile.location,
+      bio: updatedProfile.bio,
+      fields: updatedProfile.fields
+    };
+    const mutation = retryMutationKey("profile-upsert", JSON.stringify(profilePayload));
 
-    const response = await fetch("/api/profiles", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: updatedProfile.name,
-        handle: updatedProfile.handle,
-        email: updatedProfile.email,
-        avatarUrl: updatedProfile.avatarUrl,
-        likesPublic: updatedProfile.likesPublic,
-        resharesPublic: updatedProfile.resharesPublic,
-        role: updatedProfile.role,
-        location: updatedProfile.location,
-        bio: updatedProfile.bio,
-        fields: updatedProfile.fields
-      })
-    });
-
-    if (response.ok) {
-      const data = (await response.json()) as { profile: ResearchProfile };
-      const committedProfile = { ...updatedProfile, ...data.profile };
+    try {
+      const data = await symposiumApi.request<{ profile: ResearchProfile }>("/api/profiles", {
+        method: "POST",
+        idempotencyKey: mutation.idempotencyKey,
+        body: profilePayload
+      });
+      clearRetryMutationKey(mutation.fingerprintKey);
+      const committedEntity = profileMutationCoordinatorRef.current.protectIncomingItem(
+        profileSyncEntity({ ...updatedProfile, ...data.profile }),
+        profileSyncEntity(updatedProfile)
+      );
+      profileMutationCoordinatorRef.current.complete(updatedProfile.handle);
+      const committedProfile = researchProfileFromSyncEntity(committedEntity);
       const committedProfiles = { ...nextProfiles, [committedProfile.handle]: committedProfile };
       const committedItems = nextItems.map((item) => ({
         ...item,
@@ -2442,10 +2311,22 @@ function SymposiumExperience({
       setCurrentProfile(committedProfile);
       setProfiles(committedProfiles);
       replaceItems(committedItems);
-      persistLocalSnapshot(committedItems, committedProfiles, committedProfile);
+      persistLocalSnapshot(committedItems, committedProfiles, committedProfile, {
+        broadcastProfileHandles: [committedProfile.handle]
+      });
       setSyncStatus("Profile settings saved");
-    } else {
-      setSyncStatus("Profile saved locally");
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) clearRetryMutationKey(mutation.fingerprintKey);
+      profileMutationCoordinatorRef.current.complete(updatedProfile.handle);
+      currentProfileRef.current = previousProfile;
+      profilesRef.current = previousProfiles;
+      setCurrentProfile(previousProfile);
+      setProfiles(previousProfiles);
+      replaceItems(previousItems);
+      persistLocalSnapshot(previousItems, previousProfiles, previousProfile, {
+        broadcastProfileHandles: [updatedProfile.handle]
+      });
+      setSyncStatus("Profile settings could not sync");
     }
   };
 
@@ -2463,31 +2344,47 @@ function SymposiumExperience({
     const nextTargetFollowers = wasFollowing
       ? targetSocial.followers.filter((handle) => handle !== currentProfile.handle)
       : Array.from(new Set([...targetSocial.followers, currentProfile.handle]));
+    const mutation = followMutationCoordinatorRef.current.begin(
+      currentProfile.handle,
+      normalizedTarget,
+      !wasFollowing
+    );
+    const idempotencyKey = createClientMutationId(wasFollowing ? "profile-unfollow" : "profile-follow");
 
     setFollowingHandles(nextHandles);
     applySocialLists(currentProfile.handle, { ...currentSocial, following: nextHandles });
     applySocialLists(normalizedTarget, { ...targetSocial, followers: nextTargetFollowers });
-    persistLocalFollowing(currentProfile.handle, nextHandles, true);
+    persistLocalFollowing(currentProfile.handle, nextHandles);
     setSyncStatus(wasFollowing ? "Unfollowing profile" : "Following profile");
 
     try {
-      const response = await fetch(`/api/profiles/${encodeURIComponent(normalizedTarget)}/follow`, {
+      const data = await symposiumApi.request<{ follow?: ProfileFollowRecord }>(
+        `/api/profiles/${encodeURIComponent(normalizedTarget)}/follow`,
+        {
         method: wasFollowing ? "DELETE" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actorHandle: currentProfile.handle })
-      });
-
-      if (!response.ok) throw new Error("Follow action failed.");
-      const data = (await response.json()) as { follow?: ProfileFollowRecord };
+        idempotencyKey,
+        body: { actorHandle: currentProfile.handle }
+        }
+      );
       if (data.follow) {
-        captureFollowRevisions({ following: [data.follow] });
+        const normalizedFollow = {
+          ...data.follow,
+          followerHandle: cleanHandle(String(data.follow.followerHandle ?? currentProfile.handle)),
+          followingHandle: cleanHandle(String(data.follow.followingHandle ?? normalizedTarget))
+        };
+        followMutationCoordinatorRef.current.complete(mutation, normalizedFollow);
+        mergeLiveFollow(normalizedFollow, normalizedFollow.status === "active");
       }
       setSyncStatus(wasFollowing ? "Profile unfollowed" : "Following profile");
     } catch {
+      if (!followMutationCoordinatorRef.current.fail(mutation)) {
+        setSyncStatus("Follow state synced");
+        return;
+      }
       setFollowingHandles(previousHandles);
       applySocialLists(currentProfile.handle, { ...currentSocial, following: previousHandles });
       applySocialLists(normalizedTarget, { ...targetSocial });
-      persistLocalFollowing(currentProfile.handle, previousHandles, true);
+      persistLocalFollowing(currentProfile.handle, previousHandles);
       setSyncStatus("Follow could not sync");
     }
   };
@@ -2512,7 +2409,7 @@ function SymposiumExperience({
     const actionKey = `${itemId}:${action}:${actorHandle}`;
     const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
     actionVersionsRef.current[actionKey] = version;
-    const mutationKey = clientMutationId("post-action");
+    const mutationKey = createClientMutationId("post-action");
 
     const previousItems = itemsRef.current;
     let actionApplied = false;
@@ -2552,22 +2449,21 @@ function SymposiumExperience({
     persistLocalSnapshot(optimisticItems, profilesRef.current);
 
     try {
-      const response = await fetch(`/api/posts/${itemId}/actions`, {
+      const data = await symposiumApi.request<{ item: InquiryItem; activity?: unknown }>(
+        `/api/posts/${itemId}/actions`,
+        {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": mutationKey },
-        body: JSON.stringify({ action, actorHandle, active: desiredActive, trigger: options.trigger, surface: options.surface })
-      });
-
-      if (!response.ok) throw new Error("Post action failed.");
-
-      const data = (await response.json()) as { item: InquiryItem; activity?: unknown };
+        idempotencyKey: mutationKey,
+        body: { action, actorHandle, active: desiredActive, trigger: options.trigger, surface: options.surface }
+        }
+      );
       if (actionVersionsRef.current[actionKey] !== version) {
         const latestActive = protectedDesiredActionState(actionKey);
         if (latestActive !== undefined) {
-          void fetch(`/api/posts/${itemId}/actions`, {
+          void symposiumApi.request(`/api/posts/${itemId}/actions`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action, actorHandle, active: latestActive, trigger: options.trigger, surface: options.surface })
+            idempotencyKey: createClientMutationId("post-action-converge"),
+            body: { action, actorHandle, active: latestActive, trigger: options.trigger, surface: options.surface }
           }).catch(() => undefined);
         }
         return;
@@ -2657,7 +2553,7 @@ function SymposiumExperience({
     const actionKey = `${itemId}:${commentId}:${action}:${actorHandle}`;
     const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
     actionVersionsRef.current[actionKey] = version;
-    const mutationKey = clientMutationId("comment-action");
+    const mutationKey = createClientMutationId("comment-action");
 
     const previousItems = itemsRef.current;
     let actionApplied = false;
@@ -2701,15 +2597,14 @@ function SymposiumExperience({
     persistLocalSnapshot(optimisticItems, profilesRef.current);
 
     try {
-      const response = await fetch(`/api/posts/${itemId}/comments/${commentId}/actions`, {
+      const data = await symposiumApi.request<{ item: InquiryItem; activity?: unknown }>(
+        `/api/posts/${itemId}/comments/${commentId}/actions`,
+        {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": mutationKey },
-        body: JSON.stringify({ action, actorHandle, active: desiredActive, trigger: options.trigger, surface: options.surface })
-      });
-
-      if (!response.ok) throw new Error("Comment action failed.");
-
-      const data = (await response.json()) as { item: InquiryItem; activity?: unknown };
+        idempotencyKey: mutationKey,
+        body: { action, actorHandle, active: desiredActive, trigger: options.trigger, surface: options.surface }
+        }
+      );
       if (actionVersionsRef.current[actionKey] !== version) return;
 
       const committedComment = findCommentById(data.item.comments, commentId);
@@ -2808,18 +2703,11 @@ function SymposiumExperience({
     setSyncStatus("Saving post edit");
 
     try {
-      const response = await fetch(`/api/posts/${itemId}`, {
+      const data = await symposiumApi.request<{ item: InquiryItem }>(`/api/posts/${itemId}`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": clientMutationId("post-update")
-        },
-        body: JSON.stringify({ title: cleanTitle, body: cleanBody, actorHandle: currentProfile.handle })
+        idempotencyKey: createClientMutationId("post-update"),
+        body: { title: cleanTitle, body: cleanBody, actorHandle: currentProfile.handle }
       });
-
-      if (!response.ok) throw new Error("Post edit failed.");
-
-      const data = (await response.json()) as { item: InquiryItem };
       const committedItems = itemsRef.current.map((item) =>
         item.id === itemId ? reconcileCommittedItem(data.item, item) : item
       );
@@ -2850,17 +2738,11 @@ function SymposiumExperience({
     setSyncStatus("Deleting post");
 
     try {
-      const response = await fetch(`/api/posts/${itemId}`, {
+      const data = await symposiumApi.request<{ item?: InquiryItem }>(`/api/posts/${itemId}`, {
         method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": clientMutationId("post-delete")
-        },
-        body: JSON.stringify({ actorHandle: currentProfile.handle })
+        idempotencyKey: createClientMutationId("post-delete"),
+        body: { actorHandle: currentProfile.handle }
       });
-
-      if (!response.ok) throw new Error("Post delete failed.");
-      const data = (await response.json()) as { item?: InquiryItem };
       if (data.item) {
         const committedItems = itemsRef.current.map((current) =>
           current.id === itemId ? reconcileCommittedItem(data.item!, current) : current
@@ -2912,18 +2794,14 @@ function SymposiumExperience({
     setSyncStatus("Saving comment edit");
 
     try {
-      const response = await fetch(`/api/posts/${itemId}/comments/${commentId}`, {
+      const data = await symposiumApi.request<{ item: InquiryItem }>(
+        `/api/posts/${itemId}/comments/${commentId}`,
+        {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": clientMutationId("comment-update")
-        },
-        body: JSON.stringify({ body: cleanBody, actorHandle: currentProfile.handle })
-      });
-
-      if (!response.ok) throw new Error("Comment edit failed.");
-
-      const data = (await response.json()) as { item: InquiryItem };
+        idempotencyKey: createClientMutationId("comment-update"),
+        body: { body: cleanBody, actorHandle: currentProfile.handle }
+        }
+      );
       const committedItems = itemsRef.current.map((item) =>
         item.id === itemId ? reconcileCommittedItem(data.item, item) : item
       );
@@ -2966,17 +2844,14 @@ function SymposiumExperience({
     setSyncStatus("Deleting comment");
 
     try {
-      const response = await fetch(`/api/posts/${itemId}/comments/${commentId}`, {
+      const data = await symposiumApi.request<{ item?: InquiryItem }>(
+        `/api/posts/${itemId}/comments/${commentId}`,
+        {
         method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": clientMutationId("comment-delete")
-        },
-        body: JSON.stringify({ actorHandle: currentProfile.handle })
-      });
-
-      if (!response.ok) throw new Error("Comment delete failed.");
-      const data = (await response.json()) as { item?: InquiryItem };
+        idempotencyKey: createClientMutationId("comment-delete"),
+        body: { actorHandle: currentProfile.handle }
+        }
+      );
       if (data.item) {
         const committedItems = itemsRef.current.map((current) =>
           current.id === itemId ? reconcileCommittedItem(data.item!, current) : current

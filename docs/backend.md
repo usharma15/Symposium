@@ -164,7 +164,7 @@ The durable API follows one mutation rule: domain changes, idempotency receipts,
 
 The current guarantees are:
 
-- High-risk creates accept `Idempotency-Key`; the key is scoped by actor and operation and bound to a canonical payload hash. A safe retry replays the committed response, while reusing the key for a different payload returns `409`.
+- High-risk creates and current user-facing post, comment, profile, follow, and action mutations accept `Idempotency-Key`; the key is scoped by actor and operation and bound to a canonical payload hash. A safe retry replays the committed response, while reusing the key for a different payload returns `409`.
 - Action rows are the canonical save/signal/fork ledger. The denormalized post/comment arrays and metrics are reconciled inside the same locked transaction for fast reads.
 - Bootstrap reads profiles, posts, comments, attachments, communities, and action ledgers from one repeatable-read snapshot, so a refresh cannot mix rows from different mutation moments.
 - Follow, membership, call, notification, message, note, opportunity, assistant, and upload-prepare writes use atomic transactions and no-op-aware state transitions.
@@ -215,7 +215,7 @@ Implemented now:
 - Neon/Postgres schema and migrations
 - shared Upstash rate limiting with a bounded local outage fallback
 - transactionally staged database events and audit records with after-commit live publication and durable SSE recovery
-- end-to-end idempotency keys for posts, comments, canonical actions, calls, opportunities, messages, note blocks/publications, assistant messages, and upload preparation
+- end-to-end idempotency keys for posts, comments, profiles, follows, canonical actions, calls, opportunities, messages, note blocks/publications, assistant messages, and upload preparation
 - explicit public/private/community live-event audiences and privacy-safe read projections
 - server-side ownership and membership boundaries across Office/drafts, communities/calls, DMs, notifications, workspaces/notes, and AI conversations
 - migration/readiness/release/maintenance observability plus structured request correlation

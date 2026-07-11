@@ -20,6 +20,7 @@ const targetFromContext = async (context: Context) => {
 };
 
 export async function POST(request: Request, context: Context) {
+  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const targetHandle = await targetFromContext(context);
   const body = (await readJson<FollowBody>(request)) ?? {};
 
@@ -30,7 +31,8 @@ export async function POST(request: Request, context: Context) {
   const live = await proxyLiveBackend(`/v1/profiles/${encodeURIComponent(targetHandle)}/follow`, {
     method: "POST",
     body: { targetHandle, status: body.status ?? "active" },
-    actorHandle: body.actorHandle ? String(body.actorHandle) : undefined
+    actorHandle: body.actorHandle ? String(body.actorHandle) : undefined,
+    idempotencyKey
   });
   if (live) return live;
 
@@ -46,6 +48,7 @@ export async function POST(request: Request, context: Context) {
 }
 
 export async function DELETE(request: Request, context: Context) {
+  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const targetHandle = await targetFromContext(context);
   const body = (await readJson<FollowBody>(request)) ?? {};
 
@@ -56,7 +59,8 @@ export async function DELETE(request: Request, context: Context) {
   const live = await proxyLiveBackend(`/v1/profiles/${encodeURIComponent(targetHandle)}/follow`, {
     method: "DELETE",
     body: { actorHandle: body.actorHandle },
-    actorHandle: body.actorHandle ? String(body.actorHandle) : undefined
+    actorHandle: body.actorHandle ? String(body.actorHandle) : undefined,
+    idempotencyKey
   });
   if (live) return live;
 

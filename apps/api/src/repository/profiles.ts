@@ -10,9 +10,10 @@ import { buildLegacyProfileActivity } from "@/lib/profileActivity";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
-import { stageAuditLog } from "../services/audit";
+import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";
 import { runAtomic } from "../services/transactions";
+import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { decodeActivityCursor, listCanonicalProfileActivity } from "./actions";
 import { actorHandle, ensureLiveData, ensureProfileHandle, getInitialState } from "./foundation";
 
@@ -70,7 +71,7 @@ export const listProfileActivity = async (
   }
 };
 
-export const followProfile = async (rawInput: unknown, actor: Actor) => {
+export const followProfile = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = followProfileInputSchema.parse(rawInput);
   const follower = await ensureProfileHandle(actorHandle(actor));
   const following = await ensureProfileHandle(input.targetHandle);
@@ -84,6 +85,14 @@ export const followProfile = async (rawInput: unknown, actor: Actor) => {
   }
   await ensureLiveData();
   return runAtomic(async (client) => {
+    const claim = await claimMutation<{
+      followerHandle: string;
+      followingHandle: string;
+      status: string;
+      revision: number;
+      updatedAt: string;
+    }>(client, follower, mutation);
+    if (claim.replayed) return { value: claim.response };
     const result = await client.query<{ revision: number; updatedAt: Date | string }>(
       `INSERT INTO profile_follows (follower_handle, following_handle, status)
        VALUES ($1, $2, $3)
@@ -109,12 +118,13 @@ export const followProfile = async (rawInput: unknown, actor: Actor) => {
       revision: result.rows[0].revision,
       updatedAt: new Date(result.rows[0].updatedAt).toISOString()
     };
+    await completeMutation(client, follower, mutation, value);
     await stageAuditLog(client, {
       actorHandle: follower,
       action: "profile.follow",
       subjectType: "profile",
       subjectId: following,
-      metadata: { status: input.status }
+      metadata: mutationAuditMetadata(mutation, { status: input.status })
     });
     const event = await stageEvent(client, {
       kind: "profile.followed",
@@ -128,7 +138,7 @@ export const followProfile = async (rawInput: unknown, actor: Actor) => {
   });
 };
 
-export const unfollowProfile = async (rawInput: unknown, actor: Actor) => {
+export const unfollowProfile = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = unfollowProfileInputSchema.parse(rawInput);
   const follower = await ensureProfileHandle(actorHandle(actor, input.actorHandle));
   const following = cleanHandle(input.targetHandle);
@@ -136,6 +146,14 @@ export const unfollowProfile = async (rawInput: unknown, actor: Actor) => {
   if (hasDatabase()) {
     await ensureLiveData();
     return runAtomic(async (client) => {
+      const claim = await claimMutation<{
+        followerHandle: string;
+        followingHandle: string;
+        status: "none";
+        revision: number;
+        updatedAt: string;
+      }>(client, follower, mutation);
+      if (claim.replayed) return { value: claim.response };
       const result = await client.query<{ previousStatus: string; revision: number; updatedAt: Date | string }>(
         `WITH previous AS (
            SELECT status FROM profile_follows WHERE follower_handle = $1 AND following_handle = $2
@@ -167,11 +185,13 @@ export const unfollowProfile = async (rawInput: unknown, actor: Actor) => {
         revision: result.rows[0].revision,
         updatedAt: new Date(result.rows[0].updatedAt).toISOString()
       };
+      await completeMutation(client, follower, mutation, value);
       await stageAuditLog(client, {
         actorHandle: follower,
         action: "profile.unfollow",
         subjectType: "profile",
-        subjectId: following
+        subjectId: following,
+        metadata: mutationAuditMetadata(mutation)
       });
       const event = await stageEvent(client, {
         kind: "profile.unfollowed",

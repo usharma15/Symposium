@@ -40,6 +40,19 @@ export const persistCachedBootstrap = (
   snapshot: CachedBootstrapSnapshot,
   currentProfileHandle: string
 ) => {
-  storage.setItem(snapshotStorageKey, JSON.stringify(snapshot));
-  storage.setItem(profileHandleStorageKey, currentProfileHandle);
+  let snapshotStored = false;
+  let profileHandleStored = false;
+  try {
+    storage.setItem(snapshotStorageKey, JSON.stringify(snapshot));
+    snapshotStored = true;
+  } catch {
+    // Cached bootstrap is an acceleration layer; quota pressure must never fail a live mutation.
+  }
+  try {
+    storage.setItem(profileHandleStorageKey, currentProfileHandle);
+    profileHandleStored = true;
+  } catch {
+    // The authenticated server snapshot remains authoritative when browser storage is unavailable.
+  }
+  return { profileHandleStored, snapshotStored };
 };

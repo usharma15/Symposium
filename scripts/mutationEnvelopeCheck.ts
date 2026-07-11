@@ -119,8 +119,16 @@ const main = async () => {
   }
   const postProxy = readFileSync("app/api/posts/[id]/route.ts", "utf8");
   const commentProxy = readFileSync("app/api/posts/[id]/comments/[commentId]/route.ts", "utf8");
+  const profileRoutes = readFileSync("apps/api/src/routes/profileRoutes.ts", "utf8");
+  const profileProxy = readFileSync("app/api/profiles/route.ts", "utf8");
+  const followProxy = readFileSync("app/api/profiles/[handle]/follow/route.ts", "utf8");
+  for (const scope of ["profile.upsert", "profile.follow", "profile.unfollow"]) {
+    assert.match(profileRoutes, new RegExp(`mutationContextFromRequest\\(request, "${scope.replace(".", "\\.")}"`));
+  }
   assert.equal((postProxy.match(/idempotencyKey/g) ?? []).length >= 4, true);
   assert.equal((commentProxy.match(/idempotencyKey/g) ?? []).length >= 4, true);
+  assert.equal((profileProxy.match(/idempotencyKey/g) ?? []).length >= 2, true);
+  assert.equal((followProxy.match(/idempotencyKey/g) ?? []).length >= 4, true);
 
   console.log(
     JSON.stringify(
@@ -133,7 +141,8 @@ const main = async () => {
           "payload conflict rejection",
           "transactional event staging",
           "private event audience defaults",
-          "edit and delete idempotency coverage"
+          "edit and delete idempotency coverage",
+          "profile and follow idempotency coverage"
         ]
       },
       null,

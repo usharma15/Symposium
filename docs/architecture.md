@@ -101,9 +101,11 @@ Optimistic action membership and metrics use a clock-independent action-state gu
 
 The client collection is normalized into `byId` plus stable order before it reaches the shell. Synchronous refs and React state are updated through one entity-store boundary, so mutation handlers, live events, bootstrap replacement, persistence, and rendering cannot maintain divergent copies. Mutation ordering is owned by `features/mutations/itemMutationCoordinator.ts`; action reconciliation is owned by `features/live-sync/inquiryActionReconciler.ts`, not by UI components.
 
+Profiles reuse the same collection coordinator and ordered browser transport as inquiry items. Follow relationships use a relationship-specific coordinator that tracks the pending desired state and the last authoritative relationship revision, so refreshes and delayed events cannot reverse a follow or unfollow while its request is outstanding. Profile, follow, post, comment, and action writes all use the shared JSON API client and idempotency-key policy.
+
 ## Frontend ownership
 
-`SymposiumV0.tsx` is the application controller: authentication lifecycle, route-level state, mutation invocation, live-event subscription, persistence calls, and composition. Mutation ordering and reconciliation are delegated to the shared coordinator. Rendering and feature policy are owned below it:
+`SymposiumV0.tsx` is the application controller: authentication lifecycle, route-level state, mutation invocation, persistence decisions, and composition. HTTP normalization, retry identities, SSE/polling lifecycle, browser cross-tab delivery, mutation ordering, and reconciliation are delegated to shared infrastructure. Rendering and feature policy are owned below it:
 
 - `features/posts`: composers, feed cards, detail views, edit surfaces, post action presentation
 - `features/comments`: discussion trees, reply-window paging, comment ownership and actions
@@ -111,6 +113,7 @@ The client collection is normalized into `byId` plus stable order before it reac
 - `features/profiles`: activity projection, privacy-aware tabs, social graph and settings
 - `features/communities`, `features/rooms`, `features/workspace`, `features/messages`, `features/search`: their respective surfaces
 - `features/entities`, `features/live-sync`, `features/navigation`, `features/actions`: shared client invariants and contracts
+- `features/api`: same-origin JSON requests, structured failures, and retry-safe mutation identities
 
 Feature modules cannot import the application shell or Next routes, must stay bounded in size, and must form an acyclic dependency graph. These constraints are executable architecture checks.
 
@@ -118,7 +121,7 @@ Feature modules cannot import the application shell or Next routes, must stay bo
 
 The canonical browser-history state machine is owned by `features/navigation/useCanonicalBrowserHistory.ts`. The shell supplies and restores view snapshots, but it does not directly implement browser index, popstate, or direct-entry fallback policy.
 
-Browser-session entry is server-coordinated. `app/SymposiumPage.tsx` reads a non-persistent session cookie and renders subsequent tabs directly into their canonical route; `features/entrance/useBrowserSessionEntrance.ts` establishes the marker on the first visit. The first browser-session visit alone owns the five-second entrance. `features/bootstrap/cachedBootstrap.ts` owns cached entity/profile hydration so later tabs do not wait for Clerk synchronization or the live bootstrap request before rendering useful content. Server-rendered shell values, including timestamps, must be deterministic across server and browser locales to preserve hydration.
+Browser-session entry is server-coordinated. `app/SymposiumPage.tsx` reads a non-persistent session cookie and renders subsequent tabs directly into their canonical route; `features/entrance/useBrowserSessionEntrance.ts` establishes the marker on the first visit. The first browser-session visit alone owns the five-second entrance. `features/bootstrap/cachedBootstrap.ts` owns best-effort cached entity/profile hydration so later tabs do not wait for Clerk synchronization or the live bootstrap request before rendering useful content. Browser storage quota pressure is non-fatal and cannot fail a live mutation. Server-rendered shell values, including timestamps, must be deterministic across server and browser locales to preserve hydration.
 
 ## Backend ownership
 
@@ -137,6 +140,7 @@ Backend persistence is split into bounded repositories for posts, comments, iden
 9. Layer `globals.css` into tokens, foundations, layout, shared components, and feature styles. Complete with cascade-preserving layers.
 10. Split the backend live repository by domain while retaining the shared transaction kernel. Complete: routes now address domain repositories directly and cross-domain orchestration is service-owned.
 11. Add server-authoritative entity revisions and a shared cross-tab mutation coordinator. Complete for posts, comments, profiles, follows, bootstrap, live events, and the current edit/delete mutation envelope.
+12. Extract the client API, live-event, and browser-transport kernels and extend idempotent mutation coverage to profiles and follows. Complete.
 
 ## Checkpoint gates
 

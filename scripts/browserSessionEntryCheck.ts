@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { entryModeForBrowserSession } from "@/features/entrance/browserSession";
 import {
+  persistCachedBootstrap,
   readCachedBootstrapSnapshot,
   resolveCachedBootstrap
 } from "@/features/bootstrap/cachedBootstrap";
@@ -26,6 +27,21 @@ const main = async () => {
   });
   assert.equal(resolved.currentProfile.handle, cachedProfile.handle);
   assert.equal(resolved.items[0]?.id, cachedItem.id);
+  let storageAttempts = 0;
+  assert.deepEqual(
+    persistCachedBootstrap(
+      {
+        setItem: () => {
+          storageAttempts += 1;
+          throw new Error("quota");
+        }
+      },
+      { items: [cachedItem], profiles: { [cachedProfile.handle]: cachedProfile } },
+      cachedProfile.handle
+    ),
+    { profileHandleStored: false, snapshotStored: false }
+  );
+  assert.equal(storageAttempts, 2);
 
   const component = await readFile(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
   const symposiumPage = await readFile(path.join(process.cwd(), "app/SymposiumPage.tsx"), "utf8");
@@ -45,6 +61,7 @@ const main = async () => {
           "first browser-session entrance",
           "instant subsequent-tab entry",
           "cached bootstrap selection",
+          "non-fatal cached-bootstrap quota pressure",
           "canonical route hydration",
           "late authentication route preservation"
         ]

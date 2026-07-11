@@ -76,6 +76,26 @@ const main = async () => {
     symposiumSource.split("\n").length <= 3500,
     "SymposiumV0.tsx must remain an application controller rather than regrowing feature rendering."
   );
+  assert.doesNotMatch(
+    symposiumSource,
+    /new\s+(?:EventSource|BroadcastChannel)\s*\(/,
+    "Browser live and cross-tab transport must remain outside SymposiumV0.tsx."
+  );
+  assert.doesNotMatch(
+    symposiumSource,
+    /fetch\(\s*["'`]\/api\//,
+    "Same-origin API request semantics must remain owned by features/api."
+  );
+  for (const infrastructureImport of [
+    "features/api/symposiumApiClient",
+    "features/live-sync/useCrossTabItemTransport",
+    "features/live-sync/useLiveEventStream"
+  ]) {
+    assert.ok(
+      symposiumSource.includes(infrastructureImport),
+      `${infrastructureImport} must remain the controller infrastructure boundary.`
+    );
+  }
   for (const extractedComponent of [
     "AttachmentPreviewModal",
     "CommentThread",
@@ -118,6 +138,7 @@ const main = async () => {
           "backend to frontend dependency isolation",
           "feature module independence",
           "bounded shell and feature sizes",
+          "controller transport and API isolation",
           "extracted feature ownership",
           "acyclic feature dependencies"
         ]
