@@ -21,6 +21,10 @@ import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { canonicalPostAttachmentIds, claimPostAttachments } from "../services/postAttachmentClaims";
+import {
+  queueAttachmentsForOwnerStorageDeletion,
+  triggerStorageDeletion
+} from "../services/storageDeletion";
 import { transitionPostAction } from "./actions";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import {
@@ -608,6 +612,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
   const client = await getPool().connect();
   let deleted: InquiryItemContract | null = null;
   let didDelete = false;
+  let storageAttachmentIds: string[] = [];
   let stagedEvent: StoredLiveEvent | undefined;
 
   try {
@@ -654,6 +659,12 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
 
     if (isDeletedPost(existing)) {
       deleted = existing;
+      storageAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(
+        client,
+        "post",
+        postId,
+        "post_deleted"
+      );
       await completeMutation(client, handle, mutation, deleted);
       await client.query("COMMIT");
     } else {
@@ -733,13 +744,22 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
          WHERE post_id = $1 AND active = true`,
         [postId]
       );
+      storageAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(
+        client,
+        "post",
+        postId,
+        "post_deleted"
+      );
       didDelete = true;
       await stageAuditLog(client, {
         actorHandle: handle,
         action: "post.delete",
         subjectType: "post",
         subjectId: postId,
-        metadata: { deletedAt: deletedPost.deletedAt }
+        metadata: {
+          deletedAt: deletedPost.deletedAt,
+          storageAttachmentCount: storageAttachmentIds.length
+        }
       });
       stagedEvent = await stageEvent(client, {
         kind: "post.deleted",
@@ -765,6 +785,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
   if (!deleted) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
 
   if (didDelete && stagedEvent) await publishStoredEvent(stagedEvent);
+  if (storageAttachmentIds.length) await triggerStorageDeletion(storageAttachmentIds);
 
   return deleted;
 };

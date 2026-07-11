@@ -12,7 +12,7 @@ The following systems are established and should be reused rather than rebuilt:
 - Transactional domain writes, idempotency receipts, audits, and durable events.
 - Canonical post/comment action ledgers and monotonic action revisions.
 - Repeatable-read bootstrap snapshots and privacy-safe public projections.
-- Verified attachment staging, immutable promotion, quotas, and cleanup.
+- Verified attachment staging, immutable promotion, quotas, and durable object-lifecycle cleanup.
 - Migration-aware readiness, request correlation, maintenance, and release gates.
 - A production-fail-closed Next bridge plus an explicit local-preview adapter.
 

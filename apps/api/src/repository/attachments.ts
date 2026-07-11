@@ -23,10 +23,15 @@ import {
   createObjectKey,
   createUploadObjectKey,
   createUploadUrl,
-  deleteUploadedObject,
   inspectUploadedObject,
   promoteUploadedObject
 } from "../services/storage";
+import {
+  queueAttachmentRowsForStorageDeletion,
+  queueStagingObjectDeletion,
+  triggerStorageDeletion,
+  type AttachmentStorageRow
+} from "../services/storageDeletion";
 import { runAtomic } from "../services/transactions";
 import { validateDocxArchive } from "@/lib/docxSecurity";
 import { actorHandle, ensureLiveData } from "./foundation";
@@ -37,9 +42,13 @@ const maxProfileImageBytes = 5 * 1024 * 1024;
 const maxPendingUploadsPerActor = 20;
 const maxDailyUploadsPerActor = 100;
 const maxDailyUploadBytesPerActor = 250 * 1024 * 1024;
+const maxDailyUploadsGlobal = 500;
+const maxDailyUploadBytesGlobal = 1024 * 1024 * 1024;
+const maxActiveUploadBytesGlobal = 8 * 1024 * 1024 * 1024;
 
 type AttachmentRow = {
   attachmentId: string;
+  bucket: string;
   byteSize: number;
   contentType: string;
   fileName: string;
@@ -69,7 +78,8 @@ const requireAttachmentDatabase = () => {
 };
 
 const assertUploadAllowance = async (client: PoolClient, handle: string, incomingByteSize: number) => {
-  const expired = await client.query<{ uploadObjectKey: string }>(
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended('symposium:upload-capacity', 0))");
+  const expired = await client.query<AttachmentStorageRow>(
     `UPDATE attachments
      SET status = 'failed',
          metadata = metadata || jsonb_build_object('verificationError', 'Upload window expired.'),
@@ -79,7 +89,11 @@ const assertUploadAllowance = async (client: PoolClient, handle: string, incomin
          (status = 'pending' AND updated_at < now() - interval '15 minutes')
          OR (status = 'verifying' AND updated_at < now() - interval '30 minutes')
        )
-     RETURNING upload_object_key AS "uploadObjectKey"`,
+     RETURNING
+       id::text AS "attachmentId",
+       bucket,
+       object_key AS "objectKey",
+       upload_object_key AS "uploadObjectKey"`,
     [handle]
   );
   const result = await client.query<{
@@ -95,7 +109,22 @@ const assertUploadAllowance = async (client: PoolClient, handle: string, incomin
      WHERE uploader_handle = $1`,
     [handle]
   );
+  const globalResult = await client.query<{
+    activeBytes: string;
+    dailyBytes: string;
+    dailyCount: string;
+  }>(
+    `SELECT
+       count(*) FILTER (WHERE created_at >= now() - interval '24 hours')::text AS "dailyCount",
+       COALESCE(sum(byte_size) FILTER (WHERE created_at >= now() - interval '24 hours'), 0)::text AS "dailyBytes",
+       COALESCE(sum(byte_size) FILTER (
+         WHERE status IN ('pending', 'verifying', 'uploaded', 'previewed')
+            OR (status = 'failed' AND COALESCE(metadata->>'storageState', '') <> 'deleted')
+       ), 0)::text AS "activeBytes"
+     FROM attachments`
+  );
   const usage = result.rows[0];
+  const globalUsage = globalResult.rows[0];
   if (Number(usage?.pendingCount ?? 0) >= maxPendingUploadsPerActor) {
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Finish or discard an existing pending upload first." });
   }
@@ -105,7 +134,22 @@ const assertUploadAllowance = async (client: PoolClient, handle: string, incomin
   ) {
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The 24-hour attachment upload allowance has been reached." });
   }
-  return expired.rows.map((row) => row.uploadObjectKey);
+  if (
+    Number(globalUsage?.dailyCount ?? 0) + 1 > maxDailyUploadsGlobal ||
+    Number(globalUsage?.dailyBytes ?? 0) + incomingByteSize > maxDailyUploadBytesGlobal
+  ) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "SYMPOSIUM's daily storage allowance has been reached. Please try again later."
+    });
+  }
+  if (Number(globalUsage?.activeBytes ?? 0) + incomingByteSize > maxActiveUploadBytesGlobal) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "SYMPOSIUM's current storage capacity has been reached."
+    });
+  }
+  return queueAttachmentRowsForStorageDeletion(client, expired.rows, "expired_upload");
 };
 
 export const createAttachmentUpload = async (
@@ -160,7 +204,7 @@ export const createAttachmentUpload = async (
 
   requireAttachmentDatabase();
   await ensureLiveData();
-  let expiredUploadObjectKeys: string[] = [];
+  let expiredAttachmentIds: string[] = [];
   const prepared = await runAtomic(async (client) => {
     const claim = await claimMutation<{
       attachmentId: string;
@@ -170,7 +214,7 @@ export const createAttachmentUpload = async (
     }>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
 
-    expiredUploadObjectKeys = await assertUploadAllowance(client, handle, input.byteSize);
+    expiredAttachmentIds = await assertUploadAllowance(client, handle, input.byteSize);
     const attachmentId = randomUUID();
     const objectKey = createObjectKey(input.ownerType, input.fileName);
     const uploadObjectKey = createUploadObjectKey(attachmentId);
@@ -214,10 +258,7 @@ export const createAttachmentUpload = async (
     return { value };
   });
 
-  const expiredCleanup = await Promise.allSettled(expiredUploadObjectKeys.map(deleteUploadedObject));
-  if (expiredCleanup.some((result) => result.status === "rejected")) {
-    console.warn("SYMPOSIUM expired staged attachment cleanup was incomplete.");
-  }
+  if (expiredAttachmentIds.length) await triggerStorageDeletion(expiredAttachmentIds);
 
   const uploadUrl = await createUploadUrl(prepared.uploadObjectKey, input.contentType, input.byteSize);
 
@@ -230,22 +271,32 @@ export const createAttachmentUpload = async (
 };
 
 const markVerificationFailed = async (
-  attachmentId: string,
+  attachment: AttachmentRow,
   handle: string,
-  uploadObjectKey: string,
   message: string
 ) => {
-  await getPool().query(
-    `UPDATE attachments
-     SET status = 'failed',
-         metadata = metadata || jsonb_build_object('verificationError', $3::text),
-         updated_at = now()
-     WHERE id = $1 AND uploader_handle = $2 AND status = 'verifying'`,
-    [attachmentId, handle, message]
-  );
-  deleteUploadedObject(uploadObjectKey).catch((error) => {
-    console.warn("SYMPOSIUM rejected attachment cleanup failed.", error);
-  });
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const failed = await client.query(
+      `UPDATE attachments
+       SET metadata = metadata || jsonb_build_object('verificationError', $3::text),
+           updated_at = now()
+       WHERE id = $1 AND uploader_handle = $2 AND status = 'verifying'
+       RETURNING id`,
+      [attachment.attachmentId, handle, message]
+    );
+    if (failed.rowCount) {
+      await queueAttachmentRowsForStorageDeletion(client, [attachment], "verification_failed");
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+  await triggerStorageDeletion([attachment.attachmentId]);
   throw new TRPCError({ code: "BAD_REQUEST", message });
 };
 
@@ -253,6 +304,7 @@ const selectAttachment = async (attachmentId: string, handle: string) => {
   const result = await getPool().query<AttachmentRow>(
     `SELECT
        id::text AS "attachmentId",
+       bucket,
        owner_type AS "ownerType",
        owner_id AS "ownerId",
        object_key AS "objectKey",
@@ -298,6 +350,7 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
        AND (status = 'pending' OR (status = 'verifying' AND updated_at < now() - interval '10 minutes'))
      RETURNING
        id::text AS "attachmentId",
+       bucket,
        owner_type AS "ownerType",
        owner_id AS "ownerId",
        object_key AS "objectKey",
@@ -326,35 +379,20 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
   }
 
   if (inspection.byteSize !== attachment.byteSize) {
-    return markVerificationFailed(
-      attachment.attachmentId,
-      handle,
-      attachment.uploadObjectKey,
-      "Uploaded attachment size did not match the prepared upload."
-    );
+    return markVerificationFailed(attachment, handle, "Uploaded attachment size did not match the prepared upload.");
   }
   if (!inspection.contentType || !attachmentContentTypesMatch(inspection.contentType, attachment.contentType)) {
-    return markVerificationFailed(
-      attachment.attachmentId,
-      handle,
-      attachment.uploadObjectKey,
-      "Uploaded attachment type did not match the prepared upload."
-    );
+    return markVerificationFailed(attachment, handle, "Uploaded attachment type did not match the prepared upload.");
   }
   const signatureError = validateAttachmentContentSignature(attachment.contentType, inspection.prefix);
   if (signatureError) {
-    return markVerificationFailed(attachment.attachmentId, handle, attachment.uploadObjectKey, signatureError);
+    return markVerificationFailed(attachment, handle, signatureError);
   }
   if (
     attachment.contentType === docxContentType &&
     (!inspection.body || !(await validateDocxArchive(inspection.body)))
   ) {
-    return markVerificationFailed(
-      attachment.attachmentId,
-      handle,
-      attachment.uploadObjectKey,
-      "The uploaded file is not a valid DOCX document."
-    );
+    return markVerificationFailed(attachment, handle, "The uploaded file is not a valid DOCX document.");
   }
 
   try {
@@ -384,6 +422,7 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
     if ((updated.rowCount ?? 0) !== 1) {
       throw new TRPCError({ code: "CONFLICT", message: "Attachment verification state changed unexpectedly." });
     }
+    await queueStagingObjectDeletion(client, [attachment]);
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "attachment.confirm",
@@ -418,9 +457,7 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
 
   if (stagedEvent) await publishStoredEvent(stagedEvent);
   if (attachment.uploadObjectKey !== attachment.objectKey) {
-    deleteUploadedObject(attachment.uploadObjectKey).catch((error) => {
-      console.warn("SYMPOSIUM staged attachment cleanup failed.", error);
-    });
+    await triggerStorageDeletion([attachment.attachmentId]);
   }
 
   return {

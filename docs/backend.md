@@ -177,6 +177,7 @@ The current guarantees are:
 - Migration `0012_operational_integrity` backfills event audiences, removes impossible self-follows and duplicate publication links, normalizes legacy enum values conservatively, adds database checks, and adds compound/GIN indexes for the live read paths.
 - Migration `0013_authoritative_entity_revisions` adds monotonic revisions to posts, comments, profiles, and follow relationships so clients can deterministically reject stale snapshots across tabs, browsers, devices, bootstrap refreshes, and delayed live events.
 - Migration `0014_note_revision_guards` adds authoritative note and note-block revisions. Existing-note writes must supply the revisions they loaded, so delayed autosaves fail with a conflict instead of overwriting newer work.
+- Migration `0015_durable_r2_deletion` adds a leased, retry-safe object-deletion queue and backfills attachments belonging to existing post tombstones. Post deletion keeps its database tombstone and live event, but atomically removes the attachment from read projections and queues both canonical and staging R2 keys before commit. Removal is attempted before the delete request returns and retried every minute after transient provider failures.
 
 `npm run verify` is the local release gate. It runs security, infrastructure, domain, attachment, mutation, profile, TypeScript, and production-build checks. `npm audit --audit-level=high` is the dependency vulnerability gate.
 
@@ -196,7 +197,7 @@ The runner creates the live relational graph:
 - profile follows
 - posts, comments, reactions/saves/forks/reads
 - communities, memberships, channels, calls, call participants
-- attachments, previews, external links
+- attachments, durable storage-deletion jobs, previews, external links
 - DMs, messages, read state
 - workspaces, notes, note blocks, note publications
 - opportunity/job posts
@@ -222,7 +223,9 @@ Implemented now:
 - migration/readiness/release/maintenance observability plus structured request correlation
 - verified R2 staging uploads promoted to immutable public objects only after size, MIME, signature, and DOCX-structure checks
 - an enabled R2 lifecycle rule that deletes abandoned `pending/` upload objects after one day
-- batched retention maintenance for replay receipts, live events, view dedupe rows, and expired attachment states
+- durable R2 removal for deleted posts, failed verification, promoted staging copies, abandoned confirmed post uploads, and replaced profile images, with leased retries and idempotent object deletion
+- transaction-serialized global upload ceilings of 500 preparations or 1 GiB per day and 8 GiB of active attachment metadata, alongside the tighter per-user quotas
+- batched retention maintenance for replay receipts, live events, view dedupe rows, expired attachment states, and storage-orphan discovery
 - tRPC-style typed procedure router
 - REST compatibility routes for the current Next frontend
 - current seed data ported into the live schema

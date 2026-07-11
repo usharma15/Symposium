@@ -417,6 +417,29 @@ export const attachments = pgTable(
   ]
 );
 
+export const storageDeletionJobs = pgTable(
+  "storage_deletion_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    attachmentId: uuid("attachment_id").references(() => attachments.id, { onDelete: "set null" }),
+    bucket: text("bucket").notNull(),
+    objectKey: text("object_key").notNull(),
+    reason: text("reason").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).defaultNow().notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("storage_deletion_jobs_object_idx").on(table.bucket, table.objectKey),
+    index("storage_deletion_jobs_due_idx").on(table.nextAttemptAt, table.leaseExpiresAt),
+    index("storage_deletion_jobs_attachment_idx").on(table.attachmentId),
+    check("storage_deletion_jobs_attempts_check", sql`${table.attempts} >= 0`)
+  ]
+);
+
 export const previews = pgTable(
   "previews",
   {

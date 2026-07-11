@@ -1065,6 +1065,60 @@ const migrations: Migration[] = [
       END
       $$;
     `
+  },
+  {
+    id: "0015_durable_r2_deletion",
+    sql: `
+      CREATE TABLE IF NOT EXISTS storage_deletion_jobs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        attachment_id UUID REFERENCES attachments(id) ON DELETE SET NULL,
+        bucket TEXT NOT NULL,
+        object_key TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        lease_expires_at TIMESTAMPTZ,
+        last_error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CHECK (attempts >= 0)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS storage_deletion_jobs_object_idx
+        ON storage_deletion_jobs (bucket, object_key);
+      CREATE INDEX IF NOT EXISTS storage_deletion_jobs_due_idx
+        ON storage_deletion_jobs (next_attempt_at, lease_expires_at);
+      CREATE INDEX IF NOT EXISTS storage_deletion_jobs_attachment_idx
+        ON storage_deletion_jobs (attachment_id);
+
+      INSERT INTO storage_deletion_jobs (attachment_id, bucket, object_key, reason)
+      SELECT attachment_id, bucket, object_key, 'deleted_post_backfill'
+      FROM (
+        SELECT a.id AS attachment_id, a.bucket, a.object_key
+        FROM attachments a
+        INNER JOIN posts p ON a.owner_type = 'post' AND a.owner_id = p.id
+        WHERE p.deleted_at IS NOT NULL
+        UNION
+        SELECT a.id AS attachment_id, a.bucket, a.upload_object_key AS object_key
+        FROM attachments a
+        INNER JOIN posts p ON a.owner_type = 'post' AND a.owner_id = p.id
+        WHERE p.deleted_at IS NOT NULL
+      ) deleted_post_objects
+      ON CONFLICT (bucket, object_key) DO NOTHING;
+
+      UPDATE attachments attachment
+      SET status = 'failed',
+          metadata = attachment.metadata || jsonb_build_object(
+            'storageState', 'deletion_pending',
+            'storageDeletionReason', 'deleted_post_backfill',
+            'storageDeleteRequestedAt', now()
+          ),
+          updated_at = now()
+      FROM posts post
+      WHERE attachment.owner_type = 'post'
+        AND attachment.owner_id = post.id
+        AND post.deleted_at IS NOT NULL;
+    `
   }
 ];
 

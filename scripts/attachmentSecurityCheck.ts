@@ -100,16 +100,19 @@ assert.equal(
 );
 
 const root = process.cwd();
-const [viewerSource, storageSource, maintenanceSource] = await Promise.all([
+const [viewerSource, storageSource, storageDeletionSource, maintenanceSource] = await Promise.all([
   readFile(path.join(root, "features/attachments/AttachmentViews.tsx"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/storage.ts"), "utf8"),
+  readFile(path.join(root, "apps/api/src/services/storageDeletion.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/maintenance.ts"), "utf8")
 ]);
 assert.match(viewerSource, /renderAltChunks: false/);
 assert.match(viewerSource, /sanitizeRenderedDocx\(target\)/);
 assert.match(storageSource, /ContentLength: byteSize/);
 assert.match(storageSource, /signableHeaders: new Set\(\["content-type"\]\)/);
-assert.match(maintenanceSource, /deleteUploadedObject/);
+assert.match(storageDeletionSource, /storage_deletion_jobs/);
+assert.match(storageDeletionSource, /FOR UPDATE SKIP LOCKED/);
+assert.match(maintenanceSource, /runStorageDeletionMaintenance/);
 assert.equal(
   confirmAttachmentInputSchema.safeParse({
     attachmentId: "00000000-0000-4000-8000-000000000001",
@@ -133,7 +136,7 @@ console.log(
         "DOCX active-content and unsafe-relationship rejection",
         "defense-in-depth DOCX render sanitization",
         "signed upload size and type binding",
-        "expired R2 object cleanup"
+        "durable and retry-safe R2 object cleanup"
       ]
     },
     null,

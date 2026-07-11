@@ -13,6 +13,10 @@ import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import {
+  queueUnreferencedProfileStorageDeletion,
+  triggerStorageDeletion
+} from "../services/storageDeletion";
+import {
   actorHandle,
   ensureLiveData,
   insertProfile,
@@ -81,6 +85,7 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor, mutation?: 
   const client = await getPool().connect();
   let stagedEvent: StoredLiveEvent | undefined;
   let storedProfile: ResearchProfileContract | undefined;
+  let storageAttachmentIds: string[] = [];
   try {
     await client.query("BEGIN");
     const claim = await claimMutation<ResearchProfileContract>(client, writerHandle, mutation);
@@ -90,6 +95,11 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor, mutation?: 
     }
     const storedPerson = await insertProfile(client, person);
     storedProfile = storedPerson;
+    storageAttachmentIds = await queueUnreferencedProfileStorageDeletion(
+      client,
+      writerHandle,
+      storedPerson.avatarUrl
+    );
     await client.query(
       `UPDATE posts
        SET author_name = $2, revision = revision + 1, updated_at = now()
@@ -115,7 +125,10 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor, mutation?: 
       action: "profile.upsert",
       subjectType: "profile",
       subjectId: person.handle,
-      metadata: mutationAuditMetadata(mutation, { source: actor.source })
+      metadata: mutationAuditMetadata(mutation, {
+        replacedStorageAttachmentCount: storageAttachmentIds.length,
+        source: actor.source
+      })
     });
     await completeMutation(client, writerHandle, mutation, storedPerson);
     stagedEvent = await stageEvent(client, {
@@ -134,6 +147,7 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor, mutation?: 
   }
 
   if (stagedEvent) await publishStoredEvent(stagedEvent);
+  if (storageAttachmentIds.length) await triggerStorageDeletion(storageAttachmentIds);
 
   return storedProfile ?? person;
 };

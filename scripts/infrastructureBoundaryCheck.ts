@@ -1,12 +1,21 @@
 import assert from "node:assert/strict";
 import { buildApp } from "@/apps/api/src/server";
 import { latestMigrationId, migrationIds } from "@/apps/api/src/db/migrate";
-import { comments, events, noteBlocks, notes, posts, profileFollows, profiles } from "@/apps/api/src/db/schema";
+import {
+  comments,
+  events,
+  noteBlocks,
+  notes,
+  posts,
+  profileFollows,
+  profiles,
+  storageDeletionJobs
+} from "@/apps/api/src/db/schema";
 import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0014_note_revision_guards");
+  assert.equal(latestMigrationId, "0015_durable_r2_deletion");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -20,6 +29,8 @@ const main = async () => {
   assert.ok("revision" in profileFollows);
   assert.ok("revision" in notes);
   assert.ok("revision" in noteBlocks);
+  assert.ok("objectKey" in storageDeletionJobs);
+  assert.ok("leaseExpiresAt" in storageDeletionJobs);
 
   const validCursor = "2026-07-10T12:00:00.000Z::00000000-0000-4000-8000-000000000001";
   assert.deepEqual(parseEventCursor(validCursor), {
@@ -74,6 +85,8 @@ const main = async () => {
           "event audience schema placement",
           "authoritative entity revision schema",
           "note and note-block revision schema",
+          "durable storage-deletion queue schema",
+          "durable storage-deletion worker readiness",
           "strict event cursor parsing",
           "request correlation headers",
           "no-store API policy",

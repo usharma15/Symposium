@@ -62,6 +62,7 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
   const ownerBindingReady = ownerHandle !== "@udayan" || Boolean(env.SYMPOSIUM_OWNER_CLERK_USER_ID);
   const issues = [...deploymentEnvIssues()];
   const warnings = deploymentEnvWarnings();
+  const maintenance = getMaintenanceStatus();
   const checks: RuntimeCheck[] = [];
   let migrations: MigrationStatus = {
     appliedCount: 0,
@@ -152,6 +153,14 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
       env.R2_PUBLIC_BASE_URL ? "configured" : "missing"
     ),
     {
+      key: "storage_deletion_worker",
+      label: "Durable R2 deletion worker",
+      configured: maintenance.active,
+      required: strict,
+      ok: !strict || maintenance.active,
+      detail: maintenance.active ? "active" : "inactive"
+    },
+    {
       key: "owner_binding",
       label: "Reserved owner handle binding",
       configured: ownerBindingReady,
@@ -169,6 +178,12 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
     }
   );
 
+  if ((maintenance.lastStorageDeletionResult?.failed ?? 0) > 0) {
+    warnings.push(
+      `${maintenance.lastStorageDeletionResult?.failed} R2 deletion job(s) are awaiting a provider retry.`
+    );
+  }
+
   const requiredFailures = checks
     .filter((check) => check.required && !check.ok)
     .map((check) => `${check.label} is not ready.`);
@@ -184,7 +199,7 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
     checks,
     issues: uniqueIssues,
     warnings,
-    maintenance: getMaintenanceStatus(),
+    maintenance,
     migrations,
     release: env.APP_VERSION ?? env.RENDER_GIT_COMMIT ?? env.VERCEL_GIT_COMMIT_SHA ?? null
   };

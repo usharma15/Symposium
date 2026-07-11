@@ -115,10 +115,10 @@ export const promoteUploadedObject = async (uploadObjectKey: string, objectKey: 
   );
 };
 
-export const deleteUploadedObject = async (objectKey: string) => {
+export const deleteUploadedObject = async (objectKey: string, bucket = env.R2_BUCKET!) => {
   await getS3Client().send(
     new DeleteObjectCommand({
-      Bucket: env.R2_BUCKET!,
+      Bucket: bucket,
       Key: objectKey
     })
   );
