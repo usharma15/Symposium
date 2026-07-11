@@ -5,9 +5,6 @@ import {
   assertClaimablePostAttachments,
   canonicalPostAttachmentIds
 } from "@/apps/api/src/services/postAttachmentClaims";
-import {
-  shouldPlayBrowserPresenceEntrance
-} from "@/features/entrance/useBrowserPresenceEntrance";
 
 const attachmentId = "00000000-0000-4000-8000-000000000001";
 const secondAttachmentId = "00000000-0000-4000-8000-000000000002";
@@ -63,26 +60,6 @@ assert.throws(
     })
 );
 
-const currentTab = { openedAt: 20_000, tabId: "tab-b" };
-assert.equal(shouldPlayBrowserPresenceEntrance({ currentTab, peerTabs: [], seenInThisTab: false }), true);
-assert.equal(
-  shouldPlayBrowserPresenceEntrance({
-    currentTab,
-    peerTabs: [{ openedAt: 19_000, tabId: "tab-a" }],
-    seenInThisTab: false
-  }),
-  false
-);
-assert.equal(
-  shouldPlayBrowserPresenceEntrance({
-    currentTab,
-    peerTabs: [{ openedAt: 20_000, tabId: "tab-c" }],
-    seenInThisTab: false
-  }),
-  true
-);
-assert.equal(shouldPlayBrowserPresenceEntrance({ currentTab, peerTabs: [], seenInThisTab: true }), false);
-
 console.log(
   JSON.stringify(
     {
@@ -90,8 +67,7 @@ console.log(
       checked: [
         "identity-only post attachment contract",
         "confirmed attachment ownership claims",
-        "legacy rollout consistency",
-        "cross-tab entrance presence policy"
+        "legacy rollout consistency"
       ]
     },
     null,

@@ -8,7 +8,8 @@ import {
   findCommentInTree,
   mapCommentTree,
   mutateCommentForActor,
-  tombstoneCommentInItem
+  tombstoneCommentInItem,
+  localDateTimeLabel
 } from "@/lib/symposiumCore";
 
 const root: InquiryComment = {
@@ -128,12 +129,18 @@ assert.equal(deletion.item.signals[0]?.value, "1");
 assert.equal(countComments(deletion.item.comments), 1);
 assert.equal(deletion.item.comments[0]?.replies?.[0]?.id, "child");
 assert.deepEqual(tombstoneCommentInItem(deletion.item, "root").item, deletion.item);
+assert.equal(localDateTimeLabel("2026-07-11T02:19:09.000Z"), "Sat, Jul 11, 2026, 2:19 AM UTC");
 
 console.log(
   JSON.stringify(
     {
       ok: true,
-      checked: ["comment tree helpers", "deleted-comment count projection", "idempotent tombstones"]
+      checked: [
+        "comment tree helpers",
+        "deleted-comment count projection",
+        "idempotent tombstones",
+        "deterministic server-client timestamps"
+      ]
     },
     null,
     2

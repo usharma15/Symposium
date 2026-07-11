@@ -402,13 +402,16 @@ export const localDateTimeLabel = (createdAt?: string) => {
   const parsed = createdAt ? Date.parse(createdAt) : Number.NaN;
   if (Number.isNaN(parsed)) return "";
 
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-US", {
     weekday: "short",
     year: "numeric",
     month: "short",
     day: "numeric",
     hour: "numeric",
-    minute: "2-digit"
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "UTC",
+    timeZoneName: "short"
   }).format(new Date(parsed));
 };
 

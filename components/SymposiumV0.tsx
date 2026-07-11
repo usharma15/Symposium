@@ -79,6 +79,7 @@ import {
   officeModeForCanonicalRoute,
   patronageModeForCanonicalRoute,
   roomForCanonicalRoute,
+  snapshotForCanonicalRoute,
   type OfficeMode,
   type PatronageMode,
   type ViewSnapshot
@@ -147,7 +148,13 @@ import { MessagesModal } from "@/features/messages/MessagesModal";
 import { RoomView } from "@/features/rooms/RoomView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { useCanonicalBrowserHistory } from "@/features/navigation/useCanonicalBrowserHistory";
-import { useBrowserPresenceEntrance } from "@/features/entrance/useBrowserPresenceEntrance";
+import { useBrowserSessionEntrance } from "@/features/entrance/useBrowserSessionEntrance";
+import { entryModeForBrowserSession } from "@/features/entrance/browserSession";
+import {
+  persistCachedBootstrap,
+  readCachedBootstrapSnapshot,
+  resolveCachedBootstrap
+} from "@/features/bootstrap/cachedBootstrap";
 
 type Theme = "day" | "night";
 type EntryMode = "loading" | "approach" | "auth" | "complete";
@@ -155,11 +162,6 @@ type ViewTargetType = "post" | "comment";
 type EditingCommentTarget = {
   itemId: string;
   commentId: string;
-};
-
-type LocalSnapshot = {
-  profiles: Record<string, ResearchProfile>;
-  items: InquiryItem[];
 };
 
 type ProfileFollowRecord = {
@@ -450,22 +452,39 @@ const localPreviewAuth: SymposiumAuthState = {
 
 export function SymposiumV0({
   clerkEnabled = false,
-  initialRoute = { kind: "hall" }
+  initialRoute = { kind: "hall" },
+  initialShouldPlayEntrance = null
 }: {
   clerkEnabled?: boolean;
   initialRoute?: CanonicalRoute;
+  initialShouldPlayEntrance?: boolean | null;
 }) {
-  if (clerkEnabled) return <ClerkSymposiumV0 initialRoute={initialRoute} />;
-  return <SymposiumExperience auth={localPreviewAuth} initialRoute={initialRoute} />;
+  if (clerkEnabled) {
+    return <ClerkSymposiumV0 initialRoute={initialRoute} initialShouldPlayEntrance={initialShouldPlayEntrance} />;
+  }
+  return (
+    <SymposiumExperience
+      auth={localPreviewAuth}
+      initialRoute={initialRoute}
+      initialShouldPlayEntrance={initialShouldPlayEntrance}
+    />
+  );
 }
 
-function ClerkSymposiumV0({ initialRoute }: { initialRoute: CanonicalRoute }) {
+function ClerkSymposiumV0({
+  initialRoute,
+  initialShouldPlayEntrance
+}: {
+  initialRoute: CanonicalRoute;
+  initialShouldPlayEntrance: boolean | null;
+}) {
   const { isLoaded: authLoaded, isSignedIn, signOut: clerkSignOut } = useAuth();
   const { user } = useUser();
 
   return (
     <SymposiumExperience
       initialRoute={initialRoute}
+      initialShouldPlayEntrance={initialShouldPlayEntrance}
       auth={{
         clerkEnabled: true,
         authLoaded,
@@ -479,12 +498,20 @@ function ClerkSymposiumV0({ initialRoute }: { initialRoute: CanonicalRoute }) {
   );
 }
 
-function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState; initialRoute: CanonicalRoute }) {
+function SymposiumExperience({
+  auth,
+  initialRoute,
+  initialShouldPlayEntrance
+}: {
+  auth: SymposiumAuthState;
+  initialRoute: CanonicalRoute;
+  initialShouldPlayEntrance: boolean | null;
+}) {
   const { authLoaded, clerkEnabled, isSignedIn, userId } = auth;
   const [theme, setTheme] = useState<Theme>("day");
-  const [entryMode, setEntryMode] = useState<EntryMode>("loading");
+  const [entryMode, setEntryMode] = useState<EntryMode>(() => entryModeForBrowserSession(initialShouldPlayEntrance));
   const [signedIn, setSignedIn] = useState(false);
-  const shouldPlayEntrance = useBrowserPresenceEntrance();
+  const shouldPlayEntrance = useBrowserSessionEntrance(initialShouldPlayEntrance);
   const [activeRoom, setActiveRoom] = useState<RoomId>(roomForCanonicalRoute(initialRoute));
   const { items, itemsRef, replaceItems } = useInquiryEntityStore(inquiryItems);
   const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
@@ -565,6 +592,9 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   const liveRefreshTimerRef = useRef<number | null>(null);
   const itemMutationGuardRef = useRef(createItemMutationGuard());
   const authenticatedProfileHandleRef = useRef<string | null>(null);
+  const entranceStartedAtRef = useRef<number | null>(null);
+  const entryAuthStateRef = useRef({ browserSignedIn: Boolean(isSignedIn), profileSynced: signedIn });
+  entryAuthStateRef.current = { browserSignedIn: Boolean(isSignedIn), profileSynced: signedIn };
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState(
     "First note: make the thing feel alive without pretending the whole world is built yet."
@@ -756,27 +786,16 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     return sortByPublishedRecency(roomFiltered);
   }, [activeItems, activeRoom, currentProfile, feedScope, followingHandles, officeMode, patronageMode, roomChip]);
 
-  const readLocalSnapshot = (): LocalSnapshot | null => {
-    try {
-      const raw = window.localStorage.getItem("symposium-local-snapshot");
-      if (!raw) return null;
-      const snapshot = JSON.parse(raw) as LocalSnapshot;
-      return { ...snapshot, items: normalizeClientSeedTimes(snapshot.items ?? []) };
-    } catch {
-      return null;
-    }
-  };
-
   const persistLocalSnapshot = (
     nextItems = items,
     nextProfiles = profiles,
     nextProfile = currentProfile
   ) => {
-    window.localStorage.setItem(
-      "symposium-local-snapshot",
-      JSON.stringify({ items: nextItems, profiles: nextProfiles })
+    persistCachedBootstrap(
+      window.localStorage,
+      { items: nextItems, profiles: nextProfiles },
+      nextProfile.handle
     );
-    window.localStorage.setItem("symposium-profile-handle", nextProfile.handle);
   };
 
   const followingStorageKey = (handle: string) => `symposium-following-${handle}`;
@@ -1079,6 +1098,39 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     markLiveDataConnected();
   };
 
+  const applyInitialRouteState = () => {
+    const snapshot = snapshotForCanonicalRoute(initialRoute);
+    setActiveRoom(snapshot.activeRoom);
+    setSelectedItemId(snapshot.selectedItemId);
+    setSelectedCommentId(snapshot.selectedCommentId);
+    setSelectedProfileName(snapshot.selectedProfileName);
+    setProfileSocialView(snapshot.profileSocialView);
+    setOfficeMode(snapshot.officeMode);
+    setPatronageMode(snapshot.patronageMode);
+    setSelectedCommunityId(snapshot.selectedCommunityId);
+    setMessagesOpen(snapshot.messagesOpen);
+    setSelectedConversationId(snapshot.selectedConversationId);
+    commentSegmentStacksRef.current = {};
+    visibleCommentSegmentStacksRef.current = {};
+    setCommentSegmentStacks({});
+    resetHistory();
+  };
+
+  const hydrateCachedBootstrap = (storedProfileHandle: string | null) => {
+    const cached = resolveCachedBootstrap({
+      fallbackProfile: profile,
+      preferredHandle: storedProfileHandle,
+      seedItems: inquiryItems,
+      snapshot: readCachedBootstrapSnapshot(window.localStorage)
+    });
+    const cachedItems = sortByPublishedRecency(normalizeClientSeedTimes(cached.items));
+    profilesRef.current = cached.profiles;
+    currentProfileRef.current = cached.currentProfile;
+    setProfiles(cached.profiles);
+    replaceItems(cachedItems);
+    setCurrentProfile(cached.currentProfile);
+  };
+
   useEffect(() => {
     if (entryMode === "loading") return undefined;
 
@@ -1157,16 +1209,16 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       activityRecencyRef.current = {};
       setActivityRecency({});
     }
-    setEntryMode("approach");
+    hydrateCachedBootstrap(storedProfileHandle);
+    const sessionEntryMode = entryModeForBrowserSession(shouldPlayEntrance);
+    setEntryMode(sessionEntryMode);
+    if (sessionEntryMode === "approach") entranceStartedAtRef.current = Date.now();
+    if (sessionEntryMode === "complete") {
+      applyInitialRouteState();
+      window.sessionStorage.setItem("symposium-entry-complete", "true");
+    }
 
     refreshData(storedProfileHandle ?? undefined).catch(() => {
-      const local = readLocalSnapshot();
-      const fallbackProfiles = local?.profiles ?? { [profile.handle]: profile };
-      const fallbackProfile = fallbackProfiles[storedProfileHandle ?? profile.handle] ?? profile;
-      const fallbackItems = sortByPublishedRecency(normalizeClientSeedTimes(local?.items ?? inquiryItems));
-      setProfiles(fallbackProfiles);
-      replaceItems(fallbackItems);
-      setCurrentProfile(fallbackProfile);
       setSyncStatus("Using seed data");
     });
   }, [shouldPlayEntrance]);
@@ -1197,30 +1249,23 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   }, [selectedProfile?.handle]);
 
   useEffect(() => {
-    if (entryMode !== "approach" || !authLoaded || (Boolean(isSignedIn) && !signedIn)) return undefined;
+    if (entryMode !== "approach" || shouldPlayEntrance !== true) return undefined;
 
+    const startedAt = entranceStartedAtRef.current ?? Date.now();
+    entranceStartedAtRef.current = startedAt;
     const timer = window.setTimeout(() => {
-      if (signedIn) {
+      const latestAuth = entryAuthStateRef.current;
+      if (latestAuth.profileSynced || latestAuth.browserSignedIn) {
         window.sessionStorage.setItem("symposium-entry-complete", "true");
         setEntryMode("complete");
-        setActiveRoom(roomForCanonicalRoute(initialRoute));
-        setOfficeMode(officeModeForCanonicalRoute(initialRoute));
-        setPatronageMode(patronageModeForCanonicalRoute(initialRoute));
-        setMessagesOpen(initialRoute.kind === "messages");
-        setSelectedConversationId(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
-        setSelectedCommunityId(initialRoute.kind === "community" ? initialRoute.communityId : null);
-        setSelectedItemId(initialRoute.kind === "post" ? initialRoute.postId : null);
-        setSelectedCommentId(initialRoute.kind === "post" ? initialRoute.commentId ?? null : null);
-        setSelectedProfileName(initialRoute.kind === "profile" ? initialRoute.handle : null);
-        setProfileSocialView(initialRoute.kind === "profile" ? initialRoute.social ?? null : null);
-        resetHistory();
+        applyInitialRouteState();
       } else {
         setEntryMode("auth");
       }
-    }, shouldPlayEntrance ? 5000 : 0);
+    }, Math.max(0, startedAt + 5000 - Date.now()));
 
     return () => window.clearTimeout(timer);
-  }, [authLoaded, entryMode, isSignedIn, shouldPlayEntrance, signedIn]);
+  }, [entryMode, shouldPlayEntrance]);
 
   useEffect(() => {
     if (!clerkEnabled) return;
@@ -1265,18 +1310,10 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       setCurrentProfile(data.profile);
       setSignedIn(true);
       setSyncedClerkUserId(userId);
-      setEntryMode("complete");
-      setActiveRoom(roomForCanonicalRoute(initialRoute));
-      setOfficeMode(officeModeForCanonicalRoute(initialRoute));
-      setPatronageMode(patronageModeForCanonicalRoute(initialRoute));
-      setMessagesOpen(initialRoute.kind === "messages");
-      setSelectedConversationId(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
-      setSelectedCommunityId(initialRoute.kind === "community" ? initialRoute.communityId : null);
-      setSelectedItemId(initialRoute.kind === "post" ? initialRoute.postId : null);
-      setSelectedCommentId(initialRoute.kind === "post" ? initialRoute.commentId ?? null : null);
-      setSelectedProfileName(initialRoute.kind === "profile" ? initialRoute.handle : null);
-      setProfileSocialView(initialRoute.kind === "profile" ? initialRoute.social ?? null : null);
-      resetHistory();
+      if (entryMode !== "complete" && shouldPlayEntrance === false) {
+        setEntryMode("complete");
+        applyInitialRouteState();
+      }
       window.sessionStorage.setItem("symposium-entry-complete", "true");
       window.localStorage.setItem("symposium-profile-handle", data.profile.handle);
       await refreshData(data.profile.handle);
@@ -2077,17 +2114,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     setSignedIn(true);
     setAuthError("");
     setEntryMode("complete");
-    setActiveRoom(roomForCanonicalRoute(initialRoute));
-    setOfficeMode(officeModeForCanonicalRoute(initialRoute));
-    setPatronageMode(patronageModeForCanonicalRoute(initialRoute));
-    setMessagesOpen(initialRoute.kind === "messages");
-    setSelectedConversationId(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
-    setSelectedCommunityId(initialRoute.kind === "community" ? initialRoute.communityId : null);
-    setSelectedItemId(initialRoute.kind === "post" ? initialRoute.postId : null);
-    setSelectedCommentId(initialRoute.kind === "post" ? initialRoute.commentId ?? null : null);
-    setSelectedProfileName(initialRoute.kind === "profile" ? initialRoute.handle : null);
-    setProfileSocialView(initialRoute.kind === "profile" ? initialRoute.social ?? null : null);
-    resetHistory();
+    applyInitialRouteState();
     window.sessionStorage.setItem("symposium-entry-complete", "true");
     window.localStorage.setItem("symposium-profile-handle", previewProfile.handle);
     persistLocalSnapshot(items, fallbackProfiles, previewProfile);

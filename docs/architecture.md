@@ -118,6 +118,8 @@ Feature modules cannot import the application shell or Next routes, must stay bo
 
 The canonical browser-history state machine is owned by `features/navigation/useCanonicalBrowserHistory.ts`. The shell supplies and restores view snapshots, but it does not directly implement browser index, popstate, or direct-entry fallback policy.
 
+Browser-session entry is server-coordinated. `app/SymposiumPage.tsx` reads a non-persistent session cookie and renders subsequent tabs directly into their canonical route; `features/entrance/useBrowserSessionEntrance.ts` establishes the marker on the first visit. The first browser-session visit alone owns the five-second entrance. `features/bootstrap/cachedBootstrap.ts` owns cached entity/profile hydration so later tabs do not wait for Clerk synchronization or the live bootstrap request before rendering useful content. Server-rendered shell values, including timestamps, must be deterministic across server and browser locales to preserve hydration.
+
 ## Backend ownership
 
 Backend persistence is split into bounded repositories for posts, comments, identity, profiles, communities, conversations, notifications, search, workspaces, attachments, actions, opportunities, and the assistant. HTTP and tRPC routes import their owning repository directly. Cross-domain note-to-post publication is explicit in `services/notePublishing.ts`; there is no compatibility façade. Domain repositories may depend on the shared foundation, transaction, mutation, audit, event, database, and storage kernels, but they may not import one another sideways.
