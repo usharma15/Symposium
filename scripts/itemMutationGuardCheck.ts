@@ -5,7 +5,8 @@ import {
   completeItemMutation,
   createItemMutationGuard,
   itemMutationIsPending,
-  reconcileItemsAgainstMutations
+  reconcileItemsAgainstMutations,
+  touchItemMutation
 } from "@/features/live-sync/itemMutationGuard";
 
 type Item = { id: string; body: string };
@@ -48,6 +49,18 @@ assert.deepEqual(
 );
 completeItemMutation(guard, "post-2");
 
+const beforeCrossTabChange = captureItemMutationSnapshot(guard);
+touchItemMutation(guard, "post-1");
+assert.deepEqual(
+  reconcileItemsAgainstMutations(
+    [{ id: "post-1", body: "in-flight stale bootstrap" }],
+    committed,
+    guard,
+    beforeCrossTabChange
+  ),
+  committed
+);
+
 console.log(
   JSON.stringify(
     {
@@ -56,7 +69,8 @@ console.log(
         "pending mutation protection",
         "late bootstrap request protection",
         "fresh canonical convergence",
-        "optimistic entity preservation"
+        "optimistic entity preservation",
+        "cross-tab epoch invalidation"
       ]
     },
     null,

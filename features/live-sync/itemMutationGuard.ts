@@ -21,6 +21,11 @@ export const completeItemMutation = (guard: ItemMutationGuard, itemId: string) =
   });
 };
 
+export const touchItemMutation = (guard: ItemMutationGuard, itemId: string) => {
+  const current = guard.get(itemId) ?? { epoch: 0, pending: 0 };
+  guard.set(itemId, { ...current, epoch: current.epoch + 1 });
+};
+
 export const captureItemMutationSnapshot = (guard: ItemMutationGuard): ItemMutationSnapshot =>
   new Map([...guard.entries()].map(([itemId, state]) => [itemId, state.epoch]));
 

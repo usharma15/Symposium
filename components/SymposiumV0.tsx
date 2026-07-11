@@ -67,8 +67,14 @@ import {
   createItemMutationGuard,
   itemChangedSinceSnapshot,
   itemMutationIsPending,
-  reconcileItemsAgainstMutations
+  reconcileItemsAgainstMutations,
+  touchItemMutation
 } from "@/features/live-sync/itemMutationGuard";
+import {
+  createCrossTabItemSync,
+  isCrossTabItemMessage,
+  type CrossTabItemMessage
+} from "@/features/live-sync/crossTabItemSync";
 import {
   createInquiryActionReconciler,
   type ProtectedActionMetricState
@@ -591,6 +597,9 @@ function SymposiumExperience({
   const liveEventCursorRef = useRef("");
   const liveRefreshTimerRef = useRef<number | null>(null);
   const itemMutationGuardRef = useRef(createItemMutationGuard());
+  const crossTabItemSyncRef = useRef(createCrossTabItemSync<InquiryItem>());
+  const crossTabChannelRef = useRef<BroadcastChannel | null>(null);
+  const lastPersistedItemsRef = useRef<InquiryItem[]>(inquiryItems);
   const authenticatedProfileHandleRef = useRef<string | null>(null);
   const entranceStartedAtRef = useRef<number | null>(null);
   const entryAuthStateRef = useRef({ browserSignedIn: Boolean(isSignedIn), profileSynced: signedIn });
@@ -789,14 +798,121 @@ function SymposiumExperience({
   const persistLocalSnapshot = (
     nextItems = items,
     nextProfiles = profiles,
-    nextProfile = currentProfile
+    nextProfile = currentProfile,
+    options?: { broadcastItemIds?: string[] }
   ) => {
     persistCachedBootstrap(
       window.localStorage,
       { items: nextItems, profiles: nextProfiles },
       nextProfile.handle
     );
+
+    const previousById = new Map(lastPersistedItemsRef.current.map((item) => [item.id, item]));
+    const explicitIds = new Set(options?.broadcastItemIds ?? []);
+    const changedItems = nextItems.filter((item) => {
+      if (explicitIds.has(item.id)) return true;
+      if (!itemMutationIsPending(itemMutationGuardRef.current, item.id)) return false;
+      return previousById.get(item.id) !== item;
+    });
+    lastPersistedItemsRef.current = nextItems;
+
+    for (const item of changedItems) {
+      const message = crossTabItemSyncRef.current.publish(item);
+      crossTabChannelRef.current?.postMessage(message);
+      window.localStorage.setItem("symposium-cross-tab-item", JSON.stringify(message));
+    }
   };
+
+  useEffect(() => {
+    const receive = (value: unknown) => {
+      if (!isCrossTabItemMessage<InquiryItem>(value)) return;
+      const message = value as CrossTabItemMessage<InquiryItem>;
+      if (!crossTabItemSyncRef.current.accept(message)) return;
+
+      const currentItems = itemsRef.current;
+      const existingIndex = currentItems.findIndex((item) => item.id === message.item.id);
+      const nextItems =
+        existingIndex >= 0
+          ? currentItems.map((item) => (item.id === message.item.id ? message.item : item))
+          : sortByPublishedRecency([message.item, ...currentItems]);
+      touchItemMutation(itemMutationGuardRef.current, message.item.id);
+      replaceItems(nextItems);
+      lastPersistedItemsRef.current = nextItems;
+      persistCachedBootstrap(
+        window.localStorage,
+        { items: nextItems, profiles: profilesRef.current },
+        currentProfileRef.current.handle
+      );
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key || !event.newValue) return;
+      if (
+        event.key.startsWith("symposium-following-") &&
+        !event.key.startsWith("symposium-following-lease:")
+      ) {
+        const handle = event.key.slice("symposium-following-".length);
+        try {
+          const nextHandles = (JSON.parse(event.newValue) as string[]).map(cleanHandle).filter(Boolean);
+          setProfileSocialLists((current) => ({
+            ...current,
+            [handle]: { following: nextHandles, followers: current[handle]?.followers ?? [] }
+          }));
+          if (handle === currentProfileRef.current.handle) setFollowingHandles(nextHandles);
+        } catch {
+          // Ignore malformed following state.
+        }
+        return;
+      }
+      if (event.key === "symposium-local-snapshot") {
+        const snapshot = readCachedBootstrapSnapshot(window.localStorage);
+        if (!snapshot) return;
+        const currentHandle = currentProfileRef.current.handle;
+        const previousCurrent = profilesRef.current[currentHandle];
+        const protectedAt = Number(
+          window.localStorage.getItem(`symposium-profile-protected:${currentHandle}`) ?? 0
+        );
+        const nextProfiles =
+          Date.now() - protectedAt < 8_000
+            ? { ...snapshot.profiles, [currentHandle]: currentProfileRef.current }
+            : snapshot.profiles;
+        profilesRef.current = nextProfiles;
+        setProfiles(nextProfiles);
+        const current = nextProfiles[currentHandle];
+        if (current) {
+          currentProfileRef.current = current;
+          setCurrentProfile(current);
+          if (JSON.stringify(previousCurrent) !== JSON.stringify(current)) {
+            const nextItems = itemsRef.current.map((item) => ({
+              ...item,
+              author: item.authorHandle === current.handle ? current.name : item.author,
+              comments: updateCommentsForProfile(item.comments, current)
+            }));
+            replaceItems(nextItems);
+            lastPersistedItemsRef.current = nextItems;
+          }
+        }
+        return;
+      }
+      if (event.key !== "symposium-cross-tab-item") return;
+      try {
+        receive(JSON.parse(event.newValue));
+      } catch {
+        // Ignore malformed or legacy cross-tab payloads.
+      }
+    };
+
+    const channel = "BroadcastChannel" in window ? new BroadcastChannel("symposium-item-sync-v1") : null;
+    crossTabChannelRef.current = channel;
+    if (channel) channel.onmessage = (event) => receive(event.data);
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      channel?.close();
+      if (crossTabChannelRef.current === channel) crossTabChannelRef.current = null;
+    };
+  }, []);
 
   const followingStorageKey = (handle: string) => `symposium-following-${handle}`;
 
@@ -810,7 +926,10 @@ function SymposiumExperience({
     }
   };
 
-  const persistLocalFollowing = (handle: string, handles: string[]) => {
+  const persistLocalFollowing = (handle: string, handles: string[], protect = false) => {
+    if (protect) {
+      window.localStorage.setItem(`symposium-following-lease:${handle}`, String(Date.now()));
+    }
     window.localStorage.setItem(
       followingStorageKey(handle),
       JSON.stringify(Array.from(new Set(handles.map(cleanHandle).filter(Boolean))))
@@ -866,9 +985,16 @@ function SymposiumExperience({
       profiles: Record<string, ResearchProfile>;
       defaultProfile: ResearchProfile;
     };
-    const loadedProfiles = Object.keys(data.profiles).length
+    let loadedProfiles = Object.keys(data.profiles).length
       ? data.profiles
       : { [data.defaultProfile.handle]: data.defaultProfile };
+    const protectedProfileHandle = currentProfileRef.current.handle;
+    const profileProtectedAt = Number(
+      window.localStorage.getItem(`symposium-profile-protected:${protectedProfileHandle}`) ?? 0
+    );
+    if (Date.now() - profileProtectedAt < 8_000) {
+      loadedProfiles = { ...loadedProfiles, [protectedProfileHandle]: currentProfileRef.current };
+    }
     const nextProfile = selectActiveProfile({
       profiles: loadedProfiles,
       defaultProfile: data.defaultProfile,
@@ -891,8 +1017,12 @@ function SymposiumExperience({
         mutationSnapshot
       )
     );
-    const loadedItems = protectItemsFromStaleActionState(
+    const crossTabSafeItems = crossTabItemSyncRef.current.protectIncomingItems(
       mutationSafeItems,
+      itemsRef.current
+    );
+    const loadedItems = protectItemsFromStaleActionState(
+      crossTabSafeItems,
       itemsRef.current,
       nextProfile.handle
     );
@@ -915,6 +1045,12 @@ function SymposiumExperience({
     const data = (await response.json()) as ProfileFollowResponse;
     const lists = socialListsFromResponse(data);
     const remoteHandles = lists.following;
+    const protectedAt = Number(window.localStorage.getItem(`symposium-following-lease:${actorHandle}`) ?? 0);
+    if (Date.now() - protectedAt < 8_000 && JSON.stringify(remoteHandles) !== JSON.stringify(cached)) {
+      setFollowingHandles(cached);
+      applySocialLists(actorHandle, { ...lists, following: cached });
+      return;
+    }
 
     setFollowingHandles(remoteHandles);
     applySocialLists(actorHandle, lists);
@@ -940,7 +1076,12 @@ function SymposiumExperience({
       scheduleLiveRefresh();
       return false;
     }
-    const protectedIncoming = protectItemFromStaleActionState(incoming, currentItem, currentProfileRef.current.handle);
+    const crossTabProtected = crossTabItemSyncRef.current.protectIncomingItem(incoming, currentItem);
+    const protectedIncoming = protectItemFromStaleActionState(
+      crossTabProtected,
+      currentItem,
+      currentProfileRef.current.handle
+    );
     const nextItem = preservePublishedPosition(protectedIncoming, currentItem);
     const nextItems =
       existingIndex >= 0
@@ -1124,6 +1265,7 @@ function SymposiumExperience({
       snapshot: readCachedBootstrapSnapshot(window.localStorage)
     });
     const cachedItems = sortByPublishedRecency(normalizeClientSeedTimes(cached.items));
+    lastPersistedItemsRef.current = cachedItems;
     profilesRef.current = cached.profiles;
     currentProfileRef.current = cached.currentProfile;
     setProfiles(cached.profiles);
@@ -1978,7 +2120,7 @@ function SymposiumExperience({
     const nextItems = sortByPublishedRecency([committedItem, ...items.filter((item) => item.id !== committedItem.id)]);
     touchActivity(committedItem.id);
     replaceItems(nextItems);
-    persistLocalSnapshot(nextItems, profiles);
+    persistLocalSnapshot(nextItems, profiles, currentProfile, { broadcastItemIds: [committedItem.id] });
     navigateView({
       activeRoom: committedItem.room,
       selectedItemId: committedItem.id,
@@ -2215,6 +2357,8 @@ function SymposiumExperience({
       comments: updateCommentsForProfile(item.comments, updatedProfile)
     }));
 
+    window.localStorage.setItem(`symposium-profile-protected:${updatedProfile.handle}`, String(Date.now()));
+
     setCurrentProfile(updatedProfile);
     setProfiles(nextProfiles);
     replaceItems(nextItems);
@@ -2279,7 +2423,7 @@ function SymposiumExperience({
     setFollowingHandles(nextHandles);
     applySocialLists(currentProfile.handle, { ...currentSocial, following: nextHandles });
     applySocialLists(normalizedTarget, { ...targetSocial, followers: nextTargetFollowers });
-    persistLocalFollowing(currentProfile.handle, nextHandles);
+    persistLocalFollowing(currentProfile.handle, nextHandles, true);
     setSyncStatus(wasFollowing ? "Unfollowing profile" : "Following profile");
 
     try {
@@ -2295,7 +2439,7 @@ function SymposiumExperience({
       setFollowingHandles(previousHandles);
       applySocialLists(currentProfile.handle, { ...currentSocial, following: previousHandles });
       applySocialLists(normalizedTarget, { ...targetSocial });
-      persistLocalFollowing(currentProfile.handle, previousHandles);
+      persistLocalFollowing(currentProfile.handle, previousHandles, true);
       setSyncStatus("Follow could not sync");
     }
   };
