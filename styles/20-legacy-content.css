@@ -130,7 +130,7 @@
 }
 
 .composer-topline,
-.comment-composer div {
+.comment-composer-actions {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -194,6 +194,9 @@
 .composer-attachments {
   display: grid;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .composer-attachment-toolbar {
@@ -232,6 +235,9 @@
 .composer-attachment-list {
   display: grid;
   gap: 6px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .composer-attachment-chip {
@@ -239,6 +245,9 @@
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: var(--radius);

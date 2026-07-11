@@ -162,10 +162,10 @@ export function CommentComposer({
 
   return (
     <form className={`comment-composer ${compact ? "compact" : ""}`} onSubmit={submitComment}>
-      <div>
+      <div className="comment-composer-actions">
         <button type="submit" disabled={busy || submitting}>{submitting ? "Saving…" : parentId ? "Add reply" : "Add comment"}</button>
       </div>
-        <textarea
+      <textarea
         value={body}
         onChange={(event) => setBody(event.target.value)}
         placeholder={compact ? "Write a reply" : "Add a critique, question, test, or reasoned response"}

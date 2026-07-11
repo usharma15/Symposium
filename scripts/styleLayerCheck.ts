@@ -21,18 +21,38 @@ const main = async () => {
   const expected = layers.map((layer) => `@import "../styles/${layer}";`).join("\n") + "\n";
   assert.equal(globals, expected, "globals.css must remain an ordered stylesheet manifest");
 
+  const sources = new Map<string, string>();
   for (const layer of layers) {
     const source = await readFile(path.join(root, "styles", layer), "utf8");
+    sources.set(layer, source);
     const lineCount = source.split("\n").length;
     assert.ok(lineCount <= 1200, `${layer} has grown beyond its architecture boundary (${lineCount} lines)`);
     assert.ok(source.trimStart().startsWith("/*"), `${layer} must declare its ownership purpose`);
   }
 
+  const composerStyles = [
+    sources.get("20-legacy-content.css") ?? "",
+    sources.get("30-legacy-discussion-profile.css") ?? "",
+    sources.get("40-legacy-responsive.css") ?? ""
+  ].join("\n");
+  assert.doesNotMatch(
+    composerStyles,
+    /\.comment-composer(?:\.compact)?\s+div/,
+    "Comment composer layout rules must target owned classes instead of every descendant div."
+  );
+  assert.match(composerStyles, /\.comment-composer-actions/);
+  assert.match(composerStyles, /\.composer-attachment-list[\s\S]*min-width:\s*0/);
+
   console.log(
     JSON.stringify(
       {
         ok: true,
-        checked: ["ordered global manifest", "declared layer ownership", "bounded stylesheet size"]
+        checked: [
+          "ordered global manifest",
+          "declared layer ownership",
+          "bounded stylesheet size",
+          "bounded attachment composer layout"
+        ]
       },
       null,
       2

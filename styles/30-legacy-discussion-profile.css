@@ -36,6 +36,9 @@
 .comment-composer {
   display: grid;
   gap: 10px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   margin-bottom: 18px;
   padding: 12px;
   border-radius: var(--radius);
@@ -241,7 +244,7 @@
   background: color-mix(in srgb, var(--aqua) 7%, transparent);
 }
 
-.comment-composer.compact div {
+.comment-composer.compact .comment-composer-actions {
   justify-content: flex-start;
 }
 

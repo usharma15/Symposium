@@ -145,7 +145,7 @@
   }
 
   .composer-topline,
-  .comment-composer div {
+  .comment-composer-actions {
     align-items: stretch;
     flex-direction: column;
   }
