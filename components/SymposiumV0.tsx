@@ -1225,6 +1225,12 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
         setPatronageMode(patronageModeForCanonicalRoute(initialRoute));
         setMessagesOpen(initialRoute.kind === "messages");
         setSelectedConversationId(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
+        setSelectedCommunityId(initialRoute.kind === "community" ? initialRoute.communityId : null);
+        setSelectedItemId(initialRoute.kind === "post" ? initialRoute.postId : null);
+        setSelectedCommentId(initialRoute.kind === "post" ? initialRoute.commentId ?? null : null);
+        setSelectedProfileName(initialRoute.kind === "profile" ? initialRoute.handle : null);
+        setProfileSocialView(initialRoute.kind === "profile" ? initialRoute.social ?? null : null);
+        resetHistory();
       } else {
         setEntryMode("auth");
       }
