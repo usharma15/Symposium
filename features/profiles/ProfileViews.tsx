@@ -41,11 +41,14 @@ import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { FeedPost } from "@/features/posts/PostViews";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
+import { CanonicalLink } from "@/features/navigation/CanonicalLink";
+import type { ProfileSocialView } from "@/features/navigation/canonicalRoute";
 
 export type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
 export type ProfileActivityKind = "authored" | "comments" | "fork" | "signal" | "save";
 export type ProfileCommentActivityKind = Exclude<ProfileActivityKind, "authored">;
 export type ProfileSocialLists = { following: string[]; followers: string[] };
+export type { ProfileSocialView } from "@/features/navigation/canonicalRoute";
 export type ProfileSettingsDraft = {
   avatarUrl?: string;
   name: string;
@@ -180,6 +183,7 @@ export function ProfileView({
   actorHandle,
   profiles,
   socialLists,
+  socialView,
   getProfileRecency,
   getProfileCommentRecency,
   activeTab,
@@ -187,6 +191,7 @@ export function ProfileView({
   canonicalActivities,
   canonicalActivityLoaded,
   onActiveTabChange,
+  onSocialViewChange,
   onEditPost,
   onDeletePost,
   onOpenAttachmentPreview
@@ -206,6 +211,7 @@ export function ProfileView({
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
   socialLists: ProfileSocialLists;
+  socialView: ProfileSocialView | null;
   getProfileRecency: (item: InquiryItem, handle: string, kind: ProfileActivityKind) => number;
   getProfileCommentRecency: (
     _item: InquiryItem,
@@ -218,11 +224,11 @@ export function ProfileView({
   canonicalActivities: CanonicalActionActivityContract[];
   canonicalActivityLoaded: boolean;
   onActiveTabChange: (tab: ProfileTab) => void;
+  onSocialViewChange: (view: ProfileSocialView | null) => void;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
   onOpenAttachmentPreview: AttachmentPreviewHandler;
 }) {
-  const [activeSocialList, setActiveSocialList] = useState<"following" | "followers" | null>(null);
   const [visibleSlots, setVisibleSlots] = useState<ProfileActivitySlot[]>([]);
   const visibleSlotContextRef = useRef("");
   const byPublishedRecency = (nextItems: InquiryItem[]) =>
@@ -433,14 +439,20 @@ export function ProfileView({
           <p className="profile-handle">{person.handle}</p>
           <p className="profile-bio">{person.bio.slice(0, 200)}</p>
           <div className="profile-social-counts" aria-label={`${person.name} social graph`}>
-            <button type="button" onClick={() => setActiveSocialList("following")}>
+            <CanonicalLink
+              route={{ kind: "profile", handle: person.handle, social: "following" }}
+              onNavigate={() => onSocialViewChange("following")}
+            >
               <strong>{socialLists.following.length}</strong>
               <span>Following</span>
-            </button>
-            <button type="button" onClick={() => setActiveSocialList("followers")}>
+            </CanonicalLink>
+            <CanonicalLink
+              route={{ kind: "profile", handle: person.handle, social: "followers" }}
+              onNavigate={() => onSocialViewChange("followers")}
+            >
               <strong>{socialLists.followers.length}</strong>
               <span>Followers</span>
-            </button>
+            </CanonicalLink>
           </div>
           <div className="profile-metrics" aria-label={`${person.name} activity totals`}>
             {tabs.map((tab) => (
@@ -497,14 +509,13 @@ export function ProfileView({
         )}
       </section>
 
-      {activeSocialList ? (
+      {socialView ? (
         <ProfileSocialListModal
-          title={activeSocialList === "following" ? "Following" : "Followers"}
-          handles={socialLists[activeSocialList]}
+          title={socialView === "following" ? "Following" : "Followers"}
+          handles={socialLists[socialView]}
           profiles={profiles}
-          onClose={() => setActiveSocialList(null)}
+          onClose={() => onSocialViewChange(null)}
           onOpenProfile={(handle) => {
-            setActiveSocialList(null);
             onOpenProfile(handle);
           }}
         />
@@ -568,11 +579,11 @@ function ProfileCommentCard({
       }}
     >
       <header>
-        <button
-          type="button"
+        <CanonicalLink
+          route={{ kind: "profile", handle: authorProfile?.handle ?? activity.comment.authorHandle ?? activity.comment.author }}
+          onNavigate={() => onOpenProfile(authorProfile?.handle ?? activity.comment.authorHandle ?? activity.comment.author)}
           onClick={(event) => {
             event.stopPropagation();
-            onOpenProfile(authorProfile?.handle ?? activity.comment.authorHandle ?? activity.comment.author);
           }}
         >
           <span className="avatar small">
@@ -582,7 +593,7 @@ function ProfileCommentCard({
             <strong>{authorName}</strong>
             <small>{relativeTimeLabel(activity.comment.createdAt, "Comment")}</small>
           </span>
-        </button>
+        </CanonicalLink>
         <div className="profile-comment-header-actions">
           <span>
             <MessageCircle size={15} />
@@ -614,7 +625,17 @@ function ProfileCommentCard({
       />
       <footer>
         <span>On</span>
-        <strong>{deletedPostContextTitle(activity.item)}</strong>
+        <CanonicalLink
+          route={{
+            kind: "post",
+            postId: activity.item.id,
+            commentId: activity.comment.id ?? undefined
+          }}
+          onNavigate={openComment}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <strong>{deletedPostContextTitle(activity.item)}</strong>
+        </CanonicalLink>
         {activity.comment.createdAt ? <em>{localDateTimeLabel(activity.comment.createdAt)}</em> : null}
         {activity.comment.editedAt ? (
           <em>Edited {relativeTimeLabel(activity.comment.editedAt)} · {localDateTimeLabel(activity.comment.editedAt)}</em>
@@ -651,7 +672,11 @@ function ProfileSocialListModal({
             handles.map((handle) => {
               const person = profiles[handle];
               return (
-                <button type="button" key={handle} onClick={() => onOpenProfile(handle)}>
+                <CanonicalLink
+                  key={handle}
+                  route={{ kind: "profile", handle }}
+                  onNavigate={() => onOpenProfile(handle)}
+                >
                   <span className="avatar small">
                     {person?.avatarUrl ? <img src={person.avatarUrl} alt="" /> : initial(person?.name ?? handle)}
                   </span>
@@ -659,7 +684,7 @@ function ProfileSocialListModal({
                     <strong>{person?.name ?? handle}</strong>
                     <small>{handle}</small>
                   </span>
-                </button>
+                </CanonicalLink>
               );
             })
           ) : (

@@ -4,6 +4,8 @@ import Image from "next/image";
 import { SignInButton, SignUpButton } from "@clerk/nextjs";
 import { ArrowLeft, ArrowRight, Home } from "lucide-react";
 import { rooms, type Room, type RoomId } from "@/lib/mockData";
+import { CanonicalLink } from "@/features/navigation/CanonicalLink";
+import { canonicalRouteForRoom } from "@/features/navigation/canonicalRoute";
 
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
 type Theme = "day" | "night";
@@ -243,23 +245,23 @@ export function HallView({ onEnter }: { onEnter: (roomId: RoomId) => void }) {
 
           return (
 
-            <button
+            <CanonicalLink
 
               key={room.id}
 
               className={`hall-door hall-door-${room.id}`}
 
-              type="button"
-
               aria-label={`Enter ${room.name}`}
 
-              onClick={() => onEnter(room.id)}
+              route={canonicalRouteForRoom(room.id)}
+
+              onNavigate={() => onEnter(room.id)}
 
             >
 
               <span className="hall-hover-label">{room.name}</span>
 
-            </button>
+            </CanonicalLink>
 
           );
 
@@ -317,11 +319,11 @@ export function ViewNav({
 
       </button>
 
-      <button type="button" title="Main hall" onClick={onHome}>
+      <CanonicalLink route={{ kind: "hall" }} onNavigate={onHome} title="Main hall">
 
         <Home size={17} />
 
-      </button>
+      </CanonicalLink>
 
     </nav>
 
@@ -459,13 +461,13 @@ export function RoomRender({
 
           <>
 
-            <button
+            <CanonicalLink
 
               className="office-hotspot office-hotspot-notes"
 
-              type="button"
+              route={{ kind: "workspace", view: "notes" }}
 
-              onClick={onOpenNotebook}
+              onNavigate={onOpenNotebook}
 
               aria-label="Open notes"
 
@@ -473,15 +475,15 @@ export function RoomRender({
 
               <span>Notes</span>
 
-            </button>
+            </CanonicalLink>
 
-            <button
+            <CanonicalLink
 
               className="office-hotspot office-hotspot-saved"
 
-              type="button"
+              route={{ kind: "workspace", view: "saved" }}
 
-              onClick={onOpenSaved}
+              onNavigate={onOpenSaved ?? (() => undefined)}
 
               aria-label="Saved for later"
 
@@ -489,7 +491,7 @@ export function RoomRender({
 
               <span>Saved for later</span>
 
-            </button>
+            </CanonicalLink>
 
           </>
 
@@ -501,13 +503,13 @@ export function RoomRender({
 
         <div className="room-hotspots patronage-hotspots" aria-label="Patronage sections">
 
-          <button
+          <CanonicalLink
 
             className="patronage-hotspot patronage-hotspot-civic"
 
-            type="button"
+            route={{ kind: "funding", view: "civic" }}
 
-            onClick={onOpenCivic}
+            onNavigate={onOpenCivic ?? (() => undefined)}
 
             aria-label="Open Civic Patronage"
 
@@ -515,15 +517,15 @@ export function RoomRender({
 
             <span>Civic</span>
 
-          </button>
+          </CanonicalLink>
 
-          <button
+          <CanonicalLink
 
             className="patronage-hotspot patronage-hotspot-private"
 
-            type="button"
+            route={{ kind: "funding", view: "private" }}
 
-            onClick={onOpenPrivate}
+            onNavigate={onOpenPrivate ?? (() => undefined)}
 
             aria-label="Open Private Patronage"
 
@@ -531,7 +533,7 @@ export function RoomRender({
 
             <span>Private</span>
 
-          </button>
+          </CanonicalLink>
 
         </div>
 

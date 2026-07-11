@@ -130,6 +130,23 @@
   font-weight: 720;
 }
 
+.comment-permalink {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+  text-decoration: none;
+}
+
+.comment-permalink:hover,
+.comment-permalink:focus-visible {
+  color: var(--accent);
+}
+
 .comment-actions {
   display: flex;
   flex-wrap: wrap;

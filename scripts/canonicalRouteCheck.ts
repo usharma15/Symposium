@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
-import { canonicalRouteHref, parseCanonicalRoute } from "@/features/navigation/canonicalRoute";
+import {
+  canonicalRouteForRoom,
+  canonicalRouteHref,
+  parseCanonicalRoute
+} from "@/features/navigation/canonicalRoute";
 
 assert.equal(canonicalRouteHref({ kind: "hall" }), "/");
+assert.deepEqual(canonicalRouteForRoom("office"), { kind: "workspace" });
+assert.deepEqual(canonicalRouteForRoom("symposium"), { kind: "room", roomId: "symposium" });
 assert.equal(canonicalRouteHref({ kind: "room", roomId: "library" }), "/rooms/library");
 assert.deepEqual(parseCanonicalRoute("/rooms/amphitheater"), { kind: "room", roomId: "amphitheater" });
 assert.equal(canonicalRouteHref({ kind: "workspace", view: "notes" }), "/workspace?view=notes");
@@ -9,6 +15,14 @@ assert.deepEqual(parseCanonicalRoute("/workspace", "?view=saved"), { kind: "work
 assert.equal(canonicalRouteHref({ kind: "funding", view: "private" }), "/funding?view=private");
 assert.deepEqual(parseCanonicalRoute("/opportunities"), { kind: "opportunities" });
 assert.deepEqual(parseCanonicalRoute("/messages"), { kind: "messages" });
+assert.equal(
+  canonicalRouteHref({ kind: "messages", conversationId: "ai-metascience-lab" }),
+  "/messages?conversation=ai-metascience-lab"
+);
+assert.deepEqual(parseCanonicalRoute("/messages", "?conversation=niko-varga"), {
+  kind: "messages",
+  conversationId: "niko-varga"
+});
 assert.equal(
   canonicalRouteHref({ kind: "post", postId: "post/one", commentId: "comment one" }),
   "/posts/post%2Fone?comment=comment%20one"
@@ -20,6 +34,15 @@ assert.deepEqual(parseCanonicalRoute("/posts/post%2Fone", "?comment=comment%20on
 });
 assert.equal(canonicalRouteHref({ kind: "profile", handle: "@ada" }), "/profiles/ada");
 assert.deepEqual(parseCanonicalRoute("/profiles/ada"), { kind: "profile", handle: "@ada" });
+assert.equal(
+  canonicalRouteHref({ kind: "profile", handle: "@ada", social: "followers" }),
+  "/profiles/ada/followers"
+);
+assert.deepEqual(parseCanonicalRoute("/profiles/ada/following"), {
+  kind: "profile",
+  handle: "@ada",
+  social: "following"
+});
 assert.deepEqual(parseCanonicalRoute("/communities/frontier-physics"), {
   kind: "community",
   communityId: "frontier-physics"
@@ -37,7 +60,7 @@ console.log(
         "workspace and funding views",
         "opportunities and messages",
         "post and comment round-trip",
-        "profile handle normalization",
+        "profile and social-graph routes",
         "community routes",
         "safe fallback"
       ]

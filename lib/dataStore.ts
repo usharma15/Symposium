@@ -31,7 +31,7 @@ import {
   mutateItemForActor,
   setCommentActionMembership,
   setItemActionMembership,
-  tombstoneComment,
+  tombstoneCommentInItem,
   tombstonePost,
   updateSignalValue,
   type PostAction
@@ -1504,8 +1504,8 @@ export const deleteComment = async (
     if (!existing) return null;
     const original = findCommentInTree(existing.comments, commentId);
     if (!original || isDeletedComment(original) || !canManageComment(original, actorHandle)) return null;
-    const mapped = mapCommentTree(existing.comments, commentId, tombstoneComment);
-    if (!mapped.updated) return null;
+    const deletion = tombstoneCommentInItem(existing, commentId);
+    if (!deletion.deletedComment) return null;
 
     await getPool().query(
       `UPDATE comments
@@ -1525,14 +1525,14 @@ export const deleteComment = async (
         itemId,
         commentId,
         "",
-        mapped.updated.author,
-        mapped.updated.stance,
-        mapped.updated.body,
-        JSON.stringify(mapped.updated.metrics ?? commentMetricsFallback),
+        deletion.deletedComment.author,
+        deletion.deletedComment.stance,
+        deletion.deletedComment.body,
+        JSON.stringify(deletion.deletedComment.metrics ?? commentMetricsFallback),
         JSON.stringify([]),
         JSON.stringify([]),
         JSON.stringify([]),
-        mapped.updated.deletedAt
+        deletion.deletedComment.deletedAt
       ]
     );
     await getPool().query(
@@ -1545,7 +1545,15 @@ export const deleteComment = async (
       [commentId]
     );
 
-    return { ...existing, comments: mapped.comments };
+    await getPool().query(
+      `UPDATE items
+       SET metrics = $2,
+           signals = $3
+       WHERE id = $1`,
+      [itemId, JSON.stringify(deletion.item.metrics), JSON.stringify(deletion.item.signals)]
+    );
+
+    return deletion.item;
   }
 
   const local = await readLocal();
@@ -1554,9 +1562,9 @@ export const deleteComment = async (
     if (item.id !== itemId) return item;
     const original = findCommentInTree(item.comments, commentId);
     if (!original || isDeletedComment(original) || !canManageComment(original, actorHandle)) return item;
-    const mapped = mapCommentTree(item.comments, commentId, tombstoneComment);
-    if (!mapped.updated) return item;
-    deleted = { ...item, comments: mapped.comments };
+    const deletion = tombstoneCommentInItem(item, commentId);
+    if (!deletion.deletedComment) return item;
+    deleted = deletion.item;
     return deleted;
   });
   if (!deleted) return null;

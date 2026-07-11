@@ -109,6 +109,14 @@
   background: rgba(255, 253, 245, 0.62);
   color: var(--ink);
   text-align: left;
+  text-decoration: none;
+}
+
+.message-thread.active,
+.message-thread:hover,
+.message-thread:focus-visible {
+  border-color: rgba(34, 128, 138, 0.44);
+  background: rgba(224, 246, 244, 0.58);
 }
 
 .message-thread > span:not(.avatar) {
@@ -246,7 +254,8 @@
   color: rgba(246, 234, 212, 0.74);
 }
 
-.symposium-shell.night .social-actions button {
+.symposium-shell.night .social-actions button,
+.symposium-shell.night .social-actions a {
   color: rgba(246, 234, 212, 0.72);
 }
 
@@ -351,7 +360,7 @@
   text-transform: uppercase;
 }
 
-.search-group button {
+.search-group a {
   display: grid;
   gap: 3px;
   justify-items: start;
@@ -362,14 +371,15 @@
   background: rgba(255, 253, 245, 0.62);
   color: var(--ink);
   text-align: left;
+  text-decoration: none;
 }
 
-.search-group button:has(.avatar) {
+.search-group a:has(.avatar) {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
 }
 
-.search-group button > span:not(.avatar) {
+.search-group a > span:not(.avatar) {
   color: rgba(30, 101, 108, 0.92);
   font-size: 0.72rem;
   font-weight: 850;
@@ -752,7 +762,7 @@
   padding: 10px;
 }
 
-.social-list-body button {
+.social-list-body a {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -763,14 +773,15 @@
   color: var(--ink);
   padding: 7px 8px;
   text-align: left;
+  text-decoration: none;
 }
 
-.social-list-body button:hover {
+.social-list-body a:hover {
   border-color: var(--line);
   background: var(--panel);
 }
 
-.social-list-body button > span:not(.avatar) {
+.social-list-body a > span:not(.avatar) {
   display: grid;
   gap: 2px;
 }
@@ -798,11 +809,11 @@
 }
 
 .symposium-shell.night .social-list-modal header button,
-.symposium-shell.night .social-list-body button {
+.symposium-shell.night .social-list-body a {
   color: #fff8ea;
 }
 
-.symposium-shell.night .social-list-body button:hover {
+.symposium-shell.night .social-list-body a:hover {
   border-color: rgba(157, 238, 243, 0.28);
   background: rgba(157, 238, 243, 0.09);
 }

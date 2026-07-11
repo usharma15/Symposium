@@ -36,6 +36,53 @@ export const followStatusSchema = z.enum(["active", "muted", "blocked"]);
 export const opportunityStatusSchema = z.enum(["open", "closed", "draft"]);
 export const opportunityKindSchema = z.enum(["job", "bounty", "collaboration", "grant", "internship"]);
 export const aiMessageRoleSchema = z.enum(["user", "assistant", "system"]);
+export const resourceTypeSchema = z.enum([
+  "post",
+  "comment",
+  "profile",
+  "community",
+  "conversation",
+  "message",
+  "workspace",
+  "note",
+  "opportunity",
+  "attachment"
+]);
+export const resourceVisibilitySchema = z.enum(["private", "restricted", "community", "public"]);
+export const resourceLifecycleSchema = z.enum(["draft", "active", "archived", "deleted"]);
+
+export const resourceReferenceSchema = z.object({
+  type: resourceTypeSchema,
+  id: z.string().trim().min(1).max(240),
+  label: z.string().trim().min(1).max(300).optional()
+});
+
+const textMarksSchema = z.array(z.enum(["bold", "italic", "code", "strikethrough"])).max(4).default([]);
+export const documentTextSchema = z.object({
+  text: z.string(),
+  marks: textMarksSchema.optional(),
+  link: z.string().url().optional()
+});
+
+export const documentNodeSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("paragraph"), content: z.array(documentTextSchema).default([]) }),
+  z.object({
+    type: z.literal("heading"),
+    level: z.number().int().min(1).max(4),
+    content: z.array(documentTextSchema).default([])
+  }),
+  z.object({ type: z.literal("list"), ordered: z.boolean().default(false), items: z.array(z.string()).max(200) }),
+  z.object({ type: z.literal("code"), language: z.string().max(80).optional(), code: z.string().max(100000) }),
+  z.object({ type: z.literal("attachment"), attachmentId: z.string().min(1), caption: z.string().max(1000).optional() }),
+  z.object({ type: z.literal("quote"), content: z.array(documentTextSchema).default([]), source: resourceReferenceSchema.optional() }),
+  z.object({ type: z.literal("reference"), resource: resourceReferenceSchema }),
+  z.object({ type: z.literal("citation"), label: z.string().max(120), href: z.string().url().optional() })
+]);
+
+export const versionedDocumentSchema = z.object({
+  version: z.literal(1),
+  nodes: z.array(documentNodeSchema).max(2000)
+});
 
 export const researchProfileSchema = z.object({
   name: z.string().min(1),
@@ -422,6 +469,11 @@ export type ContentKindContract = z.infer<typeof contentKindSchema>;
 export type PostActionContract = z.infer<typeof postActionSchema>;
 export type ToggleActionContract = z.infer<typeof toggleActionSchema>;
 export type ActionSubjectTypeContract = z.infer<typeof actionSubjectTypeSchema>;
+export type ResourceTypeContract = z.infer<typeof resourceTypeSchema>;
+export type ResourceVisibilityContract = z.infer<typeof resourceVisibilitySchema>;
+export type ResourceLifecycleContract = z.infer<typeof resourceLifecycleSchema>;
+export type ResourceReferenceContract = z.infer<typeof resourceReferenceSchema>;
+export type VersionedDocumentContract = z.infer<typeof versionedDocumentSchema>;
 export type ResearchProfileContract = z.infer<typeof researchProfileSchema>;
 export type CreateProfileInputContract = z.infer<typeof createProfileInputSchema>;
 export type InquiryItemContract = z.infer<typeof inquiryItemSchema>;

@@ -32,6 +32,7 @@
 }
 
 .segmented button,
+.segmented a,
 .chip-row button {
   min-height: 34px;
   border: 0;
@@ -43,7 +44,14 @@
   padding: 0 12px;
 }
 
+.segmented a {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .segmented button.active,
+.segmented a.active,
 .chip-row button.active {
   background: var(--panel-strong);
   color: var(--ink);
@@ -297,6 +305,7 @@
   color: inherit;
   padding: 4px 7px 4px 0;
   text-align: left;
+  text-decoration: none;
 }
 
 .deleted-post-author {
@@ -960,7 +969,8 @@
   color: var(--muted);
 }
 
-.social-actions button {
+.social-actions button,
+.social-actions a {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -971,6 +981,7 @@
   color: inherit;
   padding: 0 7px;
   font-size: 0.82rem;
+  text-decoration: none;
 }
 
 .social-actions button:disabled {
@@ -1045,6 +1056,7 @@
   background: transparent;
   padding: 6px 8px 6px 0;
   text-align: left;
+  text-decoration: none;
 }
 
 .gathering-reason {

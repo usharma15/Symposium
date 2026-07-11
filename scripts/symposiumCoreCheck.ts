@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import type { InquiryComment } from "@/lib/mockData";
+import type { InquiryComment, InquiryItem } from "@/lib/mockData";
 import {
   appendCommentToTree,
   commentActionActive,
   commentMetricsFallback,
+  countComments,
   findCommentInTree,
   mapCommentTree,
-  mutateCommentForActor
+  mutateCommentForActor,
+  tombstoneCommentInItem
 } from "@/lib/symposiumCore";
 
 const root: InquiryComment = {
@@ -92,6 +94,50 @@ const deleted: InquiryComment = {
 const deletedAfterAction = mutateCommentForActor(deleted, "save", "@ada", true);
 assert.deepEqual(deletedAfterAction, deleted);
 
-console.log(JSON.stringify({ ok: true, checked: "symposiumCore comment helpers" }, null, 2));
+const item: InquiryItem = {
+  id: "post",
+  kind: "thought",
+  room: "symposium",
+  title: "Deletion projection",
+  author: "Ada",
+  authorHandle: "@ada",
+  affiliation: "Test",
+  date: "Now",
+  status: "Active",
+  metrics: { signal: "0", critiques: "2", forks: "0", saves: "0", reads: "0" },
+  gatheringReason: "Test",
+  excerpt: "Test",
+  body: "Test",
+  tags: [],
+  signals: [{ label: "Critiques", value: "2" }],
+  claims: [],
+  objections: [],
+  evidence: [],
+  tests: [],
+  forks: [],
+  comments: [root],
+  attachments: [],
+  savedBy: [],
+  signaledBy: [],
+  forkedBy: []
+};
+const deletion = tombstoneCommentInItem(item, "root", "2026-07-10T00:00:00.000Z");
+assert.equal(deletion.deletedComment?.id, "root");
+assert.equal(deletion.item.metrics.critiques, "1");
+assert.equal(deletion.item.signals[0]?.value, "1");
+assert.equal(countComments(deletion.item.comments), 1);
+assert.equal(deletion.item.comments[0]?.replies?.[0]?.id, "child");
+assert.deepEqual(tombstoneCommentInItem(deletion.item, "root").item, deletion.item);
+
+console.log(
+  JSON.stringify(
+    {
+      ok: true,
+      checked: ["comment tree helpers", "deleted-comment count projection", "idempotent tombstones"]
+    },
+    null,
+    2
+  )
+);
 
 export {};

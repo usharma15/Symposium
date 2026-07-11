@@ -6,7 +6,8 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
-  type KeyboardEvent
+  type KeyboardEvent,
+  type MouseEvent
 } from "react";
 import {
   ArrowLeft,
@@ -65,6 +66,7 @@ import {
 import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
+import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 
 export type PostDraft = {
   title: string;
@@ -427,7 +429,15 @@ export function FeedPost({
         onClickStop={(event) => event.stopPropagation()}
       />
       <div className="post-body">
-        <h2>{deletedPostContextTitle(item)}</h2>
+        <h2>
+          <CanonicalLink
+            route={{ kind: "post", postId: item.id }}
+            onNavigate={openPost}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {deletedPostContextTitle(item)}
+          </CanonicalLink>
+        </h2>
         <ExpandableBodyText
           text={item.body}
           className="feed-post-text"
@@ -456,7 +466,7 @@ function PostAuthor({
   item: InquiryItem;
   profiles: Record<string, ResearchProfile>;
   onOpenProfile: (name: string) => void;
-  onClickStop?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onClickStop?: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   if (isDeletedPost(item)) {
     return (
@@ -473,12 +483,12 @@ function PostAuthor({
   const authorName = authorProfile?.name ?? item.author;
 
   return (
-    <button
+    <CanonicalLink
       className="post-author"
-      type="button"
+      route={{ kind: "profile", handle: authorProfile?.handle ?? item.authorHandle ?? item.author }}
+      onNavigate={() => onOpenProfile(authorProfile?.handle ?? item.authorHandle ?? item.author)}
       onClick={(event) => {
         onClickStop?.(event);
-        onOpenProfile(authorProfile?.handle ?? item.authorHandle ?? item.author);
       }}
     >
       <span className="avatar">
@@ -488,7 +498,7 @@ function PostAuthor({
         <strong>{authorName}</strong>
         <small>{relativeTimeLabel(item.createdAt, item.date)}</small>
       </span>
-    </button>
+    </CanonicalLink>
   );
 }
 
@@ -524,6 +534,21 @@ function SocialActions({
         const fillActiveIcon = action.active && (action.label === "Likes" || action.label === "Saves");
         const disabled = postDeleted && Boolean(action.action);
         const metricValue = action.value === deletedMetricLabel ? deletedMetricLabel : formatMetric(metricNumber(action.value));
+        if (action.label === "Comments" && !postDeleted) {
+          return (
+            <CanonicalLink
+              key={action.label}
+              route={{ kind: "post", postId: item.id, commentId: commentsSectionTargetId }}
+              onNavigate={() => onCommentsClick?.()}
+              onClick={(event) => event.stopPropagation()}
+              title={action.label}
+            >
+              <Icon size={16} />
+              <span className="metric-label">{action.label}</span>
+              <strong>{metricValue}</strong>
+            </CanonicalLink>
+          );
+        }
         return (
           <button
             key={action.label}
@@ -563,6 +588,7 @@ export function DetailView({
   profiles,
   selectedCommentId,
   onClearSelectedComment,
+  onSelectComment,
   commentSegmentStacks,
   onCommentSegmentStackChange,
   onVisibleCommentSegmentStackChange,
@@ -583,6 +609,7 @@ export function DetailView({
   profiles: Record<string, ResearchProfile>;
   selectedCommentId: string | null;
   onClearSelectedComment: () => void;
+  onSelectComment: (commentId: string) => void;
   commentSegmentStacks: CommentSegmentStacks;
   onCommentSegmentStackChange: (key: string, stack: string[]) => void;
   onVisibleCommentSegmentStackChange: (key: string, stack: string[]) => void;
@@ -650,7 +677,11 @@ export function DetailView({
             </span>
           </div>
         ) : (
-          <button className="detail-byline-button" type="button" onClick={() => onOpenProfile(authorProfile?.handle ?? item.authorHandle ?? item.author)}>
+          <CanonicalLink
+            className="detail-byline-button"
+            route={{ kind: "profile", handle: authorProfile?.handle ?? item.authorHandle ?? item.author }}
+            onNavigate={() => onOpenProfile(authorProfile?.handle ?? item.authorHandle ?? item.author)}
+          >
             <span className="avatar">
               {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
             </span>
@@ -658,7 +689,7 @@ export function DetailView({
               <strong>{authorName}</strong>
               <small>{relativeTimeLabel(item.createdAt, item.date)}</small>
             </span>
-          </button>
+          </CanonicalLink>
         )}
         <p className="detail-body">{item.body}</p>
         <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} variant="detail" />
@@ -667,7 +698,10 @@ export function DetailView({
           item={item}
           commentCount={countComments(item.comments)}
           onAction={onAction}
-          onCommentsClick={scrollToComments}
+          onCommentsClick={() => {
+            onSelectComment(commentsSectionTargetId);
+            scrollToComments();
+          }}
           actorHandle={actorHandle}
         />
 
@@ -686,6 +720,7 @@ export function DetailView({
             onDeleteComment={onDeleteComment}
             actorHandle={actorHandle}
             onClearSelectedComment={onClearSelectedComment}
+            onSelectComment={onSelectComment}
             commentSegmentStacks={commentSegmentStacks}
             onCommentSegmentStackChange={onCommentSegmentStackChange}
             onVisibleCommentSegmentStackChange={onVisibleCommentSegmentStackChange}

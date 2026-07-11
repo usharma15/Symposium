@@ -58,6 +58,7 @@
     linear-gradient(135deg, rgba(255, 253, 245, 0.92), rgba(234, 222, 191, 0.68)),
     rgba(255, 253, 245, 0.74);
   color: var(--ink);
+  text-decoration: none;
   text-align: left;
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.12);
   transition:
@@ -174,6 +175,7 @@
   padding: 0 11px;
   background: rgba(255, 253, 245, 0.64);
   color: var(--ink);
+  text-decoration: none;
   font-weight: 840;
 }
 
@@ -315,7 +317,8 @@
   background: transparent;
 }
 
-.segmented button {
+.segmented button,
+.segmented a {
   min-height: 38px;
   border: 1px solid rgba(255, 253, 245, 0.18);
   background: rgba(255, 253, 245, 0.12);
@@ -323,7 +326,8 @@
   text-align: left;
 }
 
-.segmented button.active {
+.segmented button.active,
+.segmented a.active {
   background: rgba(255, 253, 245, 0.86);
   color: #14201f;
 }

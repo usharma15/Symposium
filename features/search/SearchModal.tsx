@@ -4,6 +4,7 @@ import { Search, X } from "lucide-react";
 import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
 import { profileInitials as initial } from "@/features/identity/profilePresentation";
 import { kindLabels } from "@/features/posts/PostViews";
+import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 
 export function SearchModal({
   query,
@@ -61,13 +62,17 @@ export function SearchModal({
                 <section className="search-group">
                   <h2>People</h2>
                   {results.profileMatches.map((person) => (
-                    <button key={person.handle} type="button" onClick={() => onOpenProfile(person.name)}>
+                    <CanonicalLink
+                      key={person.handle}
+                      route={{ kind: "profile", handle: person.handle }}
+                      onNavigate={() => onOpenProfile(person.name)}
+                    >
                       <span className="avatar small">{initial(person.name)}</span>
                       <span>
                         <strong>{person.name}</strong>
                         <small>{person.role}</small>
                       </span>
-                    </button>
+                    </CanonicalLink>
                   ))}
                 </section>
               ) : null}
@@ -94,13 +99,17 @@ function SearchResultGroup({
     <section className="search-group">
       <h2>{title}</h2>
       {items.slice(0, 8).map((item) => (
-        <button key={item.id} type="button" onClick={() => onOpenPost(item.id)}>
+        <CanonicalLink
+          key={item.id}
+          route={{ kind: "post", postId: item.id }}
+          onNavigate={() => onOpenPost(item.id)}
+        >
           <span>{kindLabels[item.kind]}</span>
           <strong>{item.title}</strong>
           <small>
             {item.author} · {item.date}
           </small>
-        </button>
+        </CanonicalLink>
       ))}
     </section>
   );

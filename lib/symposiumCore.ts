@@ -178,7 +178,10 @@ export const mutateItemForActor = (
 };
 
 export const countComments = (comments: InquiryComment[]): number =>
-  comments.reduce((total, comment) => total + 1 + countComments(comment.replies ?? []), 0);
+  comments.reduce(
+    (total, comment) => total + (isDeletedComment(comment) ? 0 : 1) + countComments(comment.replies ?? []),
+    0
+  );
 
 export const deletedPostTitle = "—";
 export const deletedPostBody = "This post has been deleted";
@@ -411,3 +414,26 @@ export const localDateTimeLabel = (createdAt?: string) => {
 
 export const updateSignalValue = (signals: InquiryItem["signals"], label: string, value: string) =>
   signals.map((signal) => (signal.label === label ? { ...signal, value } : signal));
+
+export const tombstoneCommentInItem = (
+  item: InquiryItem,
+  commentId: string,
+  deletedAt = new Date().toISOString()
+) => {
+  const original = findCommentInTree(item.comments, commentId);
+  if (!original || isDeletedComment(original)) return { item, deletedComment: null };
+
+  const mapped = mapCommentTree(item.comments, commentId, (comment) => tombstoneComment(comment, deletedAt));
+  if (!mapped.updated) return { item, deletedComment: null };
+
+  const critiques = incrementMetric(item.metrics.critiques, -1);
+  return {
+    item: {
+      ...item,
+      comments: mapped.comments,
+      metrics: { ...item.metrics, critiques },
+      signals: updateSignalValue(item.signals, "Critiques", critiques)
+    },
+    deletedComment: mapped.updated
+  };
+};

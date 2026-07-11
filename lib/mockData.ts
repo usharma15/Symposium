@@ -10,90 +10,24 @@ import {
   Sparkles
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import type {
+  ContentKindContract,
+  InquiryAttachmentContract,
+  InquiryCommentContract,
+  InquiryItemContract,
+  InquiryMetricsContract,
+  ResearchCommunityContract,
+  ResearchProfileContract,
+  RoomIdContract
+} from "@/packages/contracts/src";
 
-export type RoomId =
-  | "hall"
-  | "office"
-  | "symposium"
-  | "library"
-  | "amphitheater"
-  | "funding"
-  | "communities"
-  | "opportunities";
+export type RoomId = RoomIdContract;
 export type FeedScope = "suggested" | "following" | "rooms";
-export type ContentKind = "paper" | "thought" | "draft" | "note" | "code";
-
-export type InquiryComment = {
-  id?: string;
-  parentId?: string | null;
-  author: string;
-  authorHandle?: string;
-  body: string;
-  stance: string;
-  createdAt?: string;
-  editedAt?: string;
-  deletedAt?: string;
-  metrics?: Pick<InquiryMetrics, "signal" | "forks" | "saves" | "reads">;
-  savedBy?: string[];
-  signaledBy?: string[];
-  forkedBy?: string[];
-  replies?: InquiryComment[];
-};
-
-export type InquiryMetrics = {
-  signal: string;
-  critiques: string;
-  forks: string;
-  saves: string;
-  reads: string;
-};
-
-export type InquiryAttachment = {
-  id: string;
-  fileName: string;
-  contentType: string;
-  byteSize: number;
-  url?: string;
-  status: "pending" | "uploaded" | "previewed" | "failed";
-  kind: "image" | "video" | "pdf" | "text" | "document";
-  metadata?: Record<string, unknown>;
-  createdAt?: string;
-};
-
-export type InquiryItem = {
-  id: string;
-  kind: ContentKind;
-  room: Exclude<RoomId, "hall">;
-  title: string;
-  author: string;
-  authorHandle?: string;
-  affiliation: string;
-  date: string;
-  createdAt?: string;
-  editedAt?: string;
-  deletedAt?: string;
-  status: string;
-  metrics: InquiryMetrics;
-  gatheringReason: string;
-  excerpt: string;
-  body: string;
-  tags: string[];
-  signals: {
-    label: string;
-    value: string;
-  }[];
-  claims: string[];
-  objections: string[];
-  evidence: string[];
-  tests: string[];
-  forks: string[];
-  comments: InquiryComment[];
-  attachments?: InquiryAttachment[];
-  saved?: boolean;
-  savedBy?: string[];
-  signaledBy?: string[];
-  forkedBy?: string[];
-};
+export type ContentKind = ContentKindContract;
+export type InquiryComment = InquiryCommentContract;
+export type InquiryMetrics = InquiryMetricsContract;
+export type InquiryAttachment = InquiryAttachmentContract;
+export type InquiryItem = InquiryItemContract;
 
 export type Room = {
   id: RoomId;
@@ -109,35 +43,8 @@ export type Room = {
   includes: ContentKind[];
 };
 
-export type ResearchProfile = {
-  name: string;
-  handle: string;
-  email?: string;
-  avatarUrl?: string;
-  likesPublic?: boolean;
-  resharesPublic?: boolean;
-  role: string;
-  location: string;
-  bio: string;
-  fields: string[];
-};
-
-export type ResearchCommunity = {
-  id: string;
-  name: string;
-  field: string;
-  summary: string;
-  visibility: "public" | "private";
-  online: number;
-  memberHandles: string[];
-  keywords: string[];
-  seedCounts: {
-    papers: number;
-    thoughts: number;
-    opportunities: number;
-  };
-  callStatus: "quiet" | "voice live" | "video live";
-};
+export type ResearchProfile = ResearchProfileContract;
+export type ResearchCommunity = ResearchCommunityContract;
 
 export const rooms: Room[] = [
   {

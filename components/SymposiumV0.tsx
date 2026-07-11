@@ -53,7 +53,7 @@ import {
   mutateCommentForActor,
   mutateItemForActor,
   normalizeSearchPhrase,
-  tombstoneComment,
+  tombstoneCommentInItem,
   tombstonePost,
   updateSignalValue
 } from "@/lib/symposiumCore";
@@ -78,11 +78,16 @@ import {
   createInquiryActionReconciler,
   type ProtectedActionMetricState
 } from "@/features/live-sync/inquiryActionReconciler";
+import type { CanonicalRoute, ProfileSocialView } from "@/features/navigation/canonicalRoute";
 import {
-  canonicalRouteHref,
-  parseCanonicalRoute,
-  type CanonicalRoute
-} from "@/features/navigation/canonicalRoute";
+  canonicalRouteForView as routeForViewSnapshot,
+  officeModeForCanonicalRoute,
+  patronageModeForCanonicalRoute,
+  roomForCanonicalRoute,
+  type OfficeMode,
+  type PatronageMode,
+  type ViewSnapshot
+} from "@/features/navigation/viewState";
 import { selectActiveProfile } from "@/features/identity/selectActiveProfile";
 import { useInquiryEntityStore } from "@/features/entities/useInquiryEntityStore";
 import {
@@ -138,45 +143,16 @@ import { NotebookPanel, TabletPanel } from "@/features/workspace/WorkspacePanels
 import { SearchModal } from "@/features/search/SearchModal";
 import { MessagesModal } from "@/features/messages/MessagesModal";
 import { RoomView } from "@/features/rooms/RoomView";
+import { CanonicalLink } from "@/features/navigation/CanonicalLink";
+import { useCanonicalBrowserHistory } from "@/features/navigation/useCanonicalBrowserHistory";
 
 type Theme = "day" | "night";
 type EntryMode = "loading" | "approach" | "auth" | "complete";
-type OfficeMode = "desk" | "saved" | "notes";
-type PatronageMode = "lobby" | "civic" | "private";
 type ViewTargetType = "post" | "comment";
 type EditingCommentTarget = {
   itemId: string;
   commentId: string;
 };
-
-type ViewSnapshot = {
-  activeRoom: RoomId;
-  selectedItemId: string | null;
-  selectedCommentId: string | null;
-  selectedProfileName: string | null;
-  officeMode: OfficeMode;
-  patronageMode: PatronageMode;
-  selectedCommunityId: string | null;
-  messagesOpen: boolean;
-  commentSegmentStacks: CommentSegmentStacks;
-  scrollAnchor: { id: string; top: number; commentSegmentKey?: string; commentSegmentStack?: string[] } | null;
-  scrollY: number;
-};
-
-const roomForCanonicalRoute = (route: CanonicalRoute): RoomId => {
-  if (route.kind === "room") return route.roomId;
-  if (route.kind === "workspace") return "office";
-  if (route.kind === "funding") return "funding";
-  if (route.kind === "opportunities") return "opportunities";
-  if (route.kind === "community" || route.kind === "communities") return "communities";
-  return "hall";
-};
-
-const officeModeForCanonicalRoute = (route: CanonicalRoute): OfficeMode =>
-  route.kind === "workspace" ? route.view ?? "desk" : "desk";
-
-const patronageModeForCanonicalRoute = (route: CanonicalRoute): PatronageMode =>
-  route.kind === "funding" ? route.view ?? "lobby" : "lobby";
 
 type LocalSnapshot = {
   profiles: Record<string, ResearchProfile>;
@@ -545,12 +521,16 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(initialRoute.kind === "messages");
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(
+    initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(
     initialRoute.kind === "profile" ? initialRoute.handle : null
   );
-  const [viewHistory, setViewHistory] = useState<ViewSnapshot[]>([]);
-  const [viewFuture, setViewFuture] = useState<ViewSnapshot[]>([]);
+  const [profileSocialView, setProfileSocialView] = useState<ProfileSocialView | null>(
+    initialRoute.kind === "profile" ? initialRoute.social ?? null : null
+  );
   const [profileActiveTabs, setProfileActiveTabs] = useState<Record<string, ProfileTab>>({});
   const [profileActivityRevision, setProfileActivityRevision] = useState(0);
   const [profileActivityByHandle, setProfileActivityByHandle] = useState<
@@ -592,9 +572,6 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   const liveEventCursorRef = useRef("");
   const liveRefreshTimerRef = useRef<number | null>(null);
   const itemMutationGuardRef = useRef(createItemMutationGuard());
-  const browserHistoryIndexRef = useRef(0);
-  const browserHistoryInitializedRef = useRef(false);
-  const popstateHandlerRef = useRef<((event: PopStateEvent) => void) | null>(null);
   const authenticatedProfileHandleRef = useRef<string | null>(null);
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState(
@@ -1247,6 +1224,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
         setOfficeMode(officeModeForCanonicalRoute(initialRoute));
         setPatronageMode(patronageModeForCanonicalRoute(initialRoute));
         setMessagesOpen(initialRoute.kind === "messages");
+        setSelectedConversationId(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
       } else {
         setEntryMode("auth");
       }
@@ -1303,12 +1281,13 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       setOfficeMode(officeModeForCanonicalRoute(initialRoute));
       setPatronageMode(patronageModeForCanonicalRoute(initialRoute));
       setMessagesOpen(initialRoute.kind === "messages");
+      setSelectedConversationId(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
       setSelectedCommunityId(initialRoute.kind === "community" ? initialRoute.communityId : null);
       setSelectedItemId(initialRoute.kind === "post" ? initialRoute.postId : null);
       setSelectedCommentId(initialRoute.kind === "post" ? initialRoute.commentId ?? null : null);
       setSelectedProfileName(initialRoute.kind === "profile" ? initialRoute.handle : null);
-      setViewHistory([]);
-      setViewFuture([]);
+      setProfileSocialView(initialRoute.kind === "profile" ? initialRoute.social ?? null : null);
+      resetHistory();
       window.sessionStorage.setItem("symposium-entry-complete", "true");
       window.localStorage.setItem("symposium-profile-handle", data.profile.handle);
       await refreshData(data.profile.handle);
@@ -1666,10 +1645,12 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       selectedItemId,
       selectedCommentId,
       selectedProfileName,
+      profileSocialView,
       officeMode,
       patronageMode,
       selectedCommunityId,
       messagesOpen,
+      selectedConversationId,
       commentSegmentStacks: cloneCommentSegmentStacks({
         ...commentSegmentStacksRef.current,
         ...visibleCommentSegmentStacksRef.current,
@@ -1707,6 +1688,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     setSelectedItemId(snapshot.selectedItemId);
     setSelectedCommentId(snapshot.selectedCommentId);
     setSelectedProfileName(snapshot.selectedProfileName);
+    setProfileSocialView(snapshot.profileSocialView ?? null);
     setOfficeMode(snapshot.officeMode);
     setPatronageMode(snapshot.patronageMode);
     setSelectedCommunityId(snapshot.selectedCommunityId);
@@ -1720,82 +1702,27 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     setSettingsOpen(false);
     setSearchOpen(false);
     setMessagesOpen(snapshot.messagesOpen);
+    setSelectedConversationId(snapshot.selectedConversationId ?? null);
     restoreScrollPosition(snapshot);
   };
 
-  const canonicalRouteForView = (snapshot: ViewSnapshot): CanonicalRoute => {
-    if (snapshot.messagesOpen) return { kind: "messages" };
-    if (snapshot.selectedItemId) {
-      return {
-        kind: "post",
-        postId: snapshot.selectedItemId,
-        commentId: snapshot.selectedCommentId ?? undefined
-      };
-    }
-    if (snapshot.selectedProfileName) {
-      return { kind: "profile", handle: findProfile(snapshot.selectedProfileName)?.handle ?? snapshot.selectedProfileName };
-    }
-    if (snapshot.selectedCommunityId) {
-      return { kind: "community", communityId: snapshot.selectedCommunityId };
-    }
-    if (snapshot.activeRoom === "communities") return { kind: "communities" };
-    if (snapshot.activeRoom === "office") {
-      return { kind: "workspace", view: snapshot.officeMode === "desk" ? undefined : snapshot.officeMode };
-    }
-    if (snapshot.activeRoom === "funding") {
-      return { kind: "funding", view: snapshot.patronageMode === "lobby" ? undefined : snapshot.patronageMode };
-    }
-    if (snapshot.activeRoom === "opportunities") return { kind: "opportunities" };
-    if (
-      snapshot.activeRoom === "symposium" ||
-      snapshot.activeRoom === "library" ||
-      snapshot.activeRoom === "amphitheater"
-    ) {
-      return { kind: "room", roomId: snapshot.activeRoom };
-    }
-    return { kind: "hall" };
-  };
-
-  const snapshotForCanonicalRoute = (route: CanonicalRoute): ViewSnapshot => ({
-    activeRoom: roomForCanonicalRoute(route),
-    selectedItemId: route.kind === "post" ? route.postId : null,
-    selectedCommentId: route.kind === "post" ? route.commentId ?? null : null,
-    selectedProfileName: route.kind === "profile" ? route.handle : null,
-    officeMode: officeModeForCanonicalRoute(route),
-    patronageMode: patronageModeForCanonicalRoute(route),
-    selectedCommunityId: route.kind === "community" ? route.communityId : null,
-    messagesOpen: route.kind === "messages",
-    commentSegmentStacks: {},
-    scrollAnchor: null,
-    scrollY: 0
+  const {
+    canGoBack: hasViewHistory,
+    canGoForward: hasViewFuture,
+    goBack,
+    goForward,
+    recordNavigation,
+    replaceCanonicalRoute,
+    resetHistory
+  } = useCanonicalBrowserHistory({
+    snapshotView,
+    restoreView,
+    routeForView: (snapshot) =>
+      routeForViewSnapshot(
+        snapshot,
+        (nameOrHandle) => findProfile(nameOrHandle)?.handle ?? nameOrHandle
+      )
   });
-
-  const replaceCurrentBrowserView = (snapshot: ViewSnapshot) => {
-    const state = window.history.state && typeof window.history.state === "object" ? window.history.state : {};
-    window.history.replaceState(
-      { ...state, symposiumHistoryIndex: browserHistoryIndexRef.current, symposiumView: snapshot },
-      "",
-      window.location.href
-    );
-  };
-
-  const pushCanonicalRoute = (route: CanonicalRoute) => {
-    browserHistoryIndexRef.current += 1;
-    window.history.pushState(
-      { symposiumHistoryIndex: browserHistoryIndexRef.current },
-      "",
-      canonicalRouteHref(route)
-    );
-  };
-
-  const replaceCanonicalRoute = (route: CanonicalRoute) => {
-    const state = window.history.state && typeof window.history.state === "object" ? window.history.state : {};
-    window.history.replaceState(
-      { ...state, symposiumHistoryIndex: browserHistoryIndexRef.current },
-      "",
-      canonicalRouteHref(route)
-    );
-  };
 
   const navigateView = (
     next: Partial<Omit<ViewSnapshot, "scrollY">>,
@@ -1807,18 +1734,28 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       ...currentSnapshot,
       ...next,
       selectedCommentId: next.selectedCommentId ?? (next.selectedItemId !== undefined ? null : currentSnapshot.selectedCommentId),
+      profileSocialView:
+        next.profileSocialView !== undefined
+          ? next.profileSocialView
+          : next.selectedProfileName !== undefined
+            ? null
+            : currentSnapshot.profileSocialView,
       messagesOpen: next.messagesOpen ?? false,
+      selectedConversationId:
+        next.selectedConversationId !== undefined
+          ? next.selectedConversationId
+          : next.messagesOpen
+            ? currentSnapshot.selectedConversationId
+            : null,
       scrollAnchor: null,
       scrollY: scrollY ?? currentSnapshot.scrollY
     };
-    setViewHistory((history) => [...history, currentSnapshot]);
-    setViewFuture([]);
-    replaceCurrentBrowserView(currentSnapshot);
-    pushCanonicalRoute(canonicalRouteForView(nextSnapshot));
+    recordNavigation(currentSnapshot, nextSnapshot);
     if (next.activeRoom !== undefined) setActiveRoom(next.activeRoom);
     if (next.selectedItemId !== undefined) setSelectedItemId(next.selectedItemId);
     if (next.selectedCommentId !== undefined) setSelectedCommentId(next.selectedCommentId);
     if (next.selectedProfileName !== undefined) setSelectedProfileName(next.selectedProfileName);
+    if (next.profileSocialView !== undefined) setProfileSocialView(next.profileSocialView);
     if (next.selectedItemId !== undefined && next.selectedItemId !== selectedItemId) {
       commentSegmentStacksRef.current = {};
       visibleCommentSegmentStacksRef.current = {};
@@ -1833,59 +1770,12 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     setSettingsOpen(false);
     setSearchOpen(false);
     setMessagesOpen(next.messagesOpen ?? false);
+    if (next.selectedConversationId !== undefined) setSelectedConversationId(next.selectedConversationId);
+    else if (!next.messagesOpen) setSelectedConversationId(null);
     if (scrollY !== null) {
       window.setTimeout(() => window.scrollTo({ top: scrollY, behavior: "auto" }), 0);
     }
   };
-
-  const goBack = () => {
-    if (!viewHistory.length) return;
-    replaceCurrentBrowserView(snapshotView());
-    window.history.back();
-  };
-
-  const goForward = () => {
-    if (!viewFuture.length) return;
-    replaceCurrentBrowserView(snapshotView());
-    window.history.forward();
-  };
-
-  popstateHandlerRef.current = (event) => {
-    const currentSnapshot = snapshotView();
-    const state = event.state && typeof event.state === "object" ? event.state : {};
-    const nextIndex =
-      typeof state.symposiumHistoryIndex === "number"
-        ? state.symposiumHistoryIndex
-        : browserHistoryIndexRef.current - 1;
-    const movingBack = nextIndex < browserHistoryIndexRef.current;
-    browserHistoryIndexRef.current = nextIndex;
-
-    if (movingBack) {
-      setViewHistory((history) => history.slice(0, -1));
-      setViewFuture((future) => [currentSnapshot, ...future]);
-    } else {
-      setViewHistory((history) => [...history, currentSnapshot]);
-      setViewFuture((future) => future.slice(1));
-    }
-
-    const storedView = state.symposiumView as ViewSnapshot | undefined;
-    restoreView(storedView ?? snapshotForCanonicalRoute(parseCanonicalRoute(window.location.pathname, window.location.search)));
-  };
-
-  useEffect(() => {
-    if (!browserHistoryInitializedRef.current) {
-      const state = window.history.state && typeof window.history.state === "object" ? window.history.state : {};
-      const initialIndex =
-        typeof state.symposiumHistoryIndex === "number" ? state.symposiumHistoryIndex : 0;
-      browserHistoryIndexRef.current = initialIndex;
-      browserHistoryInitializedRef.current = true;
-      replaceCurrentBrowserView(snapshotView());
-    }
-
-    const handlePopState = (event: PopStateEvent) => popstateHandlerRef.current?.(event);
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
 
   const enterRoom = (roomId: RoomId, mode: OfficeMode = roomId === "office" ? "desk" : officeMode) => {
     navigateView({
@@ -1893,6 +1783,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       selectedItemId: null,
       selectedCommentId: null,
       selectedProfileName: null,
+      profileSocialView: null,
       officeMode: roomId === "office" ? mode : "desk",
       patronageMode: roomId === "funding" ? "lobby" : patronageMode,
       selectedCommunityId: null
@@ -1909,6 +1800,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       selectedItemId: null,
       selectedCommentId: null,
       selectedProfileName: null,
+      profileSocialView: null,
       officeMode: "desk",
       patronageMode: mode,
       selectedCommunityId: null
@@ -1921,6 +1813,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       selectedItemId: null,
       selectedCommentId: null,
       selectedProfileName: null,
+      profileSocialView: null,
       officeMode: "desk",
       patronageMode: "lobby",
       selectedCommunityId: communityId
@@ -1933,6 +1826,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       selectedItemId: null,
       selectedCommentId: null,
       selectedProfileName: null,
+      profileSocialView: null,
       officeMode: "desk",
       patronageMode: "lobby",
       selectedCommunityId: null
@@ -1941,7 +1835,17 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
 
   const openProfile = (profileKey: string) => {
     flushPendingActivityRecency();
-    navigateView({ selectedProfileName: profileKey, selectedItemId: null, selectedCommentId: null });
+    navigateView({
+      selectedProfileName: profileKey,
+      profileSocialView: null,
+      selectedItemId: null,
+      selectedCommentId: null
+    });
+  };
+
+  const changeProfileSocialView = (view: ProfileSocialView | null) => {
+    if (!selectedProfileName) return;
+    navigateView({ profileSocialView: view }, null);
   };
 
   const changeProfileTab = (handle: string, tab: ProfileTab) => {
@@ -2282,12 +2186,13 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     setOfficeMode(officeModeForCanonicalRoute(initialRoute));
     setPatronageMode(patronageModeForCanonicalRoute(initialRoute));
     setMessagesOpen(initialRoute.kind === "messages");
+    setSelectedConversationId(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
     setSelectedCommunityId(initialRoute.kind === "community" ? initialRoute.communityId : null);
     setSelectedItemId(initialRoute.kind === "post" ? initialRoute.postId : null);
     setSelectedCommentId(initialRoute.kind === "post" ? initialRoute.commentId ?? null : null);
     setSelectedProfileName(initialRoute.kind === "profile" ? initialRoute.handle : null);
-    setViewHistory([]);
-    setViewFuture([]);
+    setProfileSocialView(initialRoute.kind === "profile" ? initialRoute.social ?? null : null);
+    resetHistory();
     window.sessionStorage.setItem("symposium-entry-complete", "true");
     window.localStorage.setItem("symposium-profile-handle", previewProfile.handle);
     persistLocalSnapshot(items, fallbackProfiles, previewProfile);
@@ -2928,8 +2833,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     const previousItems = itemsRef.current;
     const nextItems = previousItems.map((current) => {
       if (current.id !== itemId) return current;
-      const mapped = mapCommentTree(current.comments, commentId, tombstoneComment);
-      return mapped.updated ? { ...current, comments: mapped.comments } : current;
+      return tombstoneCommentInItem(current, commentId).item;
     });
     replaceItems(nextItems);
     persistLocalSnapshot(nextItems, profilesRef.current);
@@ -2966,7 +2870,12 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
 
   const openPost = (id: string, commentId?: string | null, sourceSurface?: ViewSurface) => {
     navigateView(
-      { selectedItemId: id, selectedCommentId: commentId ?? null, selectedProfileName: null },
+      {
+        selectedItemId: id,
+        selectedCommentId: commentId ?? null,
+        selectedProfileName: null,
+        profileSocialView: null
+      },
       commentId ? null : 0
     );
     const targetItem = itemsRef.current.find((item) => item.id === id);
@@ -3033,17 +2942,21 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       <RenderPreloadDeck sources={themePreloadRenders} />
 
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => enterRoom("hall")}>
+        <CanonicalLink className="brand" route={{ kind: "hall" }} onNavigate={() => enterRoom("hall")}>
           {activeRoom !== "hall" && <ArrowLeft size={18} />}
           <span>
             <strong>{activeRoom === "hall" ? "SYMPOSIUM" : "Exit"}</strong>
             {activeRoom !== "hall" && <small>Main hall</small>}
           </span>
-        </button>
+        </CanonicalLink>
 
         <ViewNav
-          canGoBack={viewHistory.length > 0}
-          canGoForward={viewFuture.length > 0}
+          canGoBack={
+            hasViewHistory ||
+            activeRoom !== "hall" ||
+            Boolean(selectedItemId || selectedProfileName || selectedCommunityId || messagesOpen)
+          }
+          canGoForward={hasViewFuture}
           onBack={goBack}
           onForward={goForward}
           onHome={() => enterRoom("hall")}
@@ -3058,25 +2971,25 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
           >
             {theme === "day" ? <Moon size={18} /> : <Sun size={18} />}
           </button>
-          <button
+          <CanonicalLink
             className="icon-button"
-            type="button"
             title="Messages"
-            onClick={() => {
-              navigateView({ messagesOpen: true });
+            route={{ kind: "messages" }}
+            onNavigate={() => {
+              navigateView({ messagesOpen: true, selectedConversationId: null });
             }}
           >
             <MessageCircle size={18} />
-          </button>
-          <button
+          </CanonicalLink>
+          <CanonicalLink
             className="profile-button"
-            type="button"
             title="Open your profile"
-            onClick={() => openProfile(currentProfile.handle)}
+            route={{ kind: "profile", handle: currentProfile.handle }}
+            onNavigate={() => openProfile(currentProfile.handle)}
           >
             <UserRound size={18} />
             <span>{currentProfile.name}</span>
-          </button>
+          </CanonicalLink>
         </nav>
       </header>
 
@@ -3114,6 +3027,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
             actorHandle={currentProfile.handle}
             profiles={profiles}
             socialLists={profileSocialLists[selectedProfile.handle] ?? { following: [], followers: [] }}
+            socialView={profileSocialView}
             getProfileRecency={getProfileRecency}
             getProfileCommentRecency={getProfileCommentRecency}
             activeTab={profileActiveTabs[selectedProfile.handle] ?? "all"}
@@ -3121,6 +3035,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
             canonicalActivities={profileActivityByHandle[selectedProfile.handle]?.entries ?? []}
             canonicalActivityLoaded={profileActivityByHandle[selectedProfile.handle]?.loaded ?? false}
             onActiveTabChange={(tab) => changeProfileTab(selectedProfile.handle, tab)}
+            onSocialViewChange={changeProfileSocialView}
             onEditPost={setEditingPost}
             onDeletePost={deletePost}
             onOpenAttachmentPreview={openAttachmentPreview}
@@ -3141,7 +3056,11 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
             actorHandle={currentProfile.handle}
             profiles={profiles}
             selectedCommentId={selectedCommentId}
-            onClearSelectedComment={() => setSelectedCommentId(null)}
+            onClearSelectedComment={() => {
+              setSelectedCommentId(null);
+              replaceCanonicalRoute({ kind: "post", postId: selectedItem.id });
+            }}
+            onSelectComment={(commentId) => openPost(selectedItem.id, commentId, "thread")}
             commentSegmentStacks={commentSegmentStacks}
             onCommentSegmentStackChange={updateCommentSegmentStack}
             onVisibleCommentSegmentStackChange={registerVisibleCommentSegmentStack}
@@ -3266,7 +3185,15 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
         />
       ) : null}
 
-      {messagesOpen ? <MessagesModal onClose={() => (viewHistory.length ? goBack() : enterRoom("hall"))} /> : null}
+      {messagesOpen ? (
+        <MessagesModal
+          activeConversationId={selectedConversationId}
+          onClose={goBack}
+          onOpenConversation={(conversationId) =>
+            navigateView({ messagesOpen: true, selectedConversationId: conversationId }, null)
+          }
+        />
+      ) : null}
 
       {composerOpen ? (
         <PostComposerModal

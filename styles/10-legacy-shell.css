@@ -239,6 +239,13 @@
 
 .brand,
 .icon-button,
+.profile-button {
+  color: inherit;
+  text-decoration: none;
+}
+
+.brand,
+.icon-button,
 .profile-button,
 .rail-button,
 .primary-button,

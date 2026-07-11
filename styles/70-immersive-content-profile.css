@@ -5,6 +5,13 @@
   overflow-wrap: anywhere;
 }
 
+.feed-post h2 a,
+.profile-comment-card header > a,
+.profile-comment-card footer > a {
+  color: inherit;
+  text-decoration: none;
+}
+
 .feed-post p,
 .detail-body,
 .comment p,
@@ -107,7 +114,8 @@
   width: 100%;
 }
 
-.social-actions button {
+.social-actions button,
+.social-actions a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -192,7 +200,7 @@
   margin-top: 16px;
 }
 
-.profile-social-counts button {
+.profile-social-counts a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -206,6 +214,7 @@
   color: #15565c;
   font-weight: 850;
   text-align: center;
+  text-decoration: none;
 }
 
 .profile-social-counts strong {
@@ -277,7 +286,7 @@
   color: rgba(246, 234, 212, 0.8);
 }
 
-.symposium-shell.night .profile-social-counts button {
+.symposium-shell.night .profile-social-counts a {
   border-color: rgba(131, 203, 209, 0.42);
   background: rgba(12, 34, 38, 0.68);
   color: #a7eef0;
@@ -340,7 +349,7 @@
   gap: 12px;
 }
 
-.profile-comment-card header > button {
+.profile-comment-card header > a {
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -352,7 +361,7 @@
   text-align: left;
 }
 
-.profile-comment-card header > button > span:last-child {
+.profile-comment-card header > a > span:last-child {
   display: grid;
   min-width: 0;
 }

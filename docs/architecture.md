@@ -59,19 +59,21 @@ The application will progressively replace its private history stack with URLs t
 - `/posts/[postId]`
 - `/posts/[postId]?comment=[commentId]`
 - `/profiles/[handle]`
+- `/profiles/[handle]/followers`
+- `/profiles/[handle]/following`
 - `/communities/[slug]`
 - `/workspace`
-- `/messages`
+- `/messages?conversation=[conversationId]`
 - `/opportunities`
 - `/funding`
 
 The existing in-world navigation remains the visual shell. URL routing becomes its state authority rather than a competing navigation system.
 
-Canonical routing is live for public rooms, workspace modes, funding modes, opportunities, messages, the community directory, selected communities, profiles, posts, and selected comments. These routes share one server wrapper and one client shell, survive direct reload, and store full view snapshots in browser history so Back and Forward retain the established scroll and comment-stack behavior.
+Canonical routing is live for public rooms, workspace modes, funding modes, opportunities, messages and selected conversations, the community directory, selected communities, profiles and social graphs, posts, and selected comments. Resource navigation uses semantic anchors with a client-navigation adapter: ordinary clicks retain the synchronized shell, while modified clicks, middle-click, copying, and new tabs retain native browser behavior. Direct-entry application Back falls back to the Main Hall without manufacturing a history loop.
 
 ## Shared content model
 
-Rich content will be introduced through an additive, versioned document contract. Current `title` and `body` fields remain readable during migration. The first supported primitives should correspond to imminent consumers:
+The additive version-1 document and durable resource-reference contracts are defined in `packages/contracts`. Current `title` and `body` fields remain readable during migration. The first supported primitives correspond to imminent consumers:
 
 - paragraphs, headings, lists, and code
 - attachment references and placement
@@ -114,6 +116,12 @@ Feature modules cannot import the application shell or Next routes, must stay bo
 
 `app/globals.css` is an ordered manifest. Styles are split into numbered foundation, established, immersive, overlay, and responsive layers under `styles/`. Numbering preserves the proven cascade while each layer declares ownership and has an enforced size ceiling.
 
+The canonical browser-history state machine is owned by `features/navigation/useCanonicalBrowserHistory.ts`. The shell supplies and restores view snapshots, but it does not directly implement browser index, popstate, or direct-entry fallback policy.
+
+## Backend ownership
+
+Backend persistence is split into bounded repositories for posts, comments, identity, profiles, communities, conversations, notifications, search, workspaces, attachments, actions, opportunities, and the assistant. `liveRepository.ts` remains a temporary compatibility façade plus the note-to-post publication coordinator. Domain repositories may depend on the shared foundation, transaction, mutation, audit, event, database, and storage kernels; they may not import the compatibility façade or one another sideways.
+
 ## Extraction order
 
 1. Characterization checks and mutation-safe inbound reconciliation. Complete.
@@ -125,7 +133,7 @@ Feature modules cannot import the application shell or Next routes, must stay bo
 7. Profile activity and social graph extraction. Complete.
 8. Workspace/notes wiring and shared editor foundation. Presentation extracted; durable document/editor contract remains next-stage work.
 9. Layer `globals.css` into tokens, foundations, layout, shared components, and feature styles. Complete with cascade-preserving layers.
-10. Split the backend live repository by domain while retaining the shared transaction kernel.
+10. Split the backend live repository by domain while retaining the shared transaction kernel. Complete for current domains; the compatibility façade remains for additive route migration.
 
 ## Checkpoint gates
 

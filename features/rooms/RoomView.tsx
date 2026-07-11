@@ -13,6 +13,7 @@ import type { PostActionHandler } from "@/features/actions/actionTypes";
 import type { AttachmentPreviewHandler } from "@/features/attachments/AttachmentViews";
 import { FeedPost } from "@/features/posts/PostViews";
 import { RoomRender } from "@/features/shell/SymposiumShellViews";
+import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 
 type OfficeMode = "desk" | "saved" | "notes";
 type PatronageMode = "lobby" | "civic" | "private";
@@ -85,10 +86,14 @@ export function RoomView({
 
       <section className="feed-toolbar" aria-label="Feed controls">
         {room.id === "funding" && patronageMode !== "lobby" ? (
-          <button className="community-back patronage-back" type="button" onClick={() => onPatronageMode("lobby")}>
+          <CanonicalLink
+            className="community-back patronage-back"
+            route={{ kind: "funding" }}
+            onNavigate={() => onPatronageMode("lobby")}
+          >
             <ArrowLeft size={16} />
             Patronage
-          </button>
+          </CanonicalLink>
         ) : null}
 
         <div className="room-mini-title">
@@ -99,20 +104,20 @@ export function RoomView({
 
         {room.id === "funding" ? (
           <div className="segmented patronage-switch" aria-label="Patronage section">
-            <button
-              type="button"
+            <CanonicalLink
+              route={{ kind: "funding", view: "civic" }}
+              onNavigate={() => onPatronageMode("civic")}
               className={patronageMode === "civic" ? "active" : ""}
-              onClick={() => onPatronageMode("civic")}
             >
               Civic
-            </button>
-            <button
-              type="button"
+            </CanonicalLink>
+            <CanonicalLink
+              route={{ kind: "funding", view: "private" }}
+              onNavigate={() => onPatronageMode("private")}
               className={patronageMode === "private" ? "active" : ""}
-              onClick={() => onPatronageMode("private")}
             >
               Private
-            </button>
+            </CanonicalLink>
           </div>
         ) : null}
 

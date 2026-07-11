@@ -47,7 +47,8 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .segmented button {
+  .segmented button,
+  .segmented a {
     text-align: center;
   }
 

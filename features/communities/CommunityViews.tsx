@@ -16,6 +16,7 @@ import {
   getCommunityStats
 } from "@/features/discovery/discoveryPolicy";
 import { FeedPost } from "@/features/posts/PostViews";
+import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 
 const fallbackCommunityCount = 8;
 const communityMembershipIds = (communities: ResearchCommunity[], person: ResearchProfile) => {
@@ -155,10 +156,10 @@ function CommunityCard({
   onOpenCommunity: (communityId: string) => void;
 }) {
   return (
-    <button
+    <CanonicalLink
       className={`community-card community-card-${community.visibility}`}
-      type="button"
-      onClick={() => onOpenCommunity(community.id)}
+      route={{ kind: "community", communityId: community.id }}
+      onNavigate={() => onOpenCommunity(community.id)}
     >
       <span className="community-card-topline">
         <strong>{community.name}</strong>
@@ -172,7 +173,7 @@ function CommunityCard({
         <small>{stats.thoughts} thoughts</small>
         <small>{stats.opportunities} opportunities</small>
       </span>
-    </button>
+    </CanonicalLink>
   );
 }
 
@@ -210,10 +211,10 @@ export function SelectedCommunityView({
   return (
     <section className="selected-community-layout" aria-label={community.name}>
       <div className="selected-community-panel">
-        <button className="community-back" type="button" onClick={onBack}>
+        <CanonicalLink className="community-back" route={{ kind: "communities" }} onNavigate={onBack}>
           <ArrowLeft size={17} />
           Communities
-        </button>
+        </CanonicalLink>
         <header className="selected-community-header">
           <p className="eyebrow">{community.visibility} community</p>
           <h1>{community.name}</h1>

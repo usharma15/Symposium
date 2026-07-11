@@ -12,6 +12,7 @@ import {
   Bookmark,
   Eye,
   MessageCircle,
+  Link2,
   Pencil,
   Repeat2,
   ThumbsUp,
@@ -36,6 +37,7 @@ import type { CommentActionHandler } from "@/features/actions/actionTypes";
 import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
+import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 
 export type CommentSegmentStacks = Record<string, string[]>;
 
@@ -157,6 +159,7 @@ export function CommentThread({
   onDeleteComment,
   actorHandle,
   onClearSelectedComment,
+  onSelectComment,
   commentSegmentStacks,
   onCommentSegmentStackChange,
   onVisibleCommentSegmentStackChange,
@@ -173,6 +176,7 @@ export function CommentThread({
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
   onClearSelectedComment: () => void;
+  onSelectComment: (commentId: string) => void;
   commentSegmentStacks: CommentSegmentStacks;
   onCommentSegmentStackChange: (key: string, stack: string[]) => void;
   onVisibleCommentSegmentStackChange: (key: string, stack: string[]) => void;
@@ -197,6 +201,7 @@ export function CommentThread({
             onDeleteComment={onDeleteComment}
             actorHandle={actorHandle}
             onClearSelectedComment={onClearSelectedComment}
+            onSelectComment={onSelectComment}
             segmentStack={commentSegmentStacks[rootStackKey] ?? null}
             onSegmentStackChange={(stack) => onCommentSegmentStackChange(rootStackKey, stack)}
             onVisibleSegmentStackChange={(stack) => onVisibleCommentSegmentStackChange(rootStackKey, stack)}
@@ -238,6 +243,7 @@ function CommentRootSegment({
   onDeleteComment,
   actorHandle,
   onClearSelectedComment,
+  onSelectComment,
   segmentStack,
   onSegmentStackChange,
   onVisibleSegmentStackChange,
@@ -255,6 +261,7 @@ function CommentRootSegment({
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
   onClearSelectedComment: () => void;
+  onSelectComment: (commentId: string) => void;
   segmentStack: string[] | null;
   onSegmentStackChange: (stack: string[]) => void;
   onVisibleSegmentStackChange: (stack: string[]) => void;
@@ -327,6 +334,7 @@ function CommentRootSegment({
         segmentDepth={1}
         onOpenReplySegment={openReplySegment}
         onClearSelectedComment={onClearSelectedComment}
+        onSelectComment={onSelectComment}
         leadingAction={
           visibleSegmentStack.length ? (
             <button
@@ -358,6 +366,7 @@ function CommentNode({
   segmentDepth,
   onOpenReplySegment,
   onClearSelectedComment,
+  onSelectComment,
   leadingAction
 }: {
   comment: InquiryComment;
@@ -374,6 +383,7 @@ function CommentNode({
   segmentDepth: number;
   onOpenReplySegment: (commentId: string) => void;
   onClearSelectedComment: () => void;
+  onSelectComment: (commentId: string) => void;
   leadingAction?: ReactNode;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
@@ -447,6 +457,17 @@ function CommentNode({
           }}
         />
         <CommentTimeFooter comment={comment} />
+        {comment.id && !commentDeleted ? (
+          <CanonicalLink
+            className="comment-permalink"
+            route={{ kind: "post", postId: itemId, commentId: comment.id }}
+            onNavigate={() => onSelectComment(comment.id as string)}
+            title="Open this comment"
+          >
+            <Link2 size={13} />
+            <span>Comment link</span>
+          </CanonicalLink>
+        ) : null}
         <CommentActions
           comment={comment}
           itemId={itemId}
@@ -504,6 +525,7 @@ function CommentNode({
                 segmentDepth={segmentDepth + 1}
                 onOpenReplySegment={onOpenReplySegment}
                 onClearSelectedComment={onClearSelectedComment}
+                onSelectComment={onSelectComment}
               />
             ))}
           </div>
