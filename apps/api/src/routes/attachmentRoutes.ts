@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
-import { confirmAttachment, createAttachmentUpload } from "../repository/liveRepository";
+import { confirmAttachment, createAttachmentUpload } from "../repository/attachments";
 import { mutationContextFromRequest } from "../services/mutations";
 
 export const registerAttachmentRoutes = (app: FastifyInstance) => {

@@ -167,6 +167,8 @@ export const postAttachmentInputSchema = inquiryAttachmentSchema.pick({
   metadata: true
 });
 
+export const postAttachmentIdSchema = z.string().uuid();
+
 export type InquiryCommentContract = {
   id?: string;
   parentId?: string | null;
@@ -266,7 +268,21 @@ export const createPostInputSchema = z.object({
   kind: contentKindSchema,
   room: postRoomSchema,
   authorHandle: z.string().optional(),
+  attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
   attachments: z.array(postAttachmentInputSchema).max(10).default([])
+}).superRefine((input, context) => {
+  if (!input.attachmentIds?.length || !input.attachments.length) return;
+  const legacyIds = input.attachments.map((attachment) => attachment.id);
+  if (
+    input.attachmentIds.length !== legacyIds.length ||
+    input.attachmentIds.some((attachmentId, index) => attachmentId !== legacyIds[index])
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["attachmentIds"],
+      message: "Attachment references do not match the supplied attachment records."
+    });
+  }
 });
 
 export const updatePostInputSchema = z.object({

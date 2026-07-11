@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { bootstrapResponseSchema } from "../../../../packages/contracts/src";
 import { getRuntimeReadiness } from "../config/readiness";
 import { sendError } from "../http/errors";
-import { getPublicInitialState } from "../repository/liveRepository";
+import { getPublicInitialState } from "../repository/foundation";
 import { getActorFromRequest } from "../services/auth";
 
 export const registerSystemRoutes = (app: FastifyInstance) => {

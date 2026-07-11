@@ -26,10 +26,10 @@ const domainRepositories = [
 ];
 
 const main = async () => {
-  const [mockData, canonicalLink, liveRepository] = await Promise.all([
+  const [mockData, canonicalLink, notePublishing] = await Promise.all([
     source("lib/mockData.ts"),
     source("features/navigation/CanonicalLink.tsx"),
-    source("apps/api/src/repository/liveRepository.ts")
+    source("apps/api/src/services/notePublishing.ts")
   ]);
 
   assert.equal(mockData.includes("export type InquiryItem = {"), false);
@@ -41,14 +41,15 @@ const main = async () => {
   }
   assert.match(canonicalLink, /href={canonicalRouteHref\(route\)}/);
 
-  assert.ok(liveRepository.split("\n").length <= 250, "liveRepository must remain a bounded compatibility façade.");
+  assert.ok(notePublishing.split("\n").length <= 250, "Cross-domain note publication must remain bounded.");
+  assert.match(notePublishing, /from "\.\.\/repository\/posts"/);
   for (const repository of domainRepositories) {
     const repositorySource = await source(`apps/api/src/repository/${repository}.ts`);
     assert.ok(repositorySource.split("\n").length <= 900, `${repository} repository has outgrown its domain boundary.`);
     assert.equal(
-      repositorySource.includes('from "./liveRepository"'),
+      repositorySource.includes("liveRepository"),
       false,
-      `${repository} repository must not depend on the compatibility façade.`
+      `${repository} repository must not depend on a compatibility façade.`
     );
   }
 
@@ -78,6 +79,7 @@ const main = async () => {
           "contract-owned client domain types",
           "modifier-safe canonical links",
           "bounded backend domain repositories",
+          "direct route-to-domain ownership",
           "social graph route ownership",
           "versioned document and resource-reference contracts"
         ]

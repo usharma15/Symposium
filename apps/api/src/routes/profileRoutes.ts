@@ -3,14 +3,13 @@ import { withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
 import {
   followProfile,
-  getPublicInitialState,
   listFollowing,
   listProfileActivity,
   listProfileFollows,
-  syncUser,
   unfollowProfile,
-  upsertProfile
-} from "../repository/liveRepository";
+} from "../repository/profiles";
+import { getPublicInitialState } from "../repository/foundation";
+import { syncUser, upsertProfile } from "../repository/identity";
 import { getActorFromRequest } from "../services/auth";
 import type { HandleParams } from "./types";
 

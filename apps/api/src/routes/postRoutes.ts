@@ -5,14 +5,11 @@ import { mutationContextFromRequest } from "../services/mutations";
 import {
   addComment,
   applyCommentAction,
-  applyPostAction,
-  createPost,
   deleteComment,
-  deletePost,
-  getPublicInitialState,
   updateComment,
-  updatePost
-} from "../repository/liveRepository";
+} from "../repository/comments";
+import { getPublicInitialState } from "../repository/foundation";
+import { applyPostAction, createPost, deletePost, updatePost } from "../repository/posts";
 import { getActorFromRequest } from "../services/auth";
 import type { RouteParams } from "./types";
 

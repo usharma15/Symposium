@@ -120,7 +120,7 @@ The canonical browser-history state machine is owned by `features/navigation/use
 
 ## Backend ownership
 
-Backend persistence is split into bounded repositories for posts, comments, identity, profiles, communities, conversations, notifications, search, workspaces, attachments, actions, opportunities, and the assistant. `liveRepository.ts` remains a temporary compatibility façade plus the note-to-post publication coordinator. Domain repositories may depend on the shared foundation, transaction, mutation, audit, event, database, and storage kernels; they may not import the compatibility façade or one another sideways.
+Backend persistence is split into bounded repositories for posts, comments, identity, profiles, communities, conversations, notifications, search, workspaces, attachments, actions, opportunities, and the assistant. HTTP and tRPC routes import their owning repository directly. Cross-domain note-to-post publication is explicit in `services/notePublishing.ts`; there is no compatibility façade. Domain repositories may depend on the shared foundation, transaction, mutation, audit, event, database, and storage kernels, but they may not import one another sideways.
 
 ## Extraction order
 
@@ -133,7 +133,7 @@ Backend persistence is split into bounded repositories for posts, comments, iden
 7. Profile activity and social graph extraction. Complete.
 8. Workspace/notes wiring and shared editor foundation. Presentation extracted; durable document/editor contract remains next-stage work.
 9. Layer `globals.css` into tokens, foundations, layout, shared components, and feature styles. Complete with cascade-preserving layers.
-10. Split the backend live repository by domain while retaining the shared transaction kernel. Complete for current domains; the compatibility façade remains for additive route migration.
+10. Split the backend live repository by domain while retaining the shared transaction kernel. Complete: routes now address domain repositories directly and cross-domain orchestration is service-owned.
 
 ## Checkpoint gates
 

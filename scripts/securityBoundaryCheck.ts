@@ -6,7 +6,9 @@ import {
   localPreviewRouteUnavailableResponse
 } from "@/lib/runtimeSafety";
 import { actorHandle } from "@/apps/api/src/repository/foundation";
-import { joinOrRequestCommunity, search, upsertProfile } from "@/apps/api/src/repository/liveRepository";
+import { joinOrRequestCommunity } from "@/apps/api/src/repository/communities";
+import { upsertProfile } from "@/apps/api/src/repository/identity";
+import { search } from "@/apps/api/src/repository/search";
 import { getPublicInitialState } from "@/apps/api/src/repository/foundation";
 import { readJson } from "@/lib/api";
 

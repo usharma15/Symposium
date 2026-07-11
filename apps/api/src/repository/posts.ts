@@ -20,6 +20,7 @@ import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
+import { canonicalPostAttachmentIds, claimPostAttachments } from "../services/postAttachmentClaims";
 import { transitionPostAction } from "./actions";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import {
@@ -49,11 +50,11 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
   const author = snapshot.profiles[handle];
   if (!author) throw new TRPCError({ code: "NOT_FOUND", message: "Author profile not found." });
   const isPaper = input.kind === "paper";
-  const requestedAttachments = (input.attachments ?? []).map((attachment) => ({
+  const legacyRequestedAttachments = (input.attachments ?? []).map((attachment) => ({
     ...attachment,
     status: "uploaded" as const
   }));
-  const requestedAttachmentIds = requestedAttachments.map((attachment) => attachment.id);
+  const requestedAttachmentIds = canonicalPostAttachmentIds(input);
   if (new Set(requestedAttachmentIds).size !== requestedAttachmentIds.length) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "Each post attachment can only be attached once." });
   }
@@ -85,7 +86,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     tests: [],
     forks: [],
     comments: [],
-    attachments: requestedAttachments,
+    attachments: hasDatabase() ? [] : legacyRequestedAttachments,
     saved: input.room === "office",
     savedBy: input.room === "office" ? [author.handle] : [],
     signaledBy: [],
@@ -156,36 +157,11 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       );
     }
 
-    if (requestedAttachmentIds.length) {
-      const result = await client.query<AttachmentRow>(
-        `UPDATE attachments
-         SET owner_id = $1,
-             updated_at = now()
-         WHERE id = ANY($2::uuid[])
-           AND owner_type = 'post'
-           AND uploader_handle = $3
-           AND status IN ('uploaded', 'previewed')
-           AND (owner_id IS NULL OR owner_id = $1)
-         RETURNING
-           id::text,
-           owner_id AS "ownerId",
-           file_name AS "fileName",
-           content_type AS "contentType",
-           byte_size AS "byteSize",
-           status,
-           metadata,
-           object_key AS "objectKey",
-           created_at AS "createdAt"`,
-        [item.id, requestedAttachmentIds, item.authorHandle]
-      );
-
-      if ((result.rowCount ?? 0) !== requestedAttachmentIds.length) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "One or more attachments could not be attached to this post." });
-      }
-
-      const rowById = new Map(result.rows.map((row) => [row.id, row]));
-      attachedRows = requestedAttachmentIds.map((id) => rowById.get(id)).filter((row): row is AttachmentRow => Boolean(row));
-    }
+    attachedRows = await claimPostAttachments(client, {
+      attachmentIds: requestedAttachmentIds,
+      postId: item.id,
+      uploaderHandle: handle
+    });
 
     item.attachments = attachedRows.map(rowToAttachment);
     await stageAuditLog(client, {

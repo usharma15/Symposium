@@ -6,12 +6,11 @@ import { getActorFromRequest } from "../services/auth";
 import {
   createCommunityCall,
   endCommunityCall,
-  getPublicCommunity,
   joinCommunityCall,
   joinOrRequestCommunity,
-  listPublicCommunities,
   listCommunityCalls
-} from "../repository/liveRepository";
+} from "../repository/communities";
+import { getPublicCommunity, listPublicCommunities } from "../repository/foundation";
 import type { RouteParams } from "./types";
 
 export const registerCommunityRoutes = (app: FastifyInstance) => {

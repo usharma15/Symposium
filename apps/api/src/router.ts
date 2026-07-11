@@ -19,38 +19,31 @@ import {
   sendMessageInputSchema,
   unfollowProfileInputSchema
 } from "../../../packages/contracts/src";
+import { askAssistant } from "./repository/assistant";
+import { confirmAttachment, createAttachmentUpload } from "./repository/attachments";
+import { addComment } from "./repository/comments";
 import {
-  addComment,
-  askAssistant,
-  applyPostAction,
-  confirmAttachment,
-  createAttachmentUpload,
   createCommunityCall,
-  createOpportunity,
-  createPost,
   endCommunityCall,
-  followProfile,
+  joinCommunityCall,
+  joinOrRequestCommunity,
+  listCommunityCalls
+} from "./repository/communities";
+import { listConversations, sendMessage } from "./repository/conversations";
+import {
   getInitialState,
   getPublicCommunity,
   getPublicInitialState,
-  getWorkspace,
-  joinCommunityCall,
-  joinOrRequestCommunity,
-  listCommunityCalls,
-  listPublicCommunities,
-  listConversations,
-  listFollowing,
-  listNotifications,
-  listOpportunities,
-  markNotificationRead,
-  publishNote,
-  saveNoteBlock,
-  search,
-  sendMessage,
-  syncUser,
-  unfollowProfile,
-  upsertProfile
-} from "./repository/liveRepository";
+  listPublicCommunities
+} from "./repository/foundation";
+import { syncUser, upsertProfile } from "./repository/identity";
+import { listNotifications, markNotificationRead } from "./repository/notifications";
+import { createOpportunity, listOpportunities } from "./repository/opportunities";
+import { applyPostAction, createPost } from "./repository/posts";
+import { followProfile, listFollowing, unfollowProfile } from "./repository/profiles";
+import { search } from "./repository/search";
+import { getWorkspace, saveNoteBlock } from "./repository/workspace";
+import { publishNote } from "./services/notePublishing";
 import { authedProcedure, publicProcedure, router } from "./trpc";
 import { mutationContextFromRequest } from "./services/mutations";
 

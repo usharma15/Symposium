@@ -2,17 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
 import { mutationContextFromRequest } from "../services/mutations";
-import {
-  askAssistant,
-  createOpportunity,
-  getWorkspace,
-  listConversations,
-  listNotifications,
-  listOpportunities,
-  publishNote,
-  saveNoteBlock,
-  sendMessage
-} from "../repository/liveRepository";
+import { askAssistant } from "../repository/assistant";
+import { listConversations, sendMessage } from "../repository/conversations";
+import { listNotifications } from "../repository/notifications";
+import { createOpportunity, listOpportunities } from "../repository/opportunities";
+import { getWorkspace, saveNoteBlock } from "../repository/workspace";
+import { publishNote } from "../services/notePublishing";
 
 export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.get("/v1/opportunities", async (request, reply) => {
