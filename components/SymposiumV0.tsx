@@ -688,16 +688,6 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   }, [commentSegmentStacks]);
 
   useEffect(() => {
-    if (!selectedCommentId || selectedCommentId === commentsSectionTargetId) return;
-    const highlightedCommentId = selectedCommentId;
-    const timer = window.setTimeout(() => {
-      setSelectedCommentId((current) => (current === highlightedCommentId ? null : current));
-    }, 5000);
-
-    return () => window.clearTimeout(timer);
-  }, [selectedCommentId]);
-
-  useEffect(() => {
     activityRecencyRef.current = activityRecency;
   }, [activityRecency]);
 
