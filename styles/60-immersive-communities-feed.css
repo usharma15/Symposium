@@ -417,6 +417,33 @@
   transform: translate(-50%, -50%);
 }
 
+.quote-composer-modal {
+  max-height: min(860px, calc(100vh - 48px));
+  overflow-y: auto;
+}
+
+.quote-destination-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid rgba(20, 32, 31, 0.14);
+  border-radius: var(--radius);
+  background: rgba(255, 253, 245, 0.52);
+}
+
+.quote-destination-switch button {
+  min-width: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.quote-destination-switch button.active {
+  border-color: color-mix(in srgb, var(--aqua) 42%, var(--line));
+  background: color-mix(in srgb, var(--aqua) 13%, var(--panel-strong));
+}
+
 .composer-modal-head {
   display: flex;
   align-items: center;

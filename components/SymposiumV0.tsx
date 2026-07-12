@@ -20,6 +20,7 @@ import {
   roomChips,
   rooms,
   type FeedScope,
+  type ContentQuoteSource,
   type InquiryAttachment,
   type InquiryComment,
   type InquiryItem,
@@ -132,6 +133,11 @@ import {
   commentsSectionTargetId,
   type PostDraft
 } from "@/features/posts/PostViews";
+import {
+  QuoteComposerModal,
+  type QuoteSelection
+} from "@/features/quotes/QuoteViews";
+import { invalidateQuotedSource, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import {
   ProfileSettingsModal,
   ProfileView,
@@ -398,6 +404,7 @@ function SymposiumExperience({
   const [tabletOpen, setTabletOpen] = useState(false);
   const [notebookOpen, setNotebookOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [quoteSelection, setQuoteSelection] = useState<QuoteSelection | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(initialRoute.kind === "messages");
@@ -512,6 +519,15 @@ function SymposiumExperience({
     editingComment && editingCommentItem
       ? findCommentById(editingCommentItem.comments, editingComment.commentId) ?? null
       : null;
+  const quotePreview = quoteSelection
+    ? (() => {
+        try {
+          return resolveLocalContentQuote(items, quoteSelection);
+        } catch {
+          return undefined;
+        }
+      })()
+    : undefined;
   const selectedCommunity =
     selectedCommunityId ? researchCommunities.find((community) => community.id === selectedCommunityId) ?? null : null;
   const profileList = useMemo(() => Object.values(profiles), [profiles]);
@@ -1131,9 +1147,30 @@ function SymposiumExperience({
     }, 650);
   };
 
+  const invalidateLiveQuotedSource = (source: QuoteSelection) => {
+    const current = itemsRef.current;
+    const next = invalidateQuotedSource(current, source);
+    const changedItemIds = next
+      .filter((item, index) => item !== current[index])
+      .map((item) => item.id);
+    if (!changedItemIds.length) return;
+    replaceItems(next);
+    persistLocalSnapshot(next, profilesRef.current, currentProfileRef.current, {
+      broadcastItemIds: changedItemIds
+    });
+  };
+
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
     const payload = event.payload ?? {};
     if (event.kind === "post.deleted") {
+      const deletedPostId = isLiveInquiryItem(payload.item)
+        ? payload.item.id
+        : typeof payload.itemId === "string"
+          ? payload.itemId
+          : event.subjectId;
+      if (deletedPostId) {
+        invalidateLiveQuotedSource({ sourceType: "post", sourceId: deletedPostId, sourcePostId: deletedPostId });
+      }
       if (isLiveInquiryItem(payload.item)) {
         const deletedItem = payload.item;
         mergeLiveItem(deletedItem);
@@ -1146,6 +1183,18 @@ function SymposiumExperience({
     }
 
     if (event.kind === "comment.deleted" && typeof payload.commentId === "string") {
+      const sourcePostId = isLiveInquiryItem(payload.item)
+        ? payload.item.id
+        : typeof payload.itemId === "string"
+          ? payload.itemId
+          : "";
+      if (sourcePostId) {
+        invalidateLiveQuotedSource({
+          sourceType: "comment",
+          sourceId: payload.commentId,
+          sourcePostId
+        });
+      }
       setEditingComment((current) => (current?.commentId === payload.commentId ? null : current));
     }
 
@@ -2018,7 +2067,7 @@ function SymposiumExperience({
     retryMutationRegistryRef.current.clear(fingerprintKey);
   };
 
-  const createPost = async ({ title, body, kind, attachments }: PostDraft) => {
+  const createPost = async ({ title, body, kind, attachments, quoteSource }: PostDraft) => {
     const routedRoom = routePostRoom(kind);
     const createdAt = new Date().toISOString();
     const postPayload = {
@@ -2027,7 +2076,10 @@ function SymposiumExperience({
       kind,
       room: routedRoom,
       authorHandle: currentProfile.handle,
-      attachmentIds: attachments.map((attachment) => attachment.id)
+      attachmentIds: attachments.map((attachment) => attachment.id),
+      quoteSource: quoteSource
+        ? { sourceType: quoteSource.sourceType, sourceId: quoteSource.sourceId }
+        : undefined
     };
     const mutation = retryMutationKey("post-create", JSON.stringify(postPayload));
     setSyncStatus("Posting");
@@ -2077,7 +2129,8 @@ function SymposiumExperience({
     body: string,
     stance: string,
     parentId: string | null,
-    attachments: InquiryAttachment[]
+    attachments: InquiryAttachment[],
+    quoteSource?: ContentQuoteSource
   ) => {
     const previousItems = itemsRef.current;
     const previousSelectedItemId = selectedItemId;
@@ -2094,6 +2147,13 @@ function SymposiumExperience({
     }
 
     setSyncStatus(parentId ? "Saving reply" : "Saving comment");
+    let quote: InquiryComment["quote"];
+    try {
+      quote = resolveLocalContentQuote(previousItems, quoteSource);
+    } catch (error) {
+      setSyncStatus(error instanceof Error ? error.message : "Quoted content is unavailable");
+      return false;
+    }
 
     const optimisticComment: InquiryComment = {
       id: clientId("comment"),
@@ -2108,6 +2168,7 @@ function SymposiumExperience({
       signaledBy: [],
       forkedBy: [],
       attachments,
+      quote,
       replies: []
     };
     const appended = appendCommentToTree(existing.comments, optimisticComment);
@@ -2145,7 +2206,8 @@ function SymposiumExperience({
       stance,
       parentId: parentId ?? null,
       authorHandle: currentProfile.handle,
-      attachmentIds: attachments.map((attachment) => attachment.id)
+      attachmentIds: attachments.map((attachment) => attachment.id),
+      quoteSource
     };
     const mutation = retryMutationKey(
       "comment-create",
@@ -2728,7 +2790,12 @@ function SymposiumExperience({
 
   const savePostEdit = async (
     itemId: string,
-    draft: { title: string; body: string; attachments: InquiryAttachment[] }
+    draft: {
+      title: string;
+      body: string;
+      attachments: InquiryAttachment[];
+      quote: InquiryItem["quote"] | null;
+    }
   ) => {
     const cleanTitle = draft.title.trim();
     const cleanBody = draft.body.trim();
@@ -2748,6 +2815,7 @@ function SymposiumExperience({
             excerpt: cleanBody,
             claims: [cleanBody],
             attachments: draft.attachments,
+            quote: draft.quote ?? undefined,
             editedAt
           }
         : item
@@ -2766,7 +2834,8 @@ function SymposiumExperience({
           body: cleanBody,
           actorHandle: currentProfile.handle,
           expectedEditedAt: existing.editedAt ?? null,
-          attachmentIds: draft.attachments.map((attachment) => attachment.id)
+          attachmentIds: draft.attachments.map((attachment) => attachment.id),
+          quoteSource: existing.quote && !draft.quote ? null : undefined
         }
       });
       const committedItems = itemsRef.current.map((item) =>
@@ -2793,7 +2862,10 @@ function SymposiumExperience({
     itemMutationCoordinatorRef.current.begin(itemId);
     const previousItems = itemsRef.current;
     const deleted = tombstonePost(item);
-    const nextItems = previousItems.map((current) => (current.id === itemId ? deleted : current));
+    const nextItems = invalidateQuotedSource(
+      previousItems.map((current) => (current.id === itemId ? deleted : current)),
+      { sourceType: "post", sourceId: itemId, sourcePostId: itemId }
+    );
     replaceItems(nextItems);
     persistLocalSnapshot(nextItems, profilesRef.current);
     setEditingPost(null);
@@ -2806,8 +2878,11 @@ function SymposiumExperience({
         body: { actorHandle: currentProfile.handle }
       });
       if (data.item) {
-        const committedItems = itemsRef.current.map((current) =>
-          current.id === itemId ? reconcileCommittedItem(data.item!, current) : current
+        const committedItems = invalidateQuotedSource(
+          itemsRef.current.map((current) =>
+            current.id === itemId ? reconcileCommittedItem(data.item!, current) : current
+          ),
+          { sourceType: "post", sourceId: itemId, sourcePostId: itemId }
         );
         replaceItems(committedItems);
         persistLocalSnapshot(committedItems, profilesRef.current);
@@ -2826,7 +2901,8 @@ function SymposiumExperience({
     itemId: string,
     commentId: string,
     body: string,
-    attachments: InquiryAttachment[]
+    attachments: InquiryAttachment[],
+    quote: InquiryComment["quote"] | null
   ) => {
     const cleanBody = body.trim();
     if (!cleanBody) return;
@@ -2851,6 +2927,7 @@ function SymposiumExperience({
         ...comment,
         body: cleanBody,
         attachments,
+        quote: quote ?? undefined,
         editedAt
       }));
       return mapped.updated ? { ...item, comments: mapped.comments } : item;
@@ -2870,7 +2947,8 @@ function SymposiumExperience({
           body: cleanBody,
           actorHandle: currentProfile.handle,
           expectedEditedAt: existingComment.editedAt ?? null,
-          attachmentIds: attachments.map((attachment) => attachment.id)
+          attachmentIds: attachments.map((attachment) => attachment.id),
+          quoteSource: existingComment.quote && !quote ? null : undefined
         }
         }
       );
@@ -2905,10 +2983,10 @@ function SymposiumExperience({
 
     itemMutationCoordinatorRef.current.begin(itemId);
     const previousItems = itemsRef.current;
-    const nextItems = previousItems.map((current) => {
+    const nextItems = invalidateQuotedSource(previousItems.map((current) => {
       if (current.id !== itemId) return current;
       return tombstoneCommentInItem(current, commentId).item;
-    });
+    }), { sourceType: "comment", sourceId: commentId, sourcePostId: itemId });
     replaceItems(nextItems);
     persistLocalSnapshot(nextItems, profilesRef.current);
     setEditingComment((current) =>
@@ -2926,8 +3004,11 @@ function SymposiumExperience({
         }
       );
       if (data.item) {
-        const committedItems = itemsRef.current.map((current) =>
-          current.id === itemId ? reconcileCommittedItem(data.item!, current) : current
+        const committedItems = invalidateQuotedSource(
+          itemsRef.current.map((current) =>
+            current.id === itemId ? reconcileCommittedItem(data.item!, current) : current
+          ),
+          { sourceType: "comment", sourceId: commentId, sourcePostId: itemId }
         );
         replaceItems(committedItems);
         persistLocalSnapshot(committedItems, profilesRef.current);
@@ -2959,6 +3040,25 @@ function SymposiumExperience({
         surface: sourceSurface ?? (selectedProfileNameRef.current ? "profile" : "feed")
       });
     }
+  };
+
+  const beginQuote = (selection: QuoteSelection) => {
+    setNotebookOpen(false);
+    setTabletOpen(false);
+    setSettingsOpen(false);
+    setSearchOpen(false);
+    setMessagesOpen(false);
+    setComposerOpen(false);
+    setQuoteSelection(selection);
+  };
+
+  const openQuotedSource = (selection: QuoteSelection) => {
+    setQuoteSelection(null);
+    openPost(
+      selection.sourcePostId,
+      selection.sourceType === "comment" ? selection.sourceId : null,
+      "thread"
+    );
   };
 
   const currentContext = selectedItem
@@ -3088,6 +3188,8 @@ function SymposiumExperience({
             onOpenProfile={openProfile}
             onAction={applyAction}
             onCommentAction={applyCommentAction}
+            onQuote={beginQuote}
+            onOpenQuote={openQuotedSource}
             onEditComment={(itemId, commentId) => setEditingComment({ itemId, commentId })}
             onDeleteComment={deleteComment}
             onOpenSettings={() => {
@@ -3126,6 +3228,8 @@ function SymposiumExperience({
             onUploadCommentAttachment={uploadCommentAttachment}
             onOpenCommentAttachmentPreview={openCommentAttachmentPreview}
             onAction={applyAction}
+            onQuote={beginQuote}
+            onOpenQuote={openQuotedSource}
             onCommentAction={applyCommentAction}
             onEditComment={(itemId, commentId) => setEditingComment({ itemId, commentId })}
             onDeleteComment={deleteComment}
@@ -3168,6 +3272,8 @@ function SymposiumExperience({
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
+            onQuote={beginQuote}
+            onOpenQuote={openQuotedSource}
             onEditPost={setEditingPost}
             onDeletePost={deletePost}
             onOpenAttachmentPreview={openAttachmentPreview}
@@ -3198,6 +3304,8 @@ function SymposiumExperience({
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
+            onQuote={beginQuote}
+            onOpenQuote={openQuotedSource}
             onEditPost={setEditingPost}
             onDeletePost={deletePost}
             onOpenNotes={() => toggleOfficeMode("notes")}
@@ -3278,6 +3386,19 @@ function SymposiumExperience({
           onClose={() => setComposerOpen(false)}
           onCreatePost={createPost}
           onUploadAttachment={uploadPostAttachment}
+        />
+      ) : null}
+
+      {quoteSelection && quotePreview ? (
+        <QuoteComposerModal
+          key={`${quoteSelection.sourceType}:${quoteSelection.sourceId}`}
+          quote={quotePreview}
+          selection={quoteSelection}
+          onClose={() => setQuoteSelection(null)}
+          onCreatePost={createPost}
+          onAddComment={addComment}
+          onUploadPostAttachment={uploadPostAttachment}
+          onUploadCommentAttachment={uploadCommentAttachment}
         />
       ) : null}
 

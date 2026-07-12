@@ -43,6 +43,16 @@ const main = async () => {
   assert.match(composerStyles, /\.comment-composer-actions/);
   assert.match(composerStyles, /\.composer-attachment-list[\s\S]*min-width:\s*0/);
 
+  const quoteStyles = [
+    sources.get("20-legacy-content.css") ?? "",
+    sources.get("30-legacy-discussion-profile.css") ?? "",
+    sources.get("60-immersive-communities-feed.css") ?? "",
+    sources.get("70-immersive-content-profile.css") ?? ""
+  ].join("\n");
+  assert.match(quoteStyles, /\.quote-card-shell/);
+  assert.match(quoteStyles, /\.quote-card[\s\S]*overflow-wrap:\s*anywhere/);
+  assert.match(quoteStyles, /\.quote-destination-switch/);
+
   console.log(
     JSON.stringify(
       {
@@ -51,7 +61,8 @@ const main = async () => {
           "ordered global manifest",
           "declared layer ownership",
           "bounded stylesheet size",
-          "bounded attachment composer layout"
+          "bounded attachment composer layout",
+          "shared quote card and composer layout"
         ]
       },
       null,

@@ -3,6 +3,8 @@ import type { ContentKind, RoomId } from "@/lib/mockData";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { contentKinds, postRooms } from "@/lib/symposiumCore";
+import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
+import { contentQuoteSourceSchema } from "@/packages/contracts/src";
 import {
   LocalAttachmentStoreError,
   replaceLocalOwnerAttachments,
@@ -22,7 +24,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
-  const body = await readJson<Partial<CreatePostInput> & { attachmentIds?: unknown[]; authorHandle?: string }>(request);
+  const body = await readJson<Partial<CreatePostInput> & {
+    attachmentIds?: unknown[];
+    authorHandle?: string;
+    quoteSource?: unknown;
+  }>(request);
 
   if (!body) {
     return jsonError("Invalid JSON body.", 400);
@@ -48,6 +54,8 @@ export async function POST(request: Request) {
   if (!input.title || !input.body) {
     return jsonError("Title and body are required.", 400);
   }
+  const quoteSource = body.quoteSource === undefined ? undefined : contentQuoteSourceSchema.safeParse(body.quoteSource);
+  if (quoteSource && !quoteSource.success) return jsonError("Choose an available post or comment to quote.", 400);
 
   const live = await proxyLiveBackend("/v1/posts", {
     method: "POST",
@@ -57,7 +65,8 @@ export async function POST(request: Request) {
       kind: input.kind,
       room: input.room,
       authorHandle: body.authorHandle,
-      attachmentIds
+      attachmentIds,
+      quoteSource: quoteSource?.data
     },
     actorHandle: body.authorHandle ? String(body.authorHandle) : undefined,
     idempotencyKey
@@ -68,10 +77,12 @@ export async function POST(request: Request) {
     if (attachmentIds.length && (input.room === "office" || input.kind === "draft")) {
       return jsonError("Private post attachments require protected delivery before they can be published.", 412);
     }
+    const snapshot = await getSnapshot();
     const localAttachments = attachmentIds.length
       ? await resolveLocalPostAttachments(attachmentIds, String(body.authorHandle ?? ""))
       : [];
-    const item = await createPost({ ...input, attachments: localAttachments }, String(body.authorHandle ?? ""));
+    const quote = resolveLocalContentQuote(snapshot.items, quoteSource?.data);
+    const item = await createPost({ ...input, attachments: localAttachments, quote }, String(body.authorHandle ?? ""));
     await replaceLocalOwnerAttachments({
       actorHandle: String(body.authorHandle ?? ""),
       attachmentIds,
@@ -80,6 +91,7 @@ export async function POST(request: Request) {
     });
     return Response.json({ item });
   } catch (error) {
+    if (error instanceof ContentQuoteError) return jsonError(error.message, error.status);
     if (error instanceof LocalAttachmentStoreError) return jsonError(error.message, error.status);
     throw error;
   }

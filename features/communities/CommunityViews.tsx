@@ -9,6 +9,7 @@ import {
 } from "@/lib/mockData";
 import { itemTimestampScore, normalizeSearchPhrase } from "@/lib/symposiumCore";
 import type { PostActionHandler } from "@/features/actions/actionTypes";
+import type { QuoteActionHandler } from "@/features/quotes/QuoteViews";
 import type { AttachmentPreviewHandler } from "@/features/attachments/AttachmentViews";
 import {
   communitySearchText,
@@ -186,6 +187,8 @@ export function SelectedCommunityView({
   onSelect,
   onOpenProfile,
   onAction,
+  onQuote,
+  onOpenQuote,
   onEditPost,
   onDeletePost,
   onOpenAttachmentPreview,
@@ -199,6 +202,8 @@ export function SelectedCommunityView({
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: PostActionHandler;
+  onQuote: QuoteActionHandler;
+  onOpenQuote: QuoteActionHandler;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
   onOpenAttachmentPreview: AttachmentPreviewHandler;
@@ -245,6 +250,8 @@ export function SelectedCommunityView({
               onSelect={onSelect}
               onOpenProfile={onOpenProfile}
               onAction={onAction}
+              onQuote={onQuote}
+              onOpenQuote={onOpenQuote}
               onEditPost={onEditPost}
               onDeletePost={onDeletePost}
               onOpenAttachmentPreview={onOpenAttachmentPreview}

@@ -10,6 +10,7 @@ import {
   type Room
 } from "@/lib/mockData";
 import type { PostActionHandler } from "@/features/actions/actionTypes";
+import type { QuoteActionHandler } from "@/features/quotes/QuoteViews";
 import type { AttachmentPreviewHandler } from "@/features/attachments/AttachmentViews";
 import { FeedPost } from "@/features/posts/PostViews";
 import { RoomRender } from "@/features/shell/SymposiumShellViews";
@@ -31,6 +32,8 @@ export function RoomView({
   onSelect,
   onOpenProfile,
   onAction,
+  onQuote,
+  onOpenQuote,
   onEditPost,
   onDeletePost,
   onOpenNotes,
@@ -51,6 +54,8 @@ export function RoomView({
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: PostActionHandler;
+  onQuote: QuoteActionHandler;
+  onOpenQuote: QuoteActionHandler;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
   onOpenNotes: () => void;
@@ -163,6 +168,8 @@ export function RoomView({
               onSelect={onSelect}
               onOpenProfile={onOpenProfile}
               onAction={onAction}
+              onQuote={onQuote}
+              onOpenQuote={onOpenQuote}
               onEditPost={onEditPost}
               onDeletePost={onDeletePost}
               actorHandle={actorHandle}

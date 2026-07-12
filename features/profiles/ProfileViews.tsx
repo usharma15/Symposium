@@ -50,6 +50,10 @@ import { FeedPost } from "@/features/posts/PostViews";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import type { ProfileSocialView } from "@/features/navigation/canonicalRoute";
+import {
+  ContentQuoteCard,
+  type QuoteActionHandler
+} from "@/features/quotes/QuoteViews";
 
 export type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
 export type ProfileActivityKind = "authored" | "comments" | "fork" | "signal" | "save";
@@ -183,6 +187,8 @@ export function ProfileView({
   onOpenProfile,
   onAction,
   onCommentAction,
+  onQuote,
+  onOpenQuote,
   onEditComment,
   onDeleteComment,
   onOpenSettings,
@@ -212,6 +218,8 @@ export function ProfileView({
   onOpenProfile: (name: string) => void;
   onAction: PostActionHandler;
   onCommentAction: CommentActionHandler;
+  onQuote: QuoteActionHandler;
+  onOpenQuote: QuoteActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   onOpenSettings: () => void;
@@ -330,6 +338,12 @@ export function ProfileView({
   const savedEntries = saved.map((item) => postEntry(item, getProfileRecency(item, person.handle, "save")));
   const commentEntries = commentActivities.map(commentEntry);
   const commentReshareEntries = commentReshares.map(commentEntry);
+  const quotedPostEntries = authored
+    .filter((item) => Boolean(item.quote))
+    .map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
+  const quotedCommentEntries = commentActivities
+    .filter((activity) => Boolean(activity.comment.quote))
+    .map(commentEntry);
   const commentLikeEntries = commentLikes.map(commentEntry);
   const commentSavedEntries = commentSaved.map(commentEntry);
   const allActivity = uniqueProfileActivityEntries(
@@ -340,12 +354,16 @@ export function ProfileView({
         : `comment:${entry.activity.item.id}:${entry.activity.comment.id}`
   );
 
+  const reshareTabEntries = uniqueProfileActivityEntries(
+    sortEntries([...reshareEntries, ...commentReshareEntries, ...quotedPostEntries, ...quotedCommentEntries]),
+    (entry) => entry.id
+  );
   const tabEntries: Record<ProfileTab, ProfileActivityEntry[]> = {
     all: allActivity,
     papers: paperEntries,
     thoughts: thoughtEntries,
     comments: commentEntries,
-    reshares: sortEntries([...reshareEntries, ...commentReshareEntries]),
+    reshares: reshareTabEntries,
     likes: sortEntries([...likeEntries, ...commentLikeEntries]),
     saved: sortEntries([...savedEntries, ...commentSavedEntries])
   };
@@ -355,7 +373,7 @@ export function ProfileView({
     papers: papers.length,
     thoughts: thoughts.length,
     comments: commentActivities.length,
-    reshares: reshareEntries.length + commentReshareEntries.length,
+    reshares: reshareTabEntries.length,
     likes: likeEntries.length + commentLikeEntries.length,
     saved: savedEntries.length + commentSavedEntries.length
   };
@@ -490,6 +508,8 @@ export function ProfileView({
                 onSelect={onSelect}
                 onOpenProfile={onOpenProfile}
                 onCommentAction={onCommentAction}
+                onQuote={onQuote}
+                onOpenQuote={onOpenQuote}
                 onEditComment={onEditComment}
                 onDeleteComment={onDeleteComment}
                 onOpenAttachmentPreview={onOpenCommentAttachmentPreview}
@@ -502,6 +522,8 @@ export function ProfileView({
                 onSelect={onSelect}
                 onOpenProfile={onOpenProfile}
                 onAction={onAction}
+                onQuote={onQuote}
+                onOpenQuote={onOpenQuote}
                 onEditPost={onEditPost}
                 onDeletePost={onDeletePost}
                 actorHandle={actorHandle}
@@ -540,6 +562,8 @@ function ProfileCommentCard({
   onSelect,
   onOpenProfile,
   onCommentAction,
+  onQuote,
+  onOpenQuote,
   onEditComment,
   onDeleteComment,
   onOpenAttachmentPreview,
@@ -550,6 +574,8 @@ function ProfileCommentCard({
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onCommentAction: CommentActionHandler;
+  onQuote: QuoteActionHandler;
+  onOpenQuote: QuoteActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
@@ -639,11 +665,26 @@ function ProfileCommentCard({
           }
         />
       ) : null}
+      {activity.comment.quote ? (
+        <ContentQuoteCard
+          quote={activity.comment.quote}
+          onOpen={activity.comment.quote.available ? () => onOpenQuote({
+            sourceType: activity.comment.quote!.sourceType,
+            sourceId: activity.comment.quote!.sourceId,
+            sourcePostId: activity.comment.quote!.sourcePostId
+          }) : undefined}
+        />
+      ) : null}
       <CommentActions
         comment={activity.comment}
         itemId={activity.item.id}
         actorHandle={actorHandle}
         onAction={onCommentAction}
+        onQuote={() => activity.comment.id && onQuote({
+          sourceType: "comment",
+          sourceId: activity.comment.id,
+          sourcePostId: activity.item.id
+        })}
       />
       <footer>
         <span>On</span>

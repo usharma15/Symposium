@@ -1128,6 +1128,50 @@ const migrations: Migration[] = [
         ADD CONSTRAINT attachments_owner_type_check
         CHECK (owner_type IN ('post', 'comment', 'message', 'note', 'profile'));
     `
+  },
+  {
+    id: "0017_content_quotes",
+    sql: `
+      ALTER TABLE posts ADD COLUMN IF NOT EXISTS quote JSONB;
+      ALTER TABLE comments ADD COLUMN IF NOT EXISTS quote JSONB;
+
+      ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_quote_shape_check;
+      ALTER TABLE posts
+        ADD CONSTRAINT posts_quote_shape_check
+        CHECK (
+          quote IS NULL OR (
+            jsonb_typeof(quote) = 'object'
+            AND quote->>'sourceType' IN ('post', 'comment')
+            AND COALESCE(quote->>'sourceId', '') <> ''
+            AND COALESCE(quote->>'sourcePostId', '') <> ''
+          )
+        );
+
+      ALTER TABLE comments DROP CONSTRAINT IF EXISTS comments_quote_shape_check;
+      ALTER TABLE comments
+        ADD CONSTRAINT comments_quote_shape_check
+        CHECK (
+          quote IS NULL OR (
+            jsonb_typeof(quote) = 'object'
+            AND quote->>'sourceType' IN ('post', 'comment')
+            AND COALESCE(quote->>'sourceId', '') <> ''
+            AND COALESCE(quote->>'sourcePostId', '') <> ''
+          )
+        );
+
+      CREATE INDEX IF NOT EXISTS posts_quote_source_post_idx
+        ON posts ((quote->>'sourcePostId'))
+        WHERE quote IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS comments_quote_source_post_idx
+        ON comments ((quote->>'sourcePostId'))
+        WHERE quote IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS posts_quote_comment_source_idx
+        ON posts ((quote->>'sourceId'))
+        WHERE quote->>'sourceType' = 'comment';
+      CREATE INDEX IF NOT EXISTS comments_quote_comment_source_idx
+        ON comments ((quote->>'sourceId'))
+        WHERE quote->>'sourceType' = 'comment';
+    `
   }
 ];
 

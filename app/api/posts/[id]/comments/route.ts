@@ -8,6 +8,8 @@ import {
   replaceLocalOwnerAttachments
 } from "@/lib/localAttachmentStore";
 import { findCommentInTree, isDeletedPost } from "@/lib/symposiumCore";
+import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
+import { contentQuoteSourceSchema } from "@/packages/contracts/src";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +21,11 @@ type Context = {
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
   const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
-  const body = await readJson<Partial<CreateCommentInput> & { attachmentIds?: unknown[]; authorHandle?: string }>(request);
+  const body = await readJson<Partial<CreateCommentInput> & {
+    attachmentIds?: unknown[];
+    authorHandle?: string;
+    quoteSource?: unknown;
+  }>(request);
 
   if (!body) {
     return jsonError("Invalid JSON body.", 400);
@@ -33,6 +39,8 @@ export async function POST(request: Request, context: Context) {
   const attachmentIds = Array.isArray(body.attachmentIds)
     ? body.attachmentIds.map((attachmentId) => String(attachmentId))
     : [];
+  const quoteSource = body.quoteSource === undefined ? undefined : contentQuoteSourceSchema.safeParse(body.quoteSource);
+  if (quoteSource && !quoteSource.success) return jsonError("Choose an available post or comment to quote.", 400);
 
   if (!input.body) {
     return jsonError("Comment body is required.", 400);
@@ -40,7 +48,7 @@ export async function POST(request: Request, context: Context) {
 
   const live = await proxyLiveBackend(`/v1/posts/${id}/comments`, {
     method: "POST",
-    body: { ...input, attachmentIds, authorHandle: body.authorHandle },
+    body: { ...input, attachmentIds, quoteSource: quoteSource?.data, authorHandle: body.authorHandle },
     actorHandle: body.authorHandle ? String(body.authorHandle) : undefined,
     idempotencyKey
   });
@@ -66,7 +74,11 @@ export async function POST(request: Request, context: Context) {
       ownerId: commentId,
       ownerType: "comment"
     });
-    const result = await addComment(id, { ...input, id: commentId, attachments }, String(body.authorHandle ?? ""));
+    const quote = resolveLocalContentQuote(snapshot.items, quoteSource?.data, {
+      ownerId: commentId,
+      ownerType: "comment"
+    });
+    const result = await addComment(id, { ...input, id: commentId, attachments, quote }, String(body.authorHandle ?? ""));
     if (!result) {
       await deleteLocalOwnerAttachments("comment", commentId);
       return jsonError("Post not found, deleted, or cannot accept this reply.", 404);
@@ -74,6 +86,7 @@ export async function POST(request: Request, context: Context) {
 
     return Response.json(result);
   } catch (error) {
+    if (error instanceof ContentQuoteError) return jsonError(error.message, error.status);
     if (error instanceof LocalAttachmentStoreError) return jsonError(error.message, error.status);
     throw error;
   }

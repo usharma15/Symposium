@@ -272,6 +272,102 @@
   padding: 0 7px;
 }
 
+.quote-card-shell {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.quote-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--aqua) 24%, var(--line));
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: none;
+}
+
+button.quote-card {
+  cursor: pointer;
+}
+
+button.quote-card:hover {
+  transform: none;
+  border-color: color-mix(in srgb, var(--aqua) 52%, var(--line));
+  background: color-mix(in srgb, var(--aqua) 7%, var(--panel-strong));
+}
+
+.quote-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.quote-card-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quote-card-kind,
+.quote-card-attachments {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 790;
+}
+
+.quote-card h3,
+.quote-card p {
+  margin: 0;
+}
+
+.quote-card h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.96rem;
+}
+
+.quote-card p {
+  color: var(--muted);
+  line-height: 1.48;
+  white-space: pre-wrap;
+}
+
+.quote-card-unavailable {
+  font-style: italic;
+}
+
+.quote-card-remove {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  display: inline-grid;
+  place-items: center;
+  min-height: 30px;
+  padding: 0 8px;
+}
+
+.quote-card-shell.removable .quote-card {
+  padding-right: 54px;
+}
+
 .feed-stream {
   display: grid;
   gap: 12px;

@@ -25,6 +25,7 @@ import {
   type InquiryAttachment,
   type InquiryComment,
   type InquiryItem,
+  type ContentQuoteSource,
   type ResearchProfile,
   type Room
 } from "@/lib/mockData";
@@ -53,6 +54,12 @@ import {
   type AttachmentUploadHandler
 } from "@/features/attachments/AttachmentViews";
 import {
+  ContentQuoteCard,
+  QuoteActionButton,
+  type QuoteActionHandler,
+  type QuoteSelection
+} from "@/features/quotes/QuoteViews";
+import {
   CommentComposer,
   CommentThread,
   type AddCommentHandler,
@@ -69,6 +76,7 @@ export type PostDraft = {
   body: string;
   kind: Extract<InquiryItem["kind"], "paper" | "thought">;
   attachments: InquiryAttachment[];
+  quoteSource?: ContentQuoteSource;
 };
 
 export type PostCreationResult = { ok: true } | { ok: false; error: string };
@@ -177,13 +185,19 @@ export function PostEditModal({
 }: {
   item: InquiryItem;
   onClose: () => void;
-  onSave: (itemId: string, draft: { title: string; body: string; attachments: InquiryAttachment[] }) => Promise<void>;
+  onSave: (itemId: string, draft: {
+    title: string;
+    body: string;
+    attachments: InquiryAttachment[];
+    quote: InquiryItem["quote"] | null;
+  }) => Promise<void>;
   onDelete: (itemId: string) => void;
   onUploadAttachment: AttachmentUploadHandler;
 }) {
   const [title, setTitle] = useState(item.title);
   const [body, setBody] = useState(item.body);
   const [attachments, setAttachments] = useState<InquiryAttachment[]>(item.attachments ?? []);
+  const [quote, setQuote] = useState(item.quote ?? null);
   const [busy, setBusy] = useState(false);
 
   const submitEdit = async (event: FormEvent<HTMLFormElement>) => {
@@ -191,7 +205,7 @@ export function PostEditModal({
     if (busy || !title.trim() || !body.trim()) return;
     setBusy(true);
     try {
-      await onSave(item.id, { title, body, attachments });
+      await onSave(item.id, { title, body, attachments, quote });
     } finally {
       setBusy(false);
     }
@@ -233,6 +247,7 @@ export function PostEditModal({
           onBusyChange={setBusy}
           onUploadAttachment={onUploadAttachment}
         />
+        {quote ? <ContentQuoteCard quote={quote} onRemove={() => setQuote(null)} /> : null}
       </form>
     </div>
   );
@@ -254,12 +269,14 @@ export function CommentEditModal({
     commentId: string,
     body: string,
     attachments: InquiryAttachment[]
+    , quote: InquiryComment["quote"] | null
   ) => Promise<void>;
   onDelete: (itemId: string, commentId: string) => void;
   onUploadAttachment: AttachmentUploadHandler;
 }) {
   const [body, setBody] = useState(comment.body);
   const [attachments, setAttachments] = useState<InquiryAttachment[]>(comment.attachments ?? []);
+  const [quote, setQuote] = useState(comment.quote ?? null);
   const [busy, setBusy] = useState(false);
 
   const submitEdit = async (event: FormEvent<HTMLFormElement>) => {
@@ -267,7 +284,7 @@ export function CommentEditModal({
     if (!comment.id || busy || !body.trim()) return;
     setBusy(true);
     try {
-      await onSave(item.id, comment.id, body, attachments);
+      await onSave(item.id, comment.id, body, attachments, quote);
     } finally {
       setBusy(false);
     }
@@ -304,6 +321,7 @@ export function CommentEditModal({
           onBusyChange={setBusy}
           onUploadAttachment={onUploadAttachment}
         />
+        {quote ? <ContentQuoteCard quote={quote} onRemove={() => setQuote(null)} /> : null}
       </form>
     </div>
   );
@@ -369,6 +387,8 @@ export function FeedPost({
   onSelect,
   onOpenProfile,
   onAction,
+  onQuote,
+  onOpenQuote,
   onEditPost,
   onDeletePost,
   onOpenAttachmentPreview,
@@ -380,6 +400,8 @@ export function FeedPost({
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: PostActionHandler;
+  onQuote: QuoteActionHandler;
+  onOpenQuote: QuoteActionHandler;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
   onOpenAttachmentPreview: AttachmentPreviewHandler;
@@ -434,11 +456,22 @@ export function FeedPost({
           onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
         />
         <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} />
+        {item.quote ? (
+          <ContentQuoteCard
+            quote={item.quote}
+            onOpen={item.quote.available ? () => onOpenQuote({
+              sourceType: item.quote!.sourceType,
+              sourceId: item.quote!.sourceId,
+              sourcePostId: item.quote!.sourcePostId
+            }) : undefined}
+          />
+        ) : null}
         <PostTimeFooter item={item} />
         <SocialActions
           item={item}
           commentCount={countComments(item.comments)}
           onAction={onAction}
+          onQuote={() => onQuote({ sourceType: "post", sourceId: item.id, sourcePostId: item.id })}
           onCommentsClick={() => onSelect(item.id, commentsSectionTargetId)}
           actorHandle={actorHandle}
         />
@@ -496,12 +529,14 @@ function SocialActions({
   item,
   commentCount,
   onAction,
+  onQuote,
   onCommentsClick,
   actorHandle
 }: {
   item: InquiryItem;
   commentCount: number;
   onAction: PostActionHandler;
+  onQuote: () => void;
   onCommentsClick?: () => void;
   actorHandle: string;
 }) {
@@ -558,6 +593,7 @@ function SocialActions({
           </button>
         );
       })}
+      <QuoteActionButton disabled={postDeleted} label="post" onQuote={onQuote} />
     </div>
   );
 }
@@ -571,6 +607,8 @@ export function DetailView({
   onUploadCommentAttachment,
   onOpenCommentAttachmentPreview,
   onAction,
+  onQuote,
+  onOpenQuote,
   onCommentAction,
   onEditComment,
   onDeleteComment,
@@ -594,6 +632,8 @@ export function DetailView({
   onUploadCommentAttachment: AttachmentUploadHandler;
   onOpenCommentAttachmentPreview: CommentAttachmentPreviewHandler;
   onAction: PostActionHandler;
+  onQuote: QuoteActionHandler;
+  onOpenQuote: QuoteActionHandler;
   onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
@@ -687,11 +727,22 @@ export function DetailView({
         )}
         <p className="detail-body">{item.body}</p>
         <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} variant="detail" />
+        {item.quote ? (
+          <ContentQuoteCard
+            quote={item.quote}
+            onOpen={item.quote.available ? () => onOpenQuote({
+              sourceType: item.quote!.sourceType,
+              sourceId: item.quote!.sourceId,
+              sourcePostId: item.quote!.sourcePostId
+            }) : undefined}
+          />
+        ) : null}
         <PostTimeFooter item={item} />
         <SocialActions
           item={item}
           commentCount={countComments(item.comments)}
           onAction={onAction}
+          onQuote={() => onQuote({ sourceType: "post", sourceId: item.id, sourcePostId: item.id })}
           onCommentsClick={() => {
             onSelectComment(commentsSectionTargetId);
             scrollToComments();
@@ -718,6 +769,8 @@ export function DetailView({
             onUploadAttachment={onUploadCommentAttachment}
             onOpenAttachmentPreview={onOpenCommentAttachmentPreview}
             onCommentAction={onCommentAction}
+            onQuote={onQuote}
+            onOpenQuote={onOpenQuote}
             onEditComment={onEditComment}
             onDeleteComment={onDeleteComment}
             actorHandle={actorHandle}

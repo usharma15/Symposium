@@ -120,6 +120,12 @@
   margin: 10px 0 4px 39px;
 }
 
+.comment > .quote-card-shell {
+  width: calc(100% - 39px);
+  max-width: 620px;
+  margin: 10px 0 6px 39px;
+}
+
 .comment-attachments .attachment-frame {
   aspect-ratio: 16 / 9;
   max-height: 320px;

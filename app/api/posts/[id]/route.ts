@@ -7,6 +7,8 @@ import {
   replaceLocalOwnerAttachments
 } from "@/lib/localAttachmentStore";
 import { cleanHandle, isDeletedPost } from "@/lib/symposiumCore";
+import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
+import { contentQuoteSourceSchema } from "@/packages/contracts/src";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +23,7 @@ export async function PATCH(request: Request, context: Context) {
     actorHandle?: string;
     attachmentIds?: unknown[];
     expectedEditedAt?: string | null;
+    quoteSource?: unknown;
   }>(request);
 
   if (!body) {
@@ -40,10 +43,17 @@ export async function PATCH(request: Request, context: Context) {
   const attachmentIds = Array.isArray(body.attachmentIds)
     ? body.attachmentIds.map((attachmentId) => String(attachmentId))
     : undefined;
+  const quoteSource = body.quoteSource === undefined || body.quoteSource === null
+    ? body.quoteSource
+    : contentQuoteSourceSchema.safeParse(body.quoteSource);
+  if (quoteSource && "success" in quoteSource && !quoteSource.success) {
+    return jsonError("Choose an available post or comment to quote.", 400);
+  }
+  const parsedQuoteSource = quoteSource && "success" in quoteSource ? quoteSource.data : quoteSource;
   const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const live = await proxyLiveBackend(`/v1/posts/${id}`, {
     method: "PATCH",
-    body: { ...input, actorHandle, attachmentIds, expectedEditedAt: body.expectedEditedAt },
+    body: { ...input, actorHandle, attachmentIds, quoteSource: parsedQuoteSource, expectedEditedAt: body.expectedEditedAt },
     actorHandle,
     idempotencyKey
   });
@@ -62,8 +72,8 @@ export async function PATCH(request: Request, context: Context) {
     if (attachmentIds?.length && (existing.room === "office" || existing.kind === "draft")) {
       return jsonError("Private post attachments require protected delivery before they can be published.", 412);
     }
-    if (attachmentIds && body.expectedEditedAt === undefined) {
-      return jsonError("The current post edit version is required when changing attachments.", 400);
+    if ((attachmentIds || body.quoteSource !== undefined) && body.expectedEditedAt === undefined) {
+      return jsonError("The current post edit version is required when changing attachments or quotes.", 400);
     }
     if (body.expectedEditedAt !== undefined && (existing.editedAt ?? null) !== body.expectedEditedAt) {
       return jsonError("This post changed after editing began. Refresh it before saving again.", 409);
@@ -71,13 +81,19 @@ export async function PATCH(request: Request, context: Context) {
     const attachments = attachmentIds
       ? await replaceLocalOwnerAttachments({ actorHandle, attachmentIds, ownerId: id, ownerType: "post" })
       : undefined;
-    const item = await updatePost(id, { ...input, attachments }, actorHandle ?? "");
+    const quote = body.quoteSource === undefined
+      ? undefined
+      : parsedQuoteSource === null
+        ? null
+        : resolveLocalContentQuote(snapshot.items, parsedQuoteSource, { ownerId: id, ownerType: "post" });
+    const item = await updatePost(id, { ...input, attachments, quote }, actorHandle ?? "");
     if (!item) {
       return jsonError("Post not found or cannot be edited by this profile.", 404);
     }
 
     return Response.json({ item });
   } catch (error) {
+    if (error instanceof ContentQuoteError) return jsonError(error.message, error.status);
     if (error instanceof LocalAttachmentStoreError) return jsonError(error.message, error.status);
     throw error;
   }

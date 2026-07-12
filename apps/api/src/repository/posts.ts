@@ -20,6 +20,7 @@ import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
+import { markQuotedPostUnavailable, resolveContentQuote } from "../services/contentQuotes";
 import {
   assertUniqueAttachmentIds,
   canonicalAttachmentIds,
@@ -121,16 +122,17 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       await client.query("COMMIT");
       return claim.response;
     }
+    item.quote = await resolveContentQuote(client, input.quoteSource, { ownerId: item.id, ownerType: "post" });
     await client.query(
       `INSERT INTO posts (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by, search_text
+        tests, forks, saved, saved_by, signaled_by, forked_by, quote, search_text
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26
+        $19, $20, $21, $22, $23, $24, $25, $26, $27
       )`,
       [
         item.id,
@@ -158,6 +160,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
         JSON.stringify(item.savedBy ?? []),
         JSON.stringify(item.signaledBy ?? []),
         JSON.stringify(item.forkedBy ?? []),
+        item.quote ? JSON.stringify(item.quote) : null,
         searchablePostText({ ...item, authorName: item.author })
       ]
     );
@@ -187,6 +190,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       subjectId: item.id,
       metadata: mutationAuditMetadata(mutation, {
         attachmentCount: item.attachments.length,
+        quotedSourceType: item.quote?.sourceType,
         kind: item.kind,
         room: item.room
       })
@@ -287,7 +291,8 @@ export const applyPostAction = async (
         saved,
         saved_by AS "savedBy",
         signaled_by AS "signaledBy",
-        forked_by AS "forkedBy"
+        forked_by AS "forkedBy",
+        quote
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -311,6 +316,7 @@ export const applyPostAction = async (
         saved_by AS "savedBy",
         signaled_by AS "signaledBy",
         forked_by AS "forkedBy",
+        quote,
         edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         created_at AS "createdAt"
@@ -515,7 +521,7 @@ export const updatePost = async (
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy"
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -539,7 +545,7 @@ export const updatePost = async (
     if (input.expectedEditedAt !== undefined && input.expectedEditedAt !== currentEditedAt) {
       throw new TRPCError({
         code: "CONFLICT",
-        message: "This post changed after it was opened. Refresh before replacing its attachments."
+        message: "This post changed after it was opened. Refresh before saving content references."
       });
     }
     if (input.attachmentIds?.length && (row.room === "office" || row.kind === "draft")) {
@@ -556,6 +562,11 @@ export const updatePost = async (
       uploaderHandle: handle
     });
     removedAttachmentIds = attachmentChange.removedAttachmentIds;
+    const quote = input.quoteSource === undefined
+      ? row.quote
+      : input.quoteSource === null
+        ? undefined
+        : await resolveContentQuote(client, input.quoteSource, { ownerId: postId, ownerType: "post" });
 
     const revisionResult = await client.query<{ revision: number }>(
       `UPDATE posts
@@ -565,6 +576,7 @@ export const updatePost = async (
            claims = $4,
            search_text = $5,
            edited_at = $6,
+           quote = $7,
            revision = revision + 1,
            updated_at = now()
        WHERE id = $1
@@ -575,14 +587,15 @@ export const updatePost = async (
         input.body,
         JSON.stringify([input.body]),
         searchablePostText({ title: input.title, body: input.body, excerpt: input.body, authorName: row.authorName }),
-        editedAt
+        editedAt,
+        quote ? JSON.stringify(quote) : null
       ]
     );
 
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
         author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", edited_at AS "editedAt",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
        FROM comments
        WHERE post_id = $1
@@ -602,6 +615,7 @@ export const updatePost = async (
         body: input.body,
         excerpt: input.body,
         claims: [input.body],
+        quote,
         editedAt,
         revision: revisionResult.rows[0].revision
       },
@@ -617,6 +631,7 @@ export const updatePost = async (
       metadata: {
         attachmentCount: attachmentChange.attachments.length,
         removedAttachmentCount: removedAttachmentIds.length,
+        quotedSourceType: quote?.sourceType,
         editedAt
       }
     });
@@ -681,7 +696,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy"
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -699,7 +714,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
         author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", edited_at AS "editedAt",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
        FROM comments
        WHERE post_id = $1
@@ -720,6 +735,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
 
     if (isDeletedPost(existing)) {
       deleted = existing;
+      await markQuotedPostUnavailable(client, postId);
       storageAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(
         client,
         "post",
@@ -768,6 +784,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
              saved_by = '[]'::jsonb,
              signaled_by = '[]'::jsonb,
              forked_by = '[]'::jsonb,
+             quote = NULL,
              search_text = $16,
              edited_at = NULL,
              deleted_at = $17,
@@ -801,6 +818,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
         ]
       );
       deleted = { ...deletedPost, revision: revisionResult.rows[0].revision };
+      await markQuotedPostUnavailable(client, postId);
       await client.query(
         `UPDATE post_actions
          SET active = false, count = 0, revision = revision + 1, updated_at = now()

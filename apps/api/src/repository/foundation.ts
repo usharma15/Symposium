@@ -49,6 +49,7 @@ export type CommentRow = {
   savedBy?: unknown;
   signaledBy?: unknown;
   forkedBy?: unknown;
+  quote?: unknown;
   editedAt?: Date | string | null;
   deletedAt?: Date | string | null;
   createdAt: Date | string;
@@ -548,6 +549,7 @@ export const commentTreesFromRows = (
       signaledBy: json(row.signaledBy, []),
       forkedBy: json(row.forkedBy, []),
       attachments: attachmentsByComment.get(row.id),
+      quote: json(row.quote, undefined),
       replies: buildTree(byParent, row.id)
     }));
 
@@ -688,6 +690,7 @@ export const rowToItem = (
     forks: json(row.forks, []),
     comments,
     attachments: postAttachments.length ? postAttachments : undefined,
+    quote: row.quote,
     saved: row.saved,
     savedBy: json(row.savedBy, []),
     signaledBy: json(row.signaledBy, []),
@@ -761,7 +764,8 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           saved,
           saved_by AS "savedBy",
           signaled_by AS "signaledBy",
-          forked_by AS "forkedBy"
+          forked_by AS "forkedBy",
+          quote
          FROM posts
          ORDER BY created_at DESC`
       ),
@@ -779,6 +783,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           saved_by AS "savedBy",
           signaled_by AS "signaledBy",
           forked_by AS "forkedBy",
+          quote,
           edited_at AS "editedAt",
           deleted_at AS "deletedAt",
           created_at AS "createdAt"

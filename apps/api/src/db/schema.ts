@@ -14,6 +14,7 @@ import {
   uuid
 } from "drizzle-orm/pg-core";
 import type {
+  ContentQuoteContract,
   ContentKindContract,
   InquiryItemContract,
   ResearchCommunityContract,
@@ -231,6 +232,7 @@ export const posts = pgTable(
     savedBy: jsonb("saved_by").$type<string[]>().default(jsonArray).notNull(),
     signaledBy: jsonb("signaled_by").$type<string[]>().default(jsonArray).notNull(),
     forkedBy: jsonb("forked_by").$type<string[]>().default(jsonArray).notNull(),
+    quote: jsonb("quote").$type<ContentQuoteContract>(),
     visibility: text("visibility").default("public").notNull(),
     searchText: text("search_text").notNull(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
@@ -243,7 +245,9 @@ export const posts = pgTable(
     index("posts_room_idx").on(table.room),
     index("posts_author_idx").on(table.authorHandle),
     index("posts_community_idx").on(table.communityId),
-    index("posts_created_at_idx").on(table.createdAt)
+    index("posts_created_at_idx").on(table.createdAt),
+    index("posts_quote_source_post_idx").on(sql`(${table.quote}->>'sourcePostId')`).where(sql`${table.quote} IS NOT NULL`),
+    index("posts_quote_comment_source_idx").on(sql`(${table.quote}->>'sourceId')`).where(sql`${table.quote}->>'sourceType' = 'comment'`)
   ]
 );
 
@@ -287,6 +291,7 @@ export const comments = pgTable(
     savedBy: jsonb("saved_by").$type<string[]>().default(jsonArray).notNull(),
     signaledBy: jsonb("signaled_by").$type<string[]>().default(jsonArray).notNull(),
     forkedBy: jsonb("forked_by").$type<string[]>().default(jsonArray).notNull(),
+    quote: jsonb("quote").$type<ContentQuoteContract>(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     revision: integer("revision").default(1).notNull(),
@@ -296,7 +301,9 @@ export const comments = pgTable(
   (table) => [
     index("comments_post_idx").on(table.postId),
     index("comments_parent_idx").on(table.parentId),
-    index("comments_author_idx").on(table.authorHandle)
+    index("comments_author_idx").on(table.authorHandle),
+    index("comments_quote_source_post_idx").on(sql`(${table.quote}->>'sourcePostId')`).where(sql`${table.quote} IS NOT NULL`),
+    index("comments_quote_comment_source_idx").on(sql`(${table.quote}->>'sourceId')`).where(sql`${table.quote}->>'sourceType' = 'comment'`)
   ]
 );
 

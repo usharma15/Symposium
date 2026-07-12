@@ -109,9 +109,15 @@
 
 .social-actions {
   display: grid;
-  grid-template-columns: repeat(5, minmax(86px, 1fr));
+  grid-template-columns: repeat(5, minmax(78px, 1fr)) minmax(42px, 0.5fr);
   gap: clamp(4px, 0.8vw, 10px);
   width: 100%;
+}
+
+.social-actions .quote-action-button,
+.comment-actions .quote-action-button {
+  min-width: 38px;
+  padding-inline: 8px;
 }
 
 .social-actions button,
@@ -399,6 +405,12 @@
 }
 
 .profile-comment-card .comment-attachments {
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
+}
+
+.profile-comment-card .quote-card-shell {
   width: 100%;
   max-width: 100%;
   margin-left: 0;

@@ -189,6 +189,29 @@ export const postAttachmentInputSchema = inquiryAttachmentSchema.pick({
 
 export const postAttachmentIdSchema = z.string().uuid();
 
+export const contentQuoteSourceSchema = z.object({
+  sourceType: z.enum(["post", "comment"]),
+  sourceId: z.string().trim().min(1).max(200)
+});
+
+export const contentQuoteSchema = z.object({
+  sourceType: z.enum(["post", "comment"]),
+  sourceId: z.string().min(1).max(200),
+  sourcePostId: z.string().min(1).max(200),
+  sourceRevision: z.number().int().positive().optional(),
+  available: z.boolean(),
+  author: z.string().optional(),
+  authorHandle: z.string().optional(),
+  title: z.string().optional(),
+  kind: contentKindSchema.optional(),
+  body: z.string().optional(),
+  createdAt: z.string().optional(),
+  attachmentCount: z.number().int().min(0).max(10).default(0)
+});
+
+export type ContentQuoteContract = z.infer<typeof contentQuoteSchema>;
+export type ContentQuoteSourceContract = z.infer<typeof contentQuoteSourceSchema>;
+
 export type InquiryCommentContract = {
   id?: string;
   parentId?: string | null;
@@ -205,6 +228,7 @@ export type InquiryCommentContract = {
   signaledBy?: string[];
   forkedBy?: string[];
   attachments?: InquiryAttachmentContract[];
+  quote?: ContentQuoteContract;
   replies?: InquiryCommentContract[];
 };
 
@@ -225,6 +249,7 @@ export const inquiryCommentSchema: z.ZodType<InquiryCommentContract> = z.lazy(()
     signaledBy: z.array(z.string()).optional(),
     forkedBy: z.array(z.string()).optional(),
     attachments: z.array(inquiryAttachmentSchema).max(10).optional(),
+    quote: contentQuoteSchema.optional(),
     replies: z.array(inquiryCommentSchema).optional()
   })
 );
@@ -256,6 +281,7 @@ export const inquiryItemSchema = z.object({
   forks: z.array(z.string()),
   comments: z.array(inquiryCommentSchema),
   attachments: z.array(inquiryAttachmentSchema).optional(),
+  quote: contentQuoteSchema.optional(),
   saved: z.boolean().optional(),
   savedBy: z.array(z.string()).optional(),
   signaledBy: z.array(z.string()).optional(),
@@ -294,6 +320,7 @@ export const createPostInputSchema = z.object({
   room: postRoomSchema,
   authorHandle: z.string().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
+  quoteSource: contentQuoteSourceSchema.optional(),
   attachments: z.array(postAttachmentInputSchema).max(10).default([])
 }).superRefine((input, context) => {
   if (!input.attachmentIds?.length || !input.attachments.length) return;
@@ -315,13 +342,14 @@ export const updatePostInputSchema = z.object({
   body: z.string().trim().min(1).max(20000),
   expectedEditedAt: z.string().datetime().nullable().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
+  quoteSource: contentQuoteSourceSchema.nullable().optional(),
   actorHandle: z.string().optional()
 }).superRefine((input, context) => {
-  if (input.attachmentIds !== undefined && input.expectedEditedAt === undefined) {
+  if ((input.attachmentIds !== undefined || input.quoteSource !== undefined) && input.expectedEditedAt === undefined) {
     context.addIssue({
       code: "custom",
       path: ["expectedEditedAt"],
-      message: "Editing post attachments requires the content version that was loaded."
+      message: "Editing post attachments or its quote requires the content version that was loaded."
     });
   }
 });
@@ -331,6 +359,7 @@ export const createCommentInputSchema = z.object({
   stance: z.string().trim().min(1).default("Comment"),
   parentId: z.string().nullable().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
+  quoteSource: contentQuoteSourceSchema.optional(),
   authorHandle: z.string().optional()
 });
 
@@ -338,13 +367,14 @@ export const updateCommentInputSchema = z.object({
   body: z.string().trim().min(1).max(8000),
   expectedEditedAt: z.string().datetime().nullable().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
+  quoteSource: contentQuoteSourceSchema.nullable().optional(),
   actorHandle: z.string().optional()
 }).superRefine((input, context) => {
-  if (input.attachmentIds !== undefined && input.expectedEditedAt === undefined) {
+  if ((input.attachmentIds !== undefined || input.quoteSource !== undefined) && input.expectedEditedAt === undefined) {
     context.addIssue({
       code: "custom",
       path: ["expectedEditedAt"],
-      message: "Editing comment attachments requires the content version that was loaded."
+      message: "Editing comment attachments or its quote requires the content version that was loaded."
     });
   }
 });

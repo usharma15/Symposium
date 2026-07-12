@@ -1,7 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
-import type { CanonicalActionActivityContract, ToggleActionContract } from "@/packages/contracts/src";
+import type {
+  CanonicalActionActivityContract,
+  ContentQuoteContract,
+  ToggleActionContract
+} from "@/packages/contracts/src";
 import {
   getProfileForName,
   inquiryItems,
@@ -43,6 +47,7 @@ import {
   mergeCanonicalActivities,
   projectCanonicalActionLedger
 } from "@/lib/profileActivity";
+import { invalidateQuotedSource } from "@/lib/contentQuotes";
 
 type AppData = {
   profiles: Record<string, ResearchProfile>;
@@ -70,6 +75,7 @@ export type CreatePostInput = {
   kind: ContentKind;
   room: Exclude<RoomId, "hall">;
   attachments?: InquiryAttachment[];
+  quote?: ContentQuoteContract;
 };
 
 export type CreateCommentInput = {
@@ -78,6 +84,7 @@ export type CreateCommentInput = {
   stance: string;
   parentId?: string | null;
   attachments?: InquiryAttachment[];
+  quote?: ContentQuoteContract;
 };
 
 export type { PostAction };
@@ -92,11 +99,13 @@ export type UpdatePostInput = {
   title: string;
   body: string;
   attachments?: InquiryAttachment[];
+  quote?: ContentQuoteContract | null;
 };
 
 export type UpdateCommentInput = {
   body: string;
   attachments?: InquiryAttachment[];
+  quote?: ContentQuoteContract | null;
 };
 
 const viewDedupeWindowMs = 60 * 60 * 1000;
@@ -481,6 +490,7 @@ const ensureSchema = async () => {
           saved_by JSONB DEFAULT '[]'::jsonb,
           signaled_by JSONB DEFAULT '[]'::jsonb,
           forked_by JSONB DEFAULT '[]'::jsonb,
+          quote JSONB,
           edited_at TIMESTAMPTZ,
           deleted_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ DEFAULT now()
@@ -498,6 +508,7 @@ const ensureSchema = async () => {
           saved_by JSONB NOT NULL DEFAULT '[]'::jsonb,
           signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb,
           forked_by JSONB NOT NULL DEFAULT '[]'::jsonb,
+          quote JSONB,
           edited_at TIMESTAMPTZ,
           deleted_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ DEFAULT now(),
@@ -544,12 +555,14 @@ const ensureSchema = async () => {
         ALTER TABLE items ADD COLUMN IF NOT EXISTS signaled_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS forked_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS quote JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{"signal":"0","forks":"0","saves":"0","reads":"0"}'::jsonb;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS saved_by JSONB NOT NULL DEFAULT '[]'::jsonb;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS forked_by JSONB NOT NULL DEFAULT '[]'::jsonb;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS quote JSONB;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
@@ -557,6 +570,14 @@ const ensureSchema = async () => {
         CREATE INDEX IF NOT EXISTS content_views_actor_idx ON content_views (actor_handle);
         CREATE INDEX IF NOT EXISTS action_ledger_actor_activity_idx
           ON action_ledger (actor_handle, occurred_at DESC, subject_type, subject_id, action);
+        CREATE INDEX IF NOT EXISTS items_quote_source_post_idx
+          ON items ((quote->>'sourcePostId')) WHERE quote IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS comments_quote_source_post_idx
+          ON comments ((quote->>'sourcePostId')) WHERE quote IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS items_quote_comment_source_idx
+          ON items ((quote->>'sourceId')) WHERE quote->>'sourceType' = 'comment';
+        CREATE INDEX IF NOT EXISTS comments_quote_comment_source_idx
+          ON comments ((quote->>'sourceId')) WHERE quote->>'sourceType' = 'comment';
       `);
 
       const { rows } = await db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM items");
@@ -620,12 +641,12 @@ const seedPostgres = async () => {
       `INSERT INTO items (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by, created_at
+        tests, forks, saved, saved_by, signaled_by, forked_by, quote, created_at
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25
+        $19, $20, $21, $22, $23, $24, $25, $26
       )
       ON CONFLICT (id) DO NOTHING`,
       [
@@ -653,6 +674,7 @@ const seedPostgres = async () => {
         JSON.stringify(item.savedBy ?? []),
         JSON.stringify(item.signaledBy ?? []),
         JSON.stringify(item.forkedBy ?? []),
+        item.quote ? JSON.stringify(item.quote) : null,
         item.createdAt ?? null
       ]
     );
@@ -679,9 +701,9 @@ const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => 
     await db.query(
       `INSERT INTO comments (
         id, item_id, parent_id, author_handle, author_name, stance, body,
-        metrics, saved_by, signaled_by, forked_by, created_at
+        metrics, saved_by, signaled_by, forked_by, quote, created_at
       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT (id) DO NOTHING`,
       [
         comment.id ?? newId("comment"),
@@ -695,6 +717,7 @@ const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => 
         JSON.stringify(comment.savedBy ?? []),
         JSON.stringify(comment.signaledBy ?? []),
         JSON.stringify(comment.forkedBy ?? []),
+        comment.quote ? JSON.stringify(comment.quote) : null,
         stableSeedCreatedAt(comment.createdAt, legacyLiveSeedCreatedAt(comment.id, 1)) ?? new Date().toISOString()
       ]
     );
@@ -732,6 +755,7 @@ type CommentRow = {
   saved_by: string[] | null;
   signaled_by: string[] | null;
   forked_by: string[] | null;
+  quote: ContentQuoteContract | null;
   edited_at: string | null;
   deleted_at: string | null;
   created_at: string | null;
@@ -771,6 +795,7 @@ const commentTreesFromRows = (rows: CommentRow[]) => {
       savedBy: row.saved_by ?? [],
       signaledBy: row.signaled_by ?? [],
       forkedBy: row.forked_by ?? [],
+      quote: row.quote ?? undefined,
       editedAt: row.edited_at ?? undefined,
       deletedAt: row.deleted_at ?? undefined,
       createdAt: row.created_at ?? undefined,
@@ -842,6 +867,7 @@ const loadPostgres = async (): Promise<AppData> => {
       saved_by: string[];
       signaled_by: string[];
       forked_by: string[];
+      quote: ContentQuoteContract | null;
     }>("SELECT * FROM items ORDER BY created_at DESC"),
     db.query<CommentRow>("SELECT * FROM comments ORDER BY created_at ASC"),
     db.query<ActionLedgerRow>(
@@ -894,6 +920,7 @@ const loadPostgres = async (): Promise<AppData> => {
     tests: item.tests,
     forks: item.forks,
     attachments: item.attachments ?? [],
+    quote: item.quote ?? undefined,
     comments: commentsByItem.get(item.id) ?? [],
     saved: item.saved,
     savedBy: item.saved_by?.length ? item.saved_by : item.saved ? [defaultProfile.handle] : [],
@@ -1030,6 +1057,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     forks: [],
     comments: [],
     attachments: input.attachments ?? [],
+    quote: input.quote,
     saved: input.room === "office",
     savedBy: input.room === "office" ? [author.handle] : [],
     signaledBy: [],
@@ -1042,12 +1070,12 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
       `INSERT INTO items (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, attachments, saved, saved_by, signaled_by, forked_by
+        tests, forks, attachments, saved, saved_by, signaled_by, forked_by, quote
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26
+        $19, $20, $21, $22, $23, $24, $25, $26, $27
       )`,
       [
         item.id,
@@ -1075,7 +1103,8 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
         item.saved,
         JSON.stringify(item.savedBy),
         JSON.stringify(item.signaledBy),
-        JSON.stringify(item.forkedBy)
+        JSON.stringify(item.forkedBy),
+        item.quote ? JSON.stringify(item.quote) : null
       ]
     );
     if (item.savedBy?.includes(author.handle)) {
@@ -1138,6 +1167,7 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     signaledBy: [],
     forkedBy: [],
     attachments: input.attachments,
+    quote: input.quote,
     replies: []
   };
   const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
@@ -1157,9 +1187,9 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     await getPool().query(
       `INSERT INTO comments (
         id, item_id, parent_id, author_handle, author_name, stance, body,
-        metrics, saved_by, signaled_by, forked_by, created_at
+        metrics, saved_by, signaled_by, forked_by, quote, created_at
       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [
         comment.id,
         itemId,
@@ -1172,6 +1202,7 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
         JSON.stringify(comment.savedBy),
         JSON.stringify(comment.signaledBy),
         JSON.stringify(comment.forkedBy),
+        comment.quote ? JSON.stringify(comment.quote) : null,
         comment.createdAt
       ]
     );
@@ -1352,6 +1383,29 @@ export const applyPostAction = async (
 const canManagePost = (item: InquiryItem, actorHandle: string) =>
   cleanHandle(item.authorHandle ?? item.author) === cleanHandle(actorHandle);
 
+const sanitizePostgresQuotedSource = async (sourceType: "post" | "comment", sourceId: string) => {
+  const predicate = sourceType === "post"
+    ? "quote->>'sourcePostId' = $1"
+    : "quote->>'sourceType' = 'comment' AND quote->>'sourceId' = $1";
+  const unavailableQuote = `jsonb_build_object(
+    'sourceType', quote->>'sourceType',
+    'sourceId', quote->>'sourceId',
+    'sourcePostId', quote->>'sourcePostId',
+    'available', false,
+    'attachmentCount', 0
+  )`;
+  await Promise.all([
+    getPool().query(
+      `UPDATE items SET quote = ${unavailableQuote} WHERE quote->>'available' = 'true' AND ${predicate}`,
+      [sourceId]
+    ),
+    getPool().query(
+      `UPDATE comments SET quote = ${unavailableQuote}, updated_at = now() WHERE quote->>'available' = 'true' AND ${predicate}`,
+      [sourceId]
+    )
+  ]);
+};
+
 const updatePostShape = (item: InquiryItem, input: UpdatePostInput, editedAt = new Date().toISOString()): InquiryItem => ({
   ...item,
   revision: (item.revision ?? 1) + 1,
@@ -1360,6 +1414,7 @@ const updatePostShape = (item: InquiryItem, input: UpdatePostInput, editedAt = n
   excerpt: input.body.trim(),
   claims: [input.body.trim()],
   attachments: input.attachments ?? item.attachments,
+  quote: input.quote === undefined ? item.quote : input.quote ?? undefined,
   editedAt
 });
 
@@ -1367,7 +1422,8 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
   const cleanInput = {
     title: input.title.trim(),
     body: input.body.trim(),
-    attachments: input.attachments
+    attachments: input.attachments,
+    quote: input.quote
   };
   if (!cleanInput.title || !cleanInput.body) return null;
 
@@ -1384,9 +1440,17 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
            body = $3,
            excerpt = $3,
            claims = $4,
-           edited_at = $5
+           edited_at = $5,
+           quote = $6
        WHERE id = $1`,
-      [itemId, updated.title, updated.body, JSON.stringify(updated.claims), updated.editedAt]
+      [
+        itemId,
+        updated.title,
+        updated.body,
+        JSON.stringify(updated.claims),
+        updated.editedAt,
+        updated.quote ? JSON.stringify(updated.quote) : null
+      ]
     );
     return updated;
   }
@@ -1428,6 +1492,7 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
            evidence = $14,
            tests = $15,
            forks = $16,
+           quote = NULL,
            edited_at = NULL,
            deleted_at = $17
        WHERE id = $1`,
@@ -1460,6 +1525,7 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
        WHERE post_id = $1 AND active = true`,
       [itemId]
     );
+    await sanitizePostgresQuotedSource("post", itemId);
     return deleted;
   }
 
@@ -1468,6 +1534,11 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
   if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
   const deleted = { ...tombstonePost(existing), revision: (existing.revision ?? 1) + 1 };
   local.items = local.items.map((item) => (item.id === itemId ? deleted : item));
+  local.items = invalidateQuotedSource(local.items, {
+    sourceType: "post",
+    sourceId: itemId,
+    sourcePostId: itemId
+  });
   deactivateLedgerEntries(local.actionLedger, (activity) => activity.postId === itemId);
   await writeLocal(local);
   return deleted;
@@ -1482,6 +1553,7 @@ const updateCommentShape = (
   revision: (comment.revision ?? 1) + 1,
   body: input.body.trim(),
   attachments: input.attachments ?? comment.attachments,
+  quote: input.quote === undefined ? comment.quote : input.quote ?? undefined,
   editedAt
 });
 
@@ -1491,7 +1563,7 @@ export const updateComment = async (
   input: UpdateCommentInput,
   actorHandle = defaultProfile.handle
 ) => {
-  const cleanInput = { body: input.body.trim(), attachments: input.attachments };
+  const cleanInput = { body: input.body.trim(), attachments: input.attachments, quote: input.quote };
   if (!cleanInput.body) return null;
 
   if (usePostgres) {
@@ -1511,9 +1583,16 @@ export const updateComment = async (
       `UPDATE comments
        SET body = $3,
            edited_at = $4,
+           quote = $5,
            updated_at = now()
        WHERE item_id = $1 AND id = $2`,
-      [itemId, commentId, mapped.updated.body, mapped.updated.editedAt]
+      [
+        itemId,
+        commentId,
+        mapped.updated.body,
+        mapped.updated.editedAt,
+        mapped.updated.quote ? JSON.stringify(mapped.updated.quote) : null
+      ]
     );
     return { ...existing, comments: mapped.comments, revision: (existing.revision ?? 1) + 1 };
   }
@@ -1562,6 +1641,7 @@ export const deleteComment = async (
            saved_by = $8,
            signaled_by = $9,
            forked_by = $10,
+           quote = NULL,
            edited_at = NULL,
            deleted_at = $11,
            updated_at = now()
@@ -1598,6 +1678,8 @@ export const deleteComment = async (
       [itemId, JSON.stringify(deletion.item.metrics), JSON.stringify(deletion.item.signals)]
     );
 
+    await sanitizePostgresQuotedSource("comment", commentId);
+
     return { ...deletion.item, revision: (existing.revision ?? 1) + 1 };
   }
 
@@ -1613,6 +1695,11 @@ export const deleteComment = async (
     return deleted;
   });
   if (!deleted) return null;
+  local.items = invalidateQuotedSource(local.items, {
+    sourceType: "comment",
+    sourceId: commentId,
+    sourcePostId: itemId
+  });
   deactivateLedgerEntries(
     local.actionLedger,
     (activity) => activity.subjectType === "comment" && activity.subjectId === commentId

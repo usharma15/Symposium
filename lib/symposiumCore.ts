@@ -329,7 +329,8 @@ export const tombstonePost = (item: InquiryItem, deletedAt = new Date().toISOStr
   evidence: [],
   tests: [],
   forks: [],
-  attachments: []
+  attachments: [],
+  quote: undefined
 });
 
 export const tombstoneComment = (
@@ -348,6 +349,7 @@ export const tombstoneComment = (
   signaledBy: [],
   forkedBy: [],
   attachments: [],
+  quote: undefined,
   replies: comment.replies ?? []
 });
 

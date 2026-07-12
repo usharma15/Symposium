@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type {
+  ContentQuoteContract,
+  ContentQuoteSourceContract,
   ContentKindContract,
   InquiryAttachmentContract,
   InquiryCommentContract,
@@ -27,6 +29,8 @@ export type ContentKind = ContentKindContract;
 export type InquiryComment = InquiryCommentContract;
 export type InquiryMetrics = InquiryMetricsContract;
 export type InquiryAttachment = InquiryAttachmentContract;
+export type ContentQuote = ContentQuoteContract;
+export type ContentQuoteSource = ContentQuoteSourceContract;
 export type InquiryItem = InquiryItemContract;
 
 export type Room = {

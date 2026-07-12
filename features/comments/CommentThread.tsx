@@ -19,7 +19,7 @@ import {
   Trash2
 } from "lucide-react";
 import type { CommentAction } from "@/lib/dataStore";
-import type { InquiryAttachment, InquiryComment, ResearchProfile } from "@/lib/mockData";
+import type { ContentQuoteSource, InquiryAttachment, InquiryComment, ResearchProfile } from "@/lib/mockData";
 import {
   cleanHandle,
   commentActionActive,
@@ -43,6 +43,11 @@ import {
   AttachmentComposerField,
   type AttachmentUploadHandler
 } from "@/features/attachments/AttachmentViews";
+import {
+  ContentQuoteCard,
+  QuoteActionButton,
+  type QuoteActionHandler
+} from "@/features/quotes/QuoteViews";
 
 export type CommentSegmentStacks = Record<string, string[]>;
 export type AddCommentHandler = (
@@ -50,7 +55,8 @@ export type AddCommentHandler = (
   body: string,
   stance: string,
   parentId: string | null,
-  attachments: InquiryAttachment[]
+  attachments: InquiryAttachment[],
+  quoteSource?: ContentQuoteSource
 ) => Promise<boolean>;
 export type CommentAttachmentPreviewHandler = (
   itemId: string,
@@ -191,6 +197,8 @@ export function CommentThread({
   onUploadAttachment,
   onOpenAttachmentPreview,
   onCommentAction,
+  onQuote,
+  onOpenQuote,
   onEditComment,
   onDeleteComment,
   actorHandle,
@@ -210,6 +218,8 @@ export function CommentThread({
   onUploadAttachment: AttachmentUploadHandler;
   onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
+  onQuote: QuoteActionHandler;
+  onOpenQuote: QuoteActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
@@ -237,6 +247,8 @@ export function CommentThread({
             onUploadAttachment={onUploadAttachment}
             onOpenAttachmentPreview={onOpenAttachmentPreview}
             onCommentAction={onCommentAction}
+            onQuote={onQuote}
+            onOpenQuote={onOpenQuote}
             onEditComment={onEditComment}
             onDeleteComment={onDeleteComment}
             actorHandle={actorHandle}
@@ -281,6 +293,8 @@ function CommentRootSegment({
   onUploadAttachment,
   onOpenAttachmentPreview,
   onCommentAction,
+  onQuote,
+  onOpenQuote,
   onEditComment,
   onDeleteComment,
   actorHandle,
@@ -301,6 +315,8 @@ function CommentRootSegment({
   onUploadAttachment: AttachmentUploadHandler;
   onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
+  onQuote: QuoteActionHandler;
+  onOpenQuote: QuoteActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
@@ -373,6 +389,8 @@ function CommentRootSegment({
         onUploadAttachment={onUploadAttachment}
         onOpenAttachmentPreview={onOpenAttachmentPreview}
         onCommentAction={onCommentAction}
+        onQuote={onQuote}
+        onOpenQuote={onOpenQuote}
         onEditComment={onEditComment}
         onDeleteComment={onDeleteComment}
         actorHandle={actorHandle}
@@ -407,6 +425,8 @@ function CommentNode({
   onUploadAttachment,
   onOpenAttachmentPreview,
   onCommentAction,
+  onQuote,
+  onOpenQuote,
   onEditComment,
   onDeleteComment,
   actorHandle,
@@ -426,6 +446,8 @@ function CommentNode({
   onUploadAttachment: AttachmentUploadHandler;
   onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
+  onQuote: QuoteActionHandler;
+  onOpenQuote: QuoteActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
@@ -516,6 +538,16 @@ function CommentNode({
             }
           />
         ) : null}
+        {comment.quote ? (
+          <ContentQuoteCard
+            quote={comment.quote}
+            onOpen={comment.quote.available ? () => onOpenQuote({
+              sourceType: comment.quote!.sourceType,
+              sourceId: comment.quote!.sourceId,
+              sourcePostId: comment.quote!.sourcePostId
+            }) : undefined}
+          />
+        ) : null}
         <CommentTimeFooter comment={comment} />
         {comment.id && !commentDeleted ? (
           <CanonicalLink
@@ -533,6 +565,7 @@ function CommentNode({
           itemId={itemId}
           actorHandle={actorHandle}
           onAction={onCommentAction}
+          onQuote={() => comment.id && onQuote({ sourceType: "comment", sourceId: comment.id, sourcePostId: itemId })}
         />
         {commentDeleted ? null : (
           <>
@@ -545,8 +578,8 @@ function CommentNode({
                 parentId={comment.id ?? null}
                 compact
                 onUploadAttachment={onUploadAttachment}
-                onAddComment={async (id, body, stance, parentId, attachments) => {
-                  const saved = await onAddComment(id, body, stance, parentId, attachments);
+                onAddComment={async (id, body, stance, parentId, attachments, quoteSource) => {
+                  const saved = await onAddComment(id, body, stance, parentId, attachments, quoteSource);
                   if (saved) setReplyOpen(false);
                   return saved;
                 }}
@@ -582,6 +615,8 @@ function CommentNode({
                 onUploadAttachment={onUploadAttachment}
                 onOpenAttachmentPreview={onOpenAttachmentPreview}
                 onCommentAction={onCommentAction}
+                onQuote={onQuote}
+                onOpenQuote={onOpenQuote}
                 onEditComment={onEditComment}
                 onDeleteComment={onDeleteComment}
                 actorHandle={actorHandle}
@@ -618,12 +653,14 @@ export function CommentActions({
   comment,
   itemId,
   actorHandle,
-  onAction
+  onAction,
+  onQuote
 }: {
   comment: InquiryComment;
   itemId: string;
   actorHandle: string;
   onAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  onQuote: () => void;
 }) {
   if (!comment.id) return null;
 
@@ -660,6 +697,7 @@ export function CommentActions({
           </button>
         );
       })}
+      <QuoteActionButton disabled={deleted} label="comment" onQuote={onQuote} />
     </div>
   );
 }

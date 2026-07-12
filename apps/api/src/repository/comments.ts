@@ -30,21 +30,11 @@ import { assertUniqueAttachmentIds, canonicalAttachmentIds, replaceOwnerAttachme
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
+import { markQuotedCommentUnavailable, resolveContentQuote, resolveUpdatedContentQuote } from "../services/contentQuotes";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
 import { transitionCommentAction } from "./actions";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
-import {
-  actorHandle,
-  commentTreesFromRows,
-  ensureLiveData,
-  getInitialState,
-  getPostConversationAttachments,
-  newId,
-  rowToAttachment,
-  rowToItem,
-  type CommentRow,
-  type SnapshotRow
-} from "./foundation";
+import { actorHandle, commentTreesFromRows, ensureLiveData, getInitialState, getPostConversationAttachments, newId, rowToAttachment, rowToItem, type CommentRow, type SnapshotRow } from "./foundation";
 
 type ActionMutationResult = {
   item: InquiryItemContract;
@@ -167,7 +157,8 @@ export const addComment = async (
         saved,
         saved_by AS "savedBy",
         signaled_by AS "signaledBy",
-        forked_by AS "forkedBy"
+        forked_by AS "forkedBy",
+        quote
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -191,6 +182,7 @@ export const addComment = async (
         saved_by AS "savedBy",
         signaled_by AS "signaledBy",
         forked_by AS "forkedBy",
+        quote,
         edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         created_at AS "createdAt"
@@ -220,6 +212,7 @@ export const addComment = async (
       uploaderHandle: handle
     });
     comment.attachments = attachmentChange.attachments.map(rowToAttachment);
+    comment.quote = await resolveContentQuote(client, input.quoteSource, { ownerId: comment.id as string, ownerType: "comment" });
 
     const lockedNextCritiques = incrementMetric(lockedItem.metrics.critiques, 1);
     const lockedNextMetrics = { ...lockedItem.metrics, critiques: lockedNextCritiques };
@@ -232,9 +225,9 @@ export const addComment = async (
     await client.query(
       `INSERT INTO comments (
         id, post_id, parent_id, author_handle, author_name, stance, body,
-        metrics, saved_by, signaled_by, forked_by, created_at
+        metrics, saved_by, signaled_by, forked_by, quote, created_at
       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [
         comment.id,
         postId,
@@ -247,6 +240,7 @@ export const addComment = async (
         JSON.stringify(comment.savedBy),
         JSON.stringify(comment.signaledBy),
         JSON.stringify(comment.forkedBy),
+        comment.quote ? JSON.stringify(comment.quote) : null,
         comment.createdAt
       ]
     );
@@ -279,6 +273,7 @@ export const addComment = async (
       subjectId: comment.id as string,
       metadata: mutationAuditMetadata(mutation, {
         attachmentCount: comment.attachments.length,
+        quotedSourceType: comment.quote?.sourceType,
         parentId: comment.parentId,
         postId
       })
@@ -307,9 +302,6 @@ export const addComment = async (
 
   return { comment, item: updatedItem };
 };
-
-
-
 
 export const updateComment = async (
   postId: string,
@@ -369,7 +361,7 @@ export const updateComment = async (
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy"
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -387,7 +379,7 @@ export const updateComment = async (
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
         author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", edited_at AS "editedAt",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
        FROM comments
        WHERE post_id = $1
@@ -409,7 +401,7 @@ export const updateComment = async (
     if (input.expectedEditedAt !== undefined && input.expectedEditedAt !== currentEditedAt) {
       throw new TRPCError({
         code: "CONFLICT",
-        message: "This comment changed after it was opened. Refresh before replacing its attachments."
+        message: "This comment changed after it was opened. Refresh before saving content references."
       });
     }
     if (input.attachmentIds?.length && (row.room === "office" || row.kind === "draft")) {
@@ -426,11 +418,13 @@ export const updateComment = async (
       uploaderHandle: handle
     });
     removedAttachmentIds = attachmentChange.removedAttachmentIds;
+    const quote = await resolveUpdatedContentQuote(client, original.quote, input.quoteSource, { ownerId: commentId, ownerType: "comment" });
 
     const mapped = mapCommentTree(existingComments, commentId, (comment) => ({
       ...comment,
       body: input.body,
       attachments: attachmentChange.attachments.map(rowToAttachment),
+      quote,
       editedAt,
       revision: (comment.revision ?? 1) + 1
     }));
@@ -440,10 +434,11 @@ export const updateComment = async (
       `UPDATE comments
        SET body = $3,
            edited_at = $4,
+           quote = $5,
            revision = revision + 1,
            updated_at = now()
        WHERE post_id = $1 AND id = $2`,
-      [postId, commentId, input.body, editedAt]
+      [postId, commentId, input.body, editedAt, quote ? JSON.stringify(quote) : null]
     );
 
     const postRevisionResult = await client.query<{ revision: number }>(
@@ -463,6 +458,7 @@ export const updateComment = async (
       metadata: {
         attachmentCount: attachmentChange.attachments.length,
         removedAttachmentCount: removedAttachmentIds.length,
+        quotedSourceType: quote?.sourceType,
         editedAt,
         postId
       }
@@ -550,7 +546,7 @@ export const deleteComment = async (
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy"
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -568,7 +564,7 @@ export const deleteComment = async (
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
         author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", edited_at AS "editedAt",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
        FROM comments
        WHERE post_id = $1
@@ -582,6 +578,7 @@ export const deleteComment = async (
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) {
       updatedItem = rowToItem(row, existingComments, postAttachments.get(postId) ?? []);
+      await markQuotedCommentUnavailable(client, commentId);
       storageAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(
         client,
         "comment",
@@ -606,6 +603,7 @@ export const deleteComment = async (
              saved_by = $6,
              signaled_by = $7,
              forked_by = $8,
+             quote = NULL,
              edited_at = NULL,
              deleted_at = $9,
              revision = revision + 1,
@@ -623,6 +621,7 @@ export const deleteComment = async (
           deletion.deletedComment.deletedAt
         ]
       );
+      await markQuotedCommentUnavailable(client, commentId);
       await client.query(
         `UPDATE comment_actions
          SET active = false, count = 0, revision = revision + 1, updated_at = now()
@@ -750,7 +749,7 @@ export const applyCommentAction = async (
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy"
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -768,7 +767,7 @@ export const applyCommentAction = async (
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
         author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", edited_at AS "editedAt",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
        FROM comments
        WHERE post_id = $1

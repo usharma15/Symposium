@@ -89,6 +89,8 @@ Attachments remain independent staged resources. Binding them to posts, comments
 
 Post, comment, and reply attachments now use the shared owner-neutral claim service. Post and comment edits submit the complete desired attachment identity set under a content-version precondition; retained objects stay ordered, new staged objects are claimed in the owning transaction, and removed objects become unavailable and enter the durable deletion queue before commit. Comments under private Office/draft posts fail closed until protected attachment delivery is available.
 
+Posts and comments also share one quote-reference contract. Either owner type can quote either public source type; the destination stores an exact-word, non-recursive source snapshot inside its own transaction, edits use the same content-version precondition, and source deletion strips the snapshot while preserving only safe canonical identity for an unavailable-state card.
+
 ## Client reconciliation
 
 Inbound state has three classes:
