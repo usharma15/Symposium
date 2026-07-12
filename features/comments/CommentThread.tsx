@@ -192,7 +192,7 @@ export function CommentComposer({
       <textarea
         value={body}
         onChange={(event) => setBody(event.target.value)}
-        placeholder={compact ? "Write a reply" : "Add a critique, question, test, or reasoned response"}
+        placeholder="Write your comment here"
       />
       <QuoteLinkField
         attached={attachedQuote}

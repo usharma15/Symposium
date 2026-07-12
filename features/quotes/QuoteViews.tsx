@@ -184,7 +184,7 @@ export function QuoteLinkField({
         }}
       >
         <QuoteIcon size={16} />
-        Quote
+        Insert quote
       </button>
       {open ? (
         <div className="quote-link-input-row">
@@ -290,12 +290,12 @@ export function QuoteComposerModal({
     <div className="composer-modal-backdrop" role="presentation" onClick={onClose}>
       <form className="post-composer post-composer-modal quote-composer-modal" onSubmit={submit} onClick={(event) => event.stopPropagation()}>
         <div className="composer-modal-head">
-          <div><span>Quote</span><strong>{destination === "post" ? "New post" : "Comment on source"}</strong></div>
+          <div><span>Quote</span><strong>{destination === "post" ? "New post" : "Add comment"}</strong></div>
           <button type="button" title="Close" onClick={onClose}><X size={17} /></button>
         </div>
         <div className="quote-destination-switch" aria-label="Quote destination">
           <button type="button" className={destination === "post" ? "active" : ""} onClick={() => setDestination("post")}>New post</button>
-          <button type="button" className={destination === "comment" ? "active" : ""} onClick={() => setDestination("comment")}>Comment on source</button>
+          <button type="button" className={destination === "comment" ? "active" : ""} onClick={() => setDestination("comment")}>Add comment</button>
         </div>
         {destination === "post" ? (
           <div className="composer-topline">
@@ -308,11 +308,15 @@ export function QuoteComposerModal({
         ) : (
           <div className="composer-topline quote-comment-submit">
             <span />
-            <button type="submit" disabled={busy}>{busy ? "Adding…" : "Add quoted comment"}</button>
+            <button type="submit" disabled={busy}>{busy ? "Posting…" : "Post comment"}</button>
           </div>
         )}
         {destination === "post" ? <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Title" /> : null}
-        <textarea value={body} onChange={(event) => setBody(event.target.value)} placeholder="Add your own framing" />
+        <textarea
+          value={body}
+          onChange={(event) => setBody(event.target.value)}
+          placeholder={destination === "comment" ? "Write your comment here" : `Write your ${kind} here`}
+        />
         <ContentQuoteCard quote={quote} profiles={profiles} />
         <AttachmentComposerField
           attachments={attachments}

@@ -183,7 +183,7 @@ export function PostComposerModal({
         <textarea
           value={body}
           onChange={(event) => setBody(event.target.value)}
-          placeholder="Write the thing itself"
+          placeholder={`Write your ${kind} here`}
         />
         <QuoteLinkField
           attached={attachedQuote}
@@ -273,7 +273,7 @@ export function PostEditModal({
         <textarea
           value={body}
           onChange={(event) => setBody(event.target.value)}
-          placeholder="Write the thing itself"
+          placeholder={`Write your ${item.kind === "paper" ? "paper" : "thought"} here`}
         />
         <QuoteLinkField
           attached={attachedQuote}
@@ -360,7 +360,7 @@ export function CommentEditModal({
         <textarea
           value={body}
           onChange={(event) => setBody(event.target.value)}
-          placeholder="Write the comment"
+          placeholder="Write your comment here"
         />
         <QuoteLinkField
           attached={attachedQuote}

@@ -140,6 +140,12 @@ const main = async () => {
   assert.match(quoteViews, /ContentQuoteCard/);
   assert.match(quoteViews, /QuoteLinkField/);
   assert.match(quoteViews, /quote-card-author/);
+  assert.match(quoteViews, /Insert quote/);
+  assert.match(quoteViews, /Post comment/);
+  assert.match(quoteViews, /Write your comment here/);
+  assert.doesNotMatch(quoteViews, /Comment on source|Add quoted comment|Add your own framing/);
+  assert.match(postViews, /Write your \$\{kind\} here/);
+  assert.match(commentViews, /placeholder="Write your comment here"/);
   assert.match(postViews, /title="Open post link"/);
   assert.match(commentViews, /title="Open comment link"/);
   assert.doesNotMatch(commentViews, />Comment link</);
