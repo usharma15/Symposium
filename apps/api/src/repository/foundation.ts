@@ -690,7 +690,7 @@ export const rowToItem = (
     forks: json(row.forks, []),
     comments,
     attachments: postAttachments.length ? postAttachments : undefined,
-    quote: row.quote,
+    quote: row.quote ?? undefined,
     saved: row.saved,
     savedBy: json(row.savedBy, []),
     signaledBy: json(row.signaledBy, []),

@@ -101,9 +101,10 @@ const main = async () => {
   }).success, true);
 
   const root = process.cwd();
-  const [service, migration, quoteViews, controller] = await Promise.all([
+  const [service, migration, foundation, quoteViews, controller] = await Promise.all([
     readFile(path.join(root, "apps/api/src/services/contentQuotes.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8"),
+    readFile(path.join(root, "apps/api/src/repository/foundation.ts"), "utf8"),
     readFile(path.join(root, "features/quotes/QuoteViews.tsx"), "utf8"),
     readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8")
   ]);
@@ -116,6 +117,7 @@ const main = async () => {
   assert.match(migration, /0017_content_quotes/);
   assert.match(migration, /posts_quote_source_post_idx/);
   assert.match(migration, /comments_quote_comment_source_idx/);
+  assert.match(foundation, /quote: row\.quote \?\? undefined/);
   assert.match(quoteViews, /QuoteActionButton/);
   assert.match(quoteViews, /ContentQuoteCard/);
   assert.match(controller, /invalidateLiveQuotedSource/);
