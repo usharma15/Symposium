@@ -6,6 +6,7 @@ import type { InquiryAttachment } from "@/lib/mockData";
 import { splitPreviewTextIntoPages } from "@/lib/attachmentRules";
 import {
   buildStructuredAttachmentMetadata,
+  parseCsvPreview,
   sourceLanguageForFileName,
   structuredPreviewFromMetadata,
   type StructuredAttachmentPreview
@@ -28,8 +29,9 @@ export function StructuredAttachmentPreviewPane({ attachment, mode, zoom = 1 }: 
   mode: PreviewMode;
   zoom?: number;
 }) {
-  const initialStructured = useMemo(() => structuredPreviewFromMetadata(attachment.metadata), [attachment.metadata]);
   const initialText = metadataText(attachment.metadata, "previewText");
+  const initialStructured = useMemo(() => structuredPreviewFromMetadata(attachment.metadata)
+    ?? (attachment.fileName.toLowerCase().endsWith(".csv") && initialText ? parseCsvPreview(initialText) : null), [attachment.fileName, attachment.metadata, initialText]);
   const [structured, setStructured] = useState<StructuredAttachmentPreview | null>(initialStructured);
   const [previewText, setPreviewText] = useState(initialText);
   const [loading, setLoading] = useState(false);

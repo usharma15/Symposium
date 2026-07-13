@@ -44,7 +44,8 @@ import {
   CommentOwnerControls,
   type CommentAttachmentPreviewHandler
 } from "@/features/comments/CommentThread";
-import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
+import { SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
+import { appendedContentAttachments } from "@/lib/documentModel";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { FeedPost } from "@/features/posts/PostViews";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
@@ -646,9 +647,17 @@ function ProfileCommentCard({
           />
         </div>
       </header>
-      <ExpandableBodyText
-        text={activity.comment.body}
-        className="profile-comment-text"
+      <SymposiumDocumentRenderer
+        document={activity.comment.document}
+        body={activity.comment.body}
+        attachments={commentDeleted ? [] : activity.comment.attachments ?? []}
+        profiles={profiles}
+        mode="comment"
+        onOpenAttachment={(attachmentId) => {
+          if (activity.comment.id && !commentDeleted) {
+            onOpenAttachmentPreview(activity.item.id, activity.comment.id, attachmentId);
+          }
+        }}
         onExpand={() => {
           if (activity.comment.id) {
             onCommentAction(activity.item.id, activity.comment.id, "read", { trigger: "expand", surface: "profile" });
@@ -657,7 +666,7 @@ function ProfileCommentCard({
       />
       {activity.comment.id && !commentDeleted ? (
         <AttachmentCarousel
-          attachments={activity.comment.attachments ?? []}
+          attachments={appendedContentAttachments(activity.comment.document, activity.comment.attachments ?? [])}
           label="Comment attachments"
           variant="comment"
           onOpenPreview={(attachmentId) =>

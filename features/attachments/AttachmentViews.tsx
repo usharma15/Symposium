@@ -118,6 +118,14 @@ const attachmentPageCount = (attachment: InquiryAttachment, fallbackText = "") =
   return 1;
 };
 
+const attachmentRenderKind = (attachment: InquiryAttachment) =>
+  attachmentKindForContentType(attachment.contentType, attachment.fileName);
+
+const attachmentForRendering = (attachment: InquiryAttachment): InquiryAttachment => {
+  const kind = attachmentRenderKind(attachment);
+  return kind === attachment.kind ? attachment : { ...attachment, kind };
+};
+
 const decodeXmlText = (value: string) =>
   value
     .replace(/&amp;/g, "&")
@@ -401,11 +409,13 @@ const startAttachmentDrag = (attachment: InquiryAttachment) => (event: React.Dra
 
 function postPreviewAttachments(item: InquiryItem) {
   if (isDeletedPost(item)) return [];
-  return feedPreviewAttachments(item.document, item.attachments ?? []).filter((attachment) => attachment.url);
+  return feedPreviewAttachments(item.document, item.attachments ?? [])
+    .filter((attachment) => attachment.url)
+    .map(attachmentForRendering);
 }
 
 const visibleAttachments = (attachments: InquiryAttachment[]) =>
-  attachments.filter((attachment) => attachment.url);
+  attachments.filter((attachment) => attachment.url).map(attachmentForRendering);
 
 export function AttachmentCarousel({
   attachments: sourceAttachments,
@@ -510,12 +520,13 @@ export function PostAttachmentCarousel({
 }
 
 export function attachmentIcon(attachment: InquiryAttachment) {
-  if (attachment.kind === "image") return <ImageIcon size={15} />;
-  if (attachment.kind === "video") return <Film size={15} />;
-  if (attachment.kind === "code") return <Code2 size={15} />;
-  if (attachment.kind === "spreadsheet") return <FileSpreadsheet size={15} />;
-  if (attachment.kind === "presentation") return <Presentation size={15} />;
-  if (attachment.kind === "pdf" || attachment.kind === "text" || attachment.kind === "document") {
+  const kind = attachmentRenderKind(attachment);
+  if (kind === "image") return <ImageIcon size={15} />;
+  if (kind === "video") return <Film size={15} />;
+  if (kind === "code") return <Code2 size={15} />;
+  if (kind === "spreadsheet") return <FileSpreadsheet size={15} />;
+  if (kind === "presentation") return <Presentation size={15} />;
+  if (kind === "pdf" || kind === "text" || kind === "document") {
     return <FileText size={15} />;
   }
   return <Paperclip size={15} />;
@@ -530,7 +541,8 @@ function AttachmentPreviewPane({
   mode: AttachmentRenderMode;
   onOpenPreview?: (event: React.MouseEvent<HTMLElement>) => void;
 }) {
-  if (attachment.kind === "image" && attachment.url) {
+  const kind = attachmentRenderKind(attachment);
+  if (kind === "image" && attachment.url) {
     return (
       <div className={`attachment-media attachment-media-${mode}`}>
         <img src={attachment.url} alt="" style={attachmentFocalStyle(attachment)} />
@@ -538,7 +550,7 @@ function AttachmentPreviewPane({
     );
   }
 
-  if (attachment.kind === "video" && attachment.url) {
+  if (kind === "video" && attachment.url) {
     return (
       <div className={`attachment-media attachment-media-${mode}`}>
         <video
@@ -558,19 +570,19 @@ function AttachmentPreviewPane({
     );
   }
 
-  if (attachment.kind === "pdf" && attachment.url) {
+  if (kind === "pdf" && attachment.url) {
     return <PdfAttachmentPreview attachment={attachment} mode={mode} />;
   }
 
-  if (attachment.kind === "code" || attachment.kind === "spreadsheet" || attachment.kind === "presentation") {
-    return <StructuredAttachmentPreviewPane attachment={attachment} mode={mode} />;
+  if (kind === "code" || kind === "spreadsheet" || kind === "presentation") {
+    return <StructuredAttachmentPreviewPane attachment={attachmentForRendering(attachment)} mode={mode} />;
   }
 
-  if (attachment.kind === "document" && isDocxAttachment(attachment)) {
+  if (kind === "document" && isDocxAttachment(attachment)) {
     return <DocxAttachmentPreview attachment={attachment} mode={mode} />;
   }
 
-  if (attachment.kind === "text" || attachment.kind === "document") {
+  if (kind === "text" || kind === "document") {
     return <TextAttachmentPreview attachment={attachment} mode={mode} />;
   }
 
@@ -863,6 +875,7 @@ function ExpandedMediaPreview({
   zoom: number;
   viewportSize: AttachmentViewportSize | null;
 }) {
+  const kind = attachmentRenderKind(attachment);
   const [intrinsicSize, setIntrinsicSize] = useState<MediaIntrinsicSize | null>(() =>
     attachmentMediaSize(attachment)
   );
@@ -885,7 +898,7 @@ function ExpandedMediaPreview({
     setIntrinsicSize(attachmentMediaSize(attachment));
   }, [attachment.id]);
 
-  if (attachment.kind === "image" && attachment.url) {
+  if (kind === "image" && attachment.url) {
     return (
       <div className="attachment-expanded-media" style={mediaShellStyle}>
         <img
@@ -903,7 +916,7 @@ function ExpandedMediaPreview({
     );
   }
 
-  if (attachment.kind === "video" && attachment.url) {
+  if (kind === "video" && attachment.url) {
     return (
       <div className="attachment-expanded-media" style={mediaShellStyle}>
         <video
@@ -935,23 +948,24 @@ function AttachmentExpandedPane({
   zoom: number;
   viewportSize: AttachmentViewportSize | null;
 }) {
-  if (attachment.kind === "image" || attachment.kind === "video") {
+  const kind = attachmentRenderKind(attachment);
+  if (kind === "image" || kind === "video") {
     return <ExpandedMediaPreview attachment={attachment} zoom={zoom} viewportSize={viewportSize} />;
   }
 
-  if (attachment.kind === "pdf" && attachment.url) {
+  if (kind === "pdf" && attachment.url) {
     return <PdfAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} />;
   }
 
-  if (attachment.kind === "code" || attachment.kind === "spreadsheet" || attachment.kind === "presentation") {
-    return <StructuredAttachmentPreviewPane attachment={attachment} mode="expanded" zoom={zoom} />;
+  if (kind === "code" || kind === "spreadsheet" || kind === "presentation") {
+    return <StructuredAttachmentPreviewPane attachment={attachmentForRendering(attachment)} mode="expanded" zoom={zoom} />;
   }
 
-  if (attachment.kind === "document" && isDocxAttachment(attachment)) {
+  if (kind === "document" && isDocxAttachment(attachment)) {
     return <DocxAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} />;
   }
 
-  if (attachment.kind === "text" || attachment.kind === "document") {
+  if (kind === "text" || kind === "document") {
     return <TextAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} />;
   }
 

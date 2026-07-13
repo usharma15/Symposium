@@ -75,15 +75,43 @@ export const sourceLanguageForFileName = (fileName: string) => {
   return aliases[extension] ?? (extension ? extension.toUpperCase() : "Source code");
 };
 
+const csvDelimiterForSource = (source: string) => {
+  const lines = source.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim()).slice(0, 8);
+  const delimiters = [",", ";", "\t", "|"] as const;
+  const countOutsideQuotes = (line: string, delimiter: typeof delimiters[number]) => {
+    let quoted = false;
+    let count = 0;
+    for (let index = 0; index < line.length; index += 1) {
+      const character = line[index];
+      if (character === '"') {
+        if (quoted && line[index + 1] === '"') index += 1;
+        else quoted = !quoted;
+      } else if (!quoted && character === delimiter) count += 1;
+    }
+    return count;
+  };
+  const ranked = delimiters.map((delimiter) => {
+    const counts = lines.map((line) => countOutsideQuotes(line, delimiter));
+    const positive = counts.filter((count) => count > 0);
+    const frequencies = new Map<number, number>();
+    for (const count of positive) frequencies.set(count, (frequencies.get(count) ?? 0) + 1);
+    const [mode = 0, consistency = 0] = [...frequencies.entries()].sort((left, right) => right[1] - left[1] || right[0] - left[0])[0] ?? [];
+    return { delimiter, score: consistency * 100 + positive.length * 10 + mode };
+  }).sort((left, right) => right.score - left.score);
+  return ranked[0]?.score ? ranked[0].delimiter : ",";
+};
+
 export const parseCsvPreview = (source: string): SpreadsheetPreview => {
+  const normalizedSource = source.replace(/^\uFEFF/, "");
+  const delimiter = csvDelimiterForSource(normalizedSource);
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
   let quoted = false;
-  for (let index = 0; index < source.length && rows.length < maxRows; index += 1) {
-    const character = source[index] ?? "";
+  for (let index = 0; index < normalizedSource.length && rows.length < maxRows; index += 1) {
+    const character = normalizedSource[index] ?? "";
     if (quoted) {
-      if (character === '"' && source[index + 1] === '"') {
+      if (character === '"' && normalizedSource[index + 1] === '"') {
         field += '"';
         index += 1;
       } else if (character === '"') quoted = false;
@@ -91,7 +119,7 @@ export const parseCsvPreview = (source: string): SpreadsheetPreview => {
       continue;
     }
     if (character === '"') quoted = true;
-    else if (character === ",") {
+    else if (character === delimiter) {
       if (row.length < maxColumns) row.push(field.trim().slice(0, maxCellLength));
       field = "";
     } else if (character === "\n") {

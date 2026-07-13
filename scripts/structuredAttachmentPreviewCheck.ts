@@ -3,8 +3,10 @@ import JSZip from "jszip";
 import {
   buildStructuredAttachmentMetadata,
   parseCsvPreview,
+  sourceLanguageForFileName,
   structuredPreviewFromMetadata
 } from "@/lib/structuredAttachmentPreview";
+import { attachmentKindForContentType } from "@/lib/attachmentRules";
 
 const makeFile = async (zip: JSZip, name: string, type: string) => {
   const bytes = await zip.generateAsync({ type: "uint8array" });
@@ -15,6 +17,10 @@ const makeFile = async (zip: JSZip, name: string, type: string) => {
 const main = async () => {
 const csv = parseCsvPreview('name,score,note\nAda,10,"quoted, value"\nLinus,9,kernel');
 assert.deepEqual(csv.sheets[0]?.rows[1], ["Ada", "10", "quoted, value"]);
+const semicolonCsv = parseCsvPreview('\uFEFFname;score;note\nAda;10,5;"quoted; value"\nLinus;9,0;kernel');
+assert.deepEqual(semicolonCsv.sheets[0]?.rows[1], ["Ada", "10,5", "quoted; value"]);
+const tabCsv = parseCsvPreview("name\tscore\tnote\nAda\t10\tcompiler");
+assert.deepEqual(tabCsv.sheets[0]?.rows[1], ["Ada", "10", "compiler"]);
 
 const xlsx = new JSZip();
 xlsx.file("xl/workbook.xml", '<workbook><sheets><sheet name="Results" sheetId="1" r:id="rId1"/></sheets></workbook>');
@@ -51,16 +57,32 @@ const pythonMetadata = await buildStructuredAttachmentMetadata(
 );
 assert.equal(pythonMetadata.language, "Python");
 assert.match(String(pythonMetadata.previewText), /return 42/);
+
+const codeExtensions = [
+  "asm", "bash", "c", "cc", "conf", "cpp", "cxx", "cs", "css", "dart", "erl", "ex", "exs",
+  "fish", "fs", "fsx", "go", "gradle", "graphql", "groovy", "h", "hpp", "hs", "html", "ini",
+  "ipynb", "java", "js", "jsx", "json", "kt", "kts", "lua", "m", "mm", "php", "pl", "ps1",
+  "py", "r", "rb", "rs", "s", "scala", "sh", "sql", "swift", "tex", "toml", "ts", "tsx",
+  "vb", "vue", "xml", "yaml", "yml", "zsh"
+];
+for (const extension of codeExtensions) {
+  const fileName = `preview.${extension}`;
+  const kind = attachmentKindForContentType("text/plain", fileName);
+  assert.equal(kind, "code", `${fileName} should use the code viewer`);
+  const metadata = await buildStructuredAttachmentMetadata(new File([`fixture for ${extension}\n`], fileName, { type: "text/plain" }), kind);
+  assert.equal(metadata.language, sourceLanguageForFileName(fileName));
+  assert.match(String(metadata.previewText), new RegExp(extension.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+}
 assert.ok(new TextEncoder().encode(JSON.stringify(xlsxMetadata)).byteLength < 64 * 1024);
 assert.ok(new TextEncoder().encode(JSON.stringify(pptxMetadata)).byteLength < 64 * 1024);
 
 console.log(JSON.stringify({
   ok: true,
   checked: [
-    "quoted CSV cell parsing",
+    "comma, semicolon, tab, BOM, and quoted CSV parsing",
     "XLSX shared-string and worksheet extraction",
     "PPTX slide extraction",
-    "source-code metadata",
+    `${codeExtensions.length} source-code extension viewers and metadata`,
     "bounded structured metadata"
   ]
 }, null, 2));

@@ -1,5 +1,6 @@
 /* Owns attachment-native document rendering, expanded composition, and equation editing. */
 :root {
+  --document-surface-solid: #fffefa;
   --document-font-system: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --document-font-serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
   --document-font-humanist: Optima, Candara, "Trebuchet MS", sans-serif;
@@ -15,6 +16,8 @@
   --document-color-forest: #285943;
   --document-color-gold: #9a6b16;
 }
+
+.symposium-shell.night { --document-surface-solid: #181919; }
 
 .symposium-document {
   color: var(--ink);
@@ -93,8 +96,9 @@
 .symposium-document-editor.disabled { opacity: 0.7; pointer-events: none; }
 .document-editor-toolbar {
   align-items: center;
-  background: color-mix(in srgb, var(--surface-strong) 96%, transparent);
+  background: var(--document-surface-solid);
   border-bottom: 1px solid var(--line);
+  box-shadow: 0 4px 10px rgba(7, 18, 19, 0.08);
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
@@ -102,6 +106,7 @@
   position: sticky;
   top: 82px;
   z-index: 4;
+  isolation: isolate;
 }
 .document-editor-toolbar > div { align-items: center; border-right: 1px solid var(--line); display: flex; gap: 0.15rem; padding-right: 0.35rem; }
 .document-editor-toolbar > div:last-child { border-right: 0; }
@@ -188,7 +193,7 @@
 
 .post-composer-modal,
 .post-edit-modal,
-.quote-composer-modal { max-height: calc(100vh - 2rem); overflow-y: auto; }
+.quote-composer-modal { background: var(--document-surface-solid); max-height: calc(100vh - 2rem); overflow-y: auto; }
 .post-composer .symposium-document-editor { width: 100%; }
 .post-composer-modal .document-editor-toolbar,
 .post-edit-modal .document-editor-toolbar,

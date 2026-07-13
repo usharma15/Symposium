@@ -83,6 +83,16 @@ type DocumentFont = typeof documentFonts[number];
 type DocumentSize = typeof documentSizes[number];
 type DocumentColor = typeof documentColors[number];
 type PreferredTextStyle = { font: DocumentFont; size: DocumentSize; color: DocumentColor };
+type PreferredInlineMarks = { bold: boolean; italic: boolean; underline: boolean };
+type PreferredBlock = "paragraph" | "heading1" | "heading2";
+type PreferredAlignment = "left" | "center" | "right";
+type PersistentFormattingStorage = {
+  textStyle: PreferredTextStyle | null;
+  marks: PreferredInlineMarks | null;
+  block: PreferredBlock | null;
+  alignment: PreferredAlignment | null;
+  indent: number | null;
+};
 const defaultPreferredTextStyle: PreferredTextStyle = { font: "system", size: "normal", color: "default" };
 const defaultDocumentSettings: NonNullable<SymposiumDocument["settings"]> = { width: "standard", margin: "normal" };
 
@@ -289,50 +299,118 @@ const DocumentAttributes = Extension.create({
   }
 });
 
-const PersistentTextStyle = Extension.create({
-  name: "persistentTextStyle",
+const PersistentFormatting = Extension.create<
+  { capability: EditorCapability },
+  PersistentFormattingStorage
+>({
+  name: "persistentFormatting",
+  addOptions() {
+    return { capability: "paper" };
+  },
   addStorage() {
-    return { preferred: null as PreferredTextStyle | null };
+    return { textStyle: null, marks: null, block: null, alignment: null, indent: null };
   },
   addProseMirrorPlugins() {
     const editor = this.editor;
+    const capability = this.options.capability;
     return [new Plugin({
-      appendTransaction: (_transactions, _oldState, newState) => {
-        const preferred = (editor.storage as unknown as { persistentTextStyle: { preferred: PreferredTextStyle | null } }).persistentTextStyle.preferred;
-        if (!preferred) return null;
+      appendTransaction: (transactions, _oldState, newState) => {
+        const preferred = (editor.storage as unknown as { persistentFormatting: PersistentFormattingStorage }).persistentFormatting;
         const textStyle = newState.schema.marks.textStyle;
-        if (!textStyle) return null;
-        const preferredMark = textStyle.create(preferred);
+        const preferredTextStyleMark = preferred.textStyle && textStyle ? textStyle.create(preferred.textStyle) : null;
+        const controlledMarkTypes = {
+          bold: newState.schema.marks.bold,
+          italic: newState.schema.marks.italic,
+          underline: newState.schema.marks.underline
+        };
         let transaction = newState.tr;
         let changed = false;
-        for (const sourceTransaction of _transactions) {
+        for (const sourceTransaction of transactions) {
           if (!sourceTransaction.docChanged) continue;
-          const insertsText = sourceTransaction.steps.some((step) => {
-            const json = step.toJSON() as { slice?: { content?: Array<{ text?: string }> } };
-            return json.slice?.content?.some((node) => typeof node.text === "string") ?? false;
-          });
-          if (!insertsText) continue;
           for (const { newRange } of getChangedRanges(sourceTransaction)) {
             const from = Math.max(0, Math.min(newState.doc.content.size, newRange.from));
             const to = Math.max(from, Math.min(newState.doc.content.size, newRange.to));
             newState.doc.nodesBetween(from, to, (node, pos) => {
-              if (!node.isText || node.marks.some((mark) => mark.type === textStyle)) return;
+              if (!node.isText) return;
               const markFrom = Math.max(from, pos);
               const markTo = Math.min(to, pos + node.nodeSize);
               if (markTo <= markFrom) return;
-              transaction = transaction.addMark(markFrom, markTo, preferredMark);
-              changed = true;
+              if (preferredTextStyleMark && textStyle) {
+                const current = node.marks.find((mark) => mark.type === textStyle);
+                if (!current || current.attrs.font !== preferred.textStyle?.font || current.attrs.size !== preferred.textStyle?.size || current.attrs.color !== preferred.textStyle?.color) {
+                  transaction = transaction.removeMark(markFrom, markTo, textStyle).addMark(markFrom, markTo, preferredTextStyleMark);
+                  changed = true;
+                }
+              }
+              if (preferred.marks) {
+                for (const [name, markType] of Object.entries(controlledMarkTypes) as Array<[keyof PreferredInlineMarks, typeof controlledMarkTypes.bold]>) {
+                  if (!markType) continue;
+                  const active = node.marks.some((mark) => mark.type === markType);
+                  if (preferred.marks[name] && !active) {
+                    transaction = transaction.addMark(markFrom, markTo, markType.create());
+                    changed = true;
+                  } else if (!preferred.marks[name] && active) {
+                    transaction = transaction.removeMark(markFrom, markTo, markType);
+                    changed = true;
+                  }
+                }
+              }
             });
           }
         }
+
+        if (capability === "paper" && newState.selection.empty && transactions.some((source) => source.docChanged)) {
+          const { $from } = newState.selection;
+          const insideList = Array.from({ length: $from.depth + 1 }, (_unused, depth) => $from.node(depth).type.name).includes("listItem");
+          if (!insideList) {
+            for (let depth = $from.depth; depth > 0; depth -= 1) {
+              const node = $from.node(depth);
+              if (node.type.name !== "paragraph" && node.type.name !== "heading") continue;
+              const pos = $from.before(depth);
+              const expectedType = preferred.block === "heading1" || preferred.block === "heading2" ? "heading" : preferred.block === "paragraph" ? "paragraph" : node.type.name;
+              const expectedAlignment = preferred.alignment ?? (isOneOf(node.attrs.textAlign, ["left", "center", "right"] as const) ? node.attrs.textAlign : "left");
+              const expectedIndent = expectedType === "paragraph" ? Math.max(0, Math.min(8, preferred.indent ?? (Number(node.attrs.indent) || 0))) : undefined;
+              const expectedLevel = preferred.block === "heading1" ? 1 : preferred.block === "heading2" ? 2 : Number(node.attrs.level) || 1;
+              const typeChanged = node.type.name !== expectedType;
+              const attributesChanged = node.attrs.textAlign !== expectedAlignment
+                || (expectedType === "paragraph" && Number(node.attrs.indent) !== expectedIndent)
+                || (expectedType === "heading" && Number(node.attrs.level) !== expectedLevel);
+              if (typeChanged || attributesChanged) {
+                const nextType = newState.schema.nodes[expectedType];
+                if (nextType) {
+                  transaction = transaction.setNodeMarkup(pos, nextType, expectedType === "heading" ? {
+                    blockId: node.attrs.blockId,
+                    level: expectedLevel,
+                    textAlign: expectedAlignment
+                  } : {
+                    blockId: node.attrs.blockId,
+                    textAlign: expectedAlignment,
+                    indent: expectedIndent
+                  });
+                  changed = true;
+                }
+              }
+              break;
+            }
+          }
+        }
+
         if (!newState.selection.empty) return changed ? transaction : null;
         const existing = newState.storedMarks ?? newState.selection.$from.marks();
-        const current = existing.find((mark) => mark.type === textStyle);
-        if (!current || current.attrs.font !== preferred.font || current.attrs.size !== preferred.size || current.attrs.color !== preferred.color) {
-          transaction = transaction.setStoredMarks([
-          ...existing.filter((mark) => mark.type !== textStyle),
-          preferredMark
-          ]);
+        let nextMarks = [...existing];
+        if (preferredTextStyleMark && textStyle) {
+          nextMarks = [...nextMarks.filter((mark) => mark.type !== textStyle), preferredTextStyleMark];
+        }
+        if (preferred.marks) {
+          const controlledTypes = Object.values(controlledMarkTypes).filter(Boolean);
+          nextMarks = nextMarks.filter((mark) => !controlledTypes.includes(mark.type));
+          for (const [name, markType] of Object.entries(controlledMarkTypes) as Array<[keyof PreferredInlineMarks, typeof controlledMarkTypes.bold]>) {
+            if (markType && preferred.marks[name]) nextMarks.push(markType.create());
+          }
+        }
+        const signature = (marks: readonly (typeof nextMarks)[number][]) => marks.map((mark) => `${mark.type.name}:${JSON.stringify(mark.attrs)}`).sort().join("|");
+        if (signature(existing) !== signature(nextMarks)) {
+          transaction = transaction.setStoredMarks(nextMarks);
           changed = true;
         }
         return changed ? transaction : null;
@@ -427,7 +505,7 @@ const editorExtensions = (placeholder: string, capability: EditorCapability) => 
   Placeholder.configure({ placeholder, showOnlyCurrent: true, includeChildren: true }),
   StableBlockIds,
   DocumentAttributes,
-  PersistentTextStyle,
+  PersistentFormatting.configure({ capability }),
   SymposiumMention,
   SymposiumEquation,
   SymposiumAttachment,
@@ -471,31 +549,40 @@ const adjustSelectedParagraphIndent = (editor: Editor, delta: -1 | 1) => {
   return true;
 };
 
-const preferredTextStyleForEditor = (editor: Editor): PreferredTextStyle => {
-  return (editor.storage as unknown as { persistentTextStyle?: { preferred: PreferredTextStyle | null } }).persistentTextStyle?.preferred ?? defaultPreferredTextStyle;
-};
+const persistentFormattingForEditor = (editor: Editor): PersistentFormattingStorage =>
+  (editor.storage as unknown as { persistentFormatting: PersistentFormattingStorage }).persistentFormatting;
 
-const rememberPreferredTextStyle = (editor: Editor, style: PreferredTextStyle) => {
-  const storage = (editor.storage as unknown as { persistentTextStyle?: { preferred: PreferredTextStyle | null } }).persistentTextStyle;
-  if (storage) storage.preferred = style;
-};
-
-const applyPreferredStoredTextStyle = (editor: Editor, style = preferredTextStyleForEditor(editor)) => {
+const applyPreferredStoredFormatting = (editor: Editor) => {
   if (!editor.state.selection.empty) return;
+  const preferred = persistentFormattingForEditor(editor);
   const textStyle = editor.state.schema.marks.textStyle;
-  if (!textStyle) return;
-  const existing = editor.state.storedMarks ?? editor.state.selection.$from.marks();
-  const nextMarks = [...existing.filter((mark) => mark.type !== textStyle), textStyle.create(style)];
+  const controlledMarkTypes = {
+    bold: editor.state.schema.marks.bold,
+    italic: editor.state.schema.marks.italic,
+    underline: editor.state.schema.marks.underline
+  };
+  let nextMarks = [...(editor.state.storedMarks ?? editor.state.selection.$from.marks())];
+  if (preferred.textStyle && textStyle) {
+    nextMarks = [...nextMarks.filter((mark) => mark.type !== textStyle), textStyle.create(preferred.textStyle)];
+  }
+  if (preferred.marks) {
+    const controlledTypes = Object.values(controlledMarkTypes).filter(Boolean);
+    nextMarks = nextMarks.filter((mark) => !controlledTypes.includes(mark.type));
+    for (const [name, markType] of Object.entries(controlledMarkTypes) as Array<[keyof PreferredInlineMarks, typeof controlledMarkTypes.bold]>) {
+      if (markType && preferred.marks[name]) nextMarks.push(markType.create());
+    }
+  }
   editor.view.dispatch(editor.state.tr.setStoredMarks(nextMarks));
   editor.view.focus();
 };
 
 const currentParagraphAttributes = (editor: Editor) => {
+  const preferred = persistentFormattingForEditor(editor);
   const paragraph = editor.getAttributes("paragraph");
   return {
     blockId: newDocumentBlockId(),
-    textAlign: isOneOf(paragraph.textAlign, ["left", "center", "right"] as const) ? paragraph.textAlign : "left",
-    indent: Math.max(0, Math.min(8, Number(paragraph.indent) || 0))
+    textAlign: preferred.alignment ?? (isOneOf(paragraph.textAlign, ["left", "center", "right"] as const) ? paragraph.textAlign : "left"),
+    indent: Math.max(0, Math.min(8, preferred.indent ?? (Number(paragraph.indent) || 0)))
   };
 };
 
@@ -518,28 +605,41 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
   onInsertAttachment: () => void;
   uploadDisabled: boolean;
 }) {
-  const [preferredTextStyle, setPreferredTextStyle] = useState<PreferredTextStyle>(() => preferredTextStyleForEditor(editor));
+  const initialFormatting = persistentFormattingForEditor(editor);
+  const initialMarks = initialFormatting.marks ?? {
+    bold: editor.isActive("bold"),
+    italic: editor.isActive("italic"),
+    underline: editor.isActive("underline")
+  };
+  const initialBlock = initialFormatting.block
+    ?? (editor.isActive("heading", { level: 1 }) ? "heading1" : editor.isActive("heading", { level: 2 }) ? "heading2" : "paragraph");
+  const initialAlignment = initialFormatting.alignment
+    ?? (editor.isActive({ textAlign: "center" }) ? "center" : editor.isActive({ textAlign: "right" }) ? "right" : "left");
+  const initialIndent = initialFormatting.indent ?? Math.max(0, Math.min(8, Number(editor.getAttributes("paragraph").indent) || 0));
+  initialFormatting.marks = initialMarks;
+  initialFormatting.block = initialBlock;
+  initialFormatting.alignment = initialAlignment;
+  initialFormatting.indent = initialIndent;
+  const [preferredTextStyle, setPreferredTextStyle] = useState<PreferredTextStyle>(() => initialFormatting.textStyle ?? defaultPreferredTextStyle);
+  const [preferredMarks, setPreferredMarks] = useState<PreferredInlineMarks>(() => initialMarks);
+  const [preferredBlock, setPreferredBlock] = useState<PreferredBlock>(() => initialBlock);
+  const [preferredAlignment, setPreferredAlignment] = useState<PreferredAlignment>(() => initialAlignment);
+  const [preferredIndent, setPreferredIndent] = useState(() => initialIndent);
   const preferredTextStyleRef = useRef(preferredTextStyle);
+  const preferredMarksRef = useRef(preferredMarks);
+  const preferredIndentRef = useRef(preferredIndent);
   const state = useEditorState({
     editor,
     selector: ({ editor: current }) => {
       const paragraphs = current ? selectedParagraphEntries(current) : [];
       return current ? ({
-      bold: current.isActive("bold"), italic: current.isActive("italic"), underline: current.isActive("underline"),
-      paragraph: current.isActive("paragraph"), heading1: current.isActive("heading", { level: 1 }), heading2: current.isActive("heading", { level: 2 }),
       bulletList: current.isActive("bulletList"), orderedList: current.isActive("orderedList"),
-      left: current.isActive({ textAlign: "left" }), center: current.isActive({ textAlign: "center" }), right: current.isActive({ textAlign: "right" }),
-      indent: Number(current.getAttributes("paragraph").indent) || 0,
       canIndent: paragraphs.some((paragraph) => paragraph.indent < 8),
       canOutdent: paragraphs.some((paragraph) => paragraph.indent > 0),
-      font: current.getAttributes("textStyle").font as DocumentFont | undefined,
-      size: current.getAttributes("textStyle").size as DocumentSize | undefined,
-      color: current.getAttributes("textStyle").color as DocumentColor | undefined,
-      canUndo: true, canRedo: true
+      canUndo: current.can().undo(), canRedo: current.can().redo()
     }) : ({
-      bold: false, italic: false, underline: false, paragraph: false, heading1: false, heading2: false,
-      bulletList: false, orderedList: false, left: true, center: false, right: false, indent: 0,
-      canIndent: false, canOutdent: false, font: undefined, size: undefined, color: undefined, canUndo: false, canRedo: false
+      bulletList: false, orderedList: false,
+      canIndent: false, canOutdent: false, canUndo: false, canRedo: false
     });
     }
   });
@@ -547,19 +647,45 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
   const setTextStyle = (attrs: { font?: DocumentFont; size?: DocumentSize; color?: DocumentColor }) => {
     const next = { ...preferredTextStyleRef.current, ...attrs };
     preferredTextStyleRef.current = next;
-    rememberPreferredTextStyle(editor, next);
+    persistentFormattingForEditor(editor).textStyle = next;
     setPreferredTextStyle(next);
     editor.chain().focus().setMark("textStyle", next).run();
-    applyPreferredStoredTextStyle(editor, next);
+    applyPreferredStoredFormatting(editor);
   };
-  const restorePreferredStyleForCaret = () => {
-    if (!editor.state.selection.empty) return;
-    editor.chain().focus().setMark("textStyle", preferredTextStyleRef.current).run();
-    applyPreferredStoredTextStyle(editor, preferredTextStyleRef.current);
+  const toggleInlineMark = (name: keyof PreferredInlineMarks) => {
+    const next = { ...preferredMarksRef.current, [name]: !preferredMarksRef.current[name] };
+    preferredMarksRef.current = next;
+    persistentFormattingForEditor(editor).marks = next;
+    setPreferredMarks(next);
+    const command = editor.chain().focus();
+    if (next[name]) command.setMark(name).run();
+    else command.unsetMark(name).run();
+    applyPreferredStoredFormatting(editor);
+  };
+  const setBlock = (block: PreferredBlock) => {
+    persistentFormattingForEditor(editor).block = block;
+    setPreferredBlock(block);
+    if (block === "paragraph") editor.chain().focus().setParagraph().run();
+    else editor.chain().focus().setHeading({ level: block === "heading1" ? 1 : 2 }).run();
+    applyPreferredStoredFormatting(editor);
+  };
+  const setAlignment = (alignment: PreferredAlignment) => {
+    persistentFormattingForEditor(editor).alignment = alignment;
+    setPreferredAlignment(alignment);
+    editor.chain().focus().setTextAlign(alignment).run();
+    applyPreferredStoredFormatting(editor);
+  };
+  const adjustIndent = (delta: -1 | 1) => {
+    if (!adjustSelectedParagraphIndent(editor, delta)) return;
+    const next = Math.max(0, Math.min(8, preferredIndentRef.current + delta));
+    preferredIndentRef.current = next;
+    persistentFormattingForEditor(editor).indent = next;
+    setPreferredIndent(next);
+    applyPreferredStoredFormatting(editor);
   };
   const runBlockCommand = (command: () => void) => {
     command();
-    restorePreferredStyleForCaret();
+    applyPreferredStoredFormatting(editor);
   };
   return (
     <div className="document-editor-toolbar" role="toolbar" aria-label="Text and document formatting">
@@ -568,29 +694,29 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
         <ToolbarButton title="Redo" disabled={!state.canRedo} onClick={() => editor.chain().focus().redo().run()}><Redo2 size={16} /></ToolbarButton>
       </div>
       <div>
-        <ToolbarButton title="Bold" active={state.bold} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={16} /></ToolbarButton>
-        <ToolbarButton title="Italic" active={state.italic} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={16} /></ToolbarButton>
-        <ToolbarButton title="Underline" active={state.underline} onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline size={16} /></ToolbarButton>
+        <ToolbarButton title="Bold" active={preferredMarks.bold} onClick={() => toggleInlineMark("bold")}><Bold size={16} /></ToolbarButton>
+        <ToolbarButton title="Italic" active={preferredMarks.italic} onClick={() => toggleInlineMark("italic")}><Italic size={16} /></ToolbarButton>
+        <ToolbarButton title="Underline" active={preferredMarks.underline} onClick={() => toggleInlineMark("underline")}><Underline size={16} /></ToolbarButton>
       </div>
       {capability === "paper" ? <>
         <div>
-          <ToolbarButton title="Paragraph" active={state.paragraph && !state.bulletList && !state.orderedList} onClick={() => runBlockCommand(() => { editor.chain().focus().setParagraph().run(); })}><Pilcrow size={16} /></ToolbarButton>
-          <ToolbarButton title="Heading 1" active={state.heading1} onClick={() => runBlockCommand(() => { editor.chain().focus().toggleHeading({ level: 1 }).run(); })}><Heading1 size={16} /></ToolbarButton>
-          <ToolbarButton title="Heading 2" active={state.heading2} onClick={() => runBlockCommand(() => { editor.chain().focus().toggleHeading({ level: 2 }).run(); })}><Heading2 size={16} /></ToolbarButton>
+          <ToolbarButton title="Paragraph" active={preferredBlock === "paragraph" && !state.bulletList && !state.orderedList} onClick={() => setBlock("paragraph")}><Pilcrow size={16} /></ToolbarButton>
+          <ToolbarButton title="Heading 1" active={preferredBlock === "heading1"} onClick={() => setBlock("heading1")}><Heading1 size={16} /></ToolbarButton>
+          <ToolbarButton title="Heading 2" active={preferredBlock === "heading2"} onClick={() => setBlock("heading2")}><Heading2 size={16} /></ToolbarButton>
           <ToolbarButton title="Bulleted list" active={state.bulletList} onClick={() => runBlockCommand(() => { editor.chain().focus().toggleBulletList().updateAttributes("bulletList", { listStyle: "bullet" }).run(); })}><List size={16} /></ToolbarButton>
           <ToolbarButton title="Numbered list" active={state.orderedList} onClick={() => runBlockCommand(() => { editor.chain().focus().toggleOrderedList().updateAttributes("orderedList", { listStyle: "decimal" }).run(); })}><ListOrdered size={16} /></ToolbarButton>
         </div>
         <div>
-          <ToolbarButton title="Align left" active={state.left} onClick={() => runBlockCommand(() => { editor.chain().focus().setTextAlign("left").run(); })}><AlignLeft size={16} /></ToolbarButton>
-          <ToolbarButton title="Align centre" active={state.center} onClick={() => runBlockCommand(() => { editor.chain().focus().setTextAlign("center").run(); })}><AlignCenter size={16} /></ToolbarButton>
-          <ToolbarButton title="Align right" active={state.right} onClick={() => runBlockCommand(() => { editor.chain().focus().setTextAlign("right").run(); })}><AlignRight size={16} /></ToolbarButton>
-          <ToolbarButton title="Decrease indentation" disabled={!state.canOutdent} onClick={() => runBlockCommand(() => { adjustSelectedParagraphIndent(editor, -1); })}><IndentDecrease size={16} /></ToolbarButton>
-          <ToolbarButton title="Increase indentation" disabled={!state.canIndent} onClick={() => runBlockCommand(() => { adjustSelectedParagraphIndent(editor, 1); })}><IndentIncrease size={16} /></ToolbarButton>
+          <ToolbarButton title="Align left" active={preferredAlignment === "left"} onClick={() => setAlignment("left")}><AlignLeft size={16} /></ToolbarButton>
+          <ToolbarButton title="Align centre" active={preferredAlignment === "center"} onClick={() => setAlignment("center")}><AlignCenter size={16} /></ToolbarButton>
+          <ToolbarButton title="Align right" active={preferredAlignment === "right"} onClick={() => setAlignment("right")}><AlignRight size={16} /></ToolbarButton>
+          <ToolbarButton title="Decrease indentation" disabled={!state.canOutdent && preferredIndent <= 0} onClick={() => adjustIndent(-1)}><IndentDecrease size={16} /></ToolbarButton>
+          <ToolbarButton title="Increase indentation" disabled={!state.canIndent && preferredBlock !== "paragraph"} onClick={() => adjustIndent(1)}><IndentIncrease size={16} /></ToolbarButton>
         </div>
-        <select title="Font" aria-label="Font" value={state.font ?? preferredTextStyle.font} onChange={(event) => setTextStyle({ font: event.target.value as DocumentFont })}>
+        <select title="Font" aria-label="Font" value={preferredTextStyle.font} onChange={(event) => setTextStyle({ font: event.target.value as DocumentFont })}>
           <option value="system">System</option><option value="serif">Serif</option><option value="humanist">Humanist</option><option value="mono">Mono</option>
         </select>
-        <select title="Text size" aria-label="Text size" value={state.size ?? preferredTextStyle.size} onChange={(event) => setTextStyle({ size: event.target.value as DocumentSize })}>
+        <select title="Text size" aria-label="Text size" value={preferredTextStyle.size} onChange={(event) => setTextStyle({ size: event.target.value as DocumentSize })}>
           <option value="small">Small</option><option value="normal">Normal</option><option value="large">Large</option><option value="lead">Lead</option>
         </select>
         <select title="Page width" aria-label="Page width" value={settings.width} onChange={(event) => onSettingsChange({ ...settings, width: event.target.value as "standard" | "wide" })}>
@@ -600,7 +726,7 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
           <option value="compact">Compact margins</option><option value="normal">Normal margins</option><option value="generous">Generous margins</option>
         </select>
         <div className="document-color-controls" aria-label="Text colour">
-          {documentColors.map((color) => <ToolbarButton key={color} title={`${color} text`} active={(state.color ?? preferredTextStyle.color) === color} onClick={() => setTextStyle({ color })}><span style={{ "--swatch": `var(--document-color-${color})` } as CSSProperties} /></ToolbarButton>)}
+          {documentColors.map((color) => <ToolbarButton key={color} title={`${color} text`} active={preferredTextStyle.color === color} onClick={() => setTextStyle({ color })}><span style={{ "--swatch": `var(--document-color-${color})` } as CSSProperties} /></ToolbarButton>)}
         </div>
       </> : null}
       <div>
@@ -701,7 +827,7 @@ export function SymposiumDocumentEditor({
       { type: "symposiumEquation", attrs: { blockId: newDocumentBlockId("equation"), source: "E = mc^2", display: true } },
       { type: "paragraph", attrs: paragraphAttributes }
     ]).run();
-    applyPreferredStoredTextStyle(editor);
+    applyPreferredStoredFormatting(editor);
   };
 
   const uploadInline = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -721,7 +847,7 @@ export function SymposiumDocumentEditor({
         ...uploaded.map((attachment) => ({ type: "symposiumAttachment", attrs: { blockId: newDocumentBlockId("asset"), attachmentId: attachment.id } })),
         { type: "paragraph", attrs: paragraphAttributes }
       ]).run();
-      applyPreferredStoredTextStyle(editor);
+      applyPreferredStoredFormatting(editor);
     } finally {
       setInlineUploading(false);
       onBusyChange?.(false);
