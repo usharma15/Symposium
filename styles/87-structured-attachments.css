@@ -1,0 +1,158 @@
+/* Owns structured code, spreadsheet, and presentation attachment previews. */
+
+.attachment-modal-header-controls a {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+  display: inline-flex;
+  justify-content: center;
+  min-height: 34px;
+  text-decoration: none;
+  width: 34px;
+}
+
+.attachment-modal-header-controls a:hover,
+.attachment-modal-header-controls a:focus-visible {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--aqua) 12%, var(--panel));
+}
+
+.attachment-modal-stage-code,
+.attachment-modal-stage-spreadsheet,
+.attachment-modal-stage-presentation {
+  place-items: stretch;
+  background: color-mix(in srgb, var(--paper) 74%, var(--panel-strong));
+}
+
+.attachment-pagebar > span {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-code-preview pre {
+  background: color-mix(in srgb, #101817 94%, var(--paper));
+  color: #eef4ed;
+  overflow: auto;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.attachment-code-preview pre code {
+  font: inherit;
+}
+
+.attachment-sheet-scroll {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  background: color-mix(in srgb, var(--paper) 88%, white);
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+.attachment-sheet-scroll table {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 100%;
+  width: max-content;
+}
+
+.attachment-sheet-scroll th,
+.attachment-sheet-scroll td {
+  max-width: 240px;
+  min-width: 100px;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-sheet-scroll th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--aqua) 13%, var(--paper));
+  font-weight: 820;
+}
+
+.attachment-presentation-preview {
+  background: color-mix(in srgb, var(--paper) 76%, var(--panel-strong));
+  container-type: inline-size;
+}
+
+.attachment-slide {
+  position: relative;
+  display: grid;
+  align-content: center;
+  gap: 1em;
+  aspect-ratio: 16 / 9;
+  width: min(92%, 880px);
+  min-height: 0;
+  margin: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 8px;
+  padding: clamp(16px, 3cqw, 40px);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 88% 14%, color-mix(in srgb, var(--aqua) 22%, transparent), transparent 34%),
+    linear-gradient(145deg, #fffef8, color-mix(in srgb, var(--paper) 88%, #dcebed));
+  color: #14201f;
+  box-shadow: 0 18px 48px rgba(10, 16, 15, 0.14);
+}
+
+.attachment-slide h3 {
+  margin: 0;
+  font-size: clamp(1.15em, 5cqw, 1.8em);
+  line-height: 1.12;
+}
+
+.attachment-slide ul {
+  display: grid;
+  gap: 0.55em;
+  margin: 0;
+  padding-left: 1.25em;
+  font-size: clamp(0.72em, 2.8cqw, 1em);
+  line-height: 1.45;
+}
+
+.attachment-slide p {
+  margin: 0;
+  color: #586562;
+}
+
+.attachment-slide-number {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  color: #71807d;
+  font-size: 0.72em;
+  font-weight: 800;
+}
+
+.attachment-document-feed .attachment-slide,
+.attachment-document-detail .attachment-slide {
+  width: 88%;
+  padding: clamp(16px, 4vw, 34px);
+}
+
+@media (max-width: 640px) {
+  .attachment-sheet-scroll th,
+  .attachment-sheet-scroll td {
+    min-width: 82px;
+    padding: 7px 8px;
+  }
+
+  .attachment-slide {
+    width: 96%;
+  }
+}

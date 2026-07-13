@@ -33,11 +33,10 @@ import {
   type AttachmentStorageRow
 } from "../services/storageDeletion";
 import { runAtomic } from "../services/transactions";
-import { validateDocxArchive } from "@/lib/docxSecurity";
+import { officeArchiveFormatForContentType, validateOfficeArchive } from "@/lib/docxSecurity";
 import { actorHandle, ensureLiveData } from "./foundation";
 
 const allowedProfileImageTypes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/avif"]);
-const docxContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const maxProfileImageBytes = 5 * 1024 * 1024;
 const maxPendingUploadsPerActor = 20;
 const maxDailyUploadsPerActor = 100;
@@ -371,7 +370,7 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
 
   let inspection;
   try {
-    inspection = await inspectUploadedObject(attachment.uploadObjectKey, attachment.contentType === docxContentType);
+    inspection = await inspectUploadedObject(attachment.uploadObjectKey, Boolean(officeArchiveFormatForContentType(attachment.contentType)));
   } catch (error) {
     await getPool().query(
       `UPDATE attachments SET status = 'pending', updated_at = now()
@@ -391,11 +390,9 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
   if (signatureError) {
     return markVerificationFailed(attachment, handle, signatureError);
   }
-  if (
-    attachment.contentType === docxContentType &&
-    (!inspection.body || !(await validateDocxArchive(inspection.body)))
-  ) {
-    return markVerificationFailed(attachment, handle, "The uploaded file is not a valid DOCX document.");
+  const officeFormat = officeArchiveFormatForContentType(attachment.contentType);
+  if (officeFormat && (!inspection.body || !(await validateOfficeArchive(inspection.body, officeFormat)))) {
+    return markVerificationFailed(attachment, handle, "The uploaded file is not a valid or safe Office document.");
   }
 
   try {

@@ -2,10 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { attachmentKindForContentType, validateAttachmentContentSignature } from "@/lib/attachmentRules";
-import { validateDocxArchive } from "@/lib/docxSecurity";
+import { officeArchiveFormatForContentType, validateOfficeArchive } from "@/lib/docxSecurity";
 import type { InquiryAttachment } from "@/lib/mockData";
-
-const docxContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 type LocalAttachmentOwnerType = "post" | "comment" | "message" | "note" | "profile";
 type LocalAttachmentStatus = "pending" | "uploaded";
@@ -163,8 +161,9 @@ export const writeLocalAttachmentFile = async (attachmentId: string, bytes: Buff
     }
     const signatureError = validateAttachmentContentSignature(record.contentType, bytes.slice(0, 65_536));
     if (signatureError) throw new LocalAttachmentStoreError(signatureError, 400);
-    if (record.contentType === docxContentType && !(await validateDocxArchive(bytes))) {
-      throw new LocalAttachmentStoreError("The uploaded file is not a safe DOCX document.", 400);
+    const officeFormat = officeArchiveFormatForContentType(record.contentType);
+    if (officeFormat && !(await validateOfficeArchive(bytes, officeFormat))) {
+      throw new LocalAttachmentStoreError("The uploaded file is not a valid or safe Office document.", 400);
     }
 
     const filePath = recordFilePath(record);
@@ -223,7 +222,7 @@ const localRecordToAttachment = (record: LocalAttachmentRecord): InquiryAttachme
   byteSize: record.byteSize,
   url: localAttachmentPublicPath(record),
   status: "uploaded",
-  kind: attachmentKindForContentType(record.contentType),
+  kind: attachmentKindForContentType(record.contentType, record.fileName),
   metadata: record.metadata,
   createdAt: record.createdAt
 });

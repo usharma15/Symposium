@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import katex from "katex";
 import type { InquiryAttachment, ResearchProfile } from "@/lib/mockData";
 import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import {
   documentForContent,
-  type SymposiumDocumentNode,
   type SymposiumTextRun
 } from "@/lib/documentModel";
 import { cleanHandle } from "@/lib/symposiumCore";
@@ -64,25 +63,6 @@ function Equation({ source, display }: { source: string; display: boolean }) {
   return <div className={`document-equation ${display ? "display" : "inline"}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-const textNodeLength = (node: SymposiumDocumentNode) => {
-  if (node.type === "paragraph" || node.type === "heading" || node.type === "quote") {
-    return node.content.reduce((total, run) => total + run.text.length, 0);
-  }
-  if (node.type === "list") return node.items.flat().reduce((total, run) => total + run.text.length, 0);
-  if (node.type === "code") return node.code.length;
-  return 0;
-};
-
-const sliceRuns = (runs: SymposiumTextRun[], limit: number) => {
-  let remaining = limit;
-  return runs.flatMap((run) => {
-    if (remaining <= 0) return [];
-    const text = run.text.slice(0, remaining);
-    remaining -= text.length;
-    return text ? [{ ...run, text }] : [];
-  });
-};
-
 export function SymposiumDocumentRenderer({
   document,
   body,
@@ -102,64 +82,63 @@ export function SymposiumDocumentRenderer({
 }) {
   const resolved = documentForContent(document, body);
   const attachmentById = new Map((attachments ?? []).map((attachment) => [attachment.id, attachment]));
-  const compact = mode === "feed";
-  const collapsedLength = 500;
-  const totalTextLength = resolved.nodes.reduce((total, node) => total + textNodeLength(node), 0);
+  const collapsibleSurface = mode === "feed" || mode === "comment";
+  const contentFingerprint = JSON.stringify([body, document ?? null]);
   const [expanded, setExpanded] = useState(false);
-  let remaining = compact && !expanded ? collapsedLength : Number.POSITIVE_INFINITY;
+  const [collapsible, setCollapsible] = useState(false);
+  const compactContentRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => setExpanded(false), [document, body]);
+  useEffect(() => setExpanded(false), [contentFingerprint]);
+  useLayoutEffect(() => {
+    if (!collapsibleSurface || expanded) return;
+    const content = compactContentRef.current;
+    if (!content) return;
+    const measure = () => setCollapsible(content.scrollHeight > content.clientHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [attachments, body, collapsibleSurface, document, expanded]);
+
+  const renderedNodes = resolved.nodes.map((node) => {
+    if (node.type === "attachment") {
+      if (mode === "feed") return null;
+      const attachment = attachmentById.get(node.attachmentId);
+      if (!attachment) return null;
+      return (
+        <figure key={node.id} className="document-attachment-block">
+          <AttachmentCarousel
+            attachments={[attachment]}
+            label="Inline attachment"
+            variant={mode === "comment" ? "comment" : "detail"}
+            onOpenPreview={() => onOpenAttachment?.(attachment.id)}
+          />
+          {node.caption ? <figcaption>{node.caption}</figcaption> : null}
+        </figure>
+      );
+    }
+    if (node.type === "equation") return <Equation key={node.id} source={node.source} display={node.display} />;
+    if (node.type === "code") return <pre key={node.id} className="document-code"><code>{node.code}</code></pre>;
+    if (node.type === "list") {
+      const Tag = node.style === "decimal" || node.style.includes("alpha") ? "ol" : "ul";
+      return <Tag key={node.id} className={`document-list document-list-${node.style}`} style={{ marginLeft: `${node.depth * 1.25}rem` }}>{node.items.map((item, index) => <li key={index}><TextRuns content={item} profiles={profiles} /></li>)}</Tag>;
+    }
+    if (node.type === "reference") return <a key={node.id} className="document-reference" href={`/${node.resource.type}s/${encodeURIComponent(node.resource.id)}`}>{node.resource.label ?? node.resource.id}</a>;
+    if (node.type === "citation") return node.href ? <a key={node.id} className="document-citation" href={node.href} target="_blank" rel="noopener noreferrer nofollow">{node.label}</a> : <span key={node.id} className="document-citation">{node.label}</span>;
+
+    const className = `document-text-block document-align-${node.type === "quote" ? "left" : node.align}${node.type === "paragraph" ? ` document-indent-${node.indent}` : ""}`;
+    if (node.type === "heading") {
+      const Heading = `h${Math.min(4, Math.max(1, node.level))}` as "h1" | "h2" | "h3" | "h4";
+      return <Heading key={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></Heading>;
+    }
+    if (node.type === "quote") return <blockquote key={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></blockquote>;
+    return <p key={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></p>;
+  });
 
   return (
     <div className={`symposium-document symposium-document-${mode} document-width-${resolved.settings?.width ?? "standard"} document-margin-${resolved.settings?.margin ?? "normal"}`}>
-      {resolved.nodes.map((node) => {
-        if (remaining <= 0 && node.type !== "attachment") return null;
-        if (node.type === "attachment") {
-          if (compact) return null;
-          const attachment = attachmentById.get(node.attachmentId);
-          if (!attachment) return null;
-          return (
-            <figure key={node.id} className="document-attachment-block">
-              <AttachmentCarousel
-                attachments={[attachment]}
-                label="Inline attachment"
-                variant={mode === "comment" ? "comment" : "detail"}
-                onOpenPreview={() => onOpenAttachment?.(attachment.id)}
-              />
-              {node.caption ? <figcaption>{node.caption}</figcaption> : null}
-            </figure>
-          );
-        }
-        if (node.type === "equation") return <Equation key={node.id} source={node.source} display={node.display} />;
-        if (node.type === "code") {
-          const code = node.code.slice(0, remaining);
-          remaining -= code.length;
-          return <pre key={node.id} className="document-code"><code>{code}</code></pre>;
-        }
-        if (node.type === "list") {
-          const Tag = node.style === "decimal" || node.style.includes("alpha") ? "ol" : "ul";
-          const items = node.items.map((item) => {
-            const visible = sliceRuns(item, remaining);
-            remaining -= visible.reduce((total, run) => total + run.text.length, 0);
-            return visible;
-          }).filter((item) => item.length);
-          return <Tag key={node.id} className={`document-list document-list-${node.style}`} style={{ marginLeft: `${node.depth * 1.25}rem` }}>{items.map((item, index) => <li key={index}><TextRuns content={item} profiles={profiles} /></li>)}</Tag>;
-        }
-        if (node.type === "reference") return <a key={node.id} className="document-reference" href={`/${node.resource.type}s/${encodeURIComponent(node.resource.id)}`}>{node.resource.label ?? node.resource.id}</a>;
-        if (node.type === "citation") return node.href ? <a key={node.id} className="document-citation" href={node.href} target="_blank" rel="noopener noreferrer nofollow">{node.label}</a> : <span key={node.id} className="document-citation">{node.label}</span>;
-
-        const visible = sliceRuns(node.content, remaining);
-        remaining -= visible.reduce((total, run) => total + run.text.length, 0);
-        if (!visible.length) return null;
-        const className = `document-text-block document-align-${node.type === "quote" ? "left" : node.align}${node.type === "paragraph" ? ` document-indent-${node.indent}` : ""}`;
-        if (node.type === "heading") {
-          const Heading = `h${Math.min(4, Math.max(1, node.level))}` as "h1" | "h2" | "h3" | "h4";
-          return <Heading key={node.id} className={className}><TextRuns content={visible} profiles={profiles} /></Heading>;
-        }
-        if (node.type === "quote") return <blockquote key={node.id} className={className}><TextRuns content={visible} profiles={profiles} /></blockquote>;
-        return <p key={node.id} className={className}><TextRuns content={visible} profiles={profiles} /></p>;
-      })}
-      {compact && totalTextLength > collapsedLength ? (
+      {collapsibleSurface ? <div ref={compactContentRef} className={`document-collapsible-content document-${mode}-content${expanded ? " expanded" : " collapsed"}`}>{renderedNodes}</div> : renderedNodes}
+      {collapsibleSurface && (collapsible || expanded) ? (
         <button
           type="button"
           className="inline-expand-button document-expand-button"

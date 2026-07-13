@@ -31,7 +31,38 @@ export const liveCallStatusSchema = z.enum(["scheduled", "live", "ended", "cance
 export const liveCallKindSchema = z.enum(["voice", "video"]);
 export const patronageVisibilitySchema = z.enum(["civic", "private"]);
 export const attachmentStatusSchema = z.enum(["pending", "uploaded", "previewed", "failed"]);
-export const attachmentKindSchema = z.enum(["image", "video", "pdf", "text", "document"]);
+export const attachmentKindSchema = z.enum([
+  "image",
+  "video",
+  "pdf",
+  "text",
+  "document",
+  "code",
+  "spreadsheet",
+  "presentation"
+]);
+const codeAttachmentExtensions = new Set([
+  ".asm", ".bash", ".c", ".cc", ".conf", ".cpp", ".cxx", ".cs", ".css", ".dart", ".erl", ".ex", ".exs",
+  ".fish", ".fs", ".fsx", ".go", ".gradle", ".graphql", ".groovy", ".h", ".hpp", ".hs", ".html", ".ini",
+  ".ipynb", ".java", ".js", ".jsx", ".json", ".kt", ".kts", ".lua", ".m", ".mm", ".php", ".pl", ".ps1",
+  ".py", ".r", ".rb", ".rs", ".s", ".scala", ".sh", ".sql", ".swift", ".tex", ".toml", ".ts", ".tsx",
+  ".vb", ".vue", ".xml", ".yaml", ".yml", ".zsh"
+]);
+const spreadsheetAttachmentExtensions = new Set([".csv", ".xls", ".xlsx", ".ods"]);
+const presentationAttachmentExtensions = new Set([".ppt", ".pptx", ".odp"]);
+
+export const attachmentKindForFile = (contentType: string, fileName = ""): z.infer<typeof attachmentKindSchema> => {
+  const normalized = contentType.toLowerCase();
+  const extension = fileName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
+  if (presentationAttachmentExtensions.has(extension) || normalized.includes("presentation") || normalized === "application/vnd.ms-powerpoint") return "presentation";
+  if (spreadsheetAttachmentExtensions.has(extension) || normalized.includes("spreadsheet") || normalized === "application/vnd.ms-excel" || normalized === "text/csv") return "spreadsheet";
+  if (codeAttachmentExtensions.has(extension)) return "code";
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("video/")) return "video";
+  if (normalized === "application/pdf") return "pdf";
+  if (normalized.startsWith("text/") || normalized === "application/json") return "text";
+  return "document";
+};
 export const followStatusSchema = z.enum(["active", "muted", "blocked"]);
 export const opportunityStatusSchema = z.enum(["open", "closed", "draft"]);
 export const opportunityKindSchema = z.enum(["job", "bounty", "collaboration", "grant", "internship"]);

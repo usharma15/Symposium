@@ -12,6 +12,7 @@ import type {
   ResearchProfileContract,
   VersionedDocumentContract
 } from "../../../../packages/contracts/src";
+import { attachmentKindForFile } from "../../../../packages/contracts/src";
 import {
   getProfileForName,
   inquiryItems,
@@ -559,15 +560,6 @@ export const commentTreesFromRows = (
   return new Map([...byPostAndParent.entries()].map(([postId, byParent]) => [postId, buildTree(byParent)]));
 };
 
-const attachmentKindForContentType = (contentType: string): InquiryAttachmentContract["kind"] => {
-  const normalized = contentType.toLowerCase();
-  if (normalized.startsWith("image/")) return "image";
-  if (normalized.startsWith("video/")) return "video";
-  if (normalized === "application/pdf") return "pdf";
-  if (normalized.startsWith("text/") || normalized === "application/json") return "text";
-  return "document";
-};
-
 const attachmentPublicUrl = (row: Pick<AttachmentRow, "objectKey">) =>
   env.R2_PUBLIC_BASE_URL ? `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${row.objectKey}` : undefined;
 
@@ -578,7 +570,7 @@ export const rowToAttachment = (row: AttachmentRow): InquiryAttachmentContract =
   byteSize: row.byteSize,
   url: attachmentPublicUrl(row),
   status: row.status,
-  kind: attachmentKindForContentType(row.contentType),
+  kind: attachmentKindForFile(row.contentType, row.fileName),
   metadata: json(row.metadata, {}),
   createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : undefined
 });

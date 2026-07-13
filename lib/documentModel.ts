@@ -90,7 +90,10 @@ export const feedPreviewAttachments = (
     attachment.kind === "video" ||
     attachment.kind === "pdf" ||
     attachment.kind === "text" ||
-    attachment.kind === "document";
+    attachment.kind === "document" ||
+    attachment.kind === "code" ||
+    attachment.kind === "spreadsheet" ||
+    attachment.kind === "presentation";
   const { appended, inline } = orderedContentAttachments(document, attachments);
   const seen = new Set<string>();
   return [...appended, ...inline].filter((attachment) => {

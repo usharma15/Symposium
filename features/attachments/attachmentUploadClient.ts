@@ -130,7 +130,7 @@ export const uploadConfirmedAttachment = async (input: {
     byteSize: input.file.size,
     url: publicUrl,
     status: "uploaded",
-    kind: attachmentKindForContentType(contentType),
+    kind: attachmentKindForContentType(contentType, input.file.name),
     metadata: input.metadata,
     createdAt: new Date().toISOString()
   };

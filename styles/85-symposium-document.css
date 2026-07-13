@@ -75,7 +75,10 @@
 .document-reference,
 .document-citation { display: inline-flex; border: 1px solid var(--line); border-radius: 0.55rem; padding: 0.45rem 0.65rem; margin: 0.25rem 0; }
 .document-expand-button { display: inline-block; margin-top: -0.55rem; }
-.feed-post .symposium-document-feed { font-size: inherit; }
+.feed-post .symposium-document-feed { font-size: inherit; margin-top: 14px; }
+.document-collapsible-content.collapsed { max-height: calc(1.65em * 5); overflow: hidden; position: relative; }
+.document-collapsible-content.collapsed::after { background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--surface) 82%, transparent)); bottom: 0; content: ""; height: 1.15em; left: 0; pointer-events: none; position: absolute; right: 0; }
+.document-collapsible-content.expanded { max-height: none; }
 .comment-card .symposium-document-comment { margin-left: 2.8rem; max-width: calc(100% - 2.8rem); }
 .comment-card .symposium-document-comment .post-attachments-comment { margin-left: 0; max-width: 100%; }
 
@@ -84,7 +87,7 @@
   border-radius: 0.85rem;
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .symposium-document-editor.disabled { opacity: 0.7; pointer-events: none; }
@@ -97,7 +100,7 @@
   gap: 0.35rem;
   padding: 0.55rem;
   position: sticky;
-  top: 0;
+  top: 82px;
   z-index: 4;
 }
 .document-editor-toolbar > div { align-items: center; border-right: 1px solid var(--line); display: flex; gap: 0.15rem; padding-right: 0.35rem; }
@@ -187,12 +190,15 @@
 .post-edit-modal,
 .quote-composer-modal { max-height: calc(100vh - 2rem); overflow-y: auto; }
 .post-composer .symposium-document-editor { width: 100%; }
+.post-composer-modal .document-editor-toolbar,
+.post-edit-modal .document-editor-toolbar,
+.quote-composer-modal .document-editor-toolbar { top: 0; }
 .comment-composer .symposium-document-editor { margin-top: 0.65rem; }
 .comment-composer.compact .document-editor-canvas { min-height: 6rem; }
-.comment-composer.compact .document-editor-toolbar { position: static; }
+.comment-composer.compact .document-editor-toolbar { top: 82px; }
 
 @media (max-width: 720px) {
-  .document-editor-toolbar { position: static; }
+  .document-editor-toolbar { flex-wrap: nowrap; overflow-x: auto; }
   .document-editor-canvas.document-margin-normal .tiptap { padding-inline: 1rem; }
   .document-editor-canvas.document-margin-generous .tiptap { padding-inline: 1.55rem; }
   .document-appended-label { align-items: flex-start; flex-wrap: wrap; }

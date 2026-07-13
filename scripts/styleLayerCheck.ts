@@ -13,6 +13,7 @@ const layers = [
   "70-immersive-content-profile.css",
   "80-immersive-overlays.css",
   "85-symposium-document.css",
+  "87-structured-attachments.css",
   "90-immersive-responsive.css"
 ];
 

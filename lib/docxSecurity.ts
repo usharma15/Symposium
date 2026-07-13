@@ -9,6 +9,25 @@ const maxRelationshipXmlBytes = 2 * 1024 * 1024;
 const hyperlinkRelationshipSuffix = "/hyperlink";
 const forbiddenRelationshipSuffixes = ["/afchunk", "/altchunk"];
 const forbiddenEntryPattern = /(?:^|\/)(?:activex|embeddings|afchunk)(?:\/|$)|vbaProject\.bin$/i;
+export type OfficeArchiveFormat = "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp";
+const primaryDocumentPath: Record<OfficeArchiveFormat, string> = {
+  docx: "word/document.xml",
+  xlsx: "xl/workbook.xml",
+  pptx: "ppt/presentation.xml",
+  odt: "content.xml",
+  ods: "content.xml",
+  odp: "content.xml"
+};
+const officeArchiveType: Record<string, OfficeArchiveFormat> = {
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.oasis.opendocument.text": "odt",
+  "application/vnd.oasis.opendocument.spreadsheet": "ods",
+  "application/vnd.oasis.opendocument.presentation": "odp"
+};
+
+export const officeArchiveFormatForContentType = (contentType: string) => officeArchiveType[contentType.toLowerCase()];
 
 type ZipEntry = {
   _data?: { uncompressedSize?: number };
@@ -48,7 +67,7 @@ const relationshipsAreSafe = (xml: string) => {
   return true;
 };
 
-export const validateDocxArchive = async (bytes: Uint8Array) => {
+export const validateOfficeArchive = async (bytes: Uint8Array, format: OfficeArchiveFormat) => {
   try {
     const archive = await JSZip.loadAsync(bytes);
     const entries = Object.values(archive.files) as ZipEntry[];
@@ -66,13 +85,13 @@ export const validateDocxArchive = async (bytes: Uint8Array) => {
       if (totalUncompressedBytes > maxArchiveExpandedBytes) return false;
     }
 
-    const document = archive.file("word/document.xml") as ZipEntry | null;
+    const document = archive.file(primaryDocumentPath[format]) as ZipEntry | null;
     const contentTypes = archive.file("[Content_Types].xml") as ZipEntry | null;
-    if (!document || !contentTypes) return false;
+    if (!document || (["docx", "xlsx", "pptx"].includes(format) && !contentTypes)) return false;
     if (Number(document._data?.uncompressedSize ?? 0) > maxDocumentXmlBytes) return false;
 
     const documentXml = await document.async("text");
-    const contentTypesXml = await contentTypes.async("text");
+    const contentTypesXml = contentTypes ? await contentTypes.async("text") : "";
     if (/<!DOCTYPE|<!ENTITY/i.test(documentXml) || /(?:text\/html|application\/xhtml\+xml)/i.test(contentTypesXml)) {
       return false;
     }
@@ -86,3 +105,5 @@ export const validateDocxArchive = async (bytes: Uint8Array) => {
     return false;
   }
 };
+
+export const validateDocxArchive = (bytes: Uint8Array) => validateOfficeArchive(bytes, "docx");

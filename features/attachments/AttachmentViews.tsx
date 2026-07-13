@@ -12,12 +12,15 @@ import {
 import {
   ChevronLeft,
   ChevronRight,
+  Code2,
   FileText,
+  FileSpreadsheet,
   Film,
   ExternalLink,
   Fullscreen,
   ImageIcon,
   Paperclip,
+  Presentation,
   RotateCcw,
   Shrink,
   X,
@@ -26,12 +29,15 @@ import {
 } from "lucide-react";
 import type { InquiryAttachment, InquiryItem } from "@/lib/mockData";
 import {
+  attachmentKindForContentType,
   formatAttachmentBytes,
   maxAttachmentPreviewTextLength,
   maxPostAttachments,
   postAttachmentAccept,
   splitPreviewTextIntoPages
 } from "@/lib/attachmentRules";
+import { buildStructuredAttachmentMetadata } from "@/lib/structuredAttachmentPreview";
+import { StructuredAttachmentPreviewPane } from "@/features/attachments/StructuredAttachmentPreviews";
 import { feedPreviewAttachments } from "@/lib/documentModel";
 import { deletedPostContextTitle, isDeletedPost } from "@/lib/symposiumCore";
 import { isSafeExternalUrl } from "@/packages/contracts/src";
@@ -282,13 +288,19 @@ const extractVideoMetadata = async (file: File) =>
 
 export const buildPostAttachmentMetadata = async (file: File, contentType: string) => {
   try {
+    const kind = attachmentKindForContentType(contentType, file.name);
     if (contentType.startsWith("image/")) return extractImageMetadata(file);
     if (contentType.startsWith("video/")) return extractVideoMetadata(file);
     if (contentType === "application/pdf") return extractPdfMetadata(file);
-    if (contentType.startsWith("text/") || contentType === "application/json") return extractTextMetadata(file);
+    if (kind === "code" || kind === "spreadsheet" || kind === "presentation") return buildStructuredAttachmentMetadata(file, kind);
     if (contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
       return extractDocxMetadata(file);
     }
+    if (kind === "document") {
+      const structured = await buildStructuredAttachmentMetadata(file, kind);
+      if (Object.keys(structured).length) return structured;
+    }
+    if (contentType.startsWith("text/") || contentType === "application/json" || contentType === "application/rtf") return extractTextMetadata(file);
   } catch {
     return {};
   }
@@ -354,7 +366,7 @@ export function AttachmentComposerField({
             onChange={uploadFiles}
           />
         </label>
-        {status ? <small>{status}</small> : <small>Media, documents, spreadsheets, text, or code</small>}
+        {status ? <small>{status}</small> : <small>Media, documents, spreadsheets, presentations, or code</small>}
       </div>
       {attachments.length ? (
         <div className="composer-attachment-list">
@@ -500,6 +512,9 @@ export function PostAttachmentCarousel({
 export function attachmentIcon(attachment: InquiryAttachment) {
   if (attachment.kind === "image") return <ImageIcon size={15} />;
   if (attachment.kind === "video") return <Film size={15} />;
+  if (attachment.kind === "code") return <Code2 size={15} />;
+  if (attachment.kind === "spreadsheet") return <FileSpreadsheet size={15} />;
+  if (attachment.kind === "presentation") return <Presentation size={15} />;
   if (attachment.kind === "pdf" || attachment.kind === "text" || attachment.kind === "document") {
     return <FileText size={15} />;
   }
@@ -545,6 +560,10 @@ function AttachmentPreviewPane({
 
   if (attachment.kind === "pdf" && attachment.url) {
     return <PdfAttachmentPreview attachment={attachment} mode={mode} />;
+  }
+
+  if (attachment.kind === "code" || attachment.kind === "spreadsheet" || attachment.kind === "presentation") {
+    return <StructuredAttachmentPreviewPane attachment={attachment} mode={mode} />;
   }
 
   if (attachment.kind === "document" && isDocxAttachment(attachment)) {
@@ -924,6 +943,10 @@ function AttachmentExpandedPane({
     return <PdfAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} />;
   }
 
+  if (attachment.kind === "code" || attachment.kind === "spreadsheet" || attachment.kind === "presentation") {
+    return <StructuredAttachmentPreviewPane attachment={attachment} mode="expanded" zoom={zoom} />;
+  }
+
   if (attachment.kind === "document" && isDocxAttachment(attachment)) {
     return <DocxAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} />;
   }
@@ -1117,6 +1140,7 @@ export function AttachmentPreviewModal({
             {isFullscreen ? zoomControls : null}
             {isFullscreen ? fullscreenButton : null}
             {item.id !== "composer-preview" ? <button type="button" title="Open in a new tab" onClick={openDedicatedViewer}><ExternalLink size={15} /></button> : null}
+            {activeAttachment.url ? <a href={activeAttachment.url} target="_blank" rel="noopener noreferrer" title="Open original file" aria-label="Open original file"><FileText size={15} /></a> : null}
             <button type="button" title="Close" onClick={closeModal}>
               <X size={17} />
             </button>
