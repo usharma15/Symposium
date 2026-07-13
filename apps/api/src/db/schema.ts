@@ -551,7 +551,7 @@ export const aiConversations = pgTable(
   "ai_conversations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    ownerHandle: text("owner_handle").references(() => profiles.handle, { onDelete: "cascade" }),
+    ownerHandle: text("owner_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
     title: text("title").notNull(),
     contextType: text("context_type").default("general").notNull(),
     contextId: text("context_id"),
@@ -599,6 +599,28 @@ export const workspaces = pgTable(
   ]
 );
 
+export const workspaceNotebooks = pgTable(
+  "workspace_notebooks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    ownerHandle: text("owner_handle")
+      .notNull()
+      .references(() => profiles.handle, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    revision: integer("revision").default(1).notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [
+    index("workspace_notebooks_workspace_updated_idx").on(table.workspaceId, table.updatedAt),
+    check("workspace_notebooks_revision_check", sql`${table.revision} >= 1`)
+  ]
+);
+
 export const notes = pgTable(
   "notes",
   {
@@ -606,16 +628,111 @@ export const notes = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
+    ownerHandle: text("owner_handle").references(() => profiles.handle, { onDelete: "cascade" }),
+    notebookId: uuid("notebook_id").references(() => workspaceNotebooks.id, { onDelete: "set null" }),
     title: text("title").notNull(),
+    body: text("body").default("").notNull(),
+    document: jsonb("content_document").$type<VersionedDocumentContract>(),
+    kind: text("kind").default("note").notNull(),
+    publicationTarget: text("publication_target").default("undecided").notNull(),
+    targetId: text("target_id"),
+    lifecycle: text("lifecycle").default("draft").notNull(),
     visibility: text("visibility").default("private").notNull(),
     revision: integer("revision").default(1).notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedPostId: text("published_post_id").references(() => posts.id, { onDelete: "set null" }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
   (table) => [
     index("notes_workspace_updated_idx").on(table.workspaceId, table.updatedAt),
-    check("notes_visibility_check", sql`${table.visibility} IN ('private', 'community', 'public')`),
+    index("notes_owner_updated_idx").on(table.ownerHandle, table.updatedAt),
+    index("notes_notebook_updated_idx").on(table.notebookId, table.updatedAt),
+    check("notes_visibility_check", sql`${table.visibility} = 'private'`),
+    check("notes_kind_check", sql`${table.kind} IN ('note', 'paper', 'thought', 'comment', 'reply', 'quick')`),
+    check("notes_publication_target_check", sql`${table.publicationTarget} IN ('undecided', 'paper', 'thought', 'comment', 'reply')`),
+    check("notes_lifecycle_check", sql`${table.lifecycle} IN ('draft', 'published', 'archived')`),
     check("notes_revision_check", sql`${table.revision} >= 1`)
+  ]
+);
+
+export const workspaceNoteRevisions = pgTable(
+  "workspace_note_revisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    noteId: uuid("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    editorHandle: text("editor_handle").references(() => profiles.handle, { onDelete: "set null" }),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    document: jsonb("content_document").$type<VersionedDocumentContract>().notNull(),
+    kind: text("kind").notNull(),
+    publicationTarget: text("publication_target").notNull(),
+    targetId: text("target_id"),
+    notebookId: uuid("notebook_id").references(() => workspaceNotebooks.id, { onDelete: "set null" }),
+    attachmentIds: uuid("attachment_ids").array().default(sql`ARRAY[]::UUID[]`).notNull(),
+    reason: text("reason").default("checkpoint").notNull(),
+    createdAt: createdAtColumn()
+  },
+  (table) => [
+    uniqueIndex("workspace_note_revisions_note_revision_unique_idx").on(table.noteId, table.revision),
+    index("workspace_note_revisions_note_created_idx").on(table.noteId, table.createdAt)
+  ]
+);
+
+export const workspaceNotebookGrants = pgTable(
+  "workspace_notebook_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    notebookId: uuid("notebook_id").notNull().references(() => workspaceNotebooks.id, { onDelete: "cascade" }),
+    granteeHandle: text("grantee_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    grantedByHandle: text("granted_by_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("workspace_notebook_grants_notebook_grantee_unique_idx").on(table.notebookId, table.granteeHandle),
+    index("workspace_notebook_grants_grantee_idx").on(table.granteeHandle, table.notebookId),
+    check("workspace_notebook_grants_role_check", sql`${table.role} IN ('viewer', 'commenter', 'editor', 'publisher')`)
+  ]
+);
+
+export const workspaceNoteGrants = pgTable(
+  "workspace_note_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    noteId: uuid("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    granteeHandle: text("grantee_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    grantedByHandle: text("granted_by_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("workspace_note_grants_note_grantee_unique_idx").on(table.noteId, table.granteeHandle),
+    index("workspace_note_grants_grantee_idx").on(table.granteeHandle, table.noteId),
+    check("workspace_note_grants_role_check", sql`${table.role} IN ('viewer', 'commenter', 'editor', 'publisher')`)
+  ]
+);
+
+export const workspaceNoteComments = pgTable(
+  "workspace_note_comments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    noteId: uuid("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    authorHandle: text("author_handle").references(() => profiles.handle, { onDelete: "set null" }),
+    body: text("body").notNull(),
+    revision: integer("revision").default(1).notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [
+    index("workspace_note_comments_note_created_idx").on(table.noteId, table.createdAt),
+    check("workspace_note_comments_revision_check", sql`${table.revision} >= 1`)
   ]
 );
 
@@ -645,6 +762,9 @@ export const notePublications = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     noteId: uuid("note_id").references(() => notes.id, { onDelete: "set null" }),
+    noteRevision: integer("note_revision"),
+    checkpointId: uuid("checkpoint_id").references(() => workspaceNoteRevisions.id, { onDelete: "set null" }),
+    publishedCommentId: text("published_comment_id").references(() => comments.id, { onDelete: "set null" }),
     postId: text("post_id").references(() => posts.id, { onDelete: "set null" }),
     publisherHandle: text("publisher_handle").references(() => profiles.handle, { onDelete: "set null" }),
     status: text("status").default("published").notNull(),
@@ -654,6 +774,7 @@ export const notePublications = pgTable(
   },
   (table) => [
     index("note_publications_note_idx").on(table.noteId),
+    uniqueIndex("note_publications_revision_unique_idx").on(table.noteId, table.noteRevision).where(sql`${table.noteId} IS NOT NULL AND ${table.noteRevision} IS NOT NULL`),
     uniqueIndex("note_publications_post_unique_idx").on(table.postId).where(sql`${table.postId} IS NOT NULL`),
     index("note_publications_publisher_idx").on(table.publisherHandle),
     check("note_publications_visibility_check", sql`${table.visibility} IN ('private', 'community', 'public')`)

@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   const contentType = inferAttachmentContentType(String(body.fileName ?? ""), String(body.contentType ?? ""));
   const byteSize = Number(body.byteSize ?? 0);
 
-  if (ownerType !== "post" && ownerType !== "comment" && ownerType !== "profile") {
+  if (!["post", "comment", "note", "profile"].includes(ownerType)) {
     return jsonError("Private attachment delivery is not enabled for message or note uploads yet.", 412);
   }
 

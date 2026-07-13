@@ -3,7 +3,7 @@ import type { PoolClient } from "pg";
 import type { AttachmentRow } from "../repository/foundation";
 import { queueAttachmentRowsForStorageDeletion, type AttachmentStorageRow } from "./storageDeletion";
 
-export type AttachmentOwnerType = "post" | "comment";
+export type AttachmentOwnerType = "post" | "comment" | "note";
 
 export type OwnedAttachmentRow = AttachmentRow &
   AttachmentStorageRow & {
@@ -43,7 +43,7 @@ export const assertClaimableOwnerAttachments = (
       (row) =>
         !row ||
         row.ownerType !== input.ownerType ||
-        row.uploaderHandle !== input.uploaderHandle ||
+        (row.ownerId === null && row.uploaderHandle !== input.uploaderHandle) ||
         (row.status !== "uploaded" && row.status !== "previewed") ||
         (row.ownerId !== null && row.ownerId !== input.ownerId)
     )

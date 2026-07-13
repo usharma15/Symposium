@@ -56,6 +56,13 @@ export const createUploadUrl = async (objectKey: string, contentType: string, by
   });
 };
 
+export const createPrivateDownloadUrl = async (objectKey: string) =>
+  getSignedUrl(
+    getS3Client(),
+    new GetObjectCommand({ Bucket: env.R2_BUCKET!, Key: objectKey }),
+    { expiresIn: 60 }
+  );
+
 const readObjectBytes = async (objectKey: string, range?: string) => {
   const response = await getS3Client().send(
     new GetObjectCommand({

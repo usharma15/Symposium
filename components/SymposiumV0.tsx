@@ -163,7 +163,9 @@ import {
   matchesTopic,
   searchableContentText
 } from "@/features/discovery/discoveryPolicy";
-import { NotebookPanel, TabletPanel } from "@/features/workspace/WorkspacePanels";
+import { TabletPanel } from "@/features/workspace/WorkspacePanels";
+import { WorkspaceView } from "@/features/workspace/WorkspaceView";
+import type { WorkspacePublicationResponse } from "@/lib/workspaceTypes";
 import { SearchModal } from "@/features/search/SearchModal";
 import { MessagesModal } from "@/features/messages/MessagesModal";
 import { RoomView } from "@/features/rooms/RoomView";
@@ -403,7 +405,6 @@ function SymposiumExperience({
   const [communitiesExpanded, setCommunitiesExpanded] = useState(false);
   const [communityQuery, setCommunityQuery] = useState("");
   const [tabletOpen, setTabletOpen] = useState(false);
-  const [notebookOpen, setNotebookOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [quoteSelection, setQuoteSelection] = useState<QuoteSelection | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -469,9 +470,6 @@ function SymposiumExperience({
   const entryAuthStateRef = useRef({ browserSignedIn: Boolean(isSignedIn), profileSynced: signedIn });
   entryAuthStateRef.current = { browserSignedIn: Boolean(isSignedIn), profileSynced: signedIn };
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
-  const [noteText, setNoteText] = useState(
-    "First note: make the thing feel alive without pretending the whole world is built yet."
-  );
 
   const reconcileCommittedItem = (
     incoming: InquiryItem,
@@ -1264,6 +1262,9 @@ function SymposiumExperience({
       event.kind.startsWith("community.") ||
       event.kind.startsWith("note.")
     ) {
+      if (event.kind.startsWith("note.")) {
+        window.dispatchEvent(new Event("symposium-workspace-change"));
+      }
       scheduleLiveRefresh();
     }
   };
@@ -1323,7 +1324,6 @@ function SymposiumExperience({
   useEffect(() => {
     if (shouldPlayEntrance === null) return;
     const storedTheme = window.localStorage.getItem("symposium-theme") as Theme | null;
-    const storedNote = window.localStorage.getItem("symposium-notebook");
     const storedProfileHandle = window.localStorage.getItem("symposium-profile-handle");
 
     if (storedTheme === "day" || storedTheme === "night") {
@@ -1331,7 +1331,6 @@ function SymposiumExperience({
     } else if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
       setTheme("night");
     }
-    if (storedNote) setNoteText(storedNote);
     try {
       const storedActivityRecency = JSON.parse(
         window.localStorage.getItem("symposium-activity-recency") ?? "{}"
@@ -1461,9 +1460,6 @@ function SymposiumExperience({
     window.localStorage.setItem("symposium-theme", theme);
   }, [theme]);
 
-  useEffect(() => {
-    window.localStorage.setItem("symposium-notebook", noteText);
-  }, [noteText]);
 
   const persistActivityRecency = (next: Record<string, number>) => {
     activityRecencyRef.current = next;
@@ -1847,7 +1843,6 @@ function SymposiumExperience({
     visibleCommentSegmentStacksRef.current = {};
     setCommentSegmentStacks(restoredSegmentStacks);
     setTabletOpen(false);
-    setNotebookOpen(false);
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
@@ -1915,7 +1910,6 @@ function SymposiumExperience({
     if (next.patronageMode !== undefined) setPatronageMode(next.patronageMode);
     if (next.selectedCommunityId !== undefined) setSelectedCommunityId(next.selectedCommunityId);
     setTabletOpen(false);
-    setNotebookOpen(false);
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
@@ -2003,17 +1997,7 @@ function SymposiumExperience({
     setProfileActiveTabs((current) => ({ ...current, [handle]: tab }));
   };
 
-  const openNotebook = () => {
-    setTabletOpen(false);
-    setComposerOpen(false);
-    setSettingsOpen(false);
-    setSearchOpen(false);
-    setMessagesOpen(false);
-    setNotebookOpen(true);
-  };
-
   const openTablet = () => {
-    setNotebookOpen(false);
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
@@ -2023,7 +2007,6 @@ function SymposiumExperience({
 
   const openSearch = () => {
     setTabletOpen(false);
-    setNotebookOpen(false);
     setComposerOpen(false);
     setSettingsOpen(false);
     setMessagesOpen(false);
@@ -3069,8 +3052,13 @@ function SymposiumExperience({
     }
   };
 
+  const acceptWorkspacePublication = (result: WorkspacePublicationResponse) => {
+    mergeLiveItem(result.item);
+    setSyncStatus("Draft published; private history retained");
+    openPost(result.item.id, result.comment?.id ?? null, result.comment ? "thread" : "detail");
+  };
+
   const beginQuote = (selection: QuoteSelection) => {
-    setNotebookOpen(false);
     setTabletOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
@@ -3220,7 +3208,6 @@ function SymposiumExperience({
             onEditComment={(itemId, commentId) => setEditingComment({ itemId, commentId })}
             onDeleteComment={deleteComment}
             onOpenSettings={() => {
-              setNotebookOpen(false);
               setTabletOpen(false);
               setComposerOpen(false);
               setSearchOpen(false);
@@ -3283,6 +3270,14 @@ function SymposiumExperience({
             room={activeRoomData}
             onOpenSaved={() => toggleOfficeMode("saved")}
             onOpenNotes={() => toggleOfficeMode("notes")}
+          />
+        ) : activeRoom === "office" && officeMode === "notes" ? (
+          <WorkspaceView
+            room={activeRoomData}
+            actorHandle={currentProfile.handle}
+            profiles={profiles}
+            onOpenSaved={() => toggleOfficeMode("saved")}
+            onPublished={acceptWorkspacePublication}
           />
         ) : activeRoom === "funding" && patronageMode === "lobby" ? (
           <PatronageLobbyView
@@ -3349,7 +3344,6 @@ function SymposiumExperience({
         className="new-post-launcher bottom-action bottom-action-new"
         type="button"
         onClick={() => {
-          setNotebookOpen(false);
           setTabletOpen(false);
           setSettingsOpen(false);
           setSearchOpen(false);
@@ -3364,11 +3358,13 @@ function SymposiumExperience({
       <button
         className="pocket pocket-left bottom-action bottom-action-notebook"
         type="button"
-        title="Notebook"
-        onClick={openNotebook}
+        title="Notes workspace"
+        onClick={() => {
+          toggleOfficeMode("notes");
+        }}
       >
         <NotebookPen size={18} />
-        <span>Notebook</span>
+        <span>Notes</span>
       </button>
 
       <button
@@ -3380,15 +3376,6 @@ function SymposiumExperience({
         <BrainCircuit size={18} />
         <span>AI Tablet</span>
       </button>
-
-      {notebookOpen ? (
-        <NotebookPanel
-          noteText={noteText}
-          setNoteText={setNoteText}
-          context={selectedItem?.title ?? activeRoomData.name}
-          onClose={() => setNotebookOpen(false)}
-        />
-      ) : null}
 
       {tabletOpen ? (
         <TabletPanel

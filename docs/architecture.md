@@ -83,11 +83,19 @@ The additive version-1 document and durable resource-reference contracts are def
 
 Posts, comments, notes, drafts, and messages receive capability policies over this shared model; they do not receive separate incompatible editors.
 
+## Workspace documents
+
+Notes are a private workspace-document family, not a second post store. Generic Notes and Paper drafts use the full shared editor; Thought, Comment, and Reply drafts use the reduced capability policy; Quick Notes have a reserved filing surface but are not yet creatable. `All` is a virtual last-edited projection, while a document may be filed in zero or one durable notebook.
+
+Every create, autosave, explicit Save Draft, and notebook-removal move advances the document revision and stores an immutable `workspace_note_revisions` checkpoint. Publish always resolves the exact open revision, serializes against saves and notebook moves with a document-scoped advisory lock, and records a unique note/revision publication before the private draft history is retained. A collaborator with publish rights publishes under the immutable document owner's authorship; the publisher remains separately audited.
+
+The workspace root is always private. Notebook and document grants define cumulative viewer, commenter, editor, and publisher roles, with notebook access inherited by filed documents. Generic Notes and Papers are collaboration-capable; Thoughts, Comments, and Replies remain owner-editable and owner-publishable. The invitation manager and draft-discussion UI are the next collaboration pass, built on these tables and permission projections rather than a parallel sharing model.
+
 ## Attachment ownership
 
 Attachments remain independent staged resources. Binding them to posts, comments, notes, drafts, or messages is an atomic owner transition performed inside the owning domain mutation. Editing uses a declared retained/added/removed set so detached objects can be expired safely.
 
-Post, comment, and reply attachments now use the shared owner-neutral claim service. Post and comment edits submit the complete desired attachment identity set under a content-version precondition; retained objects stay ordered, new staged objects are claimed in the owning transaction, and removed objects become unavailable and enter the durable deletion queue before commit. Comments under private Office/draft posts fail closed until protected attachment delivery is available.
+Post, comment, reply, and workspace-document attachments use the shared owner-neutral claim service. Edits submit the complete desired attachment identity set under a content-version precondition; retained objects stay ordered even when an authorised collaborator did not upload them, new staged objects are claimed in the owning transaction, and removed objects become unavailable and enter the durable deletion queue before commit. Workspace attachments use permission-checked same-origin delivery and short-lived signed object URLs. Copying those private objects into a public publication remains fail-closed until the public-copy pass; private message attachment delivery also remains intentionally fail-closed.
 
 Posts and comments also share one quote-reference contract. Either owner type can quote either public source type through the direct quote action or by attaching a canonical Symposium link while drafting; the destination stores an exact-word, formatting-preserving, non-recursive source snapshot inside its own transaction, edits use the same content-version precondition, and source deletion strips the snapshot while preserving only safe canonical identity for an unavailable-state card.
 
@@ -137,10 +145,10 @@ Backend persistence is split into bounded repositories for posts, comments, iden
 2. Canonical URL routing and shell/navigation separation. Complete for current surfaces.
 3. Shared normalized entity store and live-sync controller. Complete for current inquiry entities and action reconciliation.
 4. Comment tree and composer extraction. Complete.
-5. Attachment gallery, viewer, uploader, post/comment ownership, editing, and deletion extraction. Complete for public posts, comments, and replies; private note/message delivery remains intentionally fail-closed.
+5. Attachment gallery, viewer, uploader, post/comment ownership, editing, and deletion extraction. Complete for public posts, comments, and replies and for protected workspace-document delivery; public copying of private note objects and private message delivery remain intentionally fail-closed.
 6. Post composer/detail/feed extraction. Complete.
 7. Profile activity and social graph extraction. Complete.
-8. Workspace/notes wiring and shared editor foundation. Presentation extracted and authoritative note/block revision guards are in place; durable structured-document/editor integration remains next-stage work.
+8. Workspace/notes wiring and shared editor foundation. Complete for the first construction pass: durable workspace documents and notebooks, structured editor capability policies, immutable revisions, autosave/checkpoint saves, exact-revision publication, protected note attachments, permission-safe search, local/live persistence, and cross-tab convergence. Collaboration invitations, draft discussion, public attachment copying, and Quick Note capture remain explicit next-pass gates.
 9. Layer `globals.css` into tokens, foundations, layout, shared components, and feature styles. Complete with cascade-preserving layers.
 10. Split the backend live repository by domain while retaining the shared transaction kernel. Complete: routes now address domain repositories directly and cross-domain orchestration is service-owned.
 11. Add server-authoritative entity revisions and a shared cross-tab mutation coordinator. Complete for posts, comments, profiles, follows, bootstrap, live events, and the current edit/delete mutation envelope.

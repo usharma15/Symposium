@@ -13,7 +13,7 @@ import {
   validatePostAttachmentDetails
 } from "@/lib/attachmentRules";
 import { cleanHandle } from "@/lib/symposiumCore";
-import { env } from "../config/env";
+import { env, hasR2Config } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import type { Actor } from "../services/auth";
@@ -61,14 +61,20 @@ type AttachmentRow = {
 const publicObjectUrl = (objectKey: string) =>
   env.R2_PUBLIC_BASE_URL ? `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${objectKey}` : null;
 
-const requireAttachmentDatabase = () => {
+const requireAttachmentDatabase = (ownerType: string) => {
   if (!hasDatabase()) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "Persistent attachment storage requires the live database."
     });
   }
-  if (!env.R2_PUBLIC_BASE_URL) {
+  if (!hasR2Config) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Persistent attachment storage is not configured."
+    });
+  }
+  if (ownerType !== "note" && !env.R2_PUBLIC_BASE_URL) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "Persistent public attachment delivery is not configured."
@@ -163,10 +169,10 @@ export const createAttachmentUpload = async (
   };
   const handle = actorHandle(actor);
 
-  if (input.ownerType !== "post" && input.ownerType !== "comment" && input.ownerType !== "profile") {
+  if (!["post", "comment", "note", "profile"].includes(input.ownerType)) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: "Private attachment delivery must be enabled before message or note uploads can be accepted."
+      message: "Private attachment delivery must be enabled before message uploads can be accepted."
     });
   }
 
@@ -204,7 +210,7 @@ export const createAttachmentUpload = async (
     }
   }
 
-  requireAttachmentDatabase();
+  requireAttachmentDatabase(input.ownerType);
   await ensureLiveData();
   let expiredAttachmentIds: string[] = [];
   const prepared = await runAtomic(async (client) => {
@@ -243,7 +249,7 @@ export const createAttachmentUpload = async (
       attachmentId,
       objectKey,
       uploadObjectKey,
-      publicUrl: publicObjectUrl(objectKey)
+      publicUrl: input.ownerType === "note" ? null : publicObjectUrl(objectKey)
     };
     await stageAuditLog(client, {
       actorHandle: handle,
@@ -325,15 +331,16 @@ const selectAttachment = async (attachmentId: string, handle: string) => {
 export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
   const input = confirmAttachmentInputSchema.parse(rawInput);
   const handle = actorHandle(actor);
-  requireAttachmentDatabase();
+  requireAttachmentDatabase("note");
   await ensureLiveData();
 
   const existing = await selectAttachment(input.attachmentId, handle);
   if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Attachment upload not found." });
+  requireAttachmentDatabase(existing.ownerType);
   if (existing.status === "uploaded" || existing.status === "previewed") {
     return {
       attachmentId: existing.attachmentId,
-      publicUrl: publicObjectUrl(existing.objectKey),
+      publicUrl: existing.ownerType === "note" ? null : publicObjectUrl(existing.objectKey),
       status: existing.status
     };
   }
@@ -462,7 +469,7 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
 
   return {
     attachmentId: attachment.attachmentId,
-    publicUrl: publicObjectUrl(attachment.objectKey),
+    publicUrl: attachment.ownerType === "note" ? null : publicObjectUrl(attachment.objectKey),
     status: "uploaded" as const
   };
 };

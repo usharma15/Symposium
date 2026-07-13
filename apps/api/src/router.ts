@@ -9,6 +9,10 @@ import {
   createOpportunityInputSchema,
   createPostInputSchema,
   createProfileInputSchema,
+  createWorkspaceDocumentInputSchema,
+  createWorkspaceNotebookInputSchema,
+  deleteWorkspaceDocumentInputSchema,
+  deleteWorkspaceNotebookInputSchema,
   followProfileInputSchema,
   joinCommunityInputSchema,
   markNotificationInputSchema,
@@ -17,7 +21,10 @@ import {
   saveNoteBlockInputSchema,
   searchInputSchema,
   sendMessageInputSchema,
-  unfollowProfileInputSchema
+  updateWorkspaceDocumentInputSchema,
+  updateWorkspaceNotebookInputSchema,
+  unfollowProfileInputSchema,
+  workspaceSearchInputSchema
 } from "../../../packages/contracts/src";
 import { askAssistant } from "./repository/assistant";
 import { confirmAttachment, createAttachmentUpload } from "./repository/attachments";
@@ -42,7 +49,17 @@ import { createOpportunity, listOpportunities } from "./repository/opportunities
 import { applyPostAction, createPost } from "./repository/posts";
 import { followProfile, listFollowing, unfollowProfile } from "./repository/profiles";
 import { search } from "./repository/search";
-import { getWorkspace, saveNoteBlock } from "./repository/workspace";
+import { saveNoteBlock } from "./repository/workspace";
+import {
+  createWorkspaceDocument,
+  createWorkspaceNotebook,
+  deleteWorkspaceDocument,
+  deleteWorkspaceNotebook,
+  getWorkspaceDocuments,
+  searchWorkspaceDocuments,
+  updateWorkspaceDocument,
+  updateWorkspaceNotebook
+} from "./repository/workspaceDocuments";
 import { publishNote } from "./services/notePublishing";
 import { authedProcedure, publicProcedure, router } from "./trpc";
 import { mutationContextFromRequest } from "./services/mutations";
@@ -157,7 +174,36 @@ export const appRouter = router({
     )
   }),
   notes: router({
-    getWorkspace: authedProcedure.query(({ ctx }) => getWorkspace(ctx.actor)),
+    getWorkspace: authedProcedure.query(({ ctx }) => getWorkspaceDocuments(ctx.actor)),
+    createDocument: authedProcedure.input(createWorkspaceDocumentInputSchema).mutation(({ ctx, input }) =>
+      createWorkspaceDocument(input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.document.create", input))
+    ),
+    updateDocument: authedProcedure
+      .input(z.object({ noteId: z.string().uuid(), input: updateWorkspaceDocumentInputSchema }))
+      .mutation(({ ctx, input }) =>
+        updateWorkspaceDocument(input.noteId, input.input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.document.update", input.input))
+      ),
+    deleteDocument: authedProcedure
+      .input(z.object({ noteId: z.string().uuid(), input: deleteWorkspaceDocumentInputSchema }))
+      .mutation(({ ctx, input }) =>
+        deleteWorkspaceDocument(input.noteId, input.input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.document.delete", input.input))
+      ),
+    createNotebook: authedProcedure.input(createWorkspaceNotebookInputSchema).mutation(({ ctx, input }) =>
+      createWorkspaceNotebook(input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.notebook.create", input))
+    ),
+    updateNotebook: authedProcedure
+      .input(z.object({ notebookId: z.string().uuid(), input: updateWorkspaceNotebookInputSchema }))
+      .mutation(({ ctx, input }) =>
+        updateWorkspaceNotebook(input.notebookId, input.input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.notebook.update", input.input))
+      ),
+    deleteNotebook: authedProcedure
+      .input(z.object({ notebookId: z.string().uuid(), input: deleteWorkspaceNotebookInputSchema }))
+      .mutation(({ ctx, input }) =>
+        deleteWorkspaceNotebook(input.notebookId, input.input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.notebook.delete", input.input))
+      ),
+    searchWorkspace: authedProcedure.input(workspaceSearchInputSchema).query(({ ctx, input }) =>
+      searchWorkspaceDocuments(input, ctx.actor)
+    ),
     saveBlock: authedProcedure.input(saveNoteBlockInputSchema).mutation(({ ctx, input }) =>
       saveNoteBlock(input, ctx.actor, mutationContextFromRequest(ctx.req, "note.block.save", input))
     ),

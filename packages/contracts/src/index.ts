@@ -175,6 +175,24 @@ export const versionedDocumentSchema = z.object({
   }).optional()
 });
 
+export const workspaceDocumentKindSchema = z.enum([
+  "note",
+  "paper",
+  "thought",
+  "comment",
+  "reply",
+  "quick"
+]);
+export const workspacePublicationTargetSchema = z.enum([
+  "undecided",
+  "paper",
+  "thought",
+  "comment",
+  "reply"
+]);
+export const workspaceAccessRoleSchema = z.enum(["viewer", "commenter", "editor", "publisher", "owner"]);
+export const workspaceLifecycleSchema = z.enum(["draft", "published", "archived"]);
+
 export const documentFitsReducedEditor = (document: z.infer<typeof versionedDocumentSchema>) =>
   document.nodes.every((node) => {
     if (!["paragraph", "equation", "attachment", "quote", "reference", "citation"].includes(node.type)) return false;
@@ -599,10 +617,69 @@ export const saveNoteBlockInputSchema = z.object({
   visibility: z.enum(["private", "community", "public"]).default("private")
 });
 
+const workspaceDocumentFieldsSchema = z.object({
+  title: z.string().trim().min(1).max(240),
+  body: z.string().max(100000),
+  document: versionedDocumentSchema,
+  kind: workspaceDocumentKindSchema,
+  publicationTarget: workspacePublicationTargetSchema.default("undecided"),
+  notebookId: z.string().uuid().nullable().default(null),
+  targetId: z.string().trim().min(1).max(240).nullable().default(null),
+  attachmentIds: z.array(postAttachmentIdSchema).max(100).default([])
+});
+
+export const createWorkspaceDocumentInputSchema = workspaceDocumentFieldsSchema.superRefine((input, context) => {
+  validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
+  if (["thought", "comment", "reply"].includes(input.kind) && !documentFitsReducedEditor(input.document)) {
+    context.addIssue({ code: "custom", path: ["document"], message: "This draft type uses the reduced editor formatting set." });
+  }
+  if (input.kind === "quick") {
+    context.addIssue({ code: "custom", path: ["kind"], message: "Quick Notes are reserved for the next workspace pass." });
+  }
+});
+
+export const updateWorkspaceDocumentInputSchema = workspaceDocumentFieldsSchema.extend({
+  expectedRevision: z.number().int().positive(),
+  checkpoint: z.boolean().default(false)
+}).superRefine((input, context) => {
+  validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
+  if (["thought", "comment", "reply"].includes(input.kind) && !documentFitsReducedEditor(input.document)) {
+    context.addIssue({ code: "custom", path: ["document"], message: "This draft type uses the reduced editor formatting set." });
+  }
+  if (input.kind === "quick") {
+    context.addIssue({ code: "custom", path: ["kind"], message: "Quick Notes are reserved for the next workspace pass." });
+  }
+});
+
+export const deleteWorkspaceDocumentInputSchema = z.object({
+  expectedRevision: z.number().int().positive()
+});
+
+export const createWorkspaceNotebookInputSchema = z.object({
+  name: z.string().trim().min(1).max(120)
+});
+
+export const updateWorkspaceNotebookInputSchema = createWorkspaceNotebookInputSchema.extend({
+  expectedRevision: z.number().int().positive()
+});
+
+export const deleteWorkspaceNotebookInputSchema = z.object({
+  expectedRevision: z.number().int().positive()
+});
+
+export const workspaceSearchInputSchema = z.object({
+  query: z.string().trim().min(1).max(160),
+  kind: workspaceDocumentKindSchema.optional(),
+  notebookId: z.string().uuid().nullable().optional(),
+  limit: z.coerce.number().int().positive().max(50).default(24)
+});
+
 export const publishNoteInputSchema = z.object({
   noteId: z.string().uuid().optional(),
   title: z.string().trim().min(1).max(240).optional(),
   body: z.string().trim().min(1).max(20000).optional(),
+  expectedRevision: z.number().int().positive().optional(),
+  publicationTarget: z.enum(["paper", "thought"]).optional(),
   visibility: z.enum(["private", "community", "public"]).default("public")
 });
 
@@ -707,6 +784,15 @@ export type CommunityCallContract = z.infer<typeof communityCallSchema>;
 export type CreateCommunityCallInputContract = z.infer<typeof createCommunityCallInputSchema>;
 export type OpportunityContract = z.infer<typeof opportunitySchema>;
 export type CreateOpportunityInputContract = z.infer<typeof createOpportunityInputSchema>;
+export type WorkspaceDocumentKindContract = z.infer<typeof workspaceDocumentKindSchema>;
+export type WorkspacePublicationTargetContract = z.infer<typeof workspacePublicationTargetSchema>;
+export type WorkspaceAccessRoleContract = z.infer<typeof workspaceAccessRoleSchema>;
+export type WorkspaceLifecycleContract = z.infer<typeof workspaceLifecycleSchema>;
+export type CreateWorkspaceDocumentInputContract = z.infer<typeof createWorkspaceDocumentInputSchema>;
+export type UpdateWorkspaceDocumentInputContract = z.infer<typeof updateWorkspaceDocumentInputSchema>;
+export type CreateWorkspaceNotebookInputContract = z.infer<typeof createWorkspaceNotebookInputSchema>;
+export type UpdateWorkspaceNotebookInputContract = z.infer<typeof updateWorkspaceNotebookInputSchema>;
+export type WorkspaceSearchInputContract = z.infer<typeof workspaceSearchInputSchema>;
 export type PublishNoteInputContract = z.infer<typeof publishNoteInputSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;
@@ -743,6 +829,13 @@ export const procedureNames = [
   "messages.listConversations",
   "messages.send",
   "notes.getWorkspace",
+  "notes.createDocument",
+  "notes.updateDocument",
+  "notes.deleteDocument",
+  "notes.createNotebook",
+  "notes.updateNotebook",
+  "notes.deleteNotebook",
+  "notes.searchWorkspace",
   "notes.saveBlock",
   "notes.publish",
   "assistant.ask"

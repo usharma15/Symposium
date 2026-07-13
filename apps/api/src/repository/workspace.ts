@@ -177,9 +177,9 @@ export const saveNoteBlock = async (rawInput: unknown, actor: Actor, mutation?: 
     if (!noteId) {
       const note = await client.query<{ id: string }>(
         `INSERT INTO notes (workspace_id, title, visibility)
-         VALUES ($1, 'Notebook', $2)
+         VALUES ($1, 'Notebook', 'private')
          RETURNING id`,
-        [workspace.id, input.visibility]
+        [workspace.id]
       );
       noteId = note.rows[0]!.id;
       currentNoteRevision = 1;

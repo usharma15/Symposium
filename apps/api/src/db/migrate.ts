@@ -1232,7 +1232,148 @@ const migrations: Migration[] = [
             AND jsonb_typeof(content_document->'nodes') = 'array'
             AND jsonb_array_length(content_document->'nodes') > 0
           )
+      );
+    `
+  },
+  {
+    id: "0020_workspace_documents",
+    sql: `
+      UPDATE workspaces SET visibility = 'private' WHERE visibility <> 'private';
+      ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS workspaces_visibility_check;
+      ALTER TABLE workspaces
+        ADD CONSTRAINT workspaces_visibility_check CHECK (visibility = 'private');
+
+      CREATE TABLE IF NOT EXISTS workspace_notebooks (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        owner_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        deleted_at TIMESTAMPTZ
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS workspace_notebooks_workspace_name_unique_idx
+        ON workspace_notebooks (workspace_id, lower(name)) WHERE deleted_at IS NULL;
+      CREATE INDEX IF NOT EXISTS workspace_notebooks_workspace_updated_idx
+        ON workspace_notebooks (workspace_id, updated_at DESC) WHERE deleted_at IS NULL;
+
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS owner_handle TEXT REFERENCES profiles(handle) ON DELETE CASCADE;
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS notebook_id UUID REFERENCES workspace_notebooks(id) ON DELETE SET NULL;
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'note';
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS publication_target TEXT NOT NULL DEFAULT 'undecided';
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS target_id TEXT;
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS body TEXT NOT NULL DEFAULT '';
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS content_document JSONB;
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS lifecycle TEXT NOT NULL DEFAULT 'draft';
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS published_post_id TEXT REFERENCES posts(id) ON DELETE SET NULL;
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+      UPDATE notes note
+      SET owner_handle = workspace.owner_handle
+      FROM workspaces workspace
+      WHERE workspace.id = note.workspace_id AND note.owner_handle IS NULL;
+      ALTER TABLE notes ALTER COLUMN owner_handle SET NOT NULL;
+
+      UPDATE notes SET visibility = 'private' WHERE visibility <> 'private';
+      ALTER TABLE notes DROP CONSTRAINT IF EXISTS notes_visibility_check;
+      ALTER TABLE notes ADD CONSTRAINT notes_visibility_check CHECK (visibility = 'private');
+
+      ALTER TABLE notes DROP CONSTRAINT IF EXISTS notes_kind_check;
+      ALTER TABLE notes ADD CONSTRAINT notes_kind_check
+        CHECK (kind IN ('note', 'paper', 'thought', 'comment', 'reply', 'quick'));
+      ALTER TABLE notes DROP CONSTRAINT IF EXISTS notes_publication_target_check;
+      ALTER TABLE notes ADD CONSTRAINT notes_publication_target_check
+        CHECK (publication_target IN ('undecided', 'paper', 'thought', 'comment', 'reply'));
+      ALTER TABLE notes DROP CONSTRAINT IF EXISTS notes_lifecycle_check;
+      ALTER TABLE notes ADD CONSTRAINT notes_lifecycle_check
+        CHECK (lifecycle IN ('draft', 'published', 'archived'));
+      ALTER TABLE notes DROP CONSTRAINT IF EXISTS notes_content_document_shape_check;
+      ALTER TABLE notes ADD CONSTRAINT notes_content_document_shape_check
+        CHECK (
+          content_document IS NULL OR (
+            jsonb_typeof(content_document) = 'object'
+            AND content_document->>'version' = '1'
+            AND jsonb_typeof(content_document->'nodes') = 'array'
+            AND jsonb_array_length(content_document->'nodes') > 0
+          )
         );
+      CREATE INDEX IF NOT EXISTS notes_owner_updated_idx
+        ON notes (owner_handle, updated_at DESC) WHERE deleted_at IS NULL;
+      CREATE INDEX IF NOT EXISTS notes_notebook_updated_idx
+        ON notes (notebook_id, updated_at DESC) WHERE deleted_at IS NULL;
+      CREATE INDEX IF NOT EXISTS notes_workspace_search_idx
+        ON notes USING GIN (to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(body, '')))
+        WHERE deleted_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS workspace_note_revisions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL,
+        editor_handle TEXT REFERENCES profiles(handle) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        content_document JSONB NOT NULL,
+        kind TEXT NOT NULL,
+        publication_target TEXT NOT NULL,
+        target_id TEXT,
+        notebook_id UUID REFERENCES workspace_notebooks(id) ON DELETE SET NULL,
+        attachment_ids UUID[] NOT NULL DEFAULT ARRAY[]::UUID[],
+        reason TEXT NOT NULL DEFAULT 'checkpoint',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (note_id, revision)
+      );
+      CREATE INDEX IF NOT EXISTS workspace_note_revisions_note_created_idx
+        ON workspace_note_revisions (note_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS workspace_notebook_grants (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        notebook_id UUID NOT NULL REFERENCES workspace_notebooks(id) ON DELETE CASCADE,
+        grantee_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('viewer', 'commenter', 'editor', 'publisher')),
+        granted_by_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (notebook_id, grantee_handle)
+      );
+      CREATE INDEX IF NOT EXISTS workspace_notebook_grants_grantee_idx
+        ON workspace_notebook_grants (grantee_handle, notebook_id);
+
+      CREATE TABLE IF NOT EXISTS workspace_note_grants (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        grantee_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('viewer', 'commenter', 'editor', 'publisher')),
+        granted_by_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (note_id, grantee_handle)
+      );
+      CREATE INDEX IF NOT EXISTS workspace_note_grants_grantee_idx
+        ON workspace_note_grants (grantee_handle, note_id);
+
+      CREATE TABLE IF NOT EXISTS workspace_note_comments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        author_handle TEXT REFERENCES profiles(handle) ON DELETE SET NULL,
+        body TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        archived_at TIMESTAMPTZ,
+        deleted_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS workspace_note_comments_note_created_idx
+        ON workspace_note_comments (note_id, created_at ASC) WHERE deleted_at IS NULL;
+
+      ALTER TABLE note_publications ADD COLUMN IF NOT EXISTS note_revision INTEGER;
+      ALTER TABLE note_publications ADD COLUMN IF NOT EXISTS checkpoint_id UUID REFERENCES workspace_note_revisions(id) ON DELETE SET NULL;
+      ALTER TABLE note_publications ADD COLUMN IF NOT EXISTS published_comment_id TEXT REFERENCES comments(id) ON DELETE SET NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS note_publications_comment_unique_idx
+        ON note_publications (published_comment_id) WHERE published_comment_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS note_publications_revision_unique_idx
+        ON note_publications (note_id, note_revision) WHERE note_id IS NOT NULL AND note_revision IS NOT NULL;
     `
   }
 ];

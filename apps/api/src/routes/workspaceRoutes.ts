@@ -6,8 +6,20 @@ import { askAssistant } from "../repository/assistant";
 import { listConversations, sendMessage } from "../repository/conversations";
 import { listNotifications } from "../repository/notifications";
 import { createOpportunity, listOpportunities } from "../repository/opportunities";
-import { getWorkspace, saveNoteBlock } from "../repository/workspace";
+import { saveNoteBlock } from "../repository/workspace";
+import {
+  assertWorkspaceAttachmentAccess,
+  createWorkspaceDocument,
+  createWorkspaceNotebook,
+  deleteWorkspaceDocument,
+  deleteWorkspaceNotebook,
+  getWorkspaceDocuments,
+  searchWorkspaceDocuments,
+  updateWorkspaceDocument,
+  updateWorkspaceNotebook
+} from "../repository/workspaceDocuments";
 import { publishNote } from "../services/notePublishing";
+import { createPrivateDownloadUrl } from "../services/storage";
 
 export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.get("/v1/opportunities", async (request, reply) => {
@@ -70,8 +82,112 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.get("/v1/workspace", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const workspace = await getWorkspace(actor);
+      const workspace = await getWorkspaceDocuments(actor);
       return reply.send(workspace);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/workspace/documents", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const result = await createWorkspaceDocument(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.document.create", request.body)
+      );
+      return reply.send(result);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: { noteId: string } }>("/v1/workspace/documents/:noteId", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const result = await updateWorkspaceDocument(
+        request.params.noteId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.document.update", request.body)
+      );
+      return reply.send(result);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: { noteId: string } }>("/v1/workspace/documents/:noteId", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const result = await deleteWorkspaceDocument(
+        request.params.noteId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.document.delete", request.body)
+      );
+      return reply.send(result);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/workspace/notebooks", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await createWorkspaceNotebook(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.notebook.create", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: { notebookId: string } }>("/v1/workspace/notebooks/:notebookId", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await updateWorkspaceNotebook(
+        request.params.notebookId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.notebook.update", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: { notebookId: string } }>("/v1/workspace/notebooks/:notebookId", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await deleteWorkspaceNotebook(
+        request.params.notebookId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.notebook.delete", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/workspace/search", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await searchWorkspaceDocuments(request.query, actor));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: { attachmentId: string } }>("/v1/workspace/attachments/:attachmentId/access", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const attachment = await assertWorkspaceAttachmentAccess(request.params.attachmentId, actor);
+      return reply.send({ url: await createPrivateDownloadUrl(attachment.objectKey) });
     } catch (error) {
       return sendError(app, reply, error);
     }

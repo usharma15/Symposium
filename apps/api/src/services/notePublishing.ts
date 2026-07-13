@@ -1,16 +1,36 @@
 import { TRPCError } from "@trpc/server";
 import {
+  documentFitsReducedEditor,
   publishNoteInputSchema,
+  versionedDocumentSchema,
   type PublishNoteInputContract
 } from "../../../../packages/contracts/src";
-import { getPool, hasDatabase } from "../db/client";
+import { hasDatabase } from "../db/client";
+import { addComment } from "../repository/comments";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "../repository/foundation";
 import { createPost } from "../repository/posts";
 import type { Actor } from "./auth";
-import { mutationAuditMetadata, stageAuditLog } from "./audit";
-import { stageEvent } from "./events";
-import { claimMutation, completeMutation, type MutationContext } from "./mutations";
-import { runAtomic } from "./transactions";
+import type { MutationContext } from "./mutations";
+import {
+  assertWorkspaceRevisionNotPublished,
+  loadPublishableWorkspaceRevision,
+  persistWorkspacePublication,
+  withWorkspacePublicationLock,
+  type PublishableWorkspaceRevision
+} from "./workspacePublicationState";
+
+const publicationTarget = (revision: PublishableWorkspaceRevision, input: PublishNoteInputContract) => {
+  if (revision.kind === "paper") return "paper" as const;
+  if (revision.kind === "thought") return "thought" as const;
+  if (revision.kind === "comment") return "comment" as const;
+  if (revision.kind === "reply") return "reply" as const;
+  if (revision.kind === "note") {
+    const target = input.publicationTarget ?? revision.publicationTarget;
+    if (target === "paper" || target === "thought") return target;
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Choose whether this generic note becomes a Paper or a Thought." });
+  }
+  throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Quick Notes are not publishable in this workspace pass." });
+};
 
 export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input: PublishNoteInputContract = publishNoteInputSchema.parse(rawInput);
@@ -19,83 +39,88 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
   if (input.visibility !== "public") {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: "Private and community note publishing require protected post delivery and are not enabled yet."
+      message: "A workspace draft stays private until it is published to a public destination."
     });
   }
 
-  let title = input.title;
-  let body = input.body;
-  if (hasDatabase() && input.noteId) {
-    await ensureLiveData();
-    const note = await getPool().query<{ title: string; body: string }>(
-      `SELECT
-         n.title,
-         COALESCE(string_agg(nb.body, E'\n\n' ORDER BY nb.sort_order ASC, nb.created_at ASC), '') AS body
-       FROM notes n
-       JOIN workspaces w ON w.id = n.workspace_id
-       LEFT JOIN note_blocks nb ON nb.note_id = n.id
-       WHERE n.id = $1 AND w.owner_handle = $2
-       GROUP BY n.id`,
-      [input.noteId, publisher]
+  if (!hasDatabase() || !input.noteId) {
+    if (!input.title || !input.body) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Publishing requires a draft or explicit title and body." });
+    }
+    const item = await createPost(
+      {
+        title: input.title,
+        body: input.body,
+        kind: input.publicationTarget ?? "paper",
+        room: input.publicationTarget === "thought" ? "amphitheater" : "library",
+        authorHandle: publisher
+      },
+      actor,
+      mutation ? { ...mutation, scope: "note.publish.post" } : undefined
     );
-    if (!note.rowCount) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found." });
-    title = title ?? note.rows[0]!.title;
-    body = body ?? note.rows[0]!.body;
+    return { item, publication: { noteId: null, postId: item.id, visibility: "public" as const } };
   }
 
-  if (!title || !body) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "Publishing requires a noteId or explicit title and body."
-    });
-  }
+  await ensureLiveData();
+  return withWorkspacePublicationLock(input.noteId, publisher, mutation, async (client) => {
+    const revision = await loadPublishableWorkspaceRevision(client, input.noteId!, input.expectedRevision, publisher);
+    await assertWorkspaceRevisionNotPublished(client, revision);
+    const target = publicationTarget(revision, input);
+    const document = versionedDocumentSchema.parse(revision.document);
+    if (target !== "paper" && !documentFitsReducedEditor(document)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "This draft uses Paper formatting and cannot be published to a reduced editor destination."
+      });
+    }
+    if (revision.attachmentIds.length) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Private draft attachments remain protected. Publishing their public copies will be activated in the collaboration pass."
+      });
+    }
 
-  const item = await createPost(
-    { title, body, kind: "paper", room: "library", authorHandle: publisher },
-    actor,
-    mutation ? { ...mutation, scope: "note.publish.post" } : undefined
-  );
-  const value = {
-    item,
-    publication: { noteId: input.noteId ?? null, postId: item.id, visibility: input.visibility }
-  };
-  if (!hasDatabase()) return value;
+    if (target === "paper" || target === "thought") {
+      const ownerActor: Actor = { ...actor, handle: revision.ownerHandle };
+      const item = await createPost(
+        {
+          title: revision.title,
+          body: revision.body,
+          document,
+          kind: target,
+          room: target === "paper" ? "library" : "amphitheater",
+          authorHandle: revision.ownerHandle,
+          attachmentIds: []
+        },
+        ownerActor,
+        mutation ? { ...mutation, scope: "note.publish.post" } : undefined
+      );
+      return persistWorkspacePublication(revision, publisher, target, { item }, mutation);
+    }
 
-  return runAtomic(async (client) => {
-    const claim = await claimMutation<typeof value>(client, publisher, mutation);
-    if (claim.replayed) return { value: claim.response };
-    await client.query(
-      `INSERT INTO note_publications (note_id, post_id, publisher_handle, visibility, metadata)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (post_id) WHERE post_id IS NOT NULL
-       DO UPDATE SET
-         note_id = EXCLUDED.note_id,
-         publisher_handle = EXCLUDED.publisher_handle,
-         visibility = EXCLUDED.visibility,
-         metadata = EXCLUDED.metadata`,
-      [
-        input.noteId ?? null,
-        item.id,
-        publisher,
-        input.visibility,
-        JSON.stringify({ source: input.noteId ? "note" : "direct" })
-      ]
+    const targetId = revision.targetId?.trim();
+    if (!targetId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Choose the post this comment draft belongs to before publishing." });
+    }
+    const separator = targetId.indexOf(":");
+    const postId = target === "reply" && separator > 0 ? targetId.slice(0, separator) : targetId;
+    const parentId = target === "reply" && separator > 0 ? targetId.slice(separator + 1) : null;
+    if (target === "reply" && !parentId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "A reply draft must be linked as post-id:comment-id." });
+    }
+    const commentResult = await addComment(
+      postId,
+      {
+        body: revision.body,
+        document,
+        stance: revision.title,
+        parentId,
+        attachmentIds: [],
+        authorHandle: publisher
+      },
+      actor,
+      mutation ? { ...mutation, scope: "note.publish.comment" } : undefined
     );
-    await stageAuditLog(client, {
-      actorHandle: publisher,
-      action: "note.publish",
-      subjectType: "post",
-      subjectId: item.id,
-      metadata: mutationAuditMetadata(mutation, { noteId: input.noteId, visibility: input.visibility })
-    });
-    await completeMutation(client, publisher, mutation, value);
-    const event = await stageEvent(client, {
-      kind: "note.published",
-      actorHandle: publisher,
-      subjectType: "post",
-      subjectId: item.id,
-      payload: { noteId: input.noteId ?? null, visibility: input.visibility }
-    });
-    return { value, events: [event] };
+    return persistWorkspacePublication(revision, publisher, target, commentResult, mutation);
   });
 };

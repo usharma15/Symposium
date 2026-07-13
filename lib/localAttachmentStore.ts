@@ -220,7 +220,9 @@ const localRecordToAttachment = (record: LocalAttachmentRecord): InquiryAttachme
   fileName: record.fileName,
   contentType: record.contentType,
   byteSize: record.byteSize,
-  url: localAttachmentPublicPath(record),
+  url: record.ownerType === "note"
+    ? `/api/workspace/attachments/${encodeURIComponent(record.attachmentId)}${record.actorHandle ? `?actorHandle=${encodeURIComponent(record.actorHandle)}` : ""}`
+    : localAttachmentPublicPath(record),
   status: "uploaded",
   kind: attachmentKindForContentType(record.contentType, record.fileName),
   metadata: record.metadata,
@@ -231,11 +233,12 @@ export const replaceLocalOwnerAttachments = async (input: {
   actorHandle?: string;
   attachmentIds: string[];
   ownerId: string;
-  ownerType: "post" | "comment";
+  ownerType: "post" | "comment" | "note";
 }) =>
   withStoreLock(async () => {
-    if (input.attachmentIds.length > 10) {
-      throw new LocalAttachmentStoreError(`${input.ownerType === "post" ? "Posts" : "Comments"} can have up to 10 attachments.`, 400);
+    if (input.attachmentIds.length > 100) {
+      const label = input.ownerType === "post" ? "Posts" : input.ownerType === "comment" ? "Comments" : "Drafts";
+      throw new LocalAttachmentStoreError(`${label} can have up to 100 attachments.`, 400);
     }
     if (new Set(input.attachmentIds).size !== input.attachmentIds.length) {
       throw new LocalAttachmentStoreError(`Each ${input.ownerType} attachment can only be attached once.`, 400);
@@ -278,7 +281,7 @@ export const replaceLocalOwnerAttachments = async (input: {
     return input.attachmentIds.map((attachmentId) => localRecordToAttachment(store.attachments[attachmentId]!));
   });
 
-export const deleteLocalOwnerAttachments = async (ownerType: "post" | "comment", ownerId: string) =>
+export const deleteLocalOwnerAttachments = async (ownerType: "post" | "comment" | "note", ownerId: string) =>
   withStoreLock(async () => {
     const store = await loadStore();
     const owned = Object.values(store.attachments).filter(
@@ -310,4 +313,22 @@ export const resolveLocalPostAttachments = async (attachmentIds: string[], actor
     }
     return localRecordToAttachment(record);
   });
+};
+
+export const localAttachmentsForOwner = async (
+  ownerType: "post" | "comment" | "note",
+  ownerId: string,
+  actorHandle?: string
+) => {
+  const store = await loadStore();
+  return Object.values(store.attachments)
+    .filter(
+      (record) =>
+        record.ownerType === ownerType &&
+        record.ownerId === ownerId &&
+        record.status === "uploaded" &&
+        (!record.actorHandle || record.actorHandle === actorHandle)
+    )
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .map(localRecordToAttachment);
 };

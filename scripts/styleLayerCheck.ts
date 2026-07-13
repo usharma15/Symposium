@@ -14,6 +14,7 @@ const layers = [
   "80-immersive-overlays.css",
   "85-symposium-document.css",
   "87-structured-attachments.css",
+  "88-workspace.css",
   "90-immersive-responsive.css"
 ];
 

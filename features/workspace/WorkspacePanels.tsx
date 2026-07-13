@@ -1,33 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { BrainCircuit, NotebookPen, Send, Sparkles, X } from "lucide-react";
+import { BrainCircuit, Send, Sparkles, X } from "lucide-react";
 import type { InquiryItem, Room } from "@/lib/mockData";
-
-export function NotebookPanel({
-  noteText,
-  setNoteText,
-  context,
-  onClose
-}: {
-  noteText: string;
-  setNoteText: (text: string) => void;
-  context: string;
-  onClose: () => void;
-}) {
-  return (
-    <aside className="side-panel notebook-panel">
-      <PanelHeader icon={<NotebookPen size={18} />} title="Notebook" onClose={onClose} />
-      <p className="panel-context">{context}</p>
-      <textarea value={noteText} onChange={(event) => setNoteText(event.target.value)} />
-      <div className="note-stack">
-        <span>Draft paper margin</span>
-        <span>Objection smell test</span>
-        <span>Saved replication idea</span>
-      </div>
-    </aside>
-  );
-}
 
 export function TabletPanel({
   context,

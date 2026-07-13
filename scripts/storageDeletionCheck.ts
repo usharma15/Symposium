@@ -61,7 +61,7 @@ const main = async () => {
   assert.match(attachmentSource, /"verification_failed"/);
   assert.match(identitySource, /queueUnreferencedProfileStorageDeletion/);
   assert.match(maintenanceSource, /failed_or_abandoned_upload/);
-  assert.match(maintenanceSource, /owner_type IN \('post', 'comment'\)/);
+  assert.match(maintenanceSource, /owner_type IN \('post', 'comment', 'note'\)/);
   assert.match(maintenanceSource, /profile_attachment_replaced/);
   assert.match(maintenanceSource, /storageDeletionIntervalMs = 60 \* 1000/);
   assert.match(migrationSource, /0015_durable_r2_deletion/);

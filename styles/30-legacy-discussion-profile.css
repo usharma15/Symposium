@@ -491,10 +491,6 @@
   overflow: auto;
 }
 
-.notebook-panel {
-  left: 16px;
-}
-
 .tablet-panel {
   right: 16px;
 }
@@ -528,35 +524,10 @@
   line-height: 1.55;
 }
 
-.notebook-panel textarea {
-  width: 100%;
-  min-height: 270px;
-  resize: vertical;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  outline: 0;
-  padding: 14px;
-  background:
-    linear-gradient(rgba(34, 121, 134, 0.08) 1px, transparent 1px),
-    var(--marble);
-  background-size: 100% 31px;
-  color: var(--ink);
-  line-height: 31px;
-}
-
-.note-stack,
 .prompt-stack {
   display: grid;
   gap: 8px;
   margin-top: 14px;
-}
-
-.note-stack span {
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  color: var(--muted);
-  font-size: 0.88rem;
 }
 
 .tablet-lens {

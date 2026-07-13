@@ -9,13 +9,17 @@ import {
   posts,
   profileFollows,
   profiles,
-  storageDeletionJobs
+  storageDeletionJobs,
+  workspaceNotebooks,
+  workspaceNoteRevisions,
+  workspaceNotebookGrants,
+  workspaceNoteGrants
 } from "@/apps/api/src/db/schema";
 import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0019_structured_content_documents");
+  assert.equal(latestMigrationId, "0020_workspace_documents");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -29,6 +33,10 @@ const main = async () => {
   assert.ok("revision" in profileFollows);
   assert.ok("revision" in notes);
   assert.ok("revision" in noteBlocks);
+  assert.ok("revision" in workspaceNotebooks);
+  assert.ok("revision" in workspaceNoteRevisions);
+  assert.ok("role" in workspaceNotebookGrants);
+  assert.ok("role" in workspaceNoteGrants);
   assert.ok("objectKey" in storageDeletionJobs);
   assert.ok("leaseExpiresAt" in storageDeletionJobs);
 
