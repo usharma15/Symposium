@@ -1,6 +1,6 @@
 /* Responsive rules for the immersive presentation layer. */
 
-@media (max-width: 1270px) {
+@media (max-width: 1439px) {
   .paper-detail > .paper-side {
     grid-column: 1;
     justify-self: stretch;

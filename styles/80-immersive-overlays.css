@@ -417,7 +417,7 @@
   position: fixed;
   right: 24px;
   top: 104px;
-  width: clamp(168px, calc((100vw - 840px) / 2 - 48px), 224px);
+  width: 276px;
 }
 
 .paper-side {
@@ -429,7 +429,7 @@
   gap: 12px;
   border: 1px solid rgba(255, 253, 245, 0.32);
   border-radius: 8px;
-  padding: 12px;
+  padding: 14px;
   background: rgba(255, 253, 245, 0.72);
   box-shadow: 0 22px 56px rgba(0, 0, 0, 0.18);
   backdrop-filter: blur(22px);
@@ -439,7 +439,7 @@
 .paper-side h2 {
   margin: 0;
   color: rgba(30, 101, 108, 0.92);
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -453,12 +453,12 @@
 
 .paper-side p,
 .paper-side small,
-.paper-side strong { font-size: 0.78rem; line-height: 1.4; }
+.paper-side strong { font-size: 0.86rem; line-height: 1.45; }
 
 .paper-side span,
 .paper-side small {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.86rem;
 }
 
 .paper-side strong {
