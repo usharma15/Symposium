@@ -59,6 +59,14 @@ const main = async () => {
   assert.match(quoteStyles, /\.quote-destination-switch/);
   assert.match(quoteStyles, /\.quote-link-input-row/);
 
+  const documentStyles = sources.get("85-symposium-document.css") ?? "";
+  const attachmentStyles = [sources.get("20-legacy-content.css") ?? "", sources.get("87-structured-attachments.css") ?? ""].join("\n");
+  assert.match(documentStyles, /\.symposium-shell\.night[\s\S]*--document-surface-solid/);
+  assert.match(documentStyles, /\.post-composer-modal,[\s\S]*padding-top:\s*0/);
+  assert.match(documentStyles, /\.post-composer-modal \.document-editor-toolbar,[\s\S]*top:\s*0/);
+  assert.match(attachmentStyles, /\.attachment-modal[\s\S]*background:\s*var\(--document-surface-solid\)/);
+  assert.match(attachmentStyles, /\.attachment-sheet-scroll[\s\S]*background:\s*var\(--attachment-preview-surface\)/);
+
   console.log(
     JSON.stringify(
       {
@@ -68,7 +76,8 @@ const main = async () => {
           "declared layer ownership",
           "bounded stylesheet size",
           "bounded attachment composer layout",
-          "shared quote card and composer layout"
+          "shared quote card and composer layout",
+          "flush sticky editor and opaque themed attachment surfaces"
         ]
       },
       null,

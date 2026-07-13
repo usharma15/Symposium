@@ -632,11 +632,12 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
     editor,
     selector: ({ editor: current }) => {
       const paragraphs = current ? selectedParagraphEntries(current) : [];
+      const canRunCommands = Boolean(current && !current.isDestroyed);
       return current ? ({
       bulletList: current.isActive("bulletList"), orderedList: current.isActive("orderedList"),
       canIndent: paragraphs.some((paragraph) => paragraph.indent < 8),
       canOutdent: paragraphs.some((paragraph) => paragraph.indent > 0),
-      canUndo: current.can().undo(), canRedo: current.can().redo()
+      canUndo: canRunCommands && current.can().undo(), canRedo: canRunCommands && current.can().redo()
     }) : ({
       bulletList: false, orderedList: false,
       canIndent: false, canOutdent: false, canUndo: false, canRedo: false

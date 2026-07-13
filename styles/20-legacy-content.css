@@ -487,8 +487,8 @@
   min-height: 0;
   max-width: 100%;
   overflow: hidden;
-  background: color-mix(in srgb, var(--paper) 74%, var(--panel-strong));
-  color: var(--ink);
+  background: var(--attachment-preview-surface);
+  color: var(--attachment-preview-ink);
 }
 
 .attachment-pdf {
@@ -514,7 +514,7 @@
   padding: 14px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: var(--ink);
+  color: var(--attachment-preview-ink);
   font: 0.86rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -530,8 +530,8 @@
   min-height: 36px;
   border-bottom: 1px solid var(--line);
   padding: 0 10px;
-  background: color-mix(in srgb, var(--panel-strong) 86%, transparent);
-  color: var(--muted);
+  background: var(--attachment-preview-elevated);
+  color: var(--attachment-preview-muted);
   font-size: 0.78rem;
   font-weight: 760;
 }
@@ -553,8 +553,8 @@
   min-height: 30px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--panel);
-  color: var(--ink);
+  background: var(--document-control-solid);
+  color: var(--attachment-preview-ink);
 }
 
 .attachment-pagebar button,
@@ -578,14 +578,14 @@
   min-width: 0;
   min-height: 0;
   padding: 18px;
-  color: var(--muted);
+  color: var(--attachment-preview-muted);
   text-align: center;
 }
 
 .attachment-file-shell strong {
   max-width: 100%;
   overflow: hidden;
-  color: var(--ink);
+  color: var(--attachment-preview-ink);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -652,7 +652,7 @@
   display: grid;
   place-items: center;
   padding: 8px 16px;
-  background: rgba(5, 9, 9, 0.5);
+  background: rgba(5, 9, 9, 0.72);
 }
 
 .attachment-modal {
@@ -666,10 +666,10 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 12px;
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  background: var(--document-surface-solid);
   box-shadow: var(--shadow);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .attachment-modal header,
@@ -764,7 +764,7 @@
 .attachment-modal-stage-text,
 .attachment-modal-stage-document {
   place-items: stretch;
-  background: color-mix(in srgb, var(--paper) 74%, var(--panel-strong));
+  background: var(--attachment-preview-surface);
 }
 
 .attachment-expanded-media {
@@ -798,9 +798,7 @@
   min-height: 0;
 }
 
-.attachment-docx {
-  background: color-mix(in srgb, var(--paper) 82%, var(--panel-strong));
-}
+.attachment-docx { background: var(--attachment-preview-surface); }
 
 .attachment-docx-scroll {
   height: 100%;
@@ -839,7 +837,7 @@
   margin: 0 auto !important;
   border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
   border-radius: 4px;
-  background: #fff !important;
+  background: var(--attachment-paper-surface) !important;
   box-shadow: 0 14px 38px rgba(15, 29, 31, 0.12) !important;
 }
 
@@ -854,8 +852,8 @@
   border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
   border-radius: 6px;
   padding: 28px 32px;
-  background: rgba(255, 255, 250, 0.92);
-  color: var(--ink);
+  background: var(--attachment-paper-surface);
+  color: var(--attachment-paper-ink);
   font-family: Georgia, "Times New Roman", serif;
   font-size: inherit;
   line-height: 1.58;
@@ -878,7 +876,7 @@
 
 .attachment-docx-block {
   margin: 0 0 0.85em;
-  color: var(--ink);
+  color: inherit;
   overflow-wrap: anywhere;
 }
 
@@ -928,7 +926,7 @@
   border: 0;
   border-radius: 0;
   padding: 6px 12px 2px;
-  background: color-mix(in srgb, var(--panel) 97%, #071011);
+  background: var(--document-surface-solid);
 }
 
 .attachment-modal:fullscreen .attachment-modal-stage,
