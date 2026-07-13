@@ -1,5 +1,14 @@
 /* Responsive rules for the immersive presentation layer. */
 
+@media (max-width: 1270px) {
+  .paper-detail > .paper-side {
+    grid-column: 1;
+    justify-self: stretch;
+    position: static;
+    width: 100%;
+  }
+}
+
 @media (max-width: 900px) {
   .stage {
     padding: 88px 14px 104px;
@@ -129,10 +138,6 @@
     grid-column: 1;
   }
 
-  .paper-detail > .paper-side {
-    position: static;
-    width: 100%;
-  }
 }
 
 @media (max-width: 640px) {

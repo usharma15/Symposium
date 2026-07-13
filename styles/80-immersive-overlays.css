@@ -399,11 +399,9 @@
 
 .detail-layout.paper-detail {
   display: grid;
-  width: min(1088px, calc(100vw - 48px));
-  grid-template-columns: minmax(0, 840px) minmax(200px, 224px);
-  column-gap: 24px;
+  grid-template-columns: minmax(0, 840px);
   row-gap: 16px;
-  justify-content: stretch;
+  justify-content: center;
   align-items: start;
 }
 
@@ -416,14 +414,13 @@
 }
 
 .paper-detail > .paper-side {
-  grid-column: 2;
-  justify-self: stretch;
-  width: 100%;
+  position: fixed;
+  right: 24px;
+  top: 104px;
+  width: clamp(168px, calc((100vw - 840px) / 2 - 48px), 224px);
 }
 
 .paper-side {
-  position: sticky;
-  top: 104px;
   z-index: 4;
 }
 
