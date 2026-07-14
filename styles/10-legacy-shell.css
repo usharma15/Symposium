@@ -3,7 +3,7 @@
 .symposium-shell {
   position: relative;
   min-height: 100vh;
-  overflow-x: hidden;
+  overflow-x: clip;
   background:
     linear-gradient(135deg, rgba(248, 245, 236, 0.94), rgba(226, 235, 231, 0.9)),
     var(--bg);

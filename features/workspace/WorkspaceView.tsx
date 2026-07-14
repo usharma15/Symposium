@@ -9,7 +9,6 @@ import {
   FolderPlus,
   MoreHorizontal,
   Search,
-  Sparkles,
   StickyNote,
   Trash2,
   X
@@ -39,6 +38,27 @@ const kindDescription: Record<WorkspaceDocument["kind"], string> = {
   reply: "A reduced draft linked to a comment",
   quick: "A light capture space reserved for the next pass"
 };
+
+const dayStart = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+
+const workspaceDateGroup = (value: string, now = new Date()) => {
+  const date = new Date(value);
+  const elapsedDays = Math.floor((dayStart(now) - dayStart(date)) / 86_400_000);
+  if (elapsedDays === 0) return "Today";
+  if (elapsedDays === 1) return "Yesterday";
+  if (elapsedDays < 30) return "Previous 30 Days";
+  if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString(undefined, { month: "long" });
+  return date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+};
+
+const workspaceSidebarTimestamp = (value: string, now = new Date()) => {
+  const date = new Date(value);
+  if (dayStart(date) === dayStart(now)) return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+
+const workspaceSidebarExcerpt = (document: WorkspaceDocument) =>
+  document.body.replace(/\s+/g, " ").trim() || `${workspaceKindLabel[document.kind]} draft`;
 
 export function WorkspaceView({
   room,
@@ -88,13 +108,27 @@ export function WorkspaceView({
   }, [query, selectedNotebookId, workspace.search, workspace.setStatus]);
 
   const visibleDocuments = useMemo(() => {
-    if (query.trim() && searchResults) return searchResults.documents;
-    if (section === "notebooks" && selectedNotebookId) {
-      return workspace.snapshot.documents.filter((document) => document.notebookId === selectedNotebookId);
+    const candidates = query.trim() && searchResults ? searchResults.documents : workspace.snapshot.documents;
+    if (section === "notebooks") {
+      const notebookDocuments = selectedNotebookId
+        ? candidates.filter((document) => document.notebookId === selectedNotebookId)
+        : candidates.filter((document) => Boolean(document.notebookId));
+      return [...notebookDocuments].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
     }
     if (section === "quick") return [];
-    return workspace.snapshot.documents;
+    return [...candidates].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   }, [query, searchResults, section, selectedNotebookId, workspace.snapshot.documents]);
+
+  const groupedDocuments = useMemo(() => {
+    const groups = new Map<string, WorkspaceDocument[]>();
+    visibleDocuments.forEach((document) => {
+      const group = workspaceDateGroup(document.updatedAt);
+      const documents = groups.get(group);
+      if (documents) documents.push(document);
+      else groups.set(group, [document]);
+    });
+    return [...groups.entries()];
+  }, [visibleDocuments]);
 
   const createDocument = async (kind: WorkspaceDocument["kind"]) => {
     setNewMenuOpen(false);
@@ -156,55 +190,30 @@ export function WorkspaceView({
     }
   };
 
-  if (selectedDocument) {
-    return (
-      <div className="room-layout workspace-room-layout">
-        <WorkspaceDocumentDetail
-          key={selectedDocument.id}
-          document={selectedDocument}
-          notebooks={workspace.snapshot.notebooks}
-          profiles={profiles}
-          initiallyEditing={editSelected}
-          onBack={() => { setSelectedDocumentId(null); setEditSelected(false); }}
-          onSave={(draft) => workspace.updateDocument(selectedDocument.id, draft)}
-          onDelete={async () => {
-            await workspace.deleteDocument(selectedDocument);
-            setSelectedDocumentId(null);
-            setEditSelected(false);
-          }}
-          onPublish={workspace.publishDocument}
-          onPublished={onPublished}
-          onUploadAttachment={uploadDraftAttachment}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="room-layout workspace-room-layout">
       <RoomRender room={room} onOpenNotebook={() => undefined} onOpenSaved={onOpenSaved} />
-      <section className="feed-toolbar workspace-toolbar" aria-label="Notes workspace controls">
+      <aside className="feed-toolbar workspace-toolbar" aria-label="Notes workspace controls">
         <div className="room-mini-title">
           <p className="eyebrow">Private research workspace</p>
           <h1>Notes</h1>
           <p>Draft, organise, revise, and publish research without leaving your office.</p>
         </div>
 
-        <div className="workspace-primary-row">
-          <nav className="workspace-tabs" aria-label="Workspace sections">
-            <button type="button" className={section === "all" ? "active" : ""} onClick={() => { setSection("all"); setSelectedNotebookId(null); }}><FileText size={16} />All</button>
-            <button type="button" className={section === "notebooks" ? "active" : ""} onClick={() => setSection("notebooks")}><BookOpen size={16} />Notebooks</button>
-            <button type="button" className={section === "quick" ? "active" : ""} onClick={() => { setSection("quick"); setSelectedNotebookId(null); }}><StickyNote size={16} />Quick Notes</button>
-          </nav>
-          <div className="workspace-create-wrap">
-            <button type="button" className="workspace-new-button" onClick={() => setNewMenuOpen((open) => !open)}><FilePlus2 size={16} />New draft</button>
-            {newMenuOpen ? (
-              <div className="workspace-create-menu">
-                <header><strong>Create in {selectedNotebookId ? workspace.snapshot.notebooks.find((notebook) => notebook.id === selectedNotebookId)?.name : "All"}</strong><button type="button" title="Close" onClick={() => setNewMenuOpen(false)}><X size={15} /></button></header>
-                {creationKinds.map((kind) => <button type="button" key={kind} onClick={() => void createDocument(kind)}><span>{workspaceKindLabel[kind]}</span><small>{kindDescription[kind]}</small></button>)}
-              </div>
-            ) : null}
-          </div>
+        <nav className="workspace-tabs" aria-label="Workspace sections">
+          <button type="button" className={section === "all" ? "active" : ""} onClick={() => { setSection("all"); setSelectedNotebookId(null); setSelectedDocumentId(null); setEditSelected(false); }}><FileText size={15} /><span>All</span></button>
+          <button type="button" className={section === "notebooks" ? "active" : ""} onClick={() => { setSection("notebooks"); setSelectedDocumentId(null); setEditSelected(false); }}><BookOpen size={15} /><span>Notebooks</span></button>
+          <button type="button" className={section === "quick" ? "active" : ""} onClick={() => { setSection("quick"); setSelectedNotebookId(null); setSelectedDocumentId(null); setEditSelected(false); }}><StickyNote size={15} /><span>Quick Notes</span></button>
+        </nav>
+
+        <div className="workspace-create-wrap">
+          <button type="button" className="workspace-new-button" onClick={() => setNewMenuOpen((open) => !open)}><FilePlus2 size={16} />New draft</button>
+          {newMenuOpen ? (
+            <div className="workspace-create-menu">
+              <header><strong>Create in {selectedNotebookId ? workspace.snapshot.notebooks.find((notebook) => notebook.id === selectedNotebookId)?.name : "All"}</strong><button type="button" title="Close" onClick={() => setNewMenuOpen(false)}><X size={15} /></button></header>
+              {creationKinds.map((kind) => <button type="button" key={kind} onClick={() => void createDocument(kind)}><span>{workspaceKindLabel[kind]}</span><small>{kindDescription[kind]}</small></button>)}
+            </div>
+          ) : null}
         </div>
 
         <label className="workspace-search">
@@ -214,10 +223,9 @@ export function WorkspaceView({
         </label>
 
         <div className="workspace-sync-status" aria-live="polite">{workspace.error ? <span className="error">{workspace.error}</span> : workspace.status}</div>
-      </section>
 
-      {section === "notebooks" ? (
-        <section className="workspace-notebooks" aria-label="Notebooks">
+        <div className="workspace-sidebar-scroll" aria-label={`${section === "quick" ? "Quick Notes" : section === "notebooks" ? "Notebook drafts" : "All drafts"} list`}>
+          {section === "notebooks" ? (
           <div className="workspace-notebook-rail">
             <button type="button" className={!selectedNotebookId ? "active" : ""} onClick={() => setSelectedNotebookId(null)}><Folder size={16} /><span><strong>All notebooks</strong><small>{workspace.snapshot.documents.filter((document) => document.notebookId).length} drafts</small></span></button>
             {workspace.snapshot.notebooks.map((notebook) => (
@@ -240,45 +248,84 @@ export function WorkspaceView({
               <form onSubmit={(event) => { event.preventDefault(); void createNotebook(); }}><input autoFocus value={notebookName} maxLength={120} onChange={(event) => setNotebookName(event.target.value)} placeholder="Notebook name" /><div><button type="submit" disabled={!notebookName.trim()}>Create</button><button type="button" onClick={() => setCreatingNotebook(false)}>Cancel</button></div></form>
             ) : <button type="button" className="workspace-add-notebook" onClick={() => setCreatingNotebook(true)}><FolderPlus size={16} />New notebook</button>}
           </div>
-          <div className="workspace-notebook-summary">
-            <Sparkles size={18} />
-            <div><strong>{selectedNotebookId ? workspace.snapshot.notebooks.find((notebook) => notebook.id === selectedNotebookId)?.name : "Notebooks"}</strong><p>{selectedNotebookId ? "Drafts inherit this notebook’s collaborator access. Direct document access can add to it." : "Choose a notebook or create one to give a line of research its own working space."}</p></div>
-          </div>
-        </section>
-      ) : null}
+          ) : null}
 
-      {query.trim() && searchResults && (searchResults.notebooks.length || searchResults.collaborators.length) ? (
-        <section className="workspace-search-groups" aria-label="Additional workspace search results">
-          {searchResults.notebooks.length ? <div><strong>Notebooks</strong>{searchResults.notebooks.map((notebook) => <button type="button" key={notebook.id} onClick={() => { setSection("notebooks"); setSelectedNotebookId(notebook.id); setQuery(""); }}><Folder size={15} />{notebook.name}</button>)}</div> : null}
-          {searchResults.collaborators.length ? <div><strong>Authors & collaborators</strong>{searchResults.collaborators.map((collaborator) => <span key={collaborator.handle}>{collaborator.name}<small>{collaborator.handle}</small></span>)}</div> : null}
-        </section>
-      ) : null}
+          {query.trim() && searchResults && (searchResults.notebooks.length || searchResults.collaborators.length) ? (
+            <section className="workspace-search-groups" aria-label="Additional workspace search results">
+              {searchResults.notebooks.length ? <div><strong>Notebooks</strong>{searchResults.notebooks.map((notebook) => <button type="button" key={notebook.id} onClick={() => { setSection("notebooks"); setSelectedNotebookId(notebook.id); setSelectedDocumentId(null); setQuery(""); }}><Folder size={15} /><span>{notebook.name}</span></button>)}</div> : null}
+              {searchResults.collaborators.length ? <div><strong>Authors & collaborators</strong>{searchResults.collaborators.map((collaborator) => <span key={collaborator.handle}><b>{collaborator.name}</b><small>{collaborator.handle}</small></span>)}</div> : null}
+            </section>
+          ) : null}
 
-      {section === "quick" ? (
-        <section className="workspace-quick-empty">
-          <StickyNote size={30} />
-          <h2>Quick Notes have a place.</h2>
-          <p>The filing destination is ready. Fast capture, inbox processing, and promotion into full drafts arrive in the next workspace pass.</p>
-        </section>
-      ) : (
-        <section className="feed-stream workspace-feed" aria-label="Workspace drafts">
-          {workspace.loading && !visibleDocuments.length ? <div className="empty-feed"><strong>Opening your workspace…</strong><span>Checking the latest private revisions.</span></div> : null}
-          {!workspace.loading && !visibleDocuments.length ? <div className="empty-feed"><strong>{query ? "No workspace results." : selectedNotebookId ? "This notebook is ready." : "Your workspace is ready."}</strong><span>{query ? "Try a title, author, notebook, phrase, attachment, or equation." : "Create a generic Note or a destination-specific draft."}</span></div> : null}
-          {visibleDocuments.map((document) => (
-            <WorkspaceDocumentCard
-              key={document.id}
-              document={document}
-              profiles={profiles}
-              onOpen={() => { setSelectedDocumentId(document.id); setEditSelected(false); }}
-              onEdit={() => { setSelectedDocumentId(document.id); setEditSelected(true); }}
-              onDelete={() => {
-                if (window.confirm(`Delete “${document.title}”? This cannot be undone.`)) void workspace.deleteDocument(document).catch((error) => workspace.setStatus(error instanceof Error ? error.message : "Draft could not be deleted"));
-              }}
-              onPublish={() => void publishCard(document)}
-            />
-          ))}
-        </section>
-      )}
+          {section === "quick" ? (
+            <div className="workspace-sidebar-empty"><StickyNote size={18} /><strong>Quick Notes</strong><span>Your quick-capture inbox will appear here.</span></div>
+          ) : groupedDocuments.length ? groupedDocuments.map(([label, documents]) => (
+            <section className="workspace-sidebar-group" key={label} aria-label={label}>
+              <h2>{label}</h2>
+              {documents.map((document) => (
+                <button
+                  type="button"
+                  className={`workspace-sidebar-document ${selectedDocumentId === document.id ? "active" : ""}`}
+                  key={document.id}
+                  onClick={() => { setSelectedDocumentId(document.id); setEditSelected(false); }}
+                >
+                  <strong>{document.title || "Untitled note"}</strong>
+                  <span><time>{workspaceSidebarTimestamp(document.updatedAt)}</time><small>{workspaceSidebarExcerpt(document)}</small></span>
+                  <em>{workspaceKindLabel[document.kind]}{document.notebookName ? ` · ${document.notebookName}` : ""}</em>
+                </button>
+              ))}
+            </section>
+          )) : (
+            <div className="workspace-sidebar-empty"><FileText size={18} /><strong>{searching ? "Searching…" : query ? "No results" : selectedNotebookId ? "Empty notebook" : "No drafts yet"}</strong><span>{query ? "Try another term." : "Create a draft to begin."}</span></div>
+          )}
+        </div>
+      </aside>
+
+      <main className="workspace-main-column">
+        {selectedDocument ? (
+          <WorkspaceDocumentDetail
+            key={selectedDocument.id}
+            document={selectedDocument}
+            notebooks={workspace.snapshot.notebooks}
+            profiles={profiles}
+            initiallyEditing={editSelected}
+            onBack={() => { setSelectedDocumentId(null); setEditSelected(false); }}
+            onSave={(draft) => workspace.updateDocument(selectedDocument.id, draft)}
+            onDelete={async () => {
+              await workspace.deleteDocument(selectedDocument);
+              setSelectedDocumentId(null);
+              setEditSelected(false);
+            }}
+            onPublish={workspace.publishDocument}
+            onPublished={onPublished}
+            onUploadAttachment={uploadDraftAttachment}
+          />
+        ) : section === "quick" ? (
+          <section className="workspace-quick-empty">
+            <StickyNote size={30} />
+            <h2>Quick Notes have a place.</h2>
+            <p>The filing destination is ready. Fast capture, inbox processing, and promotion into full drafts arrive in the next workspace pass.</p>
+          </section>
+        ) : (
+          <section className="feed-stream workspace-feed" aria-label="Workspace drafts">
+            {workspace.loading && !visibleDocuments.length ? <div className="empty-feed"><strong>Opening your workspace…</strong><span>Checking the latest private revisions.</span></div> : null}
+            {!workspace.loading && !visibleDocuments.length ? <div className="empty-feed"><strong>{query ? "No workspace results." : selectedNotebookId ? "This notebook is ready." : "Your workspace is ready."}</strong><span>{query ? "Try a title, author, notebook, phrase, attachment, or equation." : "Create a generic Note or a destination-specific draft."}</span></div> : null}
+            {visibleDocuments.map((document) => (
+              <WorkspaceDocumentCard
+                key={document.id}
+                document={document}
+                profiles={profiles}
+                onOpen={() => { setSelectedDocumentId(document.id); setEditSelected(false); }}
+                onEdit={() => { setSelectedDocumentId(document.id); setEditSelected(true); }}
+                onDelete={() => {
+                  if (window.confirm(`Delete “${document.title}”? This cannot be undone.`)) void workspace.deleteDocument(document).catch((error) => workspace.setStatus(error instanceof Error ? error.message : "Draft could not be deleted"));
+                }}
+                onPublish={() => void publishCard(document)}
+              />
+            ))}
+          </section>
+        )}
+      </main>
     </div>
   );
 }

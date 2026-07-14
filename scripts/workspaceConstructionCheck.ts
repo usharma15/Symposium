@@ -105,6 +105,9 @@ const main = async () => {
   assert.match(workspaceHook, /cache: "no-store"/);
   assert.match(workspaceView, /Search notes, authors, notebooks, content, comments, attachments/);
   assert.match(workspaceView, /Quick Notes have a place/);
+  assert.match(workspaceView, /workspace-sidebar-scroll/);
+  assert.match(workspaceView, /workspaceDateGroup/);
+  assert.doesNotMatch(workspaceView, /Choose a notebook or create one to give a line of research its own working space/);
   assert.match(workspaceRoute, /privateWorkspaceResponse/);
   assert.match(postViews, /onSaveDraft/);
   assert.match(postViews, /title\.trim\(\) \|\| `Untitled \$\{kind\}`/);
@@ -112,9 +115,12 @@ const main = async () => {
   assert.match(symposiumView, /savePostDraftToWorkspace/);
   assert.match(composerDrafts, /Draft saved to Notes/);
   assert.match(composerDrafts, /symposium-workspace-sync-v1/);
-  assert.match(workspaceStyles, /\.room-layout\.workspace-room-layout[\s\S]*width: min\(800px, calc\(100vw - 48px\)\)/);
-  assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar[\s\S]*position: relative/);
-  assert.match(workspaceStyles, /\.workspace-feed\.feed-stream[\s\S]*max-width: none/);
+  assert.match(workspaceStyles, /\.room-layout\.workspace-room-layout[\s\S]*width: calc\(100vw - 48px\)/);
+  assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar[\s\S]*position: fixed[\s\S]*inset: 104px auto 84px 24px/);
+  assert.match(workspaceStyles, /\.workspace-sidebar-scroll[\s\S]*overflow-y: auto[\s\S]*overscroll-behavior: contain/);
+  assert.match(workspaceStyles, /\.workspace-main-column[\s\S]*width: min\(var\(--symposium-feed-width\), calc\(100vw - 48px\)\)/);
+  assert.match(workspaceStyles, /\.workspace-feed\.feed-stream[\s\S]*max-width: var\(--symposium-feed-width\)/);
+  assert.match(workspaceStyles, /\.workspace-editor \.document-editor-toolbar[\s\S]*position: sticky|\.workspace-editor \.document-editor-toolbar[\s\S]*top: 140px/);
 
   console.log(JSON.stringify({
     ok: true,
@@ -131,7 +137,8 @@ const main = async () => {
       "protected private draft attachment delivery",
       "cross-tab convergence and no-store transport",
       "All, Notebooks, Quick Notes, and persistent search surfaces",
-      "centered feed-width Notes composition",
+      "fixed independently scrolling Notes navigator",
+      "canonical centered feed-width Notes composition",
       "New Post to private draft creation"
     ]
   }, null, 2));

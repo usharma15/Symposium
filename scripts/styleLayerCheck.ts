@@ -62,6 +62,19 @@ const main = async () => {
 
   const documentStyles = sources.get("85-symposium-document.css") ?? "";
   const attachmentStyles = [sources.get("20-legacy-content.css") ?? "", sources.get("87-structured-attachments.css") ?? ""].join("\n");
+  const foundationStyles = sources.get("00-foundations-entry.css") ?? "";
+  const shellStyles = sources.get("10-legacy-shell.css") ?? "";
+  const feedStyles = [
+    sources.get("60-immersive-communities-feed.css") ?? "",
+    sources.get("70-immersive-content-profile.css") ?? "",
+    sources.get("80-immersive-overlays.css") ?? "",
+    sources.get("88-workspace.css") ?? ""
+  ].join("\n");
+  assert.match(foundationStyles, /--symposium-feed-width:\s*840px/);
+  assert.match(shellStyles, /\.symposium-shell[\s\S]*overflow-x:\s*clip/);
+  assert.match(feedStyles, /\.feed-stream[\s\S]*max-width:\s*var\(--symposium-feed-width\)/);
+  assert.match(feedStyles, /\.detail-layout\.simple-detail[\s\S]*var\(--symposium-feed-width\)/);
+  assert.match(feedStyles, /\.workspace-main-column[\s\S]*var\(--symposium-feed-width\)/);
   assert.match(documentStyles, /\.symposium-shell\.night[\s\S]*--document-surface-solid/);
   assert.match(documentStyles, /\.post-composer-modal,[\s\S]*padding-top:\s*0/);
   assert.match(documentStyles, /\.post-composer-modal \.document-editor-toolbar,[\s\S]*top:\s*0/);
@@ -79,6 +92,7 @@ const main = async () => {
           "bounded stylesheet size",
           "bounded attachment composer layout",
           "shared quote card and composer layout",
+          "one canonical feed and clicked-post width",
           "flush sticky editor and opaque themed attachment surfaces",
           "overflow-only feed preview fades"
         ]

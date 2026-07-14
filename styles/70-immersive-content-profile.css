@@ -342,7 +342,7 @@ button.quote-card-thought:hover {
 
 .detail-layout,
 .profile-page {
-  width: min(1160px, calc(100vw - 48px));
+  width: min(calc(var(--symposium-feed-width) + 320px + 16px), calc(100vw - 48px));
   margin: 0 auto;
 }
 
@@ -350,7 +350,7 @@ button.quote-card-thought:hover {
   position: relative;
   display: grid;
   gap: 16px;
-  width: min(800px, calc(100vw - 48px));
+  width: min(var(--symposium-feed-width), calc(100vw - 48px));
 }
 
 .profile-page > .back-button {
@@ -518,7 +518,7 @@ button.quote-card-thought:hover {
 
 .profile-stream {
   grid-column: 1;
-  width: min(800px, 100%);
+  width: min(var(--symposium-feed-width), 100%);
   margin: 0 auto 32px;
 }
 

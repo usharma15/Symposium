@@ -129,7 +129,7 @@
 
   .detail-layout.paper-detail {
     grid-template-columns: minmax(0, 1fr);
-    width: min(800px, calc(100vw - 28px));
+    width: min(var(--symposium-feed-width), calc(100vw - 28px));
   }
 
   .paper-detail > .back-button,

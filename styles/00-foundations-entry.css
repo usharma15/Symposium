@@ -18,6 +18,7 @@
   --shadow: 0 24px 70px rgba(15, 29, 31, 0.18);
   --small-shadow: 0 12px 34px rgba(15, 29, 31, 0.12);
   --radius: 8px;
+  --symposium-feed-width: 840px;
 }
 
 * {

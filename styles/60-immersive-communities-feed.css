@@ -147,7 +147,7 @@
 
 .selected-community-layout {
   display: block;
-  width: min(800px, calc(100vw - 520px));
+  width: min(var(--symposium-feed-width), calc(100vw - 520px));
   margin: 28px auto 0;
 }
 
@@ -364,7 +364,7 @@
 .post-composer,
 .feed-stream {
   grid-column: auto;
-  max-width: 800px;
+  max-width: var(--symposium-feed-width);
   margin: 0 auto;
 }
 
@@ -410,7 +410,7 @@
   left: 50%;
   top: 50%;
   grid-column: auto;
-  width: min(800px, calc(100vw - 48px));
+  width: min(var(--symposium-feed-width), calc(100vw - 48px));
   max-width: none;
   margin: 0;
   background: rgba(255, 253, 245, 0.86);

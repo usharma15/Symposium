@@ -513,7 +513,7 @@
 .communities-layout {
   position: relative;
   z-index: 5;
-  width: min(800px, calc(100vw - 520px));
+  width: min(var(--symposium-feed-width), calc(100vw - 520px));
   min-height: calc(100vh - 220px);
   margin: 28px auto 96px;
 }

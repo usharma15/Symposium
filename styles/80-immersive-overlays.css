@@ -393,13 +393,13 @@
 
 .detail-layout.simple-detail {
   display: grid;
-  grid-template-columns: minmax(0, 840px);
+  grid-template-columns: minmax(0, var(--symposium-feed-width));
   justify-content: center;
 }
 
 .detail-layout.paper-detail {
   display: grid;
-  grid-template-columns: minmax(0, 840px);
+  grid-template-columns: minmax(0, var(--symposium-feed-width));
   row-gap: 16px;
   justify-content: center;
   align-items: start;
