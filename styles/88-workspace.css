@@ -798,11 +798,11 @@
 .symposium-shell.night .workspace-feed > .empty-feed {
   background: linear-gradient(180deg, rgba(28, 30, 29, 0.86), rgba(13, 17, 20, 0.74));
 }
-
 .workspace-document-card {
   position: relative;
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
 }
-
+.workspace-document-card .document-collapsible-content.collapsed.is-collapsible::after { content: none; }
 .workspace-card-title-button {
   max-width: 100%;
   padding: 0;
