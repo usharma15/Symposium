@@ -800,7 +800,7 @@
 }
 .workspace-document-card {
   position: relative;
-  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
+  background: color-mix(in srgb, var(--panel-strong) 30%, transparent);
 }
 .workspace-document-card .document-collapsible-content.collapsed.is-collapsible::after { content: none; }
 .workspace-card-title-button {
