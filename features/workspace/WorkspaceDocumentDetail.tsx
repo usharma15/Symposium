@@ -12,7 +12,7 @@ import {
 import { CommentEditModal } from "@/features/posts/PostViews";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import type { InquiryAttachment, ResearchProfile } from "@/lib/mockData";
-import { findCommentInTree, relativeTimeLabel } from "@/lib/symposiumCore";
+import { findCommentInTree, localDateTimeLabel, relativeTimeLabel } from "@/lib/symposiumCore";
 import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import type { WorkspaceDocument, WorkspaceNotebook, WorkspacePublicationResponse } from "@/lib/workspaceTypes";
 import { workspaceKindLabel } from "@/features/workspace/WorkspaceDocumentCard";
@@ -378,8 +378,9 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
               <h1>{document.title}</h1>
               <SymposiumDocumentRenderer document={document.document} body={document.body} attachments={document.attachments} profiles={profiles} mode="detail" />
               <div className="workspace-reader-meta">
-                <span>Revision {document.revision}</span>
+                <span>Created {localDateTimeLabel(document.createdAt)}</span>
                 <span>Edited {relativeTimeLabel(document.updatedAt, document.updatedAt)}</span>
+                <span>Revision {document.revision}</span>
               </div>
               {error ? <div className="workspace-error" role="alert">{error}</div> : null}
               {document.access.canPublish ? <div className="workspace-reader-post"><button type="button" className="primary" disabled={!document.body.trim() || !targetLinked || !publicationChosen} onClick={() => void publish()}><Send size={15} />Post this saved draft</button></div> : null}

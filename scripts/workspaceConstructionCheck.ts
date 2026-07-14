@@ -182,6 +182,7 @@ const main = async () => {
     workspaceNavigator,
     workspaceNavigatorDocument,
     workspaceDetail,
+    workspaceCard,
     workspaceComments,
     workspaceCommentsHook,
     commentThread,
@@ -203,6 +204,7 @@ const main = async () => {
     readFile(path.join(root, "features/workspace/workspaceNavigator.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/WorkspaceNavigatorDocument.tsx"), "utf8"),
     readFile(path.join(root, "features/workspace/WorkspaceDocumentDetail.tsx"), "utf8"),
+    readFile(path.join(root, "features/workspace/WorkspaceDocumentCard.tsx"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/workspaceComments.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/useWorkspaceComments.ts"), "utf8"),
     readFile(path.join(root, "features/comments/CommentThread.tsx"), "utf8"),
@@ -269,6 +271,8 @@ const main = async () => {
   assert.match(repository, /queueAttachmentsForOwnerStorageDeletion\([\s\S]*"note_comment"/);
   assert.match(workspaceNavigator, /workspaceDocumentMetadataUpdate/);
   assert.match(workspaceNavigator, /runAfterWorkspaceSave/);
+  assert.match(workspaceDetail, /Created \{localDateTimeLabel\(document\.createdAt\)\}/);
+  assert.match(workspaceCard, /Created \{localDateTimeLabel\(document\.createdAt\)\}/);
   assert.doesNotMatch(workspaceView, /workspaceDateGroup/);
   assert.doesNotMatch(workspaceView, /Draft, organise, revise, and publish research without leaving your office/);
   assert.doesNotMatch(workspaceView, /Workspace current/);

@@ -4,7 +4,7 @@ import { FileText, MessageCircle, Paperclip, Pencil, Send, Trash2, Users } from 
 import { SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import type { ResearchProfile } from "@/lib/mockData";
-import { relativeTimeLabel } from "@/lib/symposiumCore";
+import { localDateTimeLabel, relativeTimeLabel } from "@/lib/symposiumCore";
 import type { WorkspaceDocument } from "@/lib/workspaceTypes";
 
 export const workspaceKindLabel: Record<WorkspaceDocument["kind"], string> = {
@@ -70,6 +70,7 @@ export function WorkspaceDocumentCard({
           mode="feed"
         />
         <div className="workspace-card-footer">
+          <span>Created {localDateTimeLabel(document.createdAt)}</span>
           <span>Edited {relativeTimeLabel(document.updatedAt, document.updatedAt)}</span>
           <span><FileText size={14} />Revision {document.revision}</span>
           {document.attachments.length ? <span><Paperclip size={14} />{document.attachments.length}</span> : null}

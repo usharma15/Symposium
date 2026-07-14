@@ -376,11 +376,11 @@ export const itemTimestampScore = (item: Pick<InquiryItem, "createdAt" | "date">
   return Number.isNaN(parsed) ? relativeDateScore(item.date) : parsed;
 };
 
-export const relativeTimeLabel = (createdAt?: string, fallbackLabel = "") => {
+export const relativeTimeLabel = (createdAt?: string, fallbackLabel = "", now = Date.now()) => {
   const parsed = createdAt ? Date.parse(createdAt) : Number.NaN;
   if (Number.isNaN(parsed)) return fallbackLabel || "Just now";
 
-  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - parsed) / 1000));
+  const elapsedSeconds = Math.max(0, Math.floor((now - parsed) / 1000));
   if (elapsedSeconds < 60) return "Just now";
 
   const elapsedMinutes = Math.floor(elapsedSeconds / 60);
@@ -393,7 +393,10 @@ export const relativeTimeLabel = (createdAt?: string, fallbackLabel = "") => {
   if (elapsedDays < 7) return `${elapsedDays}d ago`;
 
   const elapsedWeeks = Math.floor(elapsedDays / 7);
-  if (elapsedWeeks < 52) return `${elapsedWeeks}w ago`;
+  if (elapsedDays < 30) return `${elapsedWeeks}w ago`;
+
+  const elapsedMonths = Math.floor(elapsedDays / 30);
+  if (elapsedDays < 365) return `${elapsedMonths}mo ago`;
 
   const elapsedYears = Math.floor(elapsedDays / 365);
   if (elapsedYears >= 1) return `${elapsedYears}y ago`;

@@ -9,7 +9,8 @@ import {
   mapCommentTree,
   mutateCommentForActor,
   tombstoneCommentInItem,
-  localDateTimeLabel
+  localDateTimeLabel,
+  relativeTimeLabel
 } from "@/lib/symposiumCore";
 
 const root: InquiryComment = {
@@ -130,6 +131,14 @@ assert.equal(countComments(deletion.item.comments), 1);
 assert.equal(deletion.item.comments[0]?.replies?.[0]?.id, "child");
 assert.deepEqual(tombstoneCommentInItem(deletion.item, "root").item, deletion.item);
 assert.equal(localDateTimeLabel("2026-07-11T02:19:09.000Z"), "Sat, Jul 11, 2026, 2:19 AM UTC");
+const relativeNow = Date.parse("2026-07-14T12:00:00.000Z");
+const relativeAgo = (milliseconds: number) => new Date(relativeNow - milliseconds).toISOString();
+assert.equal(relativeTimeLabel(relativeAgo(2 * 60 * 1000), "", relativeNow), "2m ago");
+assert.equal(relativeTimeLabel(relativeAgo(2 * 60 * 60 * 1000), "", relativeNow), "2h ago");
+assert.equal(relativeTimeLabel(relativeAgo(2 * 24 * 60 * 60 * 1000), "", relativeNow), "2d ago");
+assert.equal(relativeTimeLabel(relativeAgo(14 * 24 * 60 * 60 * 1000), "", relativeNow), "2w ago");
+assert.equal(relativeTimeLabel(relativeAgo(60 * 24 * 60 * 60 * 1000), "", relativeNow), "2mo ago");
+assert.equal(relativeTimeLabel(relativeAgo(730 * 24 * 60 * 60 * 1000), "", relativeNow), "2y ago");
 
 console.log(
   JSON.stringify(
