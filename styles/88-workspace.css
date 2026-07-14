@@ -811,8 +811,6 @@
 }
 
 .workspace-editor .document-editor-toolbar {
-  position: sticky;
-  top: 82px;
   z-index: 8;
 }
 
@@ -986,10 +984,6 @@
   .workspace-detail-nav {
     top: auto;
     flex-wrap: wrap;
-  }
-
-  .workspace-editor .document-editor-toolbar {
-    top: 74px;
   }
 
   .workspace-save-state {

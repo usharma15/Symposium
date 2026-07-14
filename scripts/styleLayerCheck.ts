@@ -85,10 +85,21 @@ const main = async () => {
   assert.match(responsiveStyles, /\.detail-layout\.simple-detail,[\s\S]*\.profile-page[\s\S]*width:\s*min\(var\(--symposium-feed-width\), calc\(100vw - 28px\)\)/);
   assert.match(documentStyles, /\.symposium-shell\.night[\s\S]*--document-surface-solid/);
   assert.match(documentStyles, /\.post-composer-modal,[\s\S]*padding-top:\s*0/);
-  assert.match(documentStyles, /\.post-composer-modal \.document-editor-toolbar,[\s\S]*top:\s*0/);
+  assert.match(documentStyles, /\.symposium-document-editor\s*\{[^}]*--document-editor-sticky-top:\s*0px/);
+  assert.match(documentStyles, /\.document-editor-toolbar\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--document-editor-sticky-top\)/);
   assert.match(documentStyles, /\.comment-composer \.document-editor-toolbar\s*\{[^}]*position:\s*static[^}]*top:\s*auto/);
-  assert.match(documentStyles, /\.comment-composer \.symposium-document-editor:focus-within \.document-editor-toolbar\s*\{[^}]*position:\s*sticky[^}]*top:\s*82px/);
+  assert.match(documentStyles, /\.comment-composer \.symposium-document-editor:focus-within \.document-editor-toolbar\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--document-editor-sticky-top\)/);
   assert.match(documentStyles, /\.comment-composer\.compact \.document-editor-toolbar\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/);
+  const documentToolbarStyles = layers.map((layer) => sources.get(layer) ?? "").join("\n");
+  for (const block of documentToolbarStyles.matchAll(/[^{}]*\.document-editor-toolbar[^{}]*\{([^}]*)\}/g)) {
+    for (const declaration of block[1].matchAll(/\btop:\s*([^;\n}]+)/g)) {
+      const value = declaration[1].trim();
+      assert.ok(
+        value === "auto" || value === "var(--document-editor-sticky-top)",
+        `Document toolbars must use the shared flush-top contract, not ${value}`
+      );
+    }
+  }
   assert.match(documentStyles, /\.document-collapsible-content\.collapsed\.is-collapsible::after/);
   assert.match(attachmentStyles, /\.attachment-modal[\s\S]*background:\s*var\(--document-surface-solid\)/);
   assert.match(attachmentStyles, /\.attachment-sheet-scroll[\s\S]*background:\s*var\(--attachment-preview-surface\)/);

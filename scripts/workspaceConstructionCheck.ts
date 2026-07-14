@@ -129,7 +129,8 @@ const main = async () => {
   assert.match(workspaceStyles, /\.workspace-main-column[\s\S]*width: min\(var\(--symposium-feed-width\), calc\(100vw - 48px\)\)/);
   assert.match(workspaceStyles, /\.workspace-feed\.feed-stream[\s\S]*max-width: var\(--symposium-feed-width\)/);
   assert.match(workspaceStyles, /\.workspace-detail-nav[\s\S]*position: relative[\s\S]*top: auto/);
-  assert.match(workspaceStyles, /\.workspace-editor \.document-editor-toolbar[\s\S]*position: sticky[\s\S]*top: 82px/);
+  assert.match(workspaceStyles, /\.workspace-editor \.document-editor-toolbar\s*\{[^}]*z-index: 8/);
+  assert.doesNotMatch(workspaceStyles, /\.workspace-editor \.document-editor-toolbar\s*\{[^}]*top:/);
 
   console.log(JSON.stringify({
     ok: true,
