@@ -318,7 +318,7 @@ button.quote-card-thought:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
   padding: 0 2px;
   overflow-wrap: normal;

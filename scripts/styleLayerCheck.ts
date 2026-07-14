@@ -106,7 +106,7 @@ const main = async () => {
   assert.match(feedStyles, /\.social-actions\s*\{[^}]*repeat\(2, 42px\)[^}]*overflow-wrap:\s*normal/);
   assert.match(feedStyles, /\.social-actions button > svg,\s*\.social-actions a > svg,\s*\.social-actions strong\s*\{[^}]*flex:\s*0 0 auto/);
   assert.match(feedStyles, /\.social-actions strong\s*\{[^}]*margin-left:\s*0[^}]*white-space:\s*nowrap[^}]*word-break:\s*normal/);
-  assert.match(feedStyles, /\.social-actions button,\s*\.social-actions a\s*\{[^}]*gap:\s*4px[^}]*white-space:\s*nowrap/);
+  assert.match(feedStyles, /\.social-actions button,\s*\.social-actions a\s*\{[^}]*gap:\s*6px[^}]*white-space:\s*nowrap/);
   assert.match(feedStyles, /\.social-actions \.metric-label\s*\{[^}]*flex:\s*0 1 auto[^}]*min-width:\s*0/);
 
   console.log(
