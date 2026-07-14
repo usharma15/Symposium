@@ -6,6 +6,13 @@ import {
   updateWorkspaceDocumentInputSchema,
   workspaceSearchInputSchema
 } from "@/packages/contracts/src";
+import {
+  normalizeWorkspaceSnapshot,
+  runAfterWorkspaceSave,
+  workspaceDocumentMetadataUpdate,
+  workspaceDocumentsInNotebook
+} from "@/features/workspace/workspaceNavigator";
+import type { WorkspaceDocument } from "@/lib/workspaceTypes";
 
 const paragraph = {
   version: 1 as const,
@@ -14,6 +21,41 @@ const paragraph = {
 const heading = {
   version: 1 as const,
   nodes: [{ id: "h1", type: "heading" as const, level: 1, content: [{ text: "Paper heading" }], align: "left" as const }]
+};
+
+const workspaceDocument = (input: Partial<WorkspaceDocument> & Pick<WorkspaceDocument, "id" | "updatedAt">): WorkspaceDocument => {
+  const { id, updatedAt, ...overrides } = input;
+  return {
+    id,
+    workspaceId: "workspace-1",
+    notebookId: null,
+    notebookName: null,
+    ownerHandle: "@owner",
+    ownerName: "Owner",
+    kind: "note",
+    publicationTarget: "undecided",
+    targetId: null,
+    title: "Research note",
+    body: "Research draft",
+    document: paragraph,
+    lifecycle: "draft",
+    revision: 4,
+    publishedPostId: null,
+    createdAt: "2026-07-14T00:00:00.000Z",
+    updatedAt,
+    publishedAt: null,
+    attachments: [],
+    access: {
+      role: "owner",
+      inheritedFromNotebook: false,
+      canComment: true,
+      canEdit: true,
+      canPublish: true,
+      canShare: true,
+      canDelete: true
+    },
+    ...overrides
+  };
 };
 
 const main = async () => {
@@ -52,6 +94,38 @@ const main = async () => {
   }).success, false);
   assert.equal(workspaceSearchInputSchema.parse({ query: "methods", limit: "12" }).limit, 12);
 
+  const olderDocument = workspaceDocument({ id: "older", notebookId: "notebook-1", notebookName: "Methods", updatedAt: "2026-07-14T00:00:00.000Z" });
+  const newerDocument = workspaceDocument({ id: "newer", notebookId: "notebook-1", notebookName: "Methods", updatedAt: "2026-07-14T01:00:00.000Z" });
+  assert.deepEqual(workspaceDocumentsInNotebook([olderDocument, newerDocument], "notebook-1").map((document) => document.id), ["newer", "older"]);
+  const normalized = normalizeWorkspaceSnapshot({
+    workspace: { id: "workspace-1", name: "Notes", ownerHandle: "@owner" },
+    notebooks: [{
+      id: "notebook-1",
+      workspaceId: "workspace-1",
+      ownerHandle: "@owner",
+      name: "Methods",
+      revision: 1,
+      role: "owner",
+      documentCount: 0,
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z"
+    }],
+    documents: [olderDocument, newerDocument]
+  });
+  assert.equal(normalized.notebooks[0]?.documentCount, 2);
+  const metadataUpdate = workspaceDocumentMetadataUpdate(newerDocument, { title: "Renamed", notebookId: null });
+  assert.equal(metadataUpdate.title, "Renamed");
+  assert.equal(metadataUpdate.notebookId, null);
+  assert.equal(metadataUpdate.body, newerDocument.body);
+  assert.equal(metadataUpdate.document, newerDocument.document);
+  assert.equal(metadataUpdate.expectedRevision, newerDocument.revision);
+  assert.equal(metadataUpdate.checkpoint, true);
+  let navigationRuns = 0;
+  assert.equal(await runAfterWorkspaceSave(async () => false, () => { navigationRuns += 1; }), false);
+  assert.equal(navigationRuns, 0);
+  assert.equal(await runAfterWorkspaceSave(async () => true, () => { navigationRuns += 1; }), true);
+  assert.equal(navigationRuns, 1);
+
   const root = process.cwd();
   const [
     migration,
@@ -66,7 +140,10 @@ const main = async () => {
     postViews,
     symposiumView,
     workspaceStyles,
-    composerDrafts
+    composerDrafts,
+    workspaceNavigator,
+    workspaceNavigatorDocument,
+    workspaceDetail
   ] = await Promise.all([
     readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/workspaceDocuments.ts"), "utf8"),
@@ -80,7 +157,10 @@ const main = async () => {
     readFile(path.join(root, "features/posts/PostViews.tsx"), "utf8"),
     readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8"),
     readFile(path.join(root, "styles/88-workspace.css"), "utf8"),
-    readFile(path.join(root, "features/workspace/savePostDraftToWorkspace.ts"), "utf8")
+    readFile(path.join(root, "features/workspace/savePostDraftToWorkspace.ts"), "utf8"),
+    readFile(path.join(root, "features/workspace/workspaceNavigator.ts"), "utf8"),
+    readFile(path.join(root, "features/workspace/WorkspaceNavigatorDocument.tsx"), "utf8"),
+    readFile(path.join(root, "features/workspace/WorkspaceDocumentDetail.tsx"), "utf8")
   ]);
 
   assert.match(migration, /0020_workspace_documents/);
@@ -103,13 +183,27 @@ const main = async () => {
   assert.match(attachmentOwnership, /row\.ownerId === null && row\.uploaderHandle !== input\.uploaderHandle/);
   assert.match(workspaceHook, /symposium-workspace-sync-v1/);
   assert.match(workspaceHook, /cache: "no-store"/);
+  assert.match(workspaceHook, /normalizeWorkspaceSnapshot/);
+  assert.match(workspaceHook, /updateDocumentMetadata/);
   assert.match(workspaceView, /Search notes, authors, notebooks, content, comments, attachments/);
   assert.match(workspaceView, /Quick Notes have a place/);
   assert.match(workspaceView, /workspace-sidebar-scroll/);
   assert.match(workspaceView, /const creationKinds: WorkspaceDocument\["kind"\]\[\] = \["note", "thought", "paper"\]/);
-  assert.match(workspaceView, /toLocaleDateString\(undefined, \{ day: "2-digit", month: "2-digit", year: "2-digit" \}\)/);
-  assert.match(workspaceView, /workspace-sidebar-preview/);
-  assert.match(workspaceView, /workspace-sidebar-meta/);
+  assert.match(workspaceNavigatorDocument, /toLocaleDateString\(undefined, \{ day: "2-digit", month: "2-digit", year: "2-digit" \}\)/);
+  assert.match(workspaceNavigatorDocument, /workspace-sidebar-preview/);
+  assert.match(workspaceNavigatorDocument, /workspace-sidebar-meta/);
+  assert.match(workspaceNavigatorDocument, /Move to notebook/);
+  assert.match(workspaceNavigatorDocument, /onRename/);
+  assert.match(workspaceNavigatorDocument, /onDelete/);
+  assert.match(workspaceView, /workspace-notebook-create[\s\S]*workspace\.snapshot\.notebooks\.map/);
+  assert.match(workspaceView, /aria-expanded=\{expanded\}/);
+  assert.match(workspaceView, /WorkspaceNavigatorDocument/);
+  assert.match(workspaceView, /prepareForNavigation/);
+  assert.match(workspaceDetail, /savePromiseRef/);
+  assert.match(workspaceDetail, /prepareForNavigation/);
+  assert.match(workspaceDetail, /document\.revision <= savedDocumentRef\.current\.revision/);
+  assert.match(workspaceNavigator, /workspaceDocumentMetadataUpdate/);
+  assert.match(workspaceNavigator, /runAfterWorkspaceSave/);
   assert.doesNotMatch(workspaceView, /workspaceDateGroup/);
   assert.doesNotMatch(workspaceView, /Draft, organise, revise, and publish research without leaving your office/);
   assert.doesNotMatch(workspaceView, /Workspace current/);
@@ -126,6 +220,9 @@ const main = async () => {
   assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar[\s\S]*position: fixed[\s\S]*inset: 104px auto 144px 24px/);
   assert.match(workspaceStyles, /\.workspace-sidebar-scroll[\s\S]*overflow-y: auto[\s\S]*overscroll-behavior: contain/);
   assert.match(workspaceStyles, /\.workspace-sidebar-document[\s\S]*height: 64px/);
+  assert.match(workspaceStyles, /\.workspace-notebook-create\s*\{[^}]*position: sticky[^}]*top: 0/);
+  assert.match(workspaceStyles, /\.workspace-notebook-documents\s*\{[^}]*display: grid/);
+  assert.match(workspaceStyles, /\.workspace-sidebar-document-menu\s*\{[^}]*display: grid/);
   assert.match(workspaceStyles, /\.workspace-main-column[\s\S]*width: min\(var\(--symposium-feed-width\), calc\(100vw - 48px\)\)/);
   assert.match(workspaceStyles, /\.workspace-feed\.feed-stream[\s\S]*max-width: var\(--symposium-feed-width\)/);
   assert.match(workspaceStyles, /\.workspace-detail-nav[\s\S]*position: relative[\s\S]*top: auto/);
@@ -152,7 +249,11 @@ const main = async () => {
       "cross-tab convergence and no-store transport",
       "All, Notebooks, Quick Notes, and persistent search surfaces",
       "fixed independently scrolling five-draft Notes navigator",
-      "flat local-date draft metadata and six-row notebook navigation",
+      "flat local-date draft metadata and expandable notebook navigation",
+      "pinned notebook creation and inline note actions",
+      "serialized save-before-navigation with guarded metadata mutations",
+      "clean-editor convergence to newer cross-tab revisions",
+      "immediate notebook document-count reconciliation",
       "theme-tokened detail navigation and workspace search",
       "Note, Thought, and Paper-only draft creation",
       "canonical centered feed-width Notes composition",

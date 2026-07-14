@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { ArrowLeft, Check, Clock3, Pencil, Send, Trash2, Users } from "lucide-react";
 import { SymposiumDocumentEditor, SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
 import type { AttachmentUploadHandler } from "@/features/attachments/AttachmentViews";
@@ -42,7 +42,26 @@ const draftFingerprint = (draft: {
   draft.attachments.map((attachment) => attachment.id)
 ]);
 
-export function WorkspaceDocumentDetail({
+export type WorkspaceDocumentDetailHandle = {
+  prepareForNavigation: () => Promise<WorkspaceDocument | null>;
+  latestSavedDocument: () => Promise<WorkspaceDocument>;
+  applySavedDocument: (document: WorkspaceDocument) => void;
+};
+
+type WorkspaceDocumentDetailProps = {
+  document: WorkspaceDocument;
+  notebooks: WorkspaceNotebook[];
+  profiles: Record<string, ResearchProfile>;
+  initiallyEditing: boolean;
+  onBack: () => void;
+  onSave: (draft: SaveDraft) => Promise<WorkspaceDocument>;
+  onDelete: (document: WorkspaceDocument) => Promise<void>;
+  onPublish: (document: WorkspaceDocument, target?: "paper" | "thought") => Promise<WorkspacePublicationResponse>;
+  onPublished: (result: WorkspacePublicationResponse) => void;
+  onUploadAttachment: AttachmentUploadHandler;
+};
+
+export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle, WorkspaceDocumentDetailProps>(function WorkspaceDocumentDetail({
   document,
   notebooks,
   profiles,
@@ -53,18 +72,7 @@ export function WorkspaceDocumentDetail({
   onPublish,
   onPublished,
   onUploadAttachment
-}: {
-  document: WorkspaceDocument;
-  notebooks: WorkspaceNotebook[];
-  profiles: Record<string, ResearchProfile>;
-  initiallyEditing: boolean;
-  onBack: () => void;
-  onSave: (draft: SaveDraft) => Promise<WorkspaceDocument>;
-  onDelete: () => Promise<void>;
-  onPublish: (document: WorkspaceDocument, target?: "paper" | "thought") => Promise<WorkspacePublicationResponse>;
-  onPublished: (result: WorkspacePublicationResponse) => void;
-  onUploadAttachment: AttachmentUploadHandler;
-}) {
+}, ref) {
   const [editing, setEditing] = useState(initiallyEditing);
   const [title, setTitle] = useState(document.title);
   const [body, setBody] = useState(document.body);
@@ -82,7 +90,8 @@ export function WorkspaceDocumentDetail({
   const [uploading, setUploading] = useState(false);
   const [saveState, setSaveState] = useState("Saved");
   const [error, setError] = useState<string | null>(null);
-  const saveInFlightRef = useRef(false);
+  const savePromiseRef = useRef<Promise<WorkspaceDocument | null> | null>(null);
+  const savedDocumentRef = useRef(document);
   const revisionRef = useRef(document.revision);
   const savedFingerprintRef = useRef(draftFingerprint({
     title: document.title,
@@ -104,43 +113,110 @@ export function WorkspaceDocumentDetail({
     attachments
   }), [attachments, body, document.kind, document.publicationTarget, documentValue, notebookId, publicationTarget, targetId, title]);
 
+  const applySavedDocument = useCallback((saved: WorkspaceDocument) => {
+    savedDocumentRef.current = saved;
+    revisionRef.current = saved.revision;
+    setRevision(saved.revision);
+    setTitle(saved.title);
+    setBody(saved.body);
+    setDocumentValue(saved.document);
+    setAttachments(saved.attachments);
+    setNotebookId(saved.notebookId);
+    setTargetId(saved.targetId ?? "");
+    setPublicationTarget(saved.publicationTarget === "paper" || saved.publicationTarget === "thought" ? saved.publicationTarget : "undecided");
+    savedFingerprintRef.current = draftFingerprint({
+      title: saved.title,
+      body: saved.body,
+      document: saved.document,
+      notebookId: saved.notebookId,
+      targetId: saved.targetId,
+      publicationTarget: saved.publicationTarget,
+      attachments: saved.attachments
+    });
+    setSaveState("Draft saved");
+    setError(null);
+  }, []);
+
   const saveDraft = useCallback(async (checkpoint: boolean) => {
-    if (saveInFlightRef.current || uploading) return null;
+    if (savePromiseRef.current) await savePromiseRef.current;
+    if (uploading) {
+      setError("Wait for the attachment upload to finish before leaving this draft.");
+      setSaveState("Upload still running");
+      return null;
+    }
     const draft = currentDraft();
     const fingerprint = draftFingerprint(draft);
-    if (!checkpoint && fingerprint === savedFingerprintRef.current) return document;
-    saveInFlightRef.current = true;
+    if (!checkpoint && fingerprint === savedFingerprintRef.current) return savedDocumentRef.current;
     setBusy(true);
     setError(null);
     setSaveState(checkpoint ? "Saving checkpoint…" : "Autosaving…");
+    const operation = (async () => {
+      try {
+        const saved = await onSave({
+          title: draft.title,
+          body: draft.body,
+          document: draft.document,
+          kind: document.kind,
+          publicationTarget: draft.publicationTarget,
+          notebookId: draft.notebookId,
+          targetId: draft.targetId,
+          attachmentIds: draft.attachments.map((attachment) => attachment.id),
+          expectedRevision: revisionRef.current,
+          checkpoint
+        });
+        savedDocumentRef.current = saved;
+        revisionRef.current = saved.revision;
+        setRevision(saved.revision);
+        savedFingerprintRef.current = fingerprint;
+        setSaveState(checkpoint ? "Draft saved" : "Autosaved");
+        return saved;
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : "Draft could not be saved.";
+        setError(message);
+        setSaveState("Save needs attention");
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    })();
+    savePromiseRef.current = operation;
     try {
-      const saved = await onSave({
-        title: draft.title,
-        body: draft.body,
-        document: draft.document,
-        kind: document.kind,
-        publicationTarget: draft.publicationTarget,
-        notebookId: draft.notebookId,
-        targetId: draft.targetId,
-        attachmentIds: draft.attachments.map((attachment) => attachment.id),
-        expectedRevision: revisionRef.current,
-        checkpoint
-      });
-      revisionRef.current = saved.revision;
-      setRevision(saved.revision);
-      savedFingerprintRef.current = fingerprint;
-      setSaveState(checkpoint ? "Draft saved" : "Autosaved");
-      return saved;
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Draft could not be saved.";
-      setError(message);
-      setSaveState("Save needs attention");
-      return null;
+      return await operation;
     } finally {
-      saveInFlightRef.current = false;
-      setBusy(false);
+      if (savePromiseRef.current === operation) savePromiseRef.current = null;
     }
   }, [currentDraft, document, onSave, uploading]);
+
+  const prepareForNavigation = useCallback(async () => {
+    if (savePromiseRef.current) await savePromiseRef.current;
+    if (uploading) {
+      setError("Wait for the attachment upload to finish before leaving this draft.");
+      setSaveState("Upload still running");
+      return null;
+    }
+    const draft = currentDraft();
+    if (draftFingerprint(draft) === savedFingerprintRef.current) return savedDocumentRef.current;
+    return saveDraft(true);
+  }, [currentDraft, saveDraft, uploading]);
+
+  useEffect(() => {
+    if (document.id !== savedDocumentRef.current.id || document.revision <= savedDocumentRef.current.revision) return;
+    if (draftFingerprint(currentDraft()) !== savedFingerprintRef.current) {
+      setError("A newer saved revision is available. Finish or review this edit before leaving the draft.");
+      setSaveState("Save needs attention");
+      return;
+    }
+    applySavedDocument(document);
+  }, [applySavedDocument, currentDraft, document]);
+
+  useImperativeHandle(ref, () => ({
+    prepareForNavigation,
+    latestSavedDocument: async () => {
+      if (savePromiseRef.current) await savePromiseRef.current;
+      return savedDocumentRef.current;
+    },
+    applySavedDocument
+  }), [applySavedDocument, prepareForNavigation]);
 
   const fingerprint = draftFingerprint(currentDraft());
   useEffect(() => {
@@ -171,6 +247,7 @@ export function WorkspaceDocumentDetail({
 
   const owner = profileForHandle(profiles, document.ownerHandle);
   const ownerName = owner?.name ?? document.ownerName ?? document.ownerHandle;
+  const compatibleNotebooks = notebooks.filter((notebook) => notebook.ownerHandle === document.ownerHandle);
   const capability = document.kind === "note" || document.kind === "paper" ? "paper" : "reduced";
   const targetLinked = document.kind !== "comment" && document.kind !== "reply" || Boolean(targetId.trim());
   const publicationChosen = document.kind !== "note" || publicationTarget !== "undecided";
@@ -186,7 +263,12 @@ export function WorkspaceDocumentDetail({
         <div className="workspace-detail-actions">
           {!editing && document.access.canEdit ? <button type="button" onClick={() => setEditing(true)}><Pencil size={15} />Edit</button> : null}
           {document.access.canDelete ? <button type="button" className="danger" onClick={() => {
-            if (window.confirm(`Delete “${document.title}”? This cannot be undone.`)) void onDelete();
+            if (window.confirm(`Delete “${document.title}”? This cannot be undone.`)) {
+              void (async () => {
+                if (savePromiseRef.current) await savePromiseRef.current;
+                await onDelete(savedDocumentRef.current);
+              })();
+            }
           }}><Trash2 size={15} />Delete</button> : null}
         </div>
       </header>
@@ -211,7 +293,7 @@ export function WorkspaceDocumentDetail({
                   <span>Save in</span>
                   <select value={notebookId ?? ""} onChange={(event) => setNotebookId(event.target.value || null)}>
                     <option value="">All · Unfiled</option>
-                    {notebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name}</option>)}
+                    {compatibleNotebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name}</option>)}
                   </select>
                   {notebookId !== document.notebookId ? <small>Moving a draft can change inherited collaborator access.</small> : null}
                 </label>
@@ -263,4 +345,4 @@ export function WorkspaceDocumentDetail({
       </article>
     </div>
   );
-}
+});

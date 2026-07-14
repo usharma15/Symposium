@@ -18,6 +18,10 @@ import type {
   WorkspaceSearchResponse,
   WorkspaceSnapshot
 } from "@/lib/workspaceTypes";
+import {
+  normalizeWorkspaceSnapshot,
+  workspaceDocumentMetadataUpdate
+} from "@/features/workspace/workspaceNavigator";
 
 type WorkspaceChangeMessage = {
   type: "workspace-change";
@@ -68,11 +72,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
   snapshotRef.current = snapshot;
 
   const applySnapshot = useCallback((next: WorkspaceSnapshot) => {
-    const normalized = {
-      ...next,
-      notebooks: [...next.notebooks].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-      documents: [...next.documents].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    };
+    const normalized = normalizeWorkspaceSnapshot(next);
     snapshotRef.current = normalized;
     setSnapshot(normalized);
     cacheSnapshot(actorHandle, normalized);
@@ -166,6 +166,11 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     setStatus(input.checkpoint ? "Draft saved" : "Autosaved");
     return result.document;
   }, [actorHandle, announceChange, applySnapshot]);
+
+  const updateDocumentMetadata = useCallback(async (
+    document: WorkspaceDocument,
+    changes: { title?: string; notebookId?: string | null }
+  ) => updateDocument(document.id, workspaceDocumentMetadataUpdate(document, changes)), [updateDocument]);
 
   const deleteDocument = useCallback(async (document: WorkspaceDocument) => {
     setStatus("Deleting draft…");
@@ -261,6 +266,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     refresh,
     createDocument,
     updateDocument,
+    updateDocumentMetadata,
     deleteDocument,
     createNotebook,
     renameNotebook,
@@ -276,6 +282,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     refresh,
     createDocument,
     updateDocument,
+    updateDocumentMetadata,
     deleteDocument,
     createNotebook,
     renameNotebook,
