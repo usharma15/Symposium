@@ -283,7 +283,7 @@ const main = async () => {
   assert.match(workspaceStyles, /\.workspace-sidebar-document[\s\S]*height: 64px/);
   assert.match(workspaceStyles, /\.workspace-notebook-create\s*\{[^}]*position: sticky[^}]*top: 0/);
   assert.match(workspaceStyles, /\.workspace-notebook-documents\s*\{[^}]*display: grid/);
-  assert.match(workspaceStyles, /\.workspace-document-card\s*\{[^}]*background: color-mix\(in srgb, var\(--panel-strong\) 82%, transparent\)/);
+  assert.match(workspaceStyles, /\.workspace-document-card\s*\{[^}]*background: color-mix\(in srgb, var\(--panel-strong\) 30%, transparent\)/);
   assert.match(workspaceStyles, /\.workspace-document-card \.document-collapsible-content\.collapsed\.is-collapsible::after\s*\{[^}]*content: none/);
   assert.match(workspaceStyles, /\.workspace-sidebar-document-menu\s*\{[^}]*display: grid/);
   assert.match(workspaceStyles, /\.workspace-main-column[\s\S]*width: min\(var\(--symposium-feed-width\), calc\(100vw - 48px\)\)/);
