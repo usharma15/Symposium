@@ -129,6 +129,10 @@ const main = async () => {
   assert.match(workspaceStyles, /\.workspace-main-column[\s\S]*width: min\(var\(--symposium-feed-width\), calc\(100vw - 48px\)\)/);
   assert.match(workspaceStyles, /\.workspace-feed\.feed-stream[\s\S]*max-width: var\(--symposium-feed-width\)/);
   assert.match(workspaceStyles, /\.workspace-detail-nav[\s\S]*position: relative[\s\S]*top: auto/);
+  assert.match(workspaceStyles, /\.workspace-detail-nav\s*\{[^}]*background: var\(--document-surface-solid\)[^}]*color: var\(--ink\)/);
+  assert.match(workspaceStyles, /\.workspace-search\s*\{[^}]*background: var\(--document-control-solid\)[^}]*color: var\(--ink\)/);
+  assert.match(workspaceStyles, /\.workspace-search input\s*\{[^}]*background: transparent[^}]*color: inherit/);
+  assert.match(workspaceStyles, /\.workspace-detail-nav button\.danger\s*\{[^}]*color: color-mix\(in srgb, #b42f2f 60%, var\(--ink\)\)/);
   assert.match(workspaceStyles, /\.workspace-editor \.document-editor-toolbar\s*\{[^}]*z-index: 8/);
   assert.doesNotMatch(workspaceStyles, /\.workspace-editor \.document-editor-toolbar\s*\{[^}]*top:/);
 
@@ -149,6 +153,7 @@ const main = async () => {
       "All, Notebooks, Quick Notes, and persistent search surfaces",
       "fixed independently scrolling five-draft Notes navigator",
       "flat local-date draft metadata and six-row notebook navigation",
+      "theme-tokened detail navigation and workspace search",
       "Note, Thought, and Paper-only draft creation",
       "canonical centered feed-width Notes composition",
       "New Post to private draft creation"

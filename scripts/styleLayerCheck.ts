@@ -105,7 +105,9 @@ const main = async () => {
   assert.match(attachmentStyles, /\.attachment-sheet-scroll[\s\S]*background:\s*var\(--attachment-preview-surface\)/);
   assert.match(feedStyles, /\.social-actions\s*\{[^}]*repeat\(2, 42px\)[^}]*overflow-wrap:\s*normal/);
   assert.match(feedStyles, /\.social-actions button > svg,\s*\.social-actions a > svg,\s*\.social-actions strong\s*\{[^}]*flex:\s*0 0 auto/);
-  assert.match(feedStyles, /\.social-actions strong\s*\{[^}]*white-space:\s*nowrap[^}]*word-break:\s*normal/);
+  assert.match(feedStyles, /\.social-actions strong\s*\{[^}]*margin-left:\s*0[^}]*white-space:\s*nowrap[^}]*word-break:\s*normal/);
+  assert.match(feedStyles, /\.social-actions button,\s*\.social-actions a\s*\{[^}]*gap:\s*4px[^}]*white-space:\s*nowrap/);
+  assert.match(feedStyles, /\.social-actions \.metric-label\s*\{[^}]*flex:\s*0 1 auto[^}]*min-width:\s*0/);
 
   console.log(
     JSON.stringify(
@@ -120,7 +122,7 @@ const main = async () => {
           "one canonical feed and clicked-post width",
           "flush sticky editor and opaque themed attachment surfaces",
           "focus-scoped inline comment and compact reply toolbars",
-          "single-line post metrics across feed and detail surfaces",
+          "compact single-line post metrics across feed and detail surfaces",
           "overflow-only feed preview fades"
         ]
       },

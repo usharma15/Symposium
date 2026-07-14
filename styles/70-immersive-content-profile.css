@@ -318,7 +318,7 @@ button.quote-card-thought:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
   padding: 0 2px;
   overflow-wrap: normal;
@@ -333,7 +333,7 @@ button.quote-card-thought:hover {
 
 .social-actions strong {
   min-width: max-content;
-  margin-left: 2px;
+  margin-left: 0;
   text-align: left;
   font-variant-numeric: tabular-nums;
   overflow-wrap: normal;
@@ -342,7 +342,7 @@ button.quote-card-thought:hover {
 }
 
 .social-actions .metric-label {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
