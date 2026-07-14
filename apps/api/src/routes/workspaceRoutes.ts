@@ -8,6 +8,13 @@ import { listNotifications } from "../repository/notifications";
 import { createOpportunity, listOpportunities } from "../repository/opportunities";
 import { saveNoteBlock } from "../repository/workspace";
 import {
+  createWorkspaceGrant,
+  deleteWorkspaceGrant,
+  getWorkspaceAccess,
+  searchWorkspaceCollaborators,
+  updateWorkspaceGrant
+} from "../repository/workspaceAccess";
+import {
   assertWorkspaceAttachmentAccess,
   createWorkspaceDocument,
   createWorkspaceNotebook,
@@ -140,6 +147,62 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
     }
   });
 
+  app.get<{ Params: { noteId: string } }>("/v1/workspace/documents/:noteId/access", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await getWorkspaceAccess("document", request.params.noteId, actor));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post<{ Params: { noteId: string } }>("/v1/workspace/documents/:noteId/access", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await createWorkspaceGrant(
+        "document",
+        request.params.noteId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.document.access.grant", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: { noteId: string; granteeHandle: string } }>("/v1/workspace/documents/:noteId/access/:granteeHandle", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await updateWorkspaceGrant(
+        "document",
+        request.params.noteId,
+        request.params.granteeHandle,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.document.access.update", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: { noteId: string; granteeHandle: string } }>("/v1/workspace/documents/:noteId/access/:granteeHandle", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await deleteWorkspaceGrant(
+        "document",
+        request.params.noteId,
+        request.params.granteeHandle,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.document.access.revoke", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
   app.get<{ Params: { noteId: string } }>("/v1/workspace/documents/:noteId/comments", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
@@ -244,6 +307,71 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
         actor,
         mutationContextFromRequest(request, "workspace.notebook.delete", request.body)
       ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: { notebookId: string } }>("/v1/workspace/notebooks/:notebookId/access", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await getWorkspaceAccess("notebook", request.params.notebookId, actor));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post<{ Params: { notebookId: string } }>("/v1/workspace/notebooks/:notebookId/access", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await createWorkspaceGrant(
+        "notebook",
+        request.params.notebookId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.notebook.access.grant", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: { notebookId: string; granteeHandle: string } }>("/v1/workspace/notebooks/:notebookId/access/:granteeHandle", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await updateWorkspaceGrant(
+        "notebook",
+        request.params.notebookId,
+        request.params.granteeHandle,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.notebook.access.update", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: { notebookId: string; granteeHandle: string } }>("/v1/workspace/notebooks/:notebookId/access/:granteeHandle", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await deleteWorkspaceGrant(
+        "notebook",
+        request.params.notebookId,
+        request.params.granteeHandle,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.notebook.access.revoke", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/workspace/collaborators", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await searchWorkspaceCollaborators(request.query, actor));
     } catch (error) {
       return sendError(app, reply, error);
     }

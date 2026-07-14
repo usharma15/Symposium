@@ -76,6 +76,16 @@ const hydrateComment = async (comment: StoredComment, actorHandle: string): Prom
 const hydrateComments = (comments: StoredComment[], actorHandle: string) =>
   Promise.all(comments.map((comment) => hydrateComment(comment, actorHandle)));
 
+const activeCommentCount = (comments: StoredComment[]): number => comments.reduce(
+  (total, comment) => total + (comment.deletedAt ? 0 : 1) + activeCommentCount(comment.replies),
+  0
+);
+
+export const getLocalWorkspaceCommentCount = async (noteId: string) => withStoreLock(async () => {
+  const store = await loadStore();
+  return activeCommentCount(store.notes[noteId] ?? []);
+});
+
 export const getLocalWorkspaceComments = async (noteId: string, actorHandle: string) => {
   await assertDocumentAccess(noteId, actorHandle);
   return withStoreLock(async () => {

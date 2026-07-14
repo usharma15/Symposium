@@ -688,6 +688,7 @@ export const workspaceNotebookGrants = pgTable(
     notebookId: uuid("notebook_id").notNull().references(() => workspaceNotebooks.id, { onDelete: "cascade" }),
     granteeHandle: text("grantee_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
     role: text("role").notNull(),
+    revision: integer("revision").default(1).notNull(),
     grantedByHandle: text("granted_by_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
@@ -695,7 +696,8 @@ export const workspaceNotebookGrants = pgTable(
   (table) => [
     uniqueIndex("workspace_notebook_grants_notebook_grantee_unique_idx").on(table.notebookId, table.granteeHandle),
     index("workspace_notebook_grants_grantee_idx").on(table.granteeHandle, table.notebookId),
-    check("workspace_notebook_grants_role_check", sql`${table.role} IN ('viewer', 'commenter', 'editor', 'publisher')`)
+    check("workspace_notebook_grants_role_check", sql`${table.role} IN ('viewer', 'commenter', 'editor', 'publisher')`),
+    check("workspace_notebook_grants_revision_check", sql`${table.revision} >= 1`)
   ]
 );
 
@@ -706,6 +708,7 @@ export const workspaceNoteGrants = pgTable(
     noteId: uuid("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
     granteeHandle: text("grantee_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
     role: text("role").notNull(),
+    revision: integer("revision").default(1).notNull(),
     grantedByHandle: text("granted_by_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
@@ -713,7 +716,8 @@ export const workspaceNoteGrants = pgTable(
   (table) => [
     uniqueIndex("workspace_note_grants_note_grantee_unique_idx").on(table.noteId, table.granteeHandle),
     index("workspace_note_grants_grantee_idx").on(table.granteeHandle, table.noteId),
-    check("workspace_note_grants_role_check", sql`${table.role} IN ('viewer', 'commenter', 'editor', 'publisher')`)
+    check("workspace_note_grants_role_check", sql`${table.role} IN ('viewer', 'commenter', 'editor', 'publisher')`),
+    check("workspace_note_grants_revision_check", sql`${table.revision} >= 1`)
   ]
 );
 

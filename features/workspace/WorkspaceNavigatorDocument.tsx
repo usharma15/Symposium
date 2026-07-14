@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Check, FolderInput, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, FolderInput, MoreHorizontal, Pencil, Trash2, Users } from "lucide-react";
 import { workspaceKindLabel } from "@/features/workspace/WorkspaceDocumentCard";
 import type { WorkspaceDocument, WorkspaceNotebook } from "@/lib/workspaceTypes";
 
@@ -21,6 +21,7 @@ export function WorkspaceNavigatorDocument({
   disabled = false,
   onOpen,
   onRename,
+  onShare,
   onMove,
   onDelete
 }: {
@@ -31,13 +32,14 @@ export function WorkspaceNavigatorDocument({
   disabled?: boolean;
   onOpen: () => void;
   onRename: () => void;
+  onShare: () => void;
   onMove: (notebookId: string | null) => void;
   onDelete: () => void;
 }) {
   const [menu, setMenu] = useState<DocumentMenu>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
-  const canOrganize = document.access.canEdit;
-  const hasActions = canOrganize || document.access.canDelete;
+  const canRename = document.access.canEdit;
+  const canMove = document.access.canDelete;
 
   useEffect(() => {
     if (!menu) return;
@@ -73,8 +75,7 @@ export function WorkspaceNavigatorDocument({
         </span>
       </button>
 
-      {hasActions ? (
-        <div className="workspace-sidebar-document-actions" ref={actionsRef}>
+      <div className="workspace-sidebar-document-actions" ref={actionsRef}>
           <button
             type="button"
             className="workspace-sidebar-more"
@@ -88,8 +89,9 @@ export function WorkspaceNavigatorDocument({
             <div className="workspace-sidebar-document-menu" role="menu" aria-label={`Actions for ${title}`}>
               {menu === "actions" ? (
                 <>
-                  {canOrganize ? <button type="button" role="menuitem" onClick={() => { setMenu(null); onRename(); }}><Pencil size={14} />Rename</button> : null}
-                  {canOrganize ? <button type="button" role="menuitem" onClick={() => setMenu("move")}><FolderInput size={14} />Move to notebook</button> : null}
+                  <button type="button" role="menuitem" onClick={() => { setMenu(null); onShare(); }}><Users size={14} />Sharing and access</button>
+                  {canRename ? <button type="button" role="menuitem" onClick={() => { setMenu(null); onRename(); }}><Pencil size={14} />Rename</button> : null}
+                  {canMove ? <button type="button" role="menuitem" onClick={() => setMenu("move")}><FolderInput size={14} />Move to notebook</button> : null}
                   {document.access.canDelete ? <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(null); onDelete(); }}><Trash2 size={14} />Delete</button> : null}
                 </>
               ) : (
@@ -105,8 +107,7 @@ export function WorkspaceNavigatorDocument({
               )}
             </div>
           ) : null}
-        </div>
-      ) : null}
+      </div>
     </div>
   );
 }

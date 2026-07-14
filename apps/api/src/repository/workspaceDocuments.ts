@@ -31,6 +31,7 @@ type AccessRow = {
   revision: number;
   kind: WorkspaceDocumentKindContract;
   workspaceId: string;
+  notebookId: string | null;
 };
 
 const roleRank: Record<WorkspaceAccessRoleContract, number> = {
@@ -81,6 +82,7 @@ const findDocumentAccess = async (client: PoolClient, noteId: string, handle: st
        note.owner_handle AS "ownerHandle",
        note.revision,
        note.kind,
+       note.notebook_id::text AS "notebookId",
        ${roleSql} AS role
      FROM notes note
      LEFT JOIN workspace_note_grants direct
@@ -199,13 +201,24 @@ const documentSelect = `
   note.created_at AS "createdAt",
   note.updated_at AS "updatedAt",
   note.published_at AS "publishedAt",
+  (SELECT count(*)::int FROM workspace_note_comments comment
+    WHERE comment.note_id = note.id AND comment.deleted_at IS NULL) AS "commentCount",
+  (SELECT count(DISTINCT audience.handle)::int FROM (
+    SELECT grantee_handle AS handle FROM workspace_note_grants WHERE note_id = note.id
+    UNION
+    SELECT grantee_handle AS handle FROM workspace_notebook_grants WHERE notebook_id = note.notebook_id
+  ) audience) AS "collaboratorCount",
   ${roleSql} AS role,
   (inherited.id IS NOT NULL) AS "inheritedFromNotebook",
   ${attachmentSelect}`;
 
 const mapDocument = (row: Record<string, unknown>) => {
-  const role = String(row.role ?? "viewer") as WorkspaceAccessRoleContract;
   const kind = String(row.kind ?? "note") as WorkspaceDocumentKindContract;
+  const projectedRole = String(row.role ?? "viewer") as WorkspaceAccessRoleContract;
+  const role = projectedRole !== "owner" && !["note", "paper"].includes(kind)
+    && roleRank[projectedRole] > roleRank.commenter
+    ? "commenter"
+    : projectedRole;
   const owner = role === "owner";
   const collaborative = kind === "note" || kind === "paper";
   return {
@@ -217,6 +230,8 @@ const mapDocument = (row: Record<string, unknown>) => {
     createdAt: iso(row.createdAt as Date | string),
     updatedAt: iso(row.updatedAt as Date | string),
     publishedAt: iso(row.publishedAt as Date | string | null),
+    commentCount: Number(row.commentCount ?? 0),
+    collaboratorCount: Number(row.collaboratorCount ?? 0),
     access: {
       role,
       inheritedFromNotebook: Boolean(row.inheritedFromNotebook),
@@ -302,6 +317,8 @@ export const getWorkspaceDocuments = async (actor: Actor) => {
          notebook.created_at AS "createdAt",
          notebook.updated_at AS "updatedAt",
          CASE WHEN notebook.owner_handle = $1 THEN 'owner' ELSE grant_row.role END AS role,
+         (SELECT count(*)::int FROM workspace_notebook_grants collaborator
+           WHERE collaborator.notebook_id = notebook.id) AS "collaboratorCount",
          count(note.id)::int AS "documentCount"
        FROM workspace_notebooks notebook
        LEFT JOIN workspace_notebook_grants grant_row
@@ -330,6 +347,8 @@ export const getWorkspaceDocuments = async (actor: Actor) => {
         workspace,
         notebooks: notebooks.rows.map((notebook) => ({
           ...notebook,
+          collaboratorCount: Number(notebook.collaboratorCount ?? 0),
+          canShare: roleRank[String(notebook.role) as WorkspaceAccessRoleContract] >= roleRank.editor,
           createdAt: iso(notebook.createdAt as Date | string),
           updatedAt: iso(notebook.updatedAt as Date | string)
         })),
@@ -420,11 +439,17 @@ export const updateWorkspaceDocument = async (
     const preflightAccess = await findDocumentAccess(client, noteId, handle);
     if (!preflightAccess) throw new TRPCError({ code: "NOT_FOUND", message: "Draft not found." });
     assertCanEdit(preflightAccess);
+    if (input.notebookId !== preflightAccess.notebookId && preflightAccess.role !== "owner") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only the owner can move a draft between notebooks." });
+    }
     await ensureNotebookForOwner(client, preflightAccess.workspaceId, preflightAccess.ownerHandle, input.notebookId);
     await lockWorkspaceDocument(client, noteId);
     const access = await findDocumentAccess(client, noteId, handle, true);
     if (!access) throw new TRPCError({ code: "NOT_FOUND", message: "Draft not found." });
     assertCanEdit(access);
+    if (input.notebookId !== access.notebookId && access.role !== "owner") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only the owner can move a draft between notebooks." });
+    }
     assertExpectedRevision("note", access.revision, input.expectedRevision);
     if (input.kind !== access.kind && access.role !== "owner") {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the owner can change a draft's type." });
@@ -578,7 +603,7 @@ export const createWorkspaceNotebook = async (rawInput: unknown, actor: Actor, m
       throw error;
     }
     const notebookId = String(notebook.rows[0]!.id);
-    const value = { notebook: { ...notebook.rows[0], role: "owner", documentCount: 0 } };
+    const value = { notebook: { ...notebook.rows[0], role: "owner", documentCount: 0, collaboratorCount: 0, canShare: true } };
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "workspace.notebook.create",
@@ -629,7 +654,21 @@ export const updateWorkspaceNotebook = async (
       throw error;
     }
     if (!updated.rowCount) throw new TRPCError({ code: "CONFLICT", message: "The notebook changed or is no longer available." });
-    const value = { notebook: { ...updated.rows[0], role: "owner" } };
+    const counts = await client.query<{ documentCount: number; collaboratorCount: number }>(
+      `SELECT
+         (SELECT count(*)::int FROM notes WHERE notebook_id = $1 AND deleted_at IS NULL) AS "documentCount",
+         (SELECT count(*)::int FROM workspace_notebook_grants WHERE notebook_id = $1) AS "collaboratorCount"`,
+      [notebookId]
+    );
+    const value = {
+      notebook: {
+        ...updated.rows[0],
+        role: "owner",
+        documentCount: Number(counts.rows[0]?.documentCount ?? 0),
+        collaboratorCount: Number(counts.rows[0]?.collaboratorCount ?? 0),
+        canShare: true
+      }
+    };
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "workspace.notebook.update",

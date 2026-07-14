@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, MessageCircle, Paperclip, Pencil, Send, Trash2 } from "lucide-react";
+import { FileText, MessageCircle, Paperclip, Pencil, Send, Trash2, Users } from "lucide-react";
 import { SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import type { ResearchProfile } from "@/lib/mockData";
@@ -21,6 +21,7 @@ export function WorkspaceDocumentCard({
   profiles,
   onOpen,
   onEdit,
+  onShare,
   onDelete,
   onPublish
 }: {
@@ -28,6 +29,7 @@ export function WorkspaceDocumentCard({
   profiles: Record<string, ResearchProfile>;
   onOpen: () => void;
   onEdit: () => void;
+  onShare: () => void;
   onDelete: () => void;
   onPublish: () => void;
 }) {
@@ -40,6 +42,7 @@ export function WorkspaceDocumentCard({
       onClick={onOpen}
     >
       <div className="workspace-card-controls" onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="workspace-sharing-trigger" title="View sharing and access" aria-label={`Sharing and access for ${document.title}`} onClick={onShare}><Users size={15} />{document.collaboratorCount ? <small>{document.collaboratorCount}</small> : null}</button>
         {document.access.canEdit ? <button type="button" title="Edit draft" onClick={onEdit}><Pencil size={15} /></button> : null}
         {document.access.canDelete ? <button type="button" title="Delete draft" onClick={onDelete}><Trash2 size={15} /></button> : null}
       </div>
@@ -72,7 +75,7 @@ export function WorkspaceDocumentCard({
           {document.attachments.length ? <span><Paperclip size={14} />{document.attachments.length}</span> : null}
         </div>
         <div className="social-actions workspace-card-actions" onClick={(event) => event.stopPropagation()}>
-          <button type="button" title="Draft discussion" onClick={onOpen}><MessageCircle size={16} /><span className="metric-label">Comments</span><strong>0</strong></button>
+          <button type="button" title="Draft discussion" onClick={onOpen}><MessageCircle size={16} /><span className="metric-label">Comments</span><strong>{document.commentCount}</strong></button>
           {document.access.canPublish ? <button type="button" title="Publish saved revision" onClick={onPublish}><Send size={16} /><span className="metric-label">Post</span></button> : null}
         </div>
       </div>

@@ -273,6 +273,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     deleteNotebook,
     search,
     publishDocument,
+    announceChange,
     setStatus
   }), [
     snapshot,
@@ -288,6 +289,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     renameNotebook,
     deleteNotebook,
     search,
-    publishDocument
+    publishDocument,
+    announceChange
   ]);
 };

@@ -11,6 +11,7 @@ import { actorHandle, ensureLiveData, ensureProfileHandle } from "../repository/
 import { createPost } from "../repository/posts";
 import type { Actor } from "./auth";
 import type { MutationContext } from "./mutations";
+import { prepareWorkspacePublicationAttachments } from "./workspaceAttachmentPublishing";
 import {
   assertWorkspaceRevisionNotPublished,
   loadPublishableWorkspaceRevision,
@@ -73,24 +74,26 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
         message: "This draft uses Paper formatting and cannot be published to a reduced editor destination."
       });
     }
-    if (revision.attachmentIds.length) {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: "Private draft attachments remain protected. Publishing their public copies will be activated in the collaboration pass."
-      });
-    }
 
     if (target === "paper" || target === "thought") {
+      const publishedContent = await prepareWorkspacePublicationAttachments(client, {
+        noteId: revision.noteId,
+        revision: revision.revision,
+        attachmentIds: revision.attachmentIds,
+        document,
+        ownerType: "post",
+        uploaderHandle: revision.ownerHandle
+      });
       const ownerActor: Actor = { ...actor, handle: revision.ownerHandle };
       const item = await createPost(
         {
           title: revision.title,
           body: revision.body,
-          document,
+          document: publishedContent.document,
           kind: target,
           room: target === "paper" ? "library" : "amphitheater",
           authorHandle: revision.ownerHandle,
-          attachmentIds: []
+          attachmentIds: publishedContent.attachmentIds
         },
         ownerActor,
         mutation ? { ...mutation, scope: "note.publish.post" } : undefined
@@ -108,17 +111,26 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
     if (target === "reply" && !parentId) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "A reply draft must be linked as post-id:comment-id." });
     }
+    const publishedContent = await prepareWorkspacePublicationAttachments(client, {
+      noteId: revision.noteId,
+      revision: revision.revision,
+      attachmentIds: revision.attachmentIds,
+      document,
+      ownerType: "comment",
+      uploaderHandle: revision.ownerHandle
+    });
+    const ownerActor: Actor = { ...actor, handle: revision.ownerHandle };
     const commentResult = await addComment(
       postId,
       {
         body: revision.body,
-        document,
+        document: publishedContent.document,
         stance: revision.title,
         parentId,
-        attachmentIds: [],
-        authorHandle: publisher
+        attachmentIds: publishedContent.attachmentIds,
+        authorHandle: revision.ownerHandle
       },
-      actor,
+      ownerActor,
       mutation ? { ...mutation, scope: "note.publish.comment" } : undefined
     );
     return persistWorkspacePublication(revision, publisher, target, commentResult, mutation);

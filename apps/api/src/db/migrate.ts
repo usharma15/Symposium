@@ -1434,6 +1434,18 @@ const migrations: Migration[] = [
       ALTER TABLE attachments ADD CONSTRAINT attachments_owner_type_check
         CHECK (owner_type IN ('post', 'comment', 'message', 'note', 'note_comment', 'profile'));
     `
+  },
+  {
+    id: "0022_workspace_collaboration",
+    sql: `
+      ALTER TABLE workspace_notebook_grants ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE workspace_note_grants ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+
+      ALTER TABLE workspace_notebook_grants DROP CONSTRAINT IF EXISTS workspace_notebook_grants_revision_check;
+      ALTER TABLE workspace_notebook_grants ADD CONSTRAINT workspace_notebook_grants_revision_check CHECK (revision >= 1);
+      ALTER TABLE workspace_note_grants DROP CONSTRAINT IF EXISTS workspace_note_grants_revision_check;
+      ALTER TABLE workspace_note_grants ADD CONSTRAINT workspace_note_grants_revision_check CHECK (revision >= 1);
+    `
   }
 ];
 

@@ -2,7 +2,9 @@ import type { InquiryAttachment, InquiryItem, ResearchProfile } from "@/lib/mock
 import type {
   VersionedDocumentContract,
   WorkspaceAccessRoleContract,
+  WorkspaceAccessResourceContract,
   WorkspaceDocumentKindContract,
+  WorkspaceGrantRoleContract,
   WorkspaceLifecycleContract,
   WorkspacePublicationTargetContract
 } from "@/packages/contracts/src";
@@ -25,6 +27,8 @@ export type WorkspaceNotebook = {
   revision: number;
   role: WorkspaceAccessRoleContract;
   documentCount: number;
+  collaboratorCount: number;
+  canShare: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -49,7 +53,60 @@ export type WorkspaceDocument = {
   updatedAt: string;
   publishedAt: string | null;
   attachments: InquiryAttachment[];
+  collaboratorCount: number;
+  commentCount: number;
   access: WorkspaceDocumentAccess;
+};
+
+export type WorkspaceDirectGrant = {
+  id: string;
+  role: WorkspaceGrantRoleContract;
+  revision: number;
+  grantedByHandle: string;
+  grantedByName: string;
+  createdAt: string;
+  updatedAt: string;
+  canManage: boolean;
+  canRemove: boolean;
+};
+
+export type WorkspaceInheritedGrant = {
+  role: WorkspaceGrantRoleContract;
+  notebookId: string;
+  notebookName: string;
+  grantedByHandle: string;
+};
+
+export type WorkspaceAccessCollaborator = {
+  handle: string;
+  name: string;
+  avatarUrl?: string;
+  effectiveRole: WorkspaceGrantRoleContract;
+  directGrant: WorkspaceDirectGrant | null;
+  inheritedGrant: WorkspaceInheritedGrant | null;
+};
+
+export type WorkspaceAccessOverview = {
+  resource: {
+    type: WorkspaceAccessResourceContract;
+    id: string;
+    name: string;
+    kind?: WorkspaceDocumentKindContract;
+    notebookId?: string | null;
+    notebookName?: string | null;
+  };
+  owner: Pick<ResearchProfile, "handle" | "name" | "avatarUrl">;
+  actor: {
+    role: WorkspaceAccessRoleContract;
+    canInvite: boolean;
+    maxGrantRole: WorkspaceGrantRoleContract | null;
+  };
+  collaborators: WorkspaceAccessCollaborator[];
+};
+
+export type WorkspaceCollaboratorSearchResponse = {
+  query: string;
+  people: Array<Pick<ResearchProfile, "handle" | "name" | "avatarUrl" | "role">>;
 };
 
 export type WorkspaceSnapshot = {

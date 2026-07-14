@@ -12,6 +12,7 @@ import {
   Search,
   StickyNote,
   Trash2,
+  Users,
   X
 } from "lucide-react";
 import { buildPostAttachmentMetadata } from "@/features/attachments/AttachmentViews";
@@ -24,6 +25,8 @@ import {
   type WorkspaceDocumentDetailHandle
 } from "@/features/workspace/WorkspaceDocumentDetail";
 import { WorkspaceNavigatorDocument } from "@/features/workspace/WorkspaceNavigatorDocument";
+import { WorkspaceSharingDialog } from "@/features/workspace/WorkspaceSharingDialog";
+import type { WorkspaceAccessTarget } from "@/features/workspace/useWorkspaceAccess";
 import { useWorkspaceDocuments } from "@/features/workspace/useWorkspaceDocuments";
 import {
   runAfterWorkspaceSave,
@@ -78,6 +81,7 @@ export function WorkspaceView({
   const [creatingNotebook, setCreatingNotebook] = useState(false);
   const [expandedNotebookIds, setExpandedNotebookIds] = useState<Set<string>>(() => new Set());
   const [navigationPending, setNavigationPending] = useState(false);
+  const [sharingTarget, setSharingTarget] = useState<WorkspaceAccessTarget | null>(null);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<WorkspaceSearchResponse | null>(null);
   const [searching, setSearching] = useState(false);
@@ -257,6 +261,10 @@ export function WorkspaceView({
 
   const moveNavigatorDocument = (document: WorkspaceDocument, notebookId: string | null) => {
     if (document.notebookId === notebookId) return;
+    const currentNotebook = workspace.snapshot.notebooks.find((notebook) => notebook.id === document.notebookId);
+    const nextNotebook = workspace.snapshot.notebooks.find((notebook) => notebook.id === notebookId);
+    const affected = Math.max(currentNotebook?.collaboratorCount ?? 0, nextNotebook?.collaboratorCount ?? 0);
+    if (affected && !window.confirm(`Moving this draft can change inherited access for up to ${affected} collaborator${affected === 1 ? "" : "s"}. Continue?`)) return;
     void mutateNavigatorDocument(
       document,
       { saveCurrent: true, fallback: "Note could not be moved" },
@@ -366,8 +374,10 @@ export function WorkspaceView({
                 <div className="workspace-notebook-group" key={notebook.id}>
                   <div className={`workspace-notebook-row ${selectedNotebookId === notebook.id ? "active" : ""}`}>
                     <button type="button" disabled={navigationPending} aria-expanded={expanded} onClick={() => toggleNotebook(notebook.id)}><ChevronRight className={expanded ? "expanded" : ""} size={14} /><Folder size={16} /><span><strong>{notebook.name}</strong><small>{notebook.documentCount} {notebook.documentCount === 1 ? "draft" : "drafts"}</small></span></button>
-                    {notebook.role === "owner" ? (
-                      <div className="workspace-notebook-actions">
+                    <div className="workspace-notebook-actions">
+                      <button type="button" className="workspace-notebook-share" title="Notebook sharing and access" aria-label={`Sharing and access for ${notebook.name}`} onClick={() => setSharingTarget({ type: "notebook", id: notebook.id })}><Users size={14} />{notebook.collaboratorCount ? <small>{notebook.collaboratorCount}</small> : null}</button>
+                      {notebook.role === "owner" ? (
+                        <>
                         <button type="button" title="Rename notebook" onClick={() => {
                           const name = window.prompt("Rename notebook", notebook.name)?.trim();
                           if (name && name !== notebook.name) void workspace.renameNotebook(notebook, name).catch((error) => workspace.setStatus(error instanceof Error ? error.message : "Notebook could not be renamed"));
@@ -380,8 +390,9 @@ export function WorkspaceView({
                             }).catch((error) => workspace.setStatus(error instanceof Error ? error.message : "Notebook could not be removed"));
                           }
                         }}><Trash2 size={14} /></button>
-                      </div>
-                    ) : null}
+                        </>
+                      ) : null}
+                    </div>
                   </div>
                   {expanded ? (
                     <div className="workspace-notebook-documents" aria-label={`${notebook.name} notes`}>
@@ -394,6 +405,7 @@ export function WorkspaceView({
                           compact
                           disabled={navigationPending}
                           onOpen={() => openDocument(document.id)}
+                          onShare={() => setSharingTarget({ type: "document", id: document.id })}
                           onRename={() => renameNavigatorDocument(document)}
                           onMove={(notebookId) => moveNavigatorDocument(document, notebookId)}
                           onDelete={() => deleteNavigatorDocument(document)}
@@ -426,6 +438,7 @@ export function WorkspaceView({
                   active={selectedDocumentId === document.id}
                   disabled={navigationPending}
                   onOpen={() => openDocument(document.id)}
+                  onShare={() => setSharingTarget({ type: "document", id: document.id })}
                   onRename={() => renameNavigatorDocument(document)}
                   onMove={(notebookId) => moveNavigatorDocument(document, notebookId)}
                   onDelete={() => deleteNavigatorDocument(document)}
@@ -450,6 +463,7 @@ export function WorkspaceView({
             profiles={profiles}
             initiallyEditing={editSelected}
             onBack={clearSelectedDocument}
+            onShare={() => setSharingTarget({ type: "document", id: selectedDocument.id })}
             onSave={(draft) => workspace.updateDocument(selectedDocument.id, draft)}
             onDelete={async (current) => {
               await workspace.deleteDocument(current);
@@ -479,6 +493,7 @@ export function WorkspaceView({
                 profiles={profiles}
                 onOpen={() => openDocument(document.id)}
                 onEdit={() => openDocument(document.id, true)}
+                onShare={() => setSharingTarget({ type: "document", id: document.id })}
                 onDelete={() => {
                   if (window.confirm(`Delete “${document.title}”? This cannot be undone.`)) void workspace.deleteDocument(document).catch((error) => workspace.setStatus(error instanceof Error ? error.message : "Draft could not be deleted"));
                 }}
@@ -488,6 +503,26 @@ export function WorkspaceView({
           </section>
         )}
       </main>
+      {sharingTarget ? (
+        <WorkspaceSharingDialog
+          target={sharingTarget}
+          actorHandle={actorHandle}
+          onClose={() => setSharingTarget(null)}
+          onChanged={async () => {
+            await workspace.refresh({ quiet: true });
+            workspace.announceChange();
+          }}
+          onLostAccess={() => {
+            if (sharingTarget.type === "document" && selectedDocumentId === sharingTarget.id) {
+              setSelectedDocumentId(null);
+              setEditSelected(false);
+            }
+            setSharingTarget(null);
+            void workspace.refresh({ quiet: true });
+          }}
+          onOpenNotebookAccess={(notebookId) => setSharingTarget({ type: "notebook", id: notebookId })}
+        />
+      ) : null}
     </div>
   );
 }

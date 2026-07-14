@@ -23,12 +23,27 @@ type WorkspaceDiscussionChangeMessage = {
   changedAt: string;
 };
 
+type WorkspaceSnapshotChangeMessage = {
+  type: "workspace-change";
+  actorHandle: string;
+  sourceId: string;
+  changedAt: string;
+};
+
 const isWorkspaceDiscussionChangeMessage = (value: unknown): value is WorkspaceDiscussionChangeMessage => {
   if (!value || typeof value !== "object") return false;
   const message = value as Partial<WorkspaceDiscussionChangeMessage>;
   return message.type === "workspace-discussion-change" &&
     typeof message.actorHandle === "string" &&
     typeof message.noteId === "string" &&
+    typeof message.sourceId === "string";
+};
+
+const isWorkspaceSnapshotChangeMessage = (value: unknown): value is WorkspaceSnapshotChangeMessage => {
+  if (!value || typeof value !== "object") return false;
+  const message = value as Partial<WorkspaceSnapshotChangeMessage>;
+  return message.type === "workspace-change" &&
+    typeof message.actorHandle === "string" &&
     typeof message.sourceId === "string";
 };
 
@@ -79,13 +94,30 @@ export const useWorkspaceComments = (noteId: string, actorHandle: string) => {
     }
   });
 
-  const announceChange = useCallback(() => publishChange({
-    type: "workspace-discussion-change",
-    actorHandle,
-    noteId,
-    sourceId: sourceIdRef.current,
-    changedAt: new Date().toISOString()
-  }), [actorHandle, noteId, publishChange]);
+  const publishSnapshotChange = useCrossTabItemTransport<WorkspaceSnapshotChangeMessage>({
+    channelName: "symposium-workspace-sync-v1",
+    storageKey: "symposium-cross-tab-workspace",
+    isMessage: isWorkspaceSnapshotChangeMessage,
+    onMessage: () => undefined
+  });
+
+  const announceChange = useCallback(() => {
+    const changedAt = new Date().toISOString();
+    publishChange({
+      type: "workspace-discussion-change",
+      actorHandle,
+      noteId,
+      sourceId: sourceIdRef.current,
+      changedAt
+    });
+    publishSnapshotChange({
+      type: "workspace-change",
+      actorHandle,
+      sourceId: sourceIdRef.current,
+      changedAt
+    });
+    window.dispatchEvent(new Event("symposium-workspace-change"));
+  }, [actorHandle, noteId, publishChange, publishSnapshotChange]);
 
   useEffect(() => {
     commentsRef.current = [];

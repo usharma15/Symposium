@@ -64,6 +64,7 @@ type WorkspaceDocumentDetailProps = {
   profiles: Record<string, ResearchProfile>;
   initiallyEditing: boolean;
   onBack: () => void;
+  onShare: () => void;
   onSave: (draft: SaveDraft) => Promise<WorkspaceDocument>;
   onDelete: (document: WorkspaceDocument) => Promise<void>;
   onPublish: (document: WorkspaceDocument, target?: "paper" | "thought") => Promise<WorkspacePublicationResponse>;
@@ -81,6 +82,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
   profiles,
   initiallyEditing,
   onBack,
+  onShare,
   onSave,
   onDelete,
   onPublish,
@@ -299,6 +301,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
           {saveState}
         </div>
         <div className="workspace-detail-actions">
+          <button type="button" className="workspace-sharing-trigger" aria-label={`Sharing and access for ${document.title}`} onClick={onShare}><Users size={15} />{document.collaboratorCount ? `Shared · ${document.collaboratorCount}` : "Share"}</button>
           {!editing && document.access.canEdit ? <button type="button" onClick={() => setEditing(true)}><Pencil size={15} />Edit</button> : null}
           {document.access.canDelete ? <button type="button" className="danger" onClick={() => {
             if (window.confirm(`Delete “${document.title}”? This cannot be undone.`)) {
@@ -327,14 +330,21 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
             <div className="workspace-editor" data-testid="workspace-editor">
               <input className="workspace-title-input" value={title} maxLength={240} onChange={(event) => setTitle(event.target.value)} placeholder="Untitled note" />
               <div className="workspace-editor-fields">
-                <label>
+                {document.access.canDelete ? <label>
                   <span>Save in</span>
-                  <select value={notebookId ?? ""} onChange={(event) => setNotebookId(event.target.value || null)}>
+                  <select value={notebookId ?? ""} onChange={(event) => {
+                    const nextNotebookId = event.target.value || null;
+                    const currentNotebook = notebooks.find((notebook) => notebook.id === notebookId);
+                    const nextNotebook = notebooks.find((notebook) => notebook.id === nextNotebookId);
+                    const affected = Math.max(currentNotebook?.collaboratorCount ?? 0, nextNotebook?.collaboratorCount ?? 0);
+                    if (affected && !window.confirm(`Moving this draft can change inherited access for up to ${affected} collaborator${affected === 1 ? "" : "s"}. Continue?`)) return;
+                    setNotebookId(nextNotebookId);
+                  }}>
                     <option value="">All · Unfiled</option>
                     {compatibleNotebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name}</option>)}
                   </select>
                   {notebookId !== document.notebookId ? <small>Moving a draft can change inherited collaborator access.</small> : null}
-                </label>
+                </label> : <label><span>Saved in</span><strong>{notebookId ? compatibleNotebooks.find((notebook) => notebook.id === notebookId)?.name ?? document.notebookName : "All · Unfiled"}</strong><small>Only the owner can change notebook placement because it controls inherited access.</small></label>}
                 {document.kind === "note" ? (
                   <label><span>Post as</span><select value={publicationTarget} onChange={(event) => setPublicationTarget(event.target.value as "undecided" | "paper" | "thought")}><option value="undecided">Choose when ready</option><option value="paper">Paper</option><option value="thought">Thought</option></select></label>
                 ) : null}
@@ -356,7 +366,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
               />
               {error ? <div className="workspace-error" role="alert">{error}</div> : null}
               <footer className="workspace-editor-footer">
-                <div><Users size={15} /><span>{document.access.role === "owner" ? "Private workspace · Owner" : `${document.access.role} access`}</span></div>
+                <div><Users size={15} /><span>{document.access.role === "owner" ? `Private workspace · Owner${document.collaboratorCount ? ` · ${document.collaboratorCount} collaborators` : ""}` : `${document.access.role} access`}</span></div>
                 <div>
                   <button type="button" disabled={busy || uploading} onClick={() => void saveDraft(true)}>Save Draft</button>
                   {document.access.canPublish ? <button type="button" className="primary" disabled={busy || uploading || !body.trim() || !targetLinked || !publicationChosen} onClick={() => void publish()}><Send size={15} />Post</button> : null}

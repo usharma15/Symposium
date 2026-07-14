@@ -49,6 +49,8 @@ const workspaceDocument = (input: Partial<WorkspaceDocument> & Pick<WorkspaceDoc
     updatedAt,
     publishedAt: null,
     attachments: [],
+    collaboratorCount: 0,
+    commentCount: 0,
     access: {
       role: "owner",
       inheritedFromNotebook: false,
@@ -141,6 +143,8 @@ const main = async () => {
       revision: 1,
       role: "owner",
       documentCount: 0,
+      collaboratorCount: 0,
+      canShare: true,
       createdAt: "2026-07-14T00:00:00.000Z",
       updatedAt: "2026-07-14T00:00:00.000Z"
     }],
@@ -223,7 +227,7 @@ const main = async () => {
   assert.match(publicationState, /revision_row\.revision = \$2/);
   assert.match(publicationState, /pg_advisory_lock\(hashtextextended\('symposium:workspace-note:'/);
   assert.match(publishing, /authorHandle: revision\.ownerHandle/);
-  assert.match(publishing, /Private draft attachments remain protected/);
+  assert.match(publishing, /prepareWorkspacePublicationAttachments/);
   assert.match(attachmentRepository, /input\.ownerType === "note" \|\| input\.ownerType === "note_comment" \? null : publicObjectUrl/);
   assert.match(attachmentOwnership, /row\.ownerId === null && row\.uploaderHandle !== input\.uploaderHandle/);
   assert.match(workspaceHook, /symposium-workspace-sync-v1/);

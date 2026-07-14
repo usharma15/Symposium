@@ -191,7 +191,39 @@ export const workspacePublicationTargetSchema = z.enum([
   "reply"
 ]);
 export const workspaceAccessRoleSchema = z.enum(["viewer", "commenter", "editor", "publisher", "owner"]);
+export const workspaceGrantRoleSchema = z.enum(["viewer", "commenter", "editor", "publisher"]);
+export const workspaceAccessResourceSchema = z.enum(["document", "notebook"]);
 export const workspaceLifecycleSchema = z.enum(["draft", "published", "archived"]);
+
+export const workspaceAccessRoleRank: Record<z.infer<typeof workspaceAccessRoleSchema>, number> = {
+  viewer: 1,
+  commenter: 2,
+  editor: 3,
+  publisher: 4,
+  owner: 5
+};
+
+export const workspaceDocumentSupportsCollaborativeEditing = (
+  kind: z.infer<typeof workspaceDocumentKindSchema>
+) => kind === "note" || kind === "paper";
+
+export const workspaceGrantCeiling = (
+  actorRole: z.infer<typeof workspaceAccessRoleSchema>,
+  kind?: z.infer<typeof workspaceDocumentKindSchema>
+): z.infer<typeof workspaceGrantRoleSchema> | null => {
+  if (actorRole === "owner") {
+    return kind && !workspaceDocumentSupportsCollaborativeEditing(kind) ? "commenter" : "publisher";
+  }
+  if (kind && !workspaceDocumentSupportsCollaborativeEditing(kind)) return null;
+  if (actorRole === "publisher") return "publisher";
+  if (actorRole === "editor") return "editor";
+  return null;
+};
+
+export const workspaceRoleWithinCeiling = (
+  role: z.infer<typeof workspaceGrantRoleSchema>,
+  ceiling: z.infer<typeof workspaceGrantRoleSchema> | null
+) => Boolean(ceiling && workspaceAccessRoleRank[role] <= workspaceAccessRoleRank[ceiling]);
 
 export const documentFitsReducedEditor = (document: z.infer<typeof versionedDocumentSchema>) =>
   document.nodes.every((node) => {
@@ -703,6 +735,25 @@ export const deleteWorkspaceNotebookInputSchema = z.object({
   expectedRevision: z.number().int().positive()
 });
 
+export const createWorkspaceGrantInputSchema = z.object({
+  granteeHandle: z.string().trim().min(1).max(80),
+  role: workspaceGrantRoleSchema
+});
+
+export const updateWorkspaceGrantInputSchema = z.object({
+  role: workspaceGrantRoleSchema,
+  expectedRevision: z.number().int().positive()
+});
+
+export const deleteWorkspaceGrantInputSchema = z.object({
+  expectedRevision: z.number().int().positive()
+});
+
+export const workspaceCollaboratorSearchInputSchema = z.object({
+  query: z.string().trim().min(1).max(160),
+  limit: z.coerce.number().int().positive().max(24).default(12)
+});
+
 export const workspaceSearchInputSchema = z.object({
   query: z.string().trim().min(1).max(160),
   kind: workspaceDocumentKindSchema.optional(),
@@ -823,6 +874,8 @@ export type CreateOpportunityInputContract = z.infer<typeof createOpportunityInp
 export type WorkspaceDocumentKindContract = z.infer<typeof workspaceDocumentKindSchema>;
 export type WorkspacePublicationTargetContract = z.infer<typeof workspacePublicationTargetSchema>;
 export type WorkspaceAccessRoleContract = z.infer<typeof workspaceAccessRoleSchema>;
+export type WorkspaceGrantRoleContract = z.infer<typeof workspaceGrantRoleSchema>;
+export type WorkspaceAccessResourceContract = z.infer<typeof workspaceAccessResourceSchema>;
 export type WorkspaceLifecycleContract = z.infer<typeof workspaceLifecycleSchema>;
 export type CreateWorkspaceDocumentInputContract = z.infer<typeof createWorkspaceDocumentInputSchema>;
 export type UpdateWorkspaceDocumentInputContract = z.infer<typeof updateWorkspaceDocumentInputSchema>;
@@ -832,6 +885,10 @@ export type DeleteWorkspaceCommentInputContract = z.infer<typeof deleteWorkspace
 export type WorkspaceCommentActionInputContract = z.infer<typeof workspaceCommentActionInputSchema>;
 export type CreateWorkspaceNotebookInputContract = z.infer<typeof createWorkspaceNotebookInputSchema>;
 export type UpdateWorkspaceNotebookInputContract = z.infer<typeof updateWorkspaceNotebookInputSchema>;
+export type CreateWorkspaceGrantInputContract = z.infer<typeof createWorkspaceGrantInputSchema>;
+export type UpdateWorkspaceGrantInputContract = z.infer<typeof updateWorkspaceGrantInputSchema>;
+export type DeleteWorkspaceGrantInputContract = z.infer<typeof deleteWorkspaceGrantInputSchema>;
+export type WorkspaceCollaboratorSearchInputContract = z.infer<typeof workspaceCollaboratorSearchInputSchema>;
 export type WorkspaceSearchInputContract = z.infer<typeof workspaceSearchInputSchema>;
 export type PublishNoteInputContract = z.infer<typeof publishNoteInputSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;

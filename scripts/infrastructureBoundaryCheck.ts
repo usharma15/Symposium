@@ -21,7 +21,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0021_workspace_draft_discussion");
+  assert.equal(latestMigrationId, "0022_workspace_collaboration");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -41,6 +41,8 @@ const main = async () => {
   assert.ok("revision" in workspaceNoteRevisions);
   assert.ok("role" in workspaceNotebookGrants);
   assert.ok("role" in workspaceNoteGrants);
+  assert.ok("revision" in workspaceNotebookGrants);
+  assert.ok("revision" in workspaceNoteGrants);
   assert.ok("objectKey" in storageDeletionJobs);
   assert.ok("leaseExpiresAt" in storageDeletionJobs);
 
