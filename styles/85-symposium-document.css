@@ -108,7 +108,7 @@
 .document-expand-button { display: inline-block; margin-top: -0.55rem; }
 .feed-post .symposium-document-feed { font-size: inherit; margin-top: 14px; }
 .document-collapsible-content.collapsed { max-height: calc(1.65em * 5); overflow: hidden; position: relative; }
-.document-collapsible-content.collapsed::after { background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--document-canvas-solid) 82%, transparent)); bottom: 0; content: ""; height: 1.15em; left: 0; pointer-events: none; position: absolute; right: 0; }
+.document-collapsible-content.collapsed.is-collapsible::after { background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--document-canvas-solid) 82%, transparent)); bottom: 0; content: ""; height: 1.15em; left: 0; pointer-events: none; position: absolute; right: 0; }
 .document-collapsible-content.expanded { max-height: none; }
 .comment-card .symposium-document-comment { margin-left: 2.8rem; max-width: calc(100% - 2.8rem); }
 .comment-card .symposium-document-comment .post-attachments-comment { margin-left: 0; max-width: 100%; }
@@ -251,11 +251,34 @@
 .post-composer-modal .document-editor-toolbar,
 .post-edit-modal .document-editor-toolbar,
 .quote-composer-modal .document-editor-toolbar { top: 0; }
+.post-composer .composer-primary-actions { align-items: center; display: flex; gap: 0.5rem; }
+.post-composer .composer-primary-actions button { white-space: nowrap; }
+.post-composer .composer-save-draft {
+  background: var(--document-control-solid);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+.post-composer .composer-primary-actions > button[type="submit"] {
+  background: var(--aqua);
+  border: 1px solid color-mix(in srgb, var(--aqua) 72%, var(--line));
+  color: var(--panel-strong);
+}
+.post-composer .composer-primary-actions > button[type="submit"]:hover:not(:disabled) {
+  background: var(--aqua);
+  filter: brightness(1.06);
+}
+.post-composer .composer-primary-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+  transform: none;
+}
 .comment-composer .symposium-document-editor { margin-top: 0.65rem; }
 .comment-composer.compact .document-editor-canvas { min-height: 6rem; }
 .comment-composer.compact .document-editor-toolbar { top: 82px; }
 
 @media (max-width: 720px) {
+  .post-composer .composer-primary-actions { width: 100%; }
+  .post-composer .composer-primary-actions button { flex: 1; }
   .document-editor-toolbar { flex-wrap: nowrap; overflow-x: auto; }
   .document-editor-canvas.document-margin-normal .tiptap { padding-inline: 1rem; }
   .document-editor-canvas.document-margin-generous .tiptap { padding-inline: 1.55rem; }

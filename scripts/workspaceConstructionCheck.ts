@@ -53,7 +53,21 @@ const main = async () => {
   assert.equal(workspaceSearchInputSchema.parse({ query: "methods", limit: "12" }).limit, 12);
 
   const root = process.cwd();
-  const [migration, repository, publishing, publicationState, attachmentRepository, attachmentOwnership, workspaceHook, workspaceView, workspaceRoute] = await Promise.all([
+  const [
+    migration,
+    repository,
+    publishing,
+    publicationState,
+    attachmentRepository,
+    attachmentOwnership,
+    workspaceHook,
+    workspaceView,
+    workspaceRoute,
+    postViews,
+    symposiumView,
+    workspaceStyles,
+    composerDrafts
+  ] = await Promise.all([
     readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/workspaceDocuments.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/services/notePublishing.ts"), "utf8"),
@@ -62,7 +76,11 @@ const main = async () => {
     readFile(path.join(root, "apps/api/src/services/attachmentOwnership.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/useWorkspaceDocuments.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/WorkspaceView.tsx"), "utf8"),
-    readFile(path.join(root, "app/api/workspace/route.ts"), "utf8")
+    readFile(path.join(root, "app/api/workspace/route.ts"), "utf8"),
+    readFile(path.join(root, "features/posts/PostViews.tsx"), "utf8"),
+    readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8"),
+    readFile(path.join(root, "styles/88-workspace.css"), "utf8"),
+    readFile(path.join(root, "features/workspace/savePostDraftToWorkspace.ts"), "utf8")
   ]);
 
   assert.match(migration, /0020_workspace_documents/);
@@ -88,6 +106,15 @@ const main = async () => {
   assert.match(workspaceView, /Search notes, authors, notebooks, content, comments, attachments/);
   assert.match(workspaceView, /Quick Notes have a place/);
   assert.match(workspaceRoute, /privateWorkspaceResponse/);
+  assert.match(postViews, /onSaveDraft/);
+  assert.match(postViews, /title\.trim\(\) \|\| `Untitled \$\{kind\}`/);
+  assert.match(symposiumView, /workspace-document-create/);
+  assert.match(symposiumView, /savePostDraftToWorkspace/);
+  assert.match(composerDrafts, /Draft saved to Notes/);
+  assert.match(composerDrafts, /symposium-workspace-sync-v1/);
+  assert.match(workspaceStyles, /\.room-layout\.workspace-room-layout[\s\S]*width: min\(800px, calc\(100vw - 48px\)\)/);
+  assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar[\s\S]*position: relative/);
+  assert.match(workspaceStyles, /\.workspace-feed\.feed-stream[\s\S]*max-width: none/);
 
   console.log(JSON.stringify({
     ok: true,
@@ -103,7 +130,9 @@ const main = async () => {
       "owner-preserving collaborator publication",
       "protected private draft attachment delivery",
       "cross-tab convergence and no-store transport",
-      "All, Notebooks, Quick Notes, and persistent search surfaces"
+      "All, Notebooks, Quick Notes, and persistent search surfaces",
+      "centered feed-width Notes composition",
+      "New Post to private draft creation"
     ]
   }, null, 2));
 };

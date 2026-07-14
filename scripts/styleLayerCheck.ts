@@ -65,6 +65,7 @@ const main = async () => {
   assert.match(documentStyles, /\.symposium-shell\.night[\s\S]*--document-surface-solid/);
   assert.match(documentStyles, /\.post-composer-modal,[\s\S]*padding-top:\s*0/);
   assert.match(documentStyles, /\.post-composer-modal \.document-editor-toolbar,[\s\S]*top:\s*0/);
+  assert.match(documentStyles, /\.document-collapsible-content\.collapsed\.is-collapsible::after/);
   assert.match(attachmentStyles, /\.attachment-modal[\s\S]*background:\s*var\(--document-surface-solid\)/);
   assert.match(attachmentStyles, /\.attachment-sheet-scroll[\s\S]*background:\s*var\(--attachment-preview-surface\)/);
 
@@ -78,7 +79,8 @@ const main = async () => {
           "bounded stylesheet size",
           "bounded attachment composer layout",
           "shared quote card and composer layout",
-          "flush sticky editor and opaque themed attachment surfaces"
+          "flush sticky editor and opaque themed attachment surfaces",
+          "overflow-only feed preview fades"
         ]
       },
       null,

@@ -165,6 +165,7 @@ import {
 } from "@/features/discovery/discoveryPolicy";
 import { TabletPanel } from "@/features/workspace/WorkspacePanels";
 import { WorkspaceView } from "@/features/workspace/WorkspaceView";
+import { savePostDraftToWorkspace } from "@/features/workspace/savePostDraftToWorkspace";
 import type { WorkspacePublicationResponse } from "@/lib/workspaceTypes";
 import { SearchModal } from "@/features/search/SearchModal";
 import { MessagesModal } from "@/features/messages/MessagesModal";
@@ -2055,6 +2056,14 @@ function SymposiumExperience({
     retryMutationRegistryRef.current.clear(fingerprintKey);
   };
 
+  const savePostDraft = (draft: PostDraft) => savePostDraftToWorkspace({
+    actorHandle: currentProfile.handle,
+    draft,
+    acquireMutation: (fingerprint) => retryMutationKey("workspace-document-create", fingerprint),
+    clearMutation: clearRetryMutationKey,
+    onStatus: setSyncStatus
+  });
+
   const createPost = async ({ title, body, document, kind, attachments, quoteSource }: PostDraft) => {
     const routedRoom = routePostRoom(kind);
     const createdAt = new Date().toISOString();
@@ -3400,6 +3409,7 @@ function SymposiumExperience({
         <PostComposerModal
           onClose={() => setComposerOpen(false)}
           onCreatePost={createPost}
+          onSaveDraft={savePostDraft}
           onUploadAttachment={uploadPostAttachment}
           onResolveQuoteLink={resolveComposerQuoteLink}
           profiles={profiles}

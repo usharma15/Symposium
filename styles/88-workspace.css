@@ -1,13 +1,29 @@
 /* Durable Notes workspace, notebook filing, workspace search, draft cards and in-place editing. */
 
-.workspace-room-layout {
+.room-layout.workspace-room-layout {
   --workspace-accent: #2b7580;
   --workspace-accent-soft: color-mix(in srgb, var(--workspace-accent) 11%, var(--panel-strong));
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  grid-auto-rows: max-content;
+  width: min(800px, calc(100vw - 48px));
+  max-width: 800px;
+  margin: 0 auto;
 }
 
-.workspace-toolbar {
+.workspace-toolbar.feed-toolbar {
+  position: relative;
+  inset: auto;
   display: grid;
+  align-items: stretch;
+  justify-content: stretch;
+  justify-items: stretch;
   gap: 16px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 16px;
 }
 
 .workspace-primary-row,
@@ -192,8 +208,8 @@
   display: grid;
   grid-template-columns: minmax(220px, 0.72fr) minmax(280px, 1.28fr);
   gap: 14px;
-  width: min(980px, calc(100% - 34px));
-  margin: 0 auto 16px;
+  width: 100%;
+  margin: 0;
 }
 
 .workspace-notebook-rail,
@@ -324,8 +340,8 @@
 .workspace-search-groups {
   display: flex;
   gap: 24px;
-  width: min(980px, calc(100% - 34px));
-  margin: 0 auto 14px;
+  width: 100%;
+  margin: 0;
   padding: 13px;
 }
 
@@ -351,8 +367,24 @@
   cursor: pointer;
 }
 
-.workspace-feed {
+.workspace-feed.feed-stream {
+  width: 100%;
+  max-width: none;
+  margin: 0;
   scroll-margin-top: 140px;
+}
+
+.workspace-feed > .empty-feed {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
+  box-shadow: var(--small-shadow);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+.symposium-shell.night .workspace-feed > .empty-feed {
+  background: linear-gradient(180deg, rgba(28, 30, 29, 0.86), rgba(13, 17, 20, 0.74));
 }
 
 .workspace-document-card {
@@ -444,8 +476,8 @@
 .workspace-quick-empty {
   display: grid;
   justify-items: center;
-  width: min(720px, calc(100% - 34px));
-  margin: 0 auto 90px;
+  width: 100%;
+  margin: 0 0 90px;
   padding: clamp(40px, 8vw, 76px) 24px;
   text-align: center;
 }
@@ -466,8 +498,8 @@
 }
 
 .workspace-detail {
-  width: min(1040px, calc(100% - 34px));
-  margin: 22px auto 96px;
+  width: 100%;
+  margin: 0 auto 96px;
 }
 
 .workspace-detail-nav {
@@ -515,10 +547,10 @@
 }
 
 .workspace-detail-paper .post-body > h1 {
-  margin: 8px 0 22px;
+  margin: 10px 0 18px;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(2rem, 5vw, 3.6rem);
-  line-height: 1.04;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  line-height: 1.1;
 }
 
 .workspace-editor {
@@ -532,7 +564,7 @@
   border-radius: 0;
   outline: 0;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.8rem, 4vw, 3.2rem);
+  font-size: clamp(1.65rem, 4vw, 2.35rem);
   font-weight: 760;
   line-height: 1.08;
 }
@@ -566,6 +598,10 @@
 
 .workspace-editor-fields small {
   line-height: 1.4;
+}
+
+.workspace-editor-fields > label:only-child {
+  grid-column: 1 / -1;
 }
 
 .workspace-target-field {
@@ -655,6 +691,10 @@
 }
 
 @media (max-width: 760px) {
+  .room-layout.workspace-room-layout {
+    width: 100%;
+  }
+
   .workspace-primary-row,
   .workspace-editor-footer {
     align-items: stretch;
@@ -692,7 +732,7 @@
   }
 
   .workspace-detail {
-    width: min(100% - 18px, 1040px);
+    width: 100%;
     margin-top: 10px;
   }
 

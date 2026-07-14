@@ -107,12 +107,14 @@ const postKindOptions: PostDraft["kind"][] = ["thought", "paper"];
 export function PostComposerModal({
   onClose,
   onCreatePost,
+  onSaveDraft,
   onUploadAttachment,
   onResolveQuoteLink,
   profiles
 }: {
   onClose: () => void;
   onCreatePost: (draft: PostDraft) => Promise<PostCreationResult>;
+  onSaveDraft: (draft: PostDraft) => Promise<PostCreationResult>;
   onUploadAttachment: AttachmentUploadHandler;
   onResolveQuoteLink: QuoteLinkResolver;
   profiles: Record<string, ResearchProfile>;
@@ -125,13 +127,14 @@ export function PostComposerModal({
   const [attachmentStatus, setAttachmentStatus] = useState("");
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [attachedQuote, setAttachedQuote] = useState<AttachedQuote | null>(null);
 
   const submitPost = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const cleanTitle = title.trim();
     const cleanBody = body.trim();
-    if (!cleanTitle || !cleanBody || uploading || submitting) return;
+    if (!cleanTitle || !cleanBody || uploading || submitting || savingDraft) return;
 
     setSubmitting(true);
     setAttachmentStatus(attachments.length ? "Publishing post with attachments" : "Publishing post");
@@ -159,6 +162,28 @@ export function PostComposerModal({
     setAttachmentStatus("");
   };
 
+  const saveDraft = async () => {
+    if (uploading || submitting || savingDraft) return;
+    setSavingDraft(true);
+    setAttachmentStatus("Saving draft to Notes");
+    const result = await onSaveDraft({
+      title: title.trim() || `Untitled ${kind}`,
+      body,
+      document: documentValue,
+      kind,
+      attachments,
+      quoteSource: attachedQuote
+        ? { sourceType: attachedQuote.selection.sourceType, sourceId: attachedQuote.selection.sourceId }
+        : undefined
+    });
+    setSavingDraft(false);
+    if (!result.ok) {
+      setAttachmentStatus(result.error);
+      return;
+    }
+    onClose();
+  };
+
   return (
     <div className="composer-modal-backdrop" role="presentation" onClick={onClose}>
       <form className="post-composer post-composer-modal" onSubmit={submitPost} onClick={(event) => event.stopPropagation()}>
@@ -179,7 +204,22 @@ export function PostComposerModal({
               </option>
             ))}
           </select>
-          <button type="submit" disabled={uploading || submitting}>{submitting ? "Posting…" : "Post"}</button>
+          <div className="composer-primary-actions">
+            <button
+              type="button"
+              className="composer-save-draft"
+              disabled={uploading || submitting || savingDraft}
+              onClick={() => void saveDraft()}
+            >
+              {savingDraft ? "Saving…" : "Save draft"}
+            </button>
+            <button
+              type="submit"
+              disabled={uploading || submitting || savingDraft || !title.trim() || !body.trim()}
+            >
+              {submitting ? "Posting…" : "Post"}
+            </button>
+          </div>
         </div>
         <input
           value={title}
@@ -191,7 +231,7 @@ export function PostComposerModal({
           capability={editorCapabilityForKind(kind)}
           attachments={attachments}
           profiles={profiles}
-          disabled={submitting}
+          disabled={submitting || savingDraft}
           placeholder={`Write your ${kind} here`}
           onChange={(document, plainText) => { setDocumentValue(document); setBody(plainText); }}
           onAttachmentsChange={setAttachments}
@@ -201,7 +241,7 @@ export function PostComposerModal({
         <QuoteLinkField
           attached={attachedQuote}
           profiles={profiles}
-          disabled={submitting}
+          disabled={submitting || savingDraft}
           onChange={setAttachedQuote}
           onResolve={onResolveQuoteLink}
         />

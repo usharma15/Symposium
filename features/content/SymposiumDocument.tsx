@@ -134,10 +134,15 @@ export function SymposiumDocumentRenderer({
     if (node.type === "quote") return <blockquote key={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></blockquote>;
     return <p key={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></p>;
   });
+  const collapseStateClass = expanded ? "expanded" : `collapsed${collapsible ? " is-collapsible" : ""}`;
 
   return (
     <div className={`symposium-document symposium-document-${mode} document-width-${resolved.settings?.width ?? "standard"} document-margin-${resolved.settings?.margin ?? "normal"}`}>
-      {collapsibleSurface ? <div ref={compactContentRef} className={`document-collapsible-content document-${mode}-content${expanded ? " expanded" : " collapsed"}`}>{renderedNodes}</div> : renderedNodes}
+      {collapsibleSurface ? (
+        <div ref={compactContentRef} className={`document-collapsible-content document-${mode}-content ${collapseStateClass}`}>
+          {renderedNodes}
+        </div>
+      ) : renderedNodes}
       {collapsibleSurface && (collapsible || expanded) ? (
         <button
           type="button"
