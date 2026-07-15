@@ -11,6 +11,7 @@ import {
   type VersionedDocumentContract
 } from "@/packages/contracts/src";
 import { documentCitationLocatorLabel } from "@/lib/documentCitations";
+import { decideScribbleSnapshot } from "@/features/scribble/scribbleReconciliation";
 
 const main = async () => {
 const root = process.cwd();
@@ -87,6 +88,11 @@ assert.equal(restoreScribbleInputSchema.safeParse({ expectedRevision: 5, discard
 assert.equal(documentCitationLocatorLabel({ kind: "image-region", x: 0.1, y: 0.2, width: 0.25, height: 0.4 }), "Image region · 25% × 40%");
 assert.equal(documentCitationLocatorLabel({ kind: "spreadsheet-range", sheet: "Results", range: "B2:D8" }), "Results · B2:D8");
 assert.equal(documentCitationLocatorLabel({ kind: "presentation-slide", slide: 7 }), "Slide 7");
+assert.equal(decideScribbleSnapshot({ dirty: true, knownServerRevision: 4, localFingerprint: "mine", pendingSaveFingerprint: "mine", serverFingerprint: "mine", snapshotRevision: 5 }), "apply-server");
+assert.equal(decideScribbleSnapshot({ dirty: true, knownServerRevision: 4, localFingerprint: "newer-keystrokes", pendingSaveFingerprint: "submitted", serverFingerprint: "submitted", snapshotRevision: 5 }), "preserve-local");
+assert.equal(decideScribbleSnapshot({ dirty: true, knownServerRevision: 4, localFingerprint: "mine", serverFingerprint: "mine", snapshotRevision: 4 }), "apply-server");
+assert.equal(decideScribbleSnapshot({ dirty: true, knownServerRevision: 4, localFingerprint: "mine", serverFingerprint: "remote", snapshotRevision: 4 }), "preserve-local");
+assert.equal(decideScribbleSnapshot({ dirty: true, knownServerRevision: 4, localFingerprint: "mine", serverFingerprint: "remote", snapshotRevision: 5 }), "conflict");
 
 assert.match(source.migration, /0024_workspace_scribbles/);
 assert.match(source.migration, /UNIQUE \(owner_handle\)/);
@@ -104,7 +110,9 @@ assert.match(source.localStore, /slice\(-500\)/);
 assert.match(source.context, /symposium-scribble-sync-v1/);
 assert.match(source.context, /dirty: parsed\.dirty === true/);
 assert.match(source.context, /Recovering unsaved Scribble/);
-assert.match(source.context, /Keep this copy/);
+assert.match(source.context, /Two versions need your choice/);
+assert.match(source.context, /decideScribbleSnapshot/);
+assert.match(source.context, /dirty: dirtyRef\.current \|\| pendingSaveRef\.current !== null/);
 assert.match(source.context, /ref=\{editorHandleRef\}/);
 assert.match(source.context, /window\.setTimeout\(\(\) => \{/);
 assert.match(source.context, /pendingSaveRef/);
@@ -187,11 +195,11 @@ console.log(JSON.stringify({
     "persistent singleton and bounded revision history",
     "revision-guarded autosave, filing, discard, and restore",
     "private API, local fallback, live event, and cross-tab parity",
-    "offline dirty-cache recovery, replay-safe retries, and explicit conflict resolution",
+    "offline dirty-cache recovery, replay-safe retries, and content-aware conflict resolution",
     "equation, vector drawing, code, references, and deduplicated citations",
     "whole-file, image-region, selected-text, spreadsheet-range, and slide capture",
     "site-wide launcher, post, comment, attachment viewer, and Workspace integration",
-    "four-corner panel treatment and locator-aware source cards",
+    "compact four-corner panel, on-demand filing menu, and locator-aware source cards",
     "non-publishable and non-shareable filed Quick Notes"
   ]
 }, null, 2));

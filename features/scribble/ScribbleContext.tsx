@@ -12,7 +12,7 @@ import {
   type ReactNode
 } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, FileInput, PenLine, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronUp, FileInput, Folder, FolderPlus, PenLine, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import {
   SymposiumDocumentEditor,
   type SymposiumDocumentEditorHandle
@@ -29,6 +29,7 @@ import type {
 } from "@/packages/contracts/src";
 import type { FiledScribble, ScribbleNotebook, ScribbleSnapshot, WorkspaceScribble } from "@/lib/workspaceTypes";
 import { documentSourceContextLabel, documentSourceKey } from "@/lib/documentCitations";
+import { decideScribbleSnapshot } from "@/features/scribble/scribbleReconciliation";
 
 type ScribbleSyncMessage = {
   type: "scribble-change";
@@ -189,7 +190,8 @@ export function ScribbleProvider({
   const [status, setStatus] = useState("Open Scribble to begin");
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
-  const [destination, setDestination] = useState("");
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [newNotebookOpen, setNewNotebookOpen] = useState(false);
   const [newNotebookName, setNewNotebookName] = useState("");
   const [busy, setBusy] = useState(false);
   const [undoDiscardRevision, setUndoDiscardRevision] = useState<number | null>(null);
@@ -205,6 +207,7 @@ export function ScribbleProvider({
   const pendingNodesRef = useRef<SymposiumDocumentNode[]>([]);
   const currentRef = useRef({ body, document: documentValue });
   const serverRevisionRef = useRef(0);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
   currentRef.current = { body, document: documentValue };
 
   const applyServerScribble = useCallback((next: WorkspaceScribble, options: { preserveLocal?: boolean } = {}) => {
@@ -227,21 +230,37 @@ export function ScribbleProvider({
   }, [actorHandle]);
 
   const refresh = useCallback(async (force = false) => {
-    if (dirtyRef.current && !force) {
-      setConflict(true);
-      setStatus("A newer Scribble exists elsewhere");
-      return;
-    }
     const snapshot = await symposiumApi.request<ScribbleSnapshot>(
       `/api/workspace/scribble?actorHandle=${encodeURIComponent(actorHandle)}`,
       { cache: "no-store" }
     );
-    applyServerScribble(snapshot.scribble);
     setNotebooks(snapshot.notebooks);
     setLoaded(true);
-    setConflict(false);
     setError(null);
-    setStatus("Scribble current");
+    const local = currentRef.current;
+    const decision = force ? "apply-server" : decideScribbleSnapshot({
+      dirty: dirtyRef.current || pendingSaveRef.current !== null,
+      knownServerRevision: serverRevisionRef.current,
+      localFingerprint: fingerprint(local.body, local.document),
+      pendingSaveFingerprint: pendingSaveRef.current?.fingerprint,
+      serverFingerprint: fingerprint(snapshot.scribble.body, snapshot.scribble.document),
+      snapshotRevision: snapshot.scribble.revision
+    });
+    if (decision === "apply-server") {
+      applyServerScribble(snapshot.scribble);
+      setConflict(false);
+      setStatus("Scribble current");
+      return;
+    }
+    dirtyRef.current = true;
+    applyServerScribble(snapshot.scribble, { preserveLocal: true });
+    if (decision === "preserve-local") {
+      setConflict(false);
+      setStatus(pendingSaveRef.current ? "Saving latest changes…" : "Recovering unsaved Scribble…");
+      return;
+    }
+    setConflict(true);
+    setStatus("Autosave paused");
   }, [actorHandle, applyServerScribble]);
 
   const ensureLoaded = useCallback(() => {
@@ -356,12 +375,13 @@ export function ScribbleProvider({
           dirtyRef.current = true;
           successful = false;
           const message = caught instanceof Error ? caught.message : "Scribble could not be saved.";
-          setError(message);
           if (caught instanceof SymposiumApiError && caught.status === 409) {
             setRetryAttempt(0);
+            setError(null);
             setConflict(true);
-            setStatus("Changed on another device");
+            setStatus("Autosave paused");
           } else {
+            setError(message);
             setRetryAttempt((current) => Math.min(6, current + 1));
             setStatus("Save interrupted · retrying automatically");
           }
@@ -407,6 +427,27 @@ export function ScribbleProvider({
       window.removeEventListener("symposium-scribble-change", handleLiveChange);
     };
   }, [refresh, saveNow]);
+
+  useEffect(() => {
+    if (!fileMenuOpen) return;
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (!fileMenuRef.current?.contains(event.target as Node)) {
+        setFileMenuOpen(false);
+        setNewNotebookOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setFileMenuOpen(false);
+      setNewNotebookOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePress);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePress);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [fileMenuOpen]);
 
   useEffect(() => {
     if (!editorHandleRef.current || !pendingNodes.length) return;
@@ -519,24 +560,24 @@ export function ScribbleProvider({
     return result.notebook.id;
   };
 
-  const fileCurrent = async () => {
+  const fileCurrent = async ({ notebookId = null, createNew = false }: { notebookId?: string | null; createNew?: boolean } = {}) => {
     if (!scribble || busy || conflict || !hasContent(body, documentValue)) return;
     setBusy(true);
     setError(null);
     try {
       if (!(await saveNow())) return;
-      let notebookId: string | null = destination || null;
-      if (destination === "new") notebookId = await createNotebook();
-      if (destination === "new" && !notebookId) return;
+      const targetNotebookId = createNew ? await createNotebook() : notebookId;
+      if (createNew && !targetNotebookId) return;
       const result = await symposiumApi.request<{ scribble: WorkspaceScribble; filed: FiledScribble }>("/api/workspace/scribble/file", {
         method: "POST",
         idempotencyKey: createClientMutationId("scribble-file"),
-        body: { actorHandle, expectedRevision: serverRevisionRef.current, notebookId }
+        body: { actorHandle, expectedRevision: serverRevisionRef.current, notebookId: targetNotebookId }
       });
       applyServerScribble(result.scribble);
       announce(result.scribble.revision);
       setFiled(result.filed);
-      setDestination("");
+      setFileMenuOpen(false);
+      setNewNotebookOpen(false);
       setStatus("Filed as a Quick Note");
       window.dispatchEvent(new Event("symposium-workspace-change"));
     } catch (caught) {
@@ -646,22 +687,19 @@ export function ScribbleProvider({
               />
             ) : null}
           </div>
-          {conflict ? <div className="scribble-conflict" role="alert"><span>Your local words are preserved. Another device saved a newer revision.</span><div><button type="button" disabled={busy} onClick={() => void refresh(true)}>Use newer</button><button type="button" disabled={busy} onClick={() => void keepLocalAfterConflict()}>Keep this copy</button></div></div> : null}
+          {conflict ? <div className="scribble-conflict" role="alert"><AlertTriangle size={15} /><span><strong>Two versions need your choice</strong><small>This Scribble changed elsewhere while you were typing. Your version is safe.</small></span><div><button type="button" disabled={busy} onClick={() => void refresh(true)}>Use latest</button><button type="button" disabled={busy} onClick={() => void keepLocalAfterConflict()}>Keep mine</button></div></div> : null}
           {error ? <div className="scribble-error" role="alert"><span>{error}</span>{!conflict ? <button type="button" disabled={busy} onClick={() => void saveNow()}><RefreshCw size={14} />Retry now</button> : null}</div> : null}
           {undoDiscardRevision ? <div className="scribble-recovery"><span>Scribble discarded.</span><button type="button" disabled={busy} onClick={() => void restoreDiscard()}><RotateCcw size={15} />Undo discard</button></div> : null}
           {filed ? <div className="scribble-filed"><Check size={15} /><span>Filed as “{filed.title}”{filed.notebookName ? ` in ${filed.notebookName}` : " in All"}.</span></div> : null}
-          <footer className="scribble-footer">
-            <div className="scribble-file-destination">
-              <FileInput size={16} />
-              <select aria-label="File Scribble in" value={destination} onChange={(event) => setDestination(event.target.value)}>
-                <option value="">All · Quick Notes</option>
-                {notebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name}{notebook.collaboratorCount ? ` · shared with ${notebook.collaboratorCount}` : ""}</option>)}
-                <option value="new">New notebook…</option>
-              </select>
-              <ChevronDown size={14} aria-hidden="true" />
-            </div>
-            {destination === "new" ? <input value={newNotebookName} maxLength={120} onChange={(event) => setNewNotebookName(event.target.value)} placeholder="Notebook name" aria-label="New notebook name" /> : null}
-            <button type="button" className="primary" disabled={busy || conflict || !hasContent(body, documentValue) || (destination === "new" && !newNotebookName.trim())} onClick={() => void fileCurrent()}>{busy ? "Working…" : "File Scribble"}</button>
+          <footer className="scribble-footer" ref={fileMenuRef}>
+            {fileMenuOpen ? <div className="scribble-file-menu" role="menu" aria-label="File Scribble in">
+              <div className="scribble-file-menu-heading"><span>File Scribble in</span><small>Choose a destination</small></div>
+              <button type="button" role="menuitem" disabled={busy} onClick={() => void fileCurrent()}><FileInput size={15} /><span><strong>All · Quick Notes</strong><small>Keep it loose and easy to find</small></span></button>
+              {notebooks.map((notebook) => <button key={notebook.id} type="button" role="menuitem" disabled={busy} onClick={() => void fileCurrent({ notebookId: notebook.id })}><Folder size={15} /><span><strong>{notebook.name}</strong>{notebook.collaboratorCount ? <small>Shared with {notebook.collaboratorCount}</small> : <small>Notebook</small>}</span></button>)}
+              <button type="button" role="menuitem" aria-expanded={newNotebookOpen} disabled={busy} onClick={() => setNewNotebookOpen((current) => !current)}><FolderPlus size={15} /><span><strong>New notebook</strong><small>Create a destination</small></span></button>
+              {newNotebookOpen ? <div className="scribble-new-notebook"><input autoFocus value={newNotebookName} maxLength={120} onChange={(event) => setNewNotebookName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && newNotebookName.trim()) void fileCurrent({ createNew: true }); }} placeholder="Notebook name" aria-label="New notebook name" /><button type="button" className="primary" disabled={busy || !newNotebookName.trim()} onClick={() => void fileCurrent({ createNew: true })}>Create & file</button></div> : null}
+            </div> : null}
+            <button type="button" className="primary scribble-file-trigger" aria-haspopup="menu" aria-expanded={fileMenuOpen} disabled={busy || conflict || !hasContent(body, documentValue)} onClick={() => { setFileMenuOpen((current) => !current); setNewNotebookOpen(false); }}>{busy ? "Working…" : <><FileInput size={15} />File Scribble<ChevronUp size={14} className={fileMenuOpen ? "open" : ""} /></>}</button>
           </footer>
         </aside>
       ) : null}

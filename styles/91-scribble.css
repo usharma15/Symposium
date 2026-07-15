@@ -6,8 +6,8 @@
   inset: 104px auto 144px 0;
   width: calc((100vw - min(var(--symposium-feed-width), calc(100vw - 28px))) / 2);
   min-width: 0;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto auto;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid rgba(255, 253, 245, 0.28);
   border-radius: 10px;
@@ -22,7 +22,6 @@
 .scribble-filed,
 .scribble-conflict {
   border-color: var(--line);
-  padding: 0.7rem;
 }
 
 .scribble-header {
@@ -30,19 +29,22 @@
   display: flex;
   justify-content: space-between;
   border-bottom: 1px solid var(--line);
+  padding: 0.48rem 0.55rem;
 }
 
-.scribble-header > div:first-child { display: grid; gap: 0.12rem; min-width: 0; }
-.scribble-header > div:first-child span { font-size: 1.05rem; font-weight: 900; }
-.scribble-header > div:first-child small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.scribble-header > div:last-child { display: flex; gap: 0.35rem; }
-.scribble-header button { align-items: center; display: inline-flex; justify-content: center; min-height: 2.15rem; min-width: 2.15rem; }
+.scribble-header > div:first-child { display: grid; gap: 0.06rem; min-width: 0; }
+.scribble-header > div:first-child span { font-size: 0.9rem; font-weight: 900; line-height: 1.15; }
+.scribble-header > div:first-child small { color: var(--muted); font-size: 0.65rem; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scribble-header > div:last-child { display: flex; gap: 0.24rem; }
+.scribble-header button { align-items: center; display: inline-flex; justify-content: center; min-height: 1.75rem; min-width: 1.75rem; padding: 0.25rem; }
+.scribble-header button svg { height: 14px; width: 14px; }
 
 .scribble-source-shelf {
   display: flex;
-  gap: 0.4rem;
+  flex: 0 0 auto;
+  gap: 0.32rem;
   overflow-x: auto;
-  padding: 0.55rem 0.7rem;
+  padding: 0.4rem 0.55rem;
   border-bottom: 1px solid var(--line);
 }
 
@@ -50,8 +52,8 @@
   flex: 0 0 min(12rem, 76%);
   min-width: 0;
   display: grid;
-  gap: 0.15rem;
-  padding: 0.5rem;
+  gap: 0.1rem;
+  padding: 0.38rem 0.45rem;
   border: 1px solid var(--line);
   border-radius: 0.55rem;
   background: var(--document-control-solid);
@@ -59,34 +61,66 @@
   text-decoration: none;
 }
 
-.scribble-source-shelf small { color: var(--muted); font-size: 0.65rem; text-transform: capitalize; }
-.scribble-source-shelf strong { font-size: 0.76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scribble-source-shelf small { color: var(--muted); font-size: 0.6rem; text-transform: capitalize; }
+.scribble-source-shelf strong { font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.scribble-editor-scroll { min-height: 0; overflow: auto; }
+.scribble-editor-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .scribble-editor-scroll .symposium-document-editor { min-height: 100%; border: 0; border-radius: 0; box-shadow: none; }
-.scribble-editor-scroll .document-editor-toolbar { top: var(--document-editor-sticky-top); border-inline: 0; }
+.scribble-editor-scroll .document-editor-toolbar { top: var(--document-editor-sticky-top); border-inline: 0; flex-wrap: nowrap; gap: 0.18rem; padding: 0.32rem 0.4rem; }
+.scribble-editor-scroll .document-editor-toolbar > div { gap: 0.06rem; padding-right: 0.22rem; }
+.scribble-editor-scroll .document-editor-toolbar button { border-radius: 0.36rem; min-height: 1.65rem; min-width: 1.65rem; padding: 0.25rem; }
+.scribble-editor-scroll .document-editor-toolbar button svg { height: 14px; width: 14px; }
 .scribble-editor-scroll .document-editor-canvas { min-height: 100%; border: 0; border-radius: 0; }
-.scribble-editor-scroll .document-editor-canvas .tiptap { min-height: 20rem; padding: 0.9rem; }
+.scribble-editor-scroll .document-editor-canvas .tiptap { min-height: 20rem; padding: 0.72rem; }
 .scribble-editor-scroll .document-editor-toolbar > div { flex: 0 0 auto; }
-.scribble-loading { color: var(--muted); padding: 1rem; }
+.scribble-loading { color: var(--muted); font-size: 0.76rem; padding: 0.8rem; }
 
 .scribble-error { align-items: center; color: #a83d47; display: flex; font-size: 0.76rem; gap: 0.5rem; justify-content: space-between; padding: 0.45rem 0.7rem; }
 .scribble-error button { align-items: center; display: inline-flex; flex: 0 0 auto; gap: 0.3rem; white-space: nowrap; }
 .scribble-conflict,
 .scribble-recovery,
-.scribble-filed { align-items: center; display: flex; gap: 0.5rem; border-top: 1px solid var(--line); font-size: 0.76rem; }
-.scribble-conflict { align-items: flex-start; background: color-mix(in srgb, #d49a2b 10%, var(--document-surface-solid)); }
-.scribble-conflict > div { display: flex; gap: 0.35rem; margin-left: auto; }
+.scribble-filed { align-items: center; display: flex; flex: 0 0 auto; gap: 0.42rem; border-top: 1px solid var(--line); font-size: 0.7rem; padding: 0.42rem 0.55rem; }
+.scribble-conflict { align-items: start; background: color-mix(in srgb, #d49a2b 10%, var(--document-surface-solid)); display: grid; flex: 0 0 auto; gap: 0.28rem 0.4rem; grid-template-columns: auto minmax(0, 1fr); padding: 0.5rem 0.55rem; }
+.scribble-conflict > svg { color: #9a6b16; margin-top: 0.08rem; }
+.scribble-conflict > span { display: grid; gap: 0.06rem; min-width: 0; }
+.scribble-conflict > span strong { font-size: 0.69rem; line-height: 1.25; }
+.scribble-conflict > span small { color: var(--muted); font-size: 0.62rem; line-height: 1.3; }
+.scribble-conflict > div { display: flex; gap: 0.3rem; grid-column: 2; }
 .scribble-conflict button,
-.scribble-recovery button { align-items: center; display: inline-flex; gap: 0.3rem; white-space: nowrap; }
+.scribble-recovery button { align-items: center; display: inline-flex; font-size: 0.64rem; gap: 0.25rem; min-height: 1.7rem; padding: 0.25rem 0.42rem; white-space: nowrap; }
 .scribble-recovery button { margin-left: auto; }
 .scribble-filed { color: var(--muted); }
 
-.scribble-footer { display: grid; gap: 0.5rem; border-top: 1px solid var(--line); }
-.scribble-file-destination { align-items: center; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.4rem; }
-.scribble-file-destination select { min-width: 0; width: 100%; appearance: none; border: 0; background: transparent; color: var(--ink); font-weight: 760; }
-.scribble-footer > input { width: 100%; }
-.scribble-footer > button { width: 100%; }
+.scribble-footer { border-top: 1px solid var(--line); flex: 0 0 auto; padding: 0.42rem 0.55rem; position: relative; z-index: 6; }
+.scribble-file-trigger { align-items: center; display: flex; font-size: 0.74rem; gap: 0.35rem; justify-content: center; min-height: 2.05rem; padding: 0.35rem 0.55rem; width: 100%; }
+.scribble-file-trigger > svg:last-child { margin-left: auto; }
+
+.scribble-file-menu {
+  background: var(--document-surface-solid);
+  border: 1px solid var(--line);
+  border-radius: 0.68rem;
+  bottom: calc(100% + 0.38rem);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+  display: grid;
+  left: 0.5rem;
+  max-height: min(21rem, calc(100vh - 13rem));
+  overflow: auto;
+  padding: 0.35rem;
+  position: absolute;
+  right: 0.5rem;
+}
+.scribble-file-menu-heading { display: grid; gap: 0.04rem; padding: 0.28rem 0.38rem 0.38rem; }
+.scribble-file-menu-heading span { font-size: 0.73rem; font-weight: 850; }
+.scribble-file-menu-heading small { color: var(--muted); font-size: 0.6rem; }
+.scribble-file-menu > button { align-items: center; background: transparent; border: 0; border-radius: 0.48rem; color: var(--ink); display: grid; gap: 0.42rem; grid-template-columns: auto minmax(0, 1fr); min-height: 2.65rem; padding: 0.38rem 0.42rem; text-align: left; width: 100%; }
+.scribble-file-menu > button:hover,
+.scribble-file-menu > button:focus-visible { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+.scribble-file-menu > button > span { display: grid; gap: 0.04rem; min-width: 0; }
+.scribble-file-menu > button strong { font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scribble-file-menu > button small { color: var(--muted); font-size: 0.59rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scribble-new-notebook { border-top: 1px solid var(--line); display: grid; gap: 0.35rem; grid-template-columns: minmax(0, 1fr) auto; margin-top: 0.2rem; padding: 0.45rem 0.38rem 0.2rem; }
+.scribble-new-notebook input { font-size: 0.68rem; min-height: 1.95rem; min-width: 0; padding: 0.35rem 0.45rem; width: 100%; }
+.scribble-new-notebook button { font-size: 0.64rem; min-height: 1.95rem; padding: 0.35rem 0.48rem; white-space: nowrap; }
 
 .scribble-launcher.active { background: rgba(196, 240, 238, 0.92); box-shadow: 0 0 0 2px rgba(196, 240, 238, 0.25), 0 18px 48px rgba(10, 16, 15, 0.22); }
 .scribble-source-action { min-width: 2rem !important; width: auto !important; }
