@@ -188,7 +188,7 @@
 .comment-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
   margin: 10px 0 0 39px;
 }
 

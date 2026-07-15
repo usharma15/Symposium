@@ -279,6 +279,7 @@ const main = async () => {
   assert.match(workspaceDetail, /document\.revision <= savedDocumentRef\.current\.revision/);
   assert.match(workspaceDetail, /<CommentComposer/);
   assert.match(workspaceDetail, /<CommentThread/);
+  assert.match(workspaceDetail, /workspace-kind-\$\{document\.kind\}/);
   assert.match(workspaceDetail, /allowQuotes: false/);
   assert.match(workspaceDetail, /allowReshares: false/);
   assert.match(workspaceComments, /roleRank\[access\.role\] < roleRank\.commenter/);

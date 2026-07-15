@@ -340,7 +340,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
         </div>
       </header>
 
-      <article className={`feed-post workspace-detail-paper ${postToneClassName(tone)}`}>
+      <article className={`feed-post workspace-detail-paper workspace-kind-${document.kind} ${postToneClassName(tone)}`}>
         <div className="post-author workspace-document-author">
           <span className="avatar">{owner?.avatarUrl ? <img src={owner.avatarUrl} alt="" /> : profileInitials(ownerName)}</span>
           <span><strong>{ownerName}</strong><small>Created {relativeTimeLabel(document.createdAt, document.createdAt)}</small></span>

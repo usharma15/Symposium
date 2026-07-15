@@ -132,10 +132,14 @@ assert.match(source.context, /postToneClassName\(source\.postTone \?\? null\)/);
 assert.match(source.context, /className=\{`scribble-panel \$\{theme\}`\}/);
 assert.match(source.shell, /<ScribbleProvider[^>]*theme=\{theme\}/);
 assert.match(source.comments, /commentScribbleSource\(comment, itemId, tone\)/);
+assert.doesNotMatch(source.comments, /<ScribbleActionButton[^>]*label="comment"/);
 assert.match(source.editor, /postToneClassName\(source\?\.postTone \?\? null\)/);
 assert.match(source.renderer, /postToneClassName\(node\.source\?\.postTone \?\? null\)/);
 assert.match(source.postToneStyles, /\.document-source-card\.post-tone,/);
 assert.match(source.postToneStyles, /\.scribble-source-shelf a\.post-tone/);
+assert.match(source.styles, /\.capability-scribble \.document-source-editor/);
+assert.match(source.styles, /\.workspace-kind-quick \.document-source-card/);
+assert.match(source.styles, /-webkit-line-clamp: 2/);
 assert.match(source.editor, /capability === "scribble"[^\n]*Insert drawing/);
 assert.match(source.editor, /capability === "scribble"[^\n]*Insert code block/);
 assert.match(source.editor, /insertContentAt\(editor\.state\.selection\.to/);
@@ -220,7 +224,8 @@ console.log(JSON.stringify({
     "equation, vector drawing, code, references, and deduplicated citations",
     "whole-file, image-region, selected-text, spreadsheet-range, and slide capture",
     "site-wide launcher, post, comment, attachment viewer, and Workspace integration",
-    "compact four-corner panel, on-demand filing menu, and tone-preserving locator-aware source cards",
+    "compact four-corner panel, on-demand filing menu, compact source snapshots, and tone-preserving locator-aware source cards",
+    "selection capture without post-level or comment-level Scribble metric actions",
     "non-publishable and non-shareable filed Quick Notes"
   ]
 }, null, 2));

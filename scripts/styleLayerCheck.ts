@@ -70,6 +70,13 @@ const main = async () => {
   assert.match(quoteStyles, /\.quote-destination-switch/);
   assert.match(quoteStyles, /\.quote-link-input-row/);
 
+  const commentActionStyles = [
+    sources.get("30-legacy-discussion-profile.css") ?? "",
+    sources.get("70-immersive-content-profile.css") ?? ""
+  ].join("\n");
+  assert.match(commentActionStyles, /\.comment-actions\s*\{[^}]*gap:\s*4px/);
+  assert.match(commentActionStyles, /\.profile-comment-card \.comment-actions button,\s*\.profile-comment-card \.comment-actions a/);
+
   const documentStyles = sources.get("85-symposium-document.css") ?? "";
   const patronageStyles = sources.get("89-patronage.css") ?? "";
   assert.match(patronageStyles, /\.patronage-proposal-fields/);
@@ -140,6 +147,7 @@ const main = async () => {
           "flush sticky editor and opaque themed attachment surfaces",
           "focus-scoped inline comment and compact reply toolbars",
           "compact single-line post metrics across feed and detail surfaces",
+          "aligned compact comment metrics with quote and link actions",
           "overflow-only feed preview fades"
         ]
       },

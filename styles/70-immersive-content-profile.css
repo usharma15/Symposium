@@ -638,7 +638,8 @@ button.quote-card-thought:hover {
   margin: 0;
 }
 
-.profile-comment-card .comment-actions button {
+.profile-comment-card .comment-actions button,
+.profile-comment-card .comment-actions a {
   gap: 5px;
   min-height: 24px;
   border: 0;
@@ -649,7 +650,8 @@ button.quote-card-thought:hover {
   font-size: 0.82rem;
 }
 
-.profile-comment-card .comment-actions button:hover {
+.profile-comment-card .comment-actions button:hover,
+.profile-comment-card .comment-actions a:hover {
   transform: none;
   border-color: transparent;
   background: transparent;

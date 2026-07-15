@@ -56,7 +56,6 @@ import { postToneClassName, type PostTone } from "@/lib/postTone";
 import {
   attachmentScribbleSource,
   commentScribbleSource,
-  ScribbleActionButton,
   ScribbleCitable,
   useScribble
 } from "@/features/scribble/ScribbleContext";
@@ -637,7 +636,6 @@ function CommentNode({
           onAction={onCommentAction}
           onQuote={onQuote ? () => comment.id && onQuote({ sourceType: "comment", sourceId: comment.id, sourcePostId: itemId }) : undefined}
           options={options}
-          tone={tone}
         />
         {commentDeleted || options.allowReplies === false ? null : (
           <>
@@ -733,8 +731,7 @@ export function CommentActions({
   actorHandle,
   onAction,
   onQuote,
-  options = {},
-  tone = null
+  options = {}
 }: {
   comment: InquiryComment;
   itemId: string;
@@ -742,7 +739,6 @@ export function CommentActions({
   onAction: (itemId: string, commentId: string, action: CommentAction) => void;
   onQuote?: () => void;
   options?: CommentThreadOptions;
-  tone?: PostTone | null;
 }) {
   if (!comment.id) return null;
 
@@ -783,7 +779,6 @@ export function CommentActions({
         );
       })}
       {options.allowQuotes !== false && onQuote ? <QuoteActionButton disabled={deleted} label="comment" onQuote={onQuote} /> : null}
-      <ScribbleActionButton disabled={deleted} label="comment" source={commentScribbleSource(comment, itemId, tone)} />
       {commentHref ? (
         <a
           className="content-link-action"
