@@ -69,6 +69,7 @@ import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreview
 import { DocumentDrawingDialog, DocumentDrawingPreview } from "@/features/content/DocumentDrawing";
 import type { DocumentCitationLocatorContract, DocumentDrawingContract, DocumentSourceSnapshotContract } from "@/packages/contracts/src";
 import { documentCitationLocatorLabel, documentSourceContextLabel } from "@/lib/documentCitations";
+import { postToneClassName } from "@/lib/postTone";
 
 type EditorContextValue = {
   attachments: InquiryAttachment[];
@@ -503,7 +504,7 @@ function ReferenceNodeView({ node, selected, deleteNode }: NodeViewProps) {
   const title = source?.title ?? (typeof resource?.label === "string" ? resource.label : "Referenced source");
   const body = source?.body ?? "";
   return (
-    <NodeViewWrapper className={`document-source-editor document-atomic-node${selected ? " selected" : ""}`}>
+    <NodeViewWrapper className={`document-source-editor document-atomic-node ${postToneClassName(source?.postTone ?? null)}${selected ? " selected" : ""}`}>
       <button type="button" className="document-atomic-delete" title="Remove reference" aria-label="Remove reference" onClick={deleteNode}><Trash2 size={15} /></button>
       <small>{source ? documentSourceContextLabel(source) : "source"}</small>
       <strong>{title}</strong>
@@ -518,7 +519,7 @@ function CitationNodeView({ node, selected, deleteNode }: NodeViewProps) {
   const locator = node.attrs.locator as DocumentCitationLocatorContract | null;
   const excerpt = typeof node.attrs.excerpt === "string" ? node.attrs.excerpt : typeof node.attrs.label === "string" ? node.attrs.label : "Citation";
   return (
-    <NodeViewWrapper className={`document-source-editor document-citation-editor document-atomic-node${selected ? " selected" : ""}`}>
+    <NodeViewWrapper className={`document-source-editor document-citation-editor document-atomic-node ${postToneClassName(source?.postTone ?? null)}${selected ? " selected" : ""}`}>
       <button type="button" className="document-atomic-delete" title="Remove citation" aria-label="Remove citation" onClick={deleteNode}><Trash2 size={15} /></button>
       <small>{documentCitationLocatorLabel(locator)}{source?.author ? ` · ${source.author}` : ""}</small>
       <blockquote>{excerpt}</blockquote>

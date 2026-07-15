@@ -48,7 +48,8 @@
   --post-tone-sidebar-accent: #d99aa3;
 }
 
-.symposium-shell.night .post-tone-thought {
+.symposium-shell.night .post-tone-thought,
+.scribble-panel.night .post-tone-thought {
   --post-tone-border: rgba(157, 238, 243, 0.22);
   --post-tone-surface:
     linear-gradient(180deg, rgba(13, 33, 40, 0.94), rgba(8, 16, 20, 0.9)),
@@ -59,7 +60,8 @@
   --post-tone-accent: #83cbd1;
 }
 
-.symposium-shell.night .post-tone-paper {
+.symposium-shell.night .post-tone-paper,
+.scribble-panel.night .post-tone-paper {
   --post-tone-border: rgba(248, 211, 149, 0.24);
   --post-tone-surface:
     linear-gradient(180deg, rgba(39, 33, 24, 0.94), rgba(16, 18, 18, 0.86)),
@@ -70,7 +72,8 @@
   --post-tone-accent: #e1bd80;
 }
 
-.symposium-shell.night .post-tone-patronage {
+.symposium-shell.night .post-tone-patronage,
+.scribble-panel.night .post-tone-patronage {
   --post-tone-border: rgba(177, 204, 131, 0.3);
   --post-tone-surface:
     linear-gradient(180deg, rgba(28, 44, 25, 0.95), rgba(15, 25, 17, 0.92)),
@@ -81,7 +84,8 @@
   --post-tone-accent: #bddb91;
 }
 
-.symposium-shell.night .post-tone-opportunity {
+.symposium-shell.night .post-tone-opportunity,
+.scribble-panel.night .post-tone-opportunity {
   --post-tone-border: rgba(221, 147, 157, 0.3);
   --post-tone-surface:
     linear-gradient(180deg, rgba(54, 28, 34, 0.95), rgba(29, 17, 21, 0.92)),
@@ -137,9 +141,30 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--post-tone-accent) 34%, transparent);
 }
 
+.document-source-card.post-tone,
+.document-source-editor.post-tone,
+.scribble-source-shelf a.post-tone,
+.symposium-shell.night .document-source-card.post-tone,
+.symposium-shell.night .document-source-editor.post-tone,
+.symposium-shell.night .scribble-source-shelf a.post-tone {
+  border-color: var(--post-tone-border);
+  background: var(--post-tone-surface);
+}
+
+.document-source-card.post-tone small,
+.document-source-editor.post-tone small,
+.document-source-editor.post-tone .document-source-open,
+.scribble-source-shelf a.post-tone small {
+  color: var(--post-tone-accent);
+}
+
+.document-source-card.post-tone blockquote,
+.document-source-editor.post-tone blockquote {
+  border-left-color: var(--post-tone-accent);
+}
+
 .workspace-sidebar-document-row.post-tone .workspace-sidebar-document {
   background: color-mix(in srgb, var(--post-tone-sidebar-accent) 10%, transparent);
-  box-shadow: inset 3px 0 var(--post-tone-sidebar-accent);
 }
 
 .workspace-sidebar-document-row.post-tone .workspace-sidebar-document:hover {
@@ -148,9 +173,6 @@
 
 .workspace-sidebar-document-row.post-tone.active .workspace-sidebar-document {
   background: color-mix(in srgb, var(--post-tone-sidebar-accent) 26%, transparent);
-  box-shadow:
-    inset 3px 0 var(--post-tone-sidebar-accent),
-    inset 0 0 0 1px color-mix(in srgb, var(--post-tone-sidebar-accent) 30%, transparent);
 }
 
 .workspace-sidebar-document-row.post-tone .workspace-sidebar-meta > em {

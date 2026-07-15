@@ -157,6 +157,7 @@ export const documentTextSchema = z.object({
 
 const documentNodeIdSchema = z.string().trim().min(1).max(120);
 const documentTextContentSchema = z.array(documentTextSchema).max(5000).default([]);
+export const postToneSchema = z.enum(["thought", "paper", "patronage", "opportunity"]);
 export const documentSourceSnapshotSchema = z.object({
   kind: z.enum(["post", "comment", "attachment"]),
   sourceId: z.string().trim().min(1).max(240),
@@ -167,6 +168,7 @@ export const documentSourceSnapshotSchema = z.object({
   authorHandle: z.string().trim().max(80).optional(),
   title: z.string().trim().max(300).optional(),
   body: z.string().max(4000).optional(),
+  postTone: postToneSchema.optional(),
   createdAt: z.string().max(80).optional(),
   canonicalPath: z.string().trim().startsWith("/").max(1000),
   attachment: z.object({
@@ -1070,6 +1072,7 @@ export type UpdateWorkspaceGrantInputContract = z.infer<typeof updateWorkspaceGr
 export type DeleteWorkspaceGrantInputContract = z.infer<typeof deleteWorkspaceGrantInputSchema>;
 export type WorkspaceCollaboratorSearchInputContract = z.infer<typeof workspaceCollaboratorSearchInputSchema>;
 export type WorkspaceSearchInputContract = z.infer<typeof workspaceSearchInputSchema>;
+export type PostToneContract = z.infer<typeof postToneSchema>;
 export type DocumentSourceSnapshotContract = z.infer<typeof documentSourceSnapshotSchema>;
 export type DocumentCitationLocatorContract = z.infer<typeof documentCitationLocatorSchema>;
 export type DocumentDrawingContract = z.infer<typeof documentDrawingSchema>;

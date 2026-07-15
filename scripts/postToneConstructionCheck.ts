@@ -61,6 +61,10 @@ const [
   workspaceCard,
   workspaceDetail,
   workspaceNavigator,
+  contracts,
+  scribble,
+  documentRenderer,
+  documentEditor,
   tones,
   feedStyles,
   nightStyles,
@@ -72,6 +76,10 @@ const [
   read("features/workspace/WorkspaceDocumentCard.tsx"),
   read("features/workspace/WorkspaceDocumentDetail.tsx"),
   read("features/workspace/WorkspaceNavigatorDocument.tsx"),
+  read("packages/contracts/src/index.ts"),
+  read("features/scribble/ScribbleContext.tsx"),
+  read("features/content/SymposiumDocument.tsx"),
+  read("features/content/SymposiumTiptapEditor.tsx"),
   read("styles/89-post-tones.css"),
   read("styles/60-immersive-communities-feed.css"),
   read("styles/80-immersive-overlays.css"),
@@ -85,16 +93,25 @@ assert.match(profiles, /profile-comment-card \$\{postToneClassName\(postToneForI
 assert.match(workspaceCard, /postToneForWorkspaceDocument\(document\)/);
 assert.match(workspaceDetail, /tone=\{tone\}/);
 assert.match(workspaceNavigator, /postToneForWorkspaceDocument\(document\)/);
+assert.match(contracts, /postTone: postToneSchema\.optional\(\)/);
+assert.match(scribble, /postToneForItem\(item\)/);
+assert.match(documentRenderer, /postToneClassName\(node\.source\?\.postTone \?\? null\)/);
+assert.match(documentEditor, /postToneClassName\(source\?\.postTone \?\? null\)/);
 
 for (const tone of ["thought", "paper", "patronage", "opportunity"]) {
   assert.match(tones, new RegExp(`\\.post-tone-${tone} \\{`));
-  assert.match(tones, new RegExp(`\\.symposium-shell\\.night \\.post-tone-${tone} \\{`));
+  assert.match(tones, new RegExp(`\\.symposium-shell\\.night \\.post-tone-${tone},`));
+  assert.match(tones, new RegExp(`\\.scribble-panel\\.night \\.post-tone-${tone} \\{`));
 }
 assert.match(tones, /\.feed-post\.post-tone,/);
 assert.match(tones, /\.detail-layout\.post-tone > \.detail-main/);
 assert.match(tones, /\.profile-comment-card\.post-tone/);
 assert.match(tones, /\.comment-thread\.post-tone \.comment-card/);
+assert.match(tones, /\.document-source-card\.post-tone,/);
+assert.match(tones, /\.document-source-editor\.post-tone,/);
+assert.match(tones, /\.scribble-source-shelf a\.post-tone/);
 assert.match(tones, /\.workspace-sidebar-document-row\.post-tone \.workspace-sidebar-document/);
+assert.doesNotMatch(tones, /inset 3px 0 var\(--post-tone-sidebar-accent\)/);
 assert.doesNotMatch(feedStyles, /\.post-kind-(?:paper|draft|code|thought|note)/);
 assert.doesNotMatch(nightStyles, /\.post-kind-(?:paper|draft|code|thought|note)/);
 assert.doesNotMatch(`${posts}\n${patronageStyles}`, /post-patronage-proposal/);
@@ -107,6 +124,8 @@ console.log(JSON.stringify({
     "shared feed and detail post classes",
     "matching post discussion and profile comment treatment",
     "matching Office cards, detail discussions, and navigator treatment",
+    "persisted semantic tone for Scribble and Quick Note source cards",
+    "subtle Notes tint and label without type-coloured edge tabs",
     "central day and night palettes",
     "removal of scattered kind-specific background rules"
   ]

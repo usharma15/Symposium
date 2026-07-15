@@ -29,6 +29,7 @@ import type {
 } from "@/packages/contracts/src";
 import type { FiledScribble, ScribbleNotebook, ScribbleSnapshot, WorkspaceScribble } from "@/lib/workspaceTypes";
 import { documentSourceContextLabel, documentSourceKey } from "@/lib/documentCitations";
+import { postToneClassName, postToneForItem, type PostTone } from "@/lib/postTone";
 import { decideScribbleSnapshot } from "@/features/scribble/scribbleReconciliation";
 
 type ScribbleSyncMessage = {
@@ -70,20 +71,28 @@ const defaultValue: ScribbleContextValue = {
 
 export const useScribble = () => useContext(ScribbleContext) ?? defaultValue;
 
-export const postScribbleSource = (item: InquiryItem): DocumentSourceSnapshotContract => ({
-  kind: "post",
-  sourceId: item.id,
-  sourcePostId: item.id,
-  ...(item.revision ? { sourceRevision: item.revision } : {}),
-  author: item.author,
-  ...(item.authorHandle ? { authorHandle: item.authorHandle } : {}),
-  title: item.title,
-  body: item.body.slice(0, 4000),
-  ...(item.createdAt ? { createdAt: item.createdAt } : {}),
-  canonicalPath: canonicalRouteHref({ kind: "post", postId: item.id })
-});
+export const postScribbleSource = (item: InquiryItem): DocumentSourceSnapshotContract => {
+  const postTone = postToneForItem(item);
+  return {
+    kind: "post",
+    sourceId: item.id,
+    sourcePostId: item.id,
+    ...(item.revision ? { sourceRevision: item.revision } : {}),
+    author: item.author,
+    ...(item.authorHandle ? { authorHandle: item.authorHandle } : {}),
+    title: item.title,
+    body: item.body.slice(0, 4000),
+    ...(postTone ? { postTone } : {}),
+    ...(item.createdAt ? { createdAt: item.createdAt } : {}),
+    canonicalPath: canonicalRouteHref({ kind: "post", postId: item.id })
+  };
+};
 
-export const commentScribbleSource = (comment: InquiryComment, sourcePostId: string): DocumentSourceSnapshotContract => ({
+export const commentScribbleSource = (
+  comment: InquiryComment,
+  sourcePostId: string,
+  postTone: PostTone | null = null
+): DocumentSourceSnapshotContract => ({
   kind: "comment",
   sourceId: comment.id ?? `${sourcePostId}:comment`,
   sourcePostId,
@@ -93,6 +102,7 @@ export const commentScribbleSource = (comment: InquiryComment, sourcePostId: str
   ...(comment.authorHandle ? { authorHandle: comment.authorHandle } : {}),
   title: `Comment by ${comment.author}`,
   body: comment.body.slice(0, 4000),
+  ...(postTone ? { postTone } : {}),
   ...(comment.createdAt ? { createdAt: comment.createdAt } : {}),
   canonicalPath: canonicalRouteHref({ kind: "post", postId: sourcePostId, commentId: comment.id })
 });
@@ -110,6 +120,7 @@ export const attachmentScribbleSource = (
   ...(parent.authorHandle ? { authorHandle: parent.authorHandle } : {}),
   title: attachment.fileName,
   body: parent.title ? `Attached to ${parent.title}` : "Referenced attachment",
+  ...(parent.postTone ? { postTone: parent.postTone } : {}),
   ...(parent.createdAt ? { createdAt: parent.createdAt } : {}),
   canonicalPath: `${parent.canonicalPath}${parent.canonicalPath.includes("?") ? "&" : "?"}attachment=${encodeURIComponent(attachment.id)}`,
   attachment: {
@@ -174,10 +185,12 @@ const writeCache = (handle: string, scribble: WorkspaceScribble, dirty = false, 
 export function ScribbleProvider({
   actorHandle,
   profiles,
+  theme,
   children
 }: {
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
+  theme: "day" | "night";
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -661,7 +674,7 @@ export function ScribbleProvider({
     <ScribbleContext.Provider value={value}>
       {children}
       {open ? (
-        <aside className="scribble-panel" aria-label="Scribble">
+        <aside className={`scribble-panel ${theme}`} aria-label="Scribble">
           <header className="scribble-header">
             <div><span>Scribble</span><small>{status}</small></div>
             <div>
@@ -669,7 +682,7 @@ export function ScribbleProvider({
               <button type="button" title="Close Scribble" onClick={() => { setOpen(false); void saveNow(); }}><X size={17} /></button>
             </div>
           </header>
-          {sources.length ? <div className="scribble-source-shelf" aria-label="Scribble sources">{sources.map(({ source, count }) => <Link key={documentSourceKey(source)} href={source.canonicalPath} title={documentSourceContextLabel(source)}><small>{documentSourceContextLabel(source)}</small><strong>{source.title ?? source.author ?? "Source"}{count > 1 ? ` · ${count}` : ""}</strong></Link>)}</div> : null}
+          {sources.length ? <div className="scribble-source-shelf" aria-label="Scribble sources">{sources.map(({ source, count }) => <Link className={postToneClassName(source.postTone ?? null)} key={documentSourceKey(source)} href={source.canonicalPath} title={documentSourceContextLabel(source)}><small>{documentSourceContextLabel(source)}</small><strong>{source.title ?? source.author ?? "Source"}{count > 1 ? ` · ${count}` : ""}</strong></Link>)}</div> : null}
           <div className="scribble-editor-scroll">
             {loading && !loaded ? <div className="scribble-loading">Opening your Scribble…</div> : null}
             {loaded && scribble ? (

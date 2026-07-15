@@ -3099,7 +3099,7 @@ function SymposiumExperience({
   }
 
   return (
-    <ScribbleProvider actorHandle={currentProfile.handle} profiles={profiles}>
+    <ScribbleProvider actorHandle={currentProfile.handle} profiles={profiles} theme={theme}>
     <main
       className={`symposium-shell ${theme}`}
       data-room={activeRoom}

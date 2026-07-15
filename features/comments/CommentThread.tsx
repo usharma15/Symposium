@@ -313,6 +313,7 @@ export function CommentThread({
             onSegmentStackChange={(stack) => onCommentSegmentStackChange(rootStackKey, stack)}
             onVisibleSegmentStackChange={(stack) => onVisibleCommentSegmentStackChange(rootStackKey, stack)}
             options={options}
+            tone={tone}
             depth={depth}
           />
         );
@@ -361,6 +362,7 @@ function CommentRootSegment({
   onSegmentStackChange,
   onVisibleSegmentStackChange,
   options,
+  tone,
   depth
 }: {
   rootStackKey: string;
@@ -385,6 +387,7 @@ function CommentRootSegment({
   onSegmentStackChange: (stack: string[]) => void;
   onVisibleSegmentStackChange: (stack: string[]) => void;
   options: CommentThreadOptions;
+  tone: PostTone | null;
   depth: number;
 }) {
   const segmentRef = useRef<HTMLDivElement | null>(null);
@@ -461,6 +464,7 @@ function CommentRootSegment({
         onClearSelectedComment={onClearSelectedComment}
         onSelectComment={onSelectComment}
         options={options}
+        tone={tone}
         leadingAction={
           visibleSegmentStack.length ? (
             <button
@@ -499,6 +503,7 @@ function CommentNode({
   onClearSelectedComment,
   onSelectComment,
   options,
+  tone,
   leadingAction
 }: {
   comment: InquiryComment;
@@ -522,10 +527,12 @@ function CommentNode({
   onClearSelectedComment: () => void;
   onSelectComment: (commentId: string) => void;
   options: CommentThreadOptions;
+  tone: PostTone | null;
   leadingAction?: ReactNode;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
   const scribble = useScribble();
+  const scribbleSource = commentScribbleSource(comment, itemId, tone);
   const replies = comment.replies ?? [];
   const nodeRef = useRef<HTMLElement | null>(null);
   const commentDeleted = isDeletedComment(comment);
@@ -586,14 +593,14 @@ function CommentNode({
           onEditComment={onEditComment}
           onDeleteComment={onDeleteComment}
         />
-        <ScribbleCitable source={commentScribbleSource(comment, itemId)}><SymposiumDocumentRenderer
+        <ScribbleCitable source={scribbleSource}><SymposiumDocumentRenderer
           document={comment.document}
           body={comment.body}
           attachments={comment.attachments}
           profiles={profiles}
           mode="comment"
           onOpenAttachment={(attachmentId) => comment.id && onOpenAttachmentPreview(itemId, comment.id, attachmentId)}
-          onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, commentScribbleSource(comment, itemId)))}
+          onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, scribbleSource))}
           onExpand={() => {
             if (comment.id && !commentDeleted) {
               onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
@@ -608,7 +615,7 @@ function CommentNode({
             onOpenPreview={(attachmentId) =>
               onOpenAttachmentPreview(itemId, comment.id as string, attachmentId)
             }
-            onAddToScribble={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, commentScribbleSource(comment, itemId)))}
+            onAddToScribble={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, scribbleSource))}
           />
         ) : null}
         {options.allowQuotes !== false && comment.quote && onOpenQuote ? (
@@ -630,6 +637,7 @@ function CommentNode({
           onAction={onCommentAction}
           onQuote={onQuote ? () => comment.id && onQuote({ sourceType: "comment", sourceId: comment.id, sourcePostId: itemId }) : undefined}
           options={options}
+          tone={tone}
         />
         {commentDeleted || options.allowReplies === false ? null : (
           <>
@@ -694,6 +702,7 @@ function CommentNode({
                 onClearSelectedComment={onClearSelectedComment}
                 onSelectComment={onSelectComment}
                 options={options}
+                tone={tone}
               />
             ))}
           </div>
@@ -724,7 +733,8 @@ export function CommentActions({
   actorHandle,
   onAction,
   onQuote,
-  options = {}
+  options = {},
+  tone = null
 }: {
   comment: InquiryComment;
   itemId: string;
@@ -732,6 +742,7 @@ export function CommentActions({
   onAction: (itemId: string, commentId: string, action: CommentAction) => void;
   onQuote?: () => void;
   options?: CommentThreadOptions;
+  tone?: PostTone | null;
 }) {
   if (!comment.id) return null;
 
@@ -772,7 +783,7 @@ export function CommentActions({
         );
       })}
       {options.allowQuotes !== false && onQuote ? <QuoteActionButton disabled={deleted} label="comment" onQuote={onQuote} /> : null}
-      <ScribbleActionButton disabled={deleted} label="comment" source={commentScribbleSource(comment, itemId)} />
+      <ScribbleActionButton disabled={deleted} label="comment" source={commentScribbleSource(comment, itemId, tone)} />
       {commentHref ? (
         <a
           className="content-link-action"

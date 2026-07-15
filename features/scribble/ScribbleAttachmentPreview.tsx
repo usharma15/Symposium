@@ -8,6 +8,7 @@ import {
   useScribble
 } from "@/features/scribble/ScribbleContext";
 import type { InquiryComment, InquiryItem } from "@/lib/mockData";
+import { postToneForItem } from "@/lib/postTone";
 
 export function ScribbleAttachmentPreview({
   item,
@@ -21,7 +22,9 @@ export function ScribbleAttachmentPreview({
   onClose: () => void;
 }) {
   const scribble = useScribble();
-  const parentSource = comment ? commentScribbleSource(comment, item.id) : postScribbleSource(item);
+  const parentSource = comment
+    ? commentScribbleSource(comment, item.id, postToneForItem(item))
+    : postScribbleSource(item);
 
   return (
     <AttachmentPreviewModal

@@ -1,7 +1,8 @@
 import type { InquiryItem } from "@/lib/mockData";
 import type { WorkspaceDocument } from "@/lib/workspaceTypes";
+import type { PostToneContract } from "@/packages/contracts/src";
 
-export type PostTone = "thought" | "paper" | "patronage" | "opportunity";
+export type PostTone = PostToneContract;
 
 export const postToneClassName = (tone: PostTone | null) =>
   tone ? `post-tone post-tone-${tone}` : "";

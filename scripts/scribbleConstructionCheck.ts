@@ -28,12 +28,14 @@ const source = {
   attachmentModal: await readFile(path.join(root, "features/attachments/AttachmentPreviewModal.tsx"), "utf8"),
   structuredAttachments: await readFile(path.join(root, "features/attachments/StructuredAttachmentPreviews.tsx"), "utf8"),
   editor: await readFile(path.join(root, "features/content/SymposiumTiptapEditor.tsx"), "utf8"),
+  renderer: await readFile(path.join(root, "features/content/SymposiumDocument.tsx"), "utf8"),
   drawing: await readFile(path.join(root, "features/content/DocumentDrawing.tsx"), "utf8"),
   posts: await readFile(path.join(root, "features/posts/PostViews.tsx"), "utf8"),
   comments: await readFile(path.join(root, "features/comments/CommentThread.tsx"), "utf8"),
   workspace: await readFile(path.join(root, "features/workspace/WorkspaceView.tsx"), "utf8"),
   shell: await readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8"),
-  styles: await readFile(path.join(root, "styles/91-scribble.css"), "utf8")
+  styles: await readFile(path.join(root, "styles/91-scribble.css"), "utf8"),
+  postToneStyles: await readFile(path.join(root, "styles/89-post-tones.css"), "utf8")
 };
 
 const paragraphDocument: VersionedDocumentContract = {
@@ -49,6 +51,7 @@ const sourceSnapshot = {
   author: "Researcher",
   title: "A result",
   body: "Source body",
+  postTone: "paper" as const,
   canonicalPath: "/post/post-1"
 };
 const richScribbleDocument: VersionedDocumentContract = {
@@ -122,6 +125,17 @@ assert.match(source.context, /window\.addEventListener\("pagehide"/);
 assert.match(source.context, /window\.addEventListener\("online"/);
 assert.match(source.context, /keepalive: options\.keepalive/);
 assert.match(source.context, /captureMatches/);
+assert.match(source.contracts, /postTone: postToneSchema\.optional\(\)/);
+assert.match(source.context, /postToneForItem\(item\)/);
+assert.match(source.context, /parent\.postTone \? \{ postTone: parent\.postTone \}/);
+assert.match(source.context, /postToneClassName\(source\.postTone \?\? null\)/);
+assert.match(source.context, /className=\{`scribble-panel \$\{theme\}`\}/);
+assert.match(source.shell, /<ScribbleProvider[^>]*theme=\{theme\}/);
+assert.match(source.comments, /commentScribbleSource\(comment, itemId, tone\)/);
+assert.match(source.editor, /postToneClassName\(source\?\.postTone \?\? null\)/);
+assert.match(source.renderer, /postToneClassName\(node\.source\?\.postTone \?\? null\)/);
+assert.match(source.postToneStyles, /\.document-source-card\.post-tone,/);
+assert.match(source.postToneStyles, /\.scribble-source-shelf a\.post-tone/);
 assert.match(source.editor, /capability === "scribble"[^\n]*Insert drawing/);
 assert.match(source.editor, /capability === "scribble"[^\n]*Insert code block/);
 assert.match(source.editor, /insertContentAt\(editor\.state\.selection\.to/);
@@ -177,11 +191,17 @@ try {
     discardedRevision: discarded.discardedRevision
   }, actor);
   assert.equal(restored.scribble.body, "Persistent thought");
-  const filed = await fileLocalScribble({ expectedRevision: restored.scribble.revision, notebookId: null }, actor);
+  const sourced = await updateLocalScribble({
+    body: documentPlainTextProjection(richScribbleDocument),
+    document: richScribbleDocument,
+    expectedRevision: restored.scribble.revision
+  }, actor);
+  const filed = await fileLocalScribble({ expectedRevision: sourced.scribble.revision, notebookId: null }, actor);
   assert.equal(filed.scribble.body, "");
   const workspace = await getLocalWorkspace(actor);
   const filedDocument = workspace.documents.find((document) => document.id === filed.filed.id);
   assert.equal(filedDocument?.kind, "quick");
+  assert.equal(filedDocument?.document.nodes.find((node) => node.type === "reference")?.source?.postTone, "paper");
   assert.equal(filedDocument?.access.canPublish, false);
   assert.equal(filedDocument?.access.canShare, false);
 } finally {
@@ -200,7 +220,7 @@ console.log(JSON.stringify({
     "equation, vector drawing, code, references, and deduplicated citations",
     "whole-file, image-region, selected-text, spreadsheet-range, and slide capture",
     "site-wide launcher, post, comment, attachment viewer, and Workspace integration",
-    "compact four-corner panel, on-demand filing menu, and locator-aware source cards",
+    "compact four-corner panel, on-demand filing menu, and tone-preserving locator-aware source cards",
     "non-publishable and non-shareable filed Quick Notes"
   ]
 }, null, 2));
