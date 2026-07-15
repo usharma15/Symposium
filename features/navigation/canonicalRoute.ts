@@ -2,7 +2,7 @@ export type CanonicalRoute =
   | { kind: "hall" }
   | { kind: "room"; roomId: CanonicalRoomId }
   | { kind: "workspace"; view?: "saved" | "notes"; noteId?: string; commentId?: string }
-  | { kind: "funding"; view?: "civic" | "private" }
+  | { kind: "funding" }
   | { kind: "opportunities" }
   | { kind: "messages"; conversationId?: string }
   | { kind: "post"; postId: string; commentId?: string }
@@ -49,7 +49,7 @@ export const canonicalRouteHref = (route: CanonicalRoute) => {
     const query = parameters.toString();
     return query ? `/workspace?${query}` : "/workspace";
   }
-  if (route.kind === "funding") return route.view ? `/funding?view=${route.view}` : "/funding";
+  if (route.kind === "funding") return "/funding";
   if (route.kind === "opportunities") return "/opportunities";
   if (route.kind === "messages") {
     return route.conversationId ? `/messages?conversation=${encoded(route.conversationId)}` : "/messages";
@@ -86,8 +86,7 @@ export const parseCanonicalRoute = (pathname: string, search = ""): CanonicalRou
     };
   }
   if (segments[0] === "funding") {
-    const view = new URLSearchParams(search).get("view");
-    return { kind: "funding", view: view === "civic" || view === "private" ? view : undefined };
+    return { kind: "funding" };
   }
   if (segments[0] === "opportunities") return { kind: "opportunities" };
   if (segments[0] === "messages") {

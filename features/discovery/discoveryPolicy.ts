@@ -1,24 +1,6 @@
 import type { InquiryComment, InquiryItem, ResearchCommunity } from "@/lib/mockData";
 import { isDeletedComment, isDeletedPost, normalizeSearchPhrase } from "@/lib/symposiumCore";
 
-type PatronageMode = "lobby" | "civic" | "private";
-
-const topicTerms: Record<string, string[]> = {
-  "Frontier Physics": ["physics", "hidden", "oscillator", "law", "apparatus"],
-  "AI Metascience": ["ai", "agent", "agents", "metascience", "benchmark", "simulation"],
-  "Rogue Youth Labs": ["youth lab", "youth labs", "pilot", "proof-of-work"],
-  "History Of Discovery": ["history", "discovery", "accident", "anomaly", "prepared"],
-  "Tools And Instruments": ["tool", "tools", "code", "instrument", "runner", "notebook"],
-  Patronage: ["funding", "grant", "backer", "budget", "patronage", "civic", "private"],
-  Communities: ["community", "communities", "events", "calls", "groups"],
-  Opportunities: ["opportunity", "opportunities", "call", "fellowship", "role", "residency"]
-};
-
-const patronageTerms: Record<Exclude<PatronageMode, "lobby">, string[]> = {
-  civic: ["civic", "crowdfund", "crowdfunding", "bounty", "bounties", "donation", "donations", "microgrant", "microgrants", "public", "stipend", "stipends"],
-  private: ["private", "investor", "investors", "grant", "grants", "family office", "funds", "patron", "patronage", "backer", "backers", "tranche"]
-};
-
 const commentSearchText = (comments: InquiryComment[]): string =>
   comments
     .flatMap((comment) =>
@@ -69,21 +51,6 @@ export const searchableContentText = (item: InquiryItem) =>
   ]
     .join(" ")
     .toLowerCase();
-
-export const matchesTopic = (item: InquiryItem, chip: string) => {
-  const terms = topicTerms[chip] ?? [];
-  const text = searchableText(item);
-  return terms.some((term) => text.includes(term));
-};
-
-export const matchesPatronageMode = (item: InquiryItem, mode: PatronageMode) => {
-  if (mode === "lobby") return false;
-  const text = searchableText(item);
-  return patronageTerms[mode].some((term) => {
-    if (term.includes(" ")) return text.includes(term);
-    return new RegExp(`\\b${term}\\b`, "i").test(text);
-  });
-};
 
 const matchesCommunity = (item: InquiryItem, community: ResearchCommunity) => {
   const text = searchableText(item);

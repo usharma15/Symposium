@@ -17,6 +17,9 @@ const attachmentOwnershipError = (ownerType: AttachmentOwnerType) =>
     message: `One or more attachments are not confirmed, no longer available, or already belong to another ${ownerType}.`
   });
 
+const isPublicDraftStagingTransition = (source: string, destination: AttachmentOwnerType) =>
+  (source === "post" && destination === "note") || (source === "note" && destination === "post");
+
 export const canonicalAttachmentIds = (input: {
   attachmentIds?: string[];
   attachments?: Array<{ id: string }>;
@@ -42,7 +45,11 @@ export const assertClaimableOwnerAttachments = (
     desiredRows.some(
       (row) =>
         !row ||
-        row.ownerType !== input.ownerType ||
+        (row.ownerType !== input.ownerType && !(
+          row.ownerId === null &&
+          row.uploaderHandle === input.uploaderHandle &&
+          isPublicDraftStagingTransition(row.ownerType, input.ownerType)
+        )) ||
         (row.ownerId === null && row.uploaderHandle !== input.uploaderHandle) ||
         (row.status !== "uploaded" && row.status !== "previewed") ||
         (row.ownerId !== null && row.ownerId !== input.ownerId)
@@ -115,9 +122,9 @@ export const replaceOwnerAttachments = async (
   if (attachmentIds.length) {
     await client.query(
       `UPDATE attachments
-       SET owner_id = $1, updated_at = now()
+       SET owner_id = $1, owner_type = $3, updated_at = now()
        WHERE id = ANY($2::uuid[])`,
-      [input.ownerId, attachmentIds]
+      [input.ownerId, attachmentIds, input.ownerType]
     );
   }
 

@@ -22,7 +22,9 @@ import {
 } from "./workspacePublicationState";
 
 const publicationTarget = (revision: PublishableWorkspaceRevision, input: PublishNoteInputContract) => {
-  if (revision.kind === "paper") return "paper" as const;
+  if (revision.kind === "paper") {
+    return revision.publicationTarget === "proposal" ? "proposal" as const : "paper" as const;
+  }
   if (revision.kind === "thought") return "thought" as const;
   if (revision.kind === "comment") return "comment" as const;
   if (revision.kind === "reply") return "reply" as const;
@@ -49,6 +51,12 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
     if (!input.title || !input.body) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Publishing requires a draft or explicit title and body." });
     }
+    if (input.publicationTarget === "proposal") {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Publish a Patronage Proposal from its exact Workspace draft revision."
+      });
+    }
     const item = await createPost(
       {
         title: input.title,
@@ -74,14 +82,17 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
       revision: revision.revision,
       ownerHandle: revision.ownerHandle
     });
-    if (target !== "paper" && !documentFitsReducedEditor(document)) {
+    if (target !== "paper" && target !== "proposal" && !documentFitsReducedEditor(document)) {
       throw new TRPCError({
         code: "BAD_REQUEST",
         message: "This draft uses Paper formatting and cannot be published to a reduced editor destination."
       });
     }
 
-    if (target === "paper" || target === "thought") {
+    if (target === "paper" || target === "thought" || target === "proposal") {
+      if (target === "proposal" && !revision.proposal) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Add funding details before publishing this Patronage Proposal." });
+      }
       const publishedContent = await prepareWorkspacePublicationAttachments(client, {
         noteId: revision.noteId,
         revision: revision.revision,
@@ -96,8 +107,9 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
           title: revision.title,
           body: revision.body,
           document: publishedContent.document,
-          kind: target,
-          room: target === "paper" ? "library" : "amphitheater",
+          kind: target === "proposal" ? "paper" : target,
+          room: target === "proposal" ? "funding" : target === "paper" ? "library" : "amphitheater",
+          patronage: target === "proposal" ? revision.proposal ?? undefined : undefined,
           authorHandle: revision.ownerHandle,
           attachmentIds: publishedContent.attachmentIds
         },

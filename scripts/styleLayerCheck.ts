@@ -15,6 +15,7 @@ const layers = [
   "85-symposium-document.css",
   "87-structured-attachments.css",
   "88-workspace.css",
+  "89-patronage.css",
   "89-workspace-sharing.css",
   "90-immersive-responsive.css",
   "91-scribble.css"
@@ -69,6 +70,11 @@ const main = async () => {
   assert.match(quoteStyles, /\.quote-link-input-row/);
 
   const documentStyles = sources.get("85-symposium-document.css") ?? "";
+  const patronageStyles = sources.get("89-patronage.css") ?? "";
+  assert.match(patronageStyles, /\.patronage-proposal-fields/);
+  assert.match(patronageStyles, /\.patronage-feed-summary/);
+  assert.match(patronageStyles, /\.paper-detail\.patronage-detail > \.patronage-side/);
+  assert.match(patronageStyles, /\.symposium-shell\.night \.patronage-feed-summary/);
   assert.match(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*pointer-events:\s*none/);
   assert.doesNotMatch(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*opacity:/);
   const attachmentStyles = [sources.get("20-legacy-content.css") ?? "", sources.get("87-structured-attachments.css") ?? ""].join("\n");
@@ -87,6 +93,8 @@ const main = async () => {
   assert.match(feedStyles, /\.detail-layout\.simple-detail[\s\S]*var\(--symposium-feed-width\)/);
   assert.match(feedStyles, /\.workspace-main-column[\s\S]*var\(--symposium-feed-width\)/);
   assert.match(responsiveStyles, /\.detail-layout\.simple-detail,[\s\S]*\.profile-page[\s\S]*width:\s*min\(var\(--symposium-feed-width\), calc\(100vw - 28px\)\)/);
+  assert.match(responsiveStyles, /\.feed-stream\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(responsiveStyles, /\.feed-post\s*\{[^}]*min-width:\s*0[^}]*overflow:\s*hidden/);
   assert.match(documentStyles, /\.symposium-shell\.night[\s\S]*--document-surface-solid/);
   assert.match(documentStyles, /\.symposium-shell\s*\{[^}]*--document-color-default:\s*var\(--ink\)[^}]*--document-color-gold:\s*#9a6b16/);
   assert.match(documentStyles, /\.symposium-shell\.night\s*\{[^}]*--document-color-default:\s*var\(--ink\)[^}]*--document-color-blue:\s*#8ec5f4[^}]*--document-color-crimson:\s*#f0a0ad[^}]*--document-color-forest:\s*#8fd0ae[^}]*--document-color-gold:\s*#e7bd65/);

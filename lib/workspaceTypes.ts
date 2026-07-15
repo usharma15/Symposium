@@ -1,6 +1,7 @@
 import type { InquiryAttachment, InquiryItem, ResearchProfile } from "@/lib/mockData";
 import type {
   VersionedDocumentContract,
+  PatronageProposalInputContract,
   WorkspaceAccessRoleContract,
   WorkspaceAccessResourceContract,
   WorkspaceDocumentKindContract,
@@ -42,6 +43,7 @@ export type WorkspaceDocument = {
   ownerName: string;
   kind: WorkspaceDocumentKindContract;
   publicationTarget: WorkspacePublicationTargetContract;
+  proposal: PatronageProposalInputContract | null;
   targetId: string | null;
   title: string;
   body: string;
@@ -159,7 +161,7 @@ export type WorkspacePublicationResponse = {
     noteId: string | null;
     revision?: number;
     checkpointId?: string;
-    target?: "paper" | "thought" | "comment" | "reply";
+    target?: "paper" | "thought" | "proposal" | "comment" | "reply";
     postId: string;
     commentId?: string | null;
     visibility: "public";

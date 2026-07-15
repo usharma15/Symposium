@@ -70,7 +70,7 @@ The application will progressively replace its private history stack with URLs t
 
 The existing in-world navigation remains the visual shell. URL routing becomes its state authority rather than a competing navigation system.
 
-Canonical routing is live for public rooms, workspace modes, funding modes, opportunities, messages and selected conversations, the community directory, selected communities, profiles, profile activity filters and social graphs, posts, and selected comments. Resource navigation uses semantic anchors with a client-navigation adapter: ordinary clicks retain the synchronized shell, while modified clicks, middle-click, copying, and new tabs retain native browser behavior. Direct-entry application Back falls back to the Main Hall without manufacturing a history loop.
+Canonical routing is live for public rooms, workspace modes, the unified Patronage Hall, opportunities, messages and selected conversations, the community directory, selected communities, profiles, profile activity filters and social graphs, posts, and selected comments. Resource navigation uses semantic anchors with a client-navigation adapter: ordinary clicks retain the synchronized shell, while modified clicks, middle-click, copying, and new tabs retain native browser behavior. Direct-entry application Back falls back to the Main Hall without manufacturing a history loop. Legacy Patronage mode query strings normalize to `/funding`; civic and private capital are not separate feed modes.
 
 ## Shared content model
 
@@ -86,11 +86,17 @@ Posts, comments, notes, drafts, and messages receive capability policies over th
 
 ## Workspace documents
 
-Notes are a private workspace-document family, not a second post store. Generic Notes and Paper drafts use the full shared editor; Thought, Comment, and Reply drafts use the reduced capability policy; Quick Notes have a reserved filing surface but are not yet creatable. `All` is a virtual last-edited projection, while a document may be filed in zero or one durable notebook.
+Notes are a private workspace-document family, not a second post store. Generic Notes, Paper drafts, and Patronage Proposal drafts use the full shared editor; Thought, Comment, and Reply drafts use the reduced capability policy. A proposal remains an ordinary paper-grade draft marked with the `proposal` publication target and exact funding metadata rather than becoming a new Office category. `All` is a virtual last-edited projection, while a document may be filed in zero or one durable notebook.
 
 Every create, autosave, explicit Save Draft, and notebook-removal move advances the document revision and stores an immutable `workspace_note_revisions` checkpoint. Publish always resolves the exact open revision, serializes against saves and notebook moves with a document-scoped advisory lock, and records a unique note/revision publication. A successful publication promotes the draft out of every workspace projection, transfers its discussion tree into the public post or published comment, and retains only the internal publication, revision, and audit linkage required for idempotency and recovery. A collaborator with publish rights publishes under the immutable document owner's authorship; the publisher remains separately audited.
 
 The workspace root is always private. Notebook and document grants define cumulative viewer, commenter, editor, and publisher roles, with notebook access inherited by current and future filed documents. Generic Notes and Papers are collaboration-capable; Thoughts, Comments, and Replies remain owner-editable and owner-publishable. The sharing-and-collaboration manager exposes the same authoritative grants in note cards, note details, notebook rows, and navigation menus; it enforces delegated role ceilings, exact grant revisions, direct-plus-inherited precedence, grantor/owner revocation, self-leave, audit events, notifications, local fallback, and live/cross-tab convergence. Draft discussion uses the same effective-access projection and intentionally omits public quote and reshare actions.
+
+## Patronage proposals
+
+The Patronage Hall is one public proposal feed at `/funding`, using the same For you and Following scopes as the other feed rooms. A proposal is a paper-grade post with an additional validated funding projection: status, currency, goal, optional deadline, provider-confirmed amount, supporter count, and at most ten public supporter rows. Proposal creation lives in the global post composer; Save draft creates an ordinary Office paper draft marked as a proposal, and exact-revision publishing preserves its funding metadata.
+
+The public proposal JSON on a post is a read projection. `patronage_proposals` is the canonical proposal record and `patronage_contributions` is the provider-keyed append-only payment ledger from which confirmed totals and leaderboards can later be rebuilt. No client mutation can write raised totals or supporters directly. Until a payment provider is integrated, Contribute explains that no payment or contribution has been created; Private Capital is an explicitly disabled coming-soon action. Compute markets, resource exchange, crypto, bounties, and private-capital coordination are outside this construction boundary.
 
 ## Attachment ownership
 
@@ -138,7 +144,7 @@ Browser-session entry is server-coordinated. `app/SymposiumPage.tsx` reads a non
 
 ## Backend ownership
 
-Backend persistence is split into bounded repositories for posts, comments, identity, profiles, communities, conversations, notifications, search, workspaces, attachments, actions, opportunities, and the assistant. HTTP and tRPC routes import their owning repository directly. Cross-domain note-to-post publication is explicit in `services/notePublishing.ts`; there is no compatibility façade. Domain repositories may depend on the shared foundation, transaction, mutation, audit, event, database, and storage kernels, but they may not import one another sideways.
+Backend persistence is split into bounded repositories for posts, comments, identity, profiles, communities, conversations, notifications, search, workspaces, attachments, actions, opportunities, and the assistant. HTTP and tRPC routes import their owning repository directly. Cross-domain note-to-post and note-to-proposal publication is explicit in `services/notePublishing.ts`; there is no compatibility façade. The post repository owns proposal creation and metadata edits in the same transaction as the public post, while payment ingestion remains gated behind a future provider-owned service. Domain repositories may depend on the shared foundation, transaction, mutation, audit, event, database, and storage kernels, but they may not import one another sideways.
 
 ## Extraction order
 
@@ -154,6 +160,7 @@ Backend persistence is split into bounded repositories for posts, comments, iden
 10. Split the backend live repository by domain while retaining the shared transaction kernel. Complete: routes now address domain repositories directly and cross-domain orchestration is service-owned.
 11. Add server-authoritative entity revisions and a shared cross-tab mutation coordinator. Complete for posts, comments, profiles, follows, bootstrap, live events, and the current edit/delete mutation envelope.
 12. Extract the client API, live-event, and browser-transport kernels and extend idempotent mutation coverage to profiles and follows. Complete.
+13. Construct the unified Patronage Hall domain. Complete for proposal contracts, creation and editing, Office drafts, exact-revision publication, canonical proposal and contribution-ledger storage, local/live persistence, feed and detail projections, and payment/private-capital feature gates. Provider payment ingestion remains intentionally unopened.
 
 ## Checkpoint gates
 

@@ -24,7 +24,7 @@ import type {
 } from "@/packages/contracts/src";
 
 export type RoomId = RoomIdContract;
-export type FeedScope = "suggested" | "following" | "rooms";
+export type FeedScope = "suggested" | "following";
 export type ContentKind = ContentKindContract;
 export type InquiryComment = InquiryCommentContract;
 export type InquiryMetrics = InquiryMetricsContract;
@@ -126,11 +126,11 @@ export const rooms: Room[] = [
     name: "Patronage",
     shortName: "Patronage",
     icon: Sparkles,
-    eyebrow: "Civic and private backing",
+    eyebrow: "Public research patronage",
     title: "Support serious work before it looks obvious.",
     description:
-      "Civic backing, bounties, donations, grants, investors, family offices, and patronage routes for live research work.",
-    feedLabel: "Patronage desk",
+      "Public proposals for research, experiments, tools, field work, and institutions that need practical backing.",
+    feedLabel: "Patronage Hall",
     location: "Left under the library stair",
     ambient: "Quiet negotiations, budgets, small tables, practical pressure",
     includes: ["paper", "thought", "draft", "note"]
@@ -167,19 +167,7 @@ export const rooms: Room[] = [
 
 export const feedScopes: { id: FeedScope; label: string }[] = [
   { id: "suggested", label: "For you" },
-  { id: "following", label: "Following" },
-  { id: "rooms", label: "Rooms" }
-];
-
-export const roomChips = [
-  "Frontier Physics",
-  "AI Metascience",
-  "Rogue Youth Labs",
-  "History Of Discovery",
-  "Tools And Instruments",
-  "Patronage",
-  "Communities",
-  "Opportunities"
+  { id: "following", label: "Following" }
 ];
 
 export const libraryFolders = [
@@ -972,23 +960,23 @@ const generatedBlueprints: Array<{
   },
   {
     room: "funding",
-    kind: "draft",
-    status: "Civic patronage",
+    kind: "paper",
+    status: "Open",
     title: "Microgrant packet for blind rediscovery weekends",
     excerpt: "A compact budget for running small rediscovery sessions with public logs and critic review.",
     body:
-      "The civic patronage note asks for small, fast support: facilitator time, participant stipends, hosting, and review honoraria. The output would be public packets, failed attempts, and a repeatable format for other communities.",
-    tags: ["patronage", "civic", "microgrants", "rediscovery", "review"]
+      "This proposal asks for small, fast support: facilitator time, participant stipends, hosting, and review honoraria. The output would be public packets, failed attempts, and a repeatable format for other communities.",
+    tags: ["patronage", "microgrants", "rediscovery", "review"]
   },
   {
     room: "funding",
-    kind: "thought",
-    status: "Private patronage",
-    title: "What evidence should unlock the second tranche?",
-    excerpt: "Patronage should reward reality contact, not the ability to write heroic updates.",
+    kind: "paper",
+    status: "Open",
+    title: "Open instrumentation fund for low-cost anomaly tests",
+    excerpt: "A public proposal for small instruments, calibration time, and independently logged tests.",
     body:
-      "A staged grant can be honest if the unlock condition is visible work: logs, critique response, replication attempts, or a working artifact. The hard part is choosing evidence that does not become theater.",
-    tags: ["patronage", "private", "grants", "milestones", "evidence"]
+      "The fund would support low-cost apparatus, calibration time, and replication attempts where the output is visible work: logs, critique responses, failed tests, and working artifacts. The proposal keeps research direction with the researchers while making spending and evidence legible.",
+    tags: ["patronage", "instruments", "replication", "evidence"]
   },
   {
     room: "communities",
@@ -1514,8 +1502,40 @@ const stampSeedComments = (
     replies: stampSeedComments(comment.replies ?? [], itemIndex, parentOffset + commentIndex + 6)
   }));
 
+const seedPatronage = (index: number): NonNullable<InquiryItem["patronage"]> => {
+  const goalMinorUnits = (18_000 + (index % 7) * 7_500) * 100;
+  const supporterAmounts = [
+    Math.round(goalMinorUnits * 0.12),
+    Math.round(goalMinorUnits * 0.08),
+    Math.round(goalMinorUnits * 0.05)
+  ];
+  const supporters = supporterAmounts.map((amountMinorUnits, supporterIndex) => {
+    const person = generatedPublicProfiles[(index + supporterIndex * 13) % generatedPublicProfiles.length];
+    return {
+      displayName: supporterIndex === 1 ? "Anonymous" : person.name,
+      amountMinorUnits,
+      anonymous: supporterIndex === 1
+    };
+  });
+  return {
+    status: "open",
+    currency: "USD",
+    goalMinorUnits,
+    deadline: `2026-${String(9 + (index % 3)).padStart(2, "0")}-${String(12 + (index % 14)).padStart(2, "0")}`,
+    raisedMinorUnits: supporterAmounts.reduce((total, amount) => total + amount, 0),
+    supporterCount: supporters.length,
+    topSupporters: supporters
+  };
+};
+
 export const inquiryItems: InquiryItem[] = [...coreInquiryItems, ...generatedInquiryItems].map((item, index) => ({
   ...item,
+  ...(item.room === "funding" ? {
+    kind: "paper" as const,
+    status: "Open",
+    patronage: seedPatronage(index),
+    tags: item.tags.filter((tag) => tag !== "civic" && tag !== "private")
+  } : {}),
   createdAt: item.createdAt ?? seedIsoDate(index),
   comments: stampSeedComments(item.comments, index)
 }));

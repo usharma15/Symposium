@@ -1494,6 +1494,80 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS workspace_scribble_revisions_scribble_created_idx
         ON workspace_scribble_revisions (scribble_id, created_at DESC);
     `
+  },
+  {
+    id: "0025_patronage_foundation",
+    sql: `
+      ALTER TABLE posts ADD COLUMN IF NOT EXISTS patronage JSONB;
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS proposal JSONB;
+      ALTER TABLE workspace_note_revisions ADD COLUMN IF NOT EXISTS proposal JSONB;
+
+      ALTER TABLE notes DROP CONSTRAINT IF EXISTS notes_publication_target_check;
+      ALTER TABLE notes ADD CONSTRAINT notes_publication_target_check
+        CHECK (publication_target IN ('undecided', 'paper', 'thought', 'proposal', 'comment', 'reply'));
+
+      CREATE TABLE IF NOT EXISTS patronage_proposals (
+        post_id TEXT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'open'
+          CHECK (status IN ('open', 'funded', 'closed')),
+        currency TEXT NOT NULL DEFAULT 'USD'
+          CHECK (currency IN ('USD', 'EUR', 'GBP', 'CAD', 'AUD')),
+        goal_minor_units BIGINT NOT NULL CHECK (goal_minor_units > 0),
+        deadline DATE,
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS patronage_proposals_status_updated_idx
+        ON patronage_proposals (status, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS patronage_contributions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+        contributor_handle TEXT REFERENCES profiles(handle) ON DELETE SET NULL,
+        display_name TEXT NOT NULL,
+        amount_minor_units BIGINT NOT NULL CHECK (amount_minor_units > 0),
+        currency TEXT NOT NULL CHECK (currency IN ('USD', 'EUR', 'GBP', 'CAD', 'AUD')),
+        anonymous BOOLEAN NOT NULL DEFAULT false,
+        provider TEXT NOT NULL,
+        provider_reference TEXT,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'confirmed', 'refunded', 'failed')),
+        confirmed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (provider, provider_reference)
+      );
+      CREATE INDEX IF NOT EXISTS patronage_contributions_post_status_idx
+        ON patronage_contributions (post_id, status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS patronage_contributions_contributor_idx
+        ON patronage_contributions (contributor_handle, created_at DESC);
+
+      UPDATE posts
+      SET kind = 'paper',
+          status = CASE WHEN deleted_at IS NULL THEN 'Open' ELSE status END,
+          patronage = CASE WHEN deleted_at IS NULL THEN jsonb_build_object(
+            'status', 'open',
+            'currency', 'USD',
+            'goalMinorUnits', 2500000,
+            'deadline', NULL,
+            'raisedMinorUnits', 0,
+            'supporterCount', 0,
+            'topSupporters', '[]'::jsonb
+          ) ELSE patronage END
+      WHERE room = 'funding' AND patronage IS NULL;
+
+      INSERT INTO patronage_proposals (post_id, status, currency, goal_minor_units, deadline)
+      SELECT
+        id,
+        patronage->>'status',
+        patronage->>'currency',
+        (patronage->>'goalMinorUnits')::BIGINT,
+        NULLIF(patronage->>'deadline', '')::DATE
+      FROM posts
+      WHERE patronage IS NOT NULL
+      ON CONFLICT (post_id) DO NOTHING;
+    `
   }
 ];
 

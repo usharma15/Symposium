@@ -2,7 +2,6 @@ import type { RoomId } from "@/lib/mockData";
 import type { CanonicalRoute, ProfileSocialView, ProfileTab } from "@/features/navigation/canonicalRoute";
 
 export type OfficeMode = "desk" | "saved" | "notes";
-export type PatronageMode = "lobby" | "civic" | "private";
 
 export type ViewSnapshot = {
   activeRoom: RoomId;
@@ -12,7 +11,6 @@ export type ViewSnapshot = {
   profileSocialView: ProfileSocialView | null;
   profileTab: ProfileTab;
   officeMode: OfficeMode;
-  patronageMode: PatronageMode;
   selectedCommunityId: string | null;
   messagesOpen: boolean;
   selectedConversationId: string | null;
@@ -21,8 +19,12 @@ export type ViewSnapshot = {
   scrollY: number;
 };
 
-export const roomForCanonicalRoute = (route: CanonicalRoute): RoomId => {
+export const roomForCanonicalRoute = (
+  route: CanonicalRoute,
+  resolvePostRoom: (postId: string) => RoomId | undefined = () => undefined
+): RoomId => {
   if (route.kind === "room") return route.roomId;
+  if (route.kind === "post") return resolvePostRoom(route.postId) ?? "hall";
   if (route.kind === "workspace") return "office";
   if (route.kind === "funding") return "funding";
   if (route.kind === "opportunities") return "opportunities";
@@ -32,9 +34,6 @@ export const roomForCanonicalRoute = (route: CanonicalRoute): RoomId => {
 
 export const officeModeForCanonicalRoute = (route: CanonicalRoute): OfficeMode =>
   route.kind === "workspace" ? route.view ?? "desk" : "desk";
-
-export const patronageModeForCanonicalRoute = (route: CanonicalRoute): PatronageMode =>
-  route.kind === "funding" ? route.view ?? "lobby" : "lobby";
 
 export const canonicalRouteForView = (
   snapshot: ViewSnapshot,
@@ -69,7 +68,7 @@ export const canonicalRouteForView = (
     return { kind: "workspace", view: snapshot.officeMode === "desk" ? undefined : snapshot.officeMode };
   }
   if (snapshot.activeRoom === "funding") {
-    return { kind: "funding", view: snapshot.patronageMode === "lobby" ? undefined : snapshot.patronageMode };
+    return { kind: "funding" };
   }
   if (snapshot.activeRoom === "opportunities") return { kind: "opportunities" };
   if (
@@ -82,15 +81,17 @@ export const canonicalRouteForView = (
   return { kind: "hall" };
 };
 
-export const snapshotForCanonicalRoute = (route: CanonicalRoute): ViewSnapshot => ({
-  activeRoom: roomForCanonicalRoute(route),
+export const snapshotForCanonicalRoute = (
+  route: CanonicalRoute,
+  resolvePostRoom?: (postId: string) => RoomId | undefined
+): ViewSnapshot => ({
+  activeRoom: roomForCanonicalRoute(route, resolvePostRoom),
   selectedItemId: route.kind === "post" ? route.postId : null,
   selectedCommentId: route.kind === "post" ? route.commentId ?? null : null,
   selectedProfileName: route.kind === "profile" ? route.handle : null,
   profileSocialView: route.kind === "profile" ? route.social ?? null : null,
   profileTab: route.kind === "profile" ? route.tab ?? "all" : "all",
   officeMode: officeModeForCanonicalRoute(route),
-  patronageMode: patronageModeForCanonicalRoute(route),
   selectedCommunityId: route.kind === "community" ? route.communityId : null,
   messagesOpen: route.kind === "messages",
   selectedConversationId: route.kind === "messages" ? route.conversationId ?? null : null,

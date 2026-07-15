@@ -16,9 +16,15 @@ import type { InquiryAttachment, ResearchProfile } from "@/lib/mockData";
 import { findCommentInTree, localDateTimeLabel, relativeTimeLabel } from "@/lib/symposiumCore";
 import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import type { WorkspaceDocument, WorkspaceNotebook, WorkspacePublicationResponse } from "@/lib/workspaceTypes";
-import { workspaceKindLabel } from "@/features/workspace/WorkspaceDocumentCard";
+import { workspaceDocumentLabel, workspaceKindLabel } from "@/features/workspace/WorkspaceDocumentCard";
 import { useWorkspaceComments } from "@/features/workspace/useWorkspaceComments";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
+import { PatronageProposalFields } from "@/features/patronage/PatronageViews";
+import {
+  emptyPatronageDraftFields,
+  patronageDraftFieldsForProposal,
+  patronageInputForDraft
+} from "@/features/patronage/patronageModel";
 
 type SaveDraft = {
   title: string;
@@ -26,6 +32,7 @@ type SaveDraft = {
   document: VersionedDocumentContract;
   kind: WorkspaceDocument["kind"];
   publicationTarget: WorkspaceDocument["publicationTarget"];
+  proposal: WorkspaceDocument["proposal"];
   notebookId: string | null;
   targetId: string | null;
   attachmentIds: string[];
@@ -40,6 +47,7 @@ const draftFingerprint = (draft: {
   notebookId: string | null;
   targetId: string | null;
   publicationTarget: WorkspaceDocument["publicationTarget"];
+  proposal: WorkspaceDocument["proposal"];
   attachments: InquiryAttachment[];
 }) => JSON.stringify([
   draft.title,
@@ -48,6 +56,7 @@ const draftFingerprint = (draft: {
   draft.notebookId,
   draft.targetId,
   draft.publicationTarget,
+  draft.proposal,
   draft.attachments.map((attachment) => attachment.id)
 ]);
 
@@ -68,7 +77,7 @@ type WorkspaceDocumentDetailProps = {
   onShare: () => void;
   onSave: (draft: SaveDraft) => Promise<WorkspaceDocument>;
   onDelete: (document: WorkspaceDocument) => Promise<void>;
-  onPublish: (document: WorkspaceDocument, target?: "paper" | "thought") => Promise<WorkspacePublicationResponse>;
+  onPublish: (document: WorkspaceDocument, target?: "paper" | "thought" | "proposal") => Promise<WorkspacePublicationResponse>;
   onPublished: (result: WorkspacePublicationResponse) => void;
   onUploadAttachment: AttachmentUploadHandler;
   onUploadCommentAttachment: AttachmentUploadHandler;
@@ -104,6 +113,9 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
       ? document.publicationTarget
       : "undecided"
   );
+  const [patronageFields, setPatronageFields] = useState(() =>
+    document.proposal ? patronageDraftFieldsForProposal(document.proposal) : emptyPatronageDraftFields()
+  );
   const [revision, setRevision] = useState(document.revision);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -123,6 +135,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
     notebookId: document.notebookId,
     targetId: document.targetId,
     publicationTarget: document.publicationTarget,
+    proposal: document.proposal,
     attachments: document.attachments
   }));
   const discussion = useWorkspaceComments(document.id, actorHandle);
@@ -134,8 +147,9 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
     notebookId,
     targetId: targetId.trim() || null,
     publicationTarget: document.kind === "note" ? publicationTarget : document.publicationTarget,
+    proposal: document.publicationTarget === "proposal" ? patronageInputForDraft(patronageFields) : null,
     attachments
-  }), [attachments, body, document.kind, document.publicationTarget, documentValue, notebookId, publicationTarget, targetId, title]);
+  }), [attachments, body, document.kind, document.publicationTarget, documentValue, notebookId, patronageFields, publicationTarget, targetId, title]);
 
   const applySavedDocument = useCallback((saved: WorkspaceDocument) => {
     savedDocumentRef.current = saved;
@@ -148,6 +162,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
     setNotebookId(saved.notebookId);
     setTargetId(saved.targetId ?? "");
     setPublicationTarget(saved.publicationTarget === "paper" || saved.publicationTarget === "thought" ? saved.publicationTarget : "undecided");
+    setPatronageFields(saved.proposal ? patronageDraftFieldsForProposal(saved.proposal) : emptyPatronageDraftFields());
     savedFingerprintRef.current = draftFingerprint({
       title: saved.title,
       body: saved.body,
@@ -155,6 +170,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
       notebookId: saved.notebookId,
       targetId: saved.targetId,
       publicationTarget: saved.publicationTarget,
+      proposal: saved.proposal,
       attachments: saved.attachments
     });
     setSaveState("Draft saved");
@@ -169,6 +185,11 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
       return null;
     }
     const draft = currentDraft();
+    if (draft.publicationTarget === "proposal" && !draft.proposal) {
+      setError("Add a valid funding goal before saving this proposal draft.");
+      setSaveState("Save needs attention");
+      return null;
+    }
     const fingerprint = draftFingerprint(draft);
     if (!checkpoint && fingerprint === savedFingerprintRef.current) return savedDocumentRef.current;
     setBusy(true);
@@ -182,6 +203,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
           document: draft.document,
           kind: document.kind,
           publicationTarget: draft.publicationTarget,
+          proposal: draft.proposal,
           notebookId: draft.notebookId,
           targetId: draft.targetId,
           attachmentIds: draft.attachments.map((attachment) => attachment.id),
@@ -275,6 +297,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
   const capability = document.kind === "quick" ? "scribble" : document.kind === "note" || document.kind === "paper" ? "paper" : "reduced";
   const targetLinked = document.kind !== "comment" && document.kind !== "reply" || Boolean(targetId.trim());
   const publicationChosen = document.kind !== "note" || publicationTarget !== "undecided";
+  const proposalReady = document.publicationTarget !== "proposal" || Boolean(patronageInputForDraft(patronageFields));
   const editingComment = editingCommentId ? findCommentInTree(discussion.comments, editingCommentId) ?? null : null;
   const previewComment = commentPreview ? findCommentInTree(discussion.comments, commentPreview.commentId) ?? null : null;
 
@@ -322,7 +345,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
         </div>
         <div className="post-body">
           <div className="workspace-draft-line">
-            <strong>Draft · {workspaceKindLabel[document.kind]}</strong>
+            <strong>Draft · {workspaceDocumentLabel(document)}</strong>
             {notebookId ? <><b aria-hidden="true">•</b><span>{notebooks.find((notebook) => notebook.id === notebookId)?.name ?? document.notebookName}</span></> : null}
             {document.lifecycle === "published" ? <span className="workspace-published-badge">Published checkpoint retained</span> : null}
           </div>
@@ -365,12 +388,20 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
                 onBusyChange={setUploading}
                 onUploadAttachment={onUploadAttachment}
               />
+              {document.publicationTarget === "proposal" ? (
+                <PatronageProposalFields
+                  value={patronageFields}
+                  onChange={setPatronageFields}
+                  disabled={busy}
+                  allowStatus
+                />
+              ) : null}
               {error ? <div className="workspace-error" role="alert">{error}</div> : null}
               <footer className="workspace-editor-footer">
                 <div><Users size={15} /><span>{document.access.role === "owner" ? `Private workspace · Owner${document.collaboratorCount ? ` · ${document.collaboratorCount} collaborators` : ""}` : `${document.access.role} access`}</span></div>
                 <div>
                   <button type="button" disabled={busy || uploading} onClick={() => void saveDraft(true)}>Save Draft</button>
-                  {document.access.canPublish ? <button type="button" className="primary" disabled={busy || uploading || !body.trim() || !targetLinked || !publicationChosen} onClick={() => void publish()}><Send size={15} />Post</button> : null}
+                  {document.access.canPublish ? <button type="button" className="primary" disabled={busy || uploading || !body.trim() || !targetLinked || !publicationChosen || !proposalReady} onClick={() => void publish()}><Send size={15} />Post</button> : null}
                 </div>
               </footer>
             </div>
@@ -384,7 +415,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
                 <span>Revision {document.revision}</span>
               </div>
               {error ? <div className="workspace-error" role="alert">{error}</div> : null}
-              {document.access.canPublish ? <div className="workspace-reader-post"><button type="button" className="primary" disabled={!document.body.trim() || !targetLinked || !publicationChosen} onClick={() => void publish()}><Send size={15} />Post this saved draft</button></div> : null}
+              {document.access.canPublish ? <div className="workspace-reader-post"><button type="button" className="primary" disabled={!document.body.trim() || !targetLinked || !publicationChosen || !proposalReady} onClick={() => void publish()}><Send size={15} />Post this saved draft</button></div> : null}
             </>
           )}
 

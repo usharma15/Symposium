@@ -17,7 +17,6 @@ import {
   inquiryItems,
   profile,
   researchCommunities,
-  roomChips,
   rooms,
   type FeedScope,
   type ContentQuoteSource,
@@ -30,6 +29,7 @@ import {
 import type { CommentAction, PostAction } from "@/lib/dataStore";
 import type {
   CanonicalActionActivityContract,
+  PatronageProposalInputContract,
   ProfileActivityResponseContract,
   ToggleActionContract,
   VersionedDocumentContract
@@ -89,11 +89,9 @@ import type { CanonicalRoute, ProfileSocialView } from "@/features/navigation/ca
 import {
   canonicalRouteForView as routeForViewSnapshot,
   officeModeForCanonicalRoute,
-  patronageModeForCanonicalRoute,
   roomForCanonicalRoute,
   snapshotForCanonicalRoute,
   type OfficeMode,
-  type PatronageMode,
   type ViewSnapshot
 } from "@/features/navigation/viewState";
 import { selectActiveProfile } from "@/features/identity/selectActiveProfile";
@@ -117,7 +115,6 @@ import {
   EntrySequence,
   HallView,
   OfficeDeskView,
-  PatronageLobbyView,
   RenderPreloadDeck,
   ViewNav
 } from "@/features/shell/SymposiumShellViews";
@@ -159,11 +156,7 @@ import {
   CommunitiesDirectoryView,
   SelectedCommunityView
 } from "@/features/communities/CommunityViews";
-import {
-  matchesPatronageMode,
-  matchesTopic,
-  searchableContentText
-} from "@/features/discovery/discoveryPolicy";
+import { searchableContentText } from "@/features/discovery/discoveryPolicy";
 import { TabletPanel } from "@/features/workspace/WorkspacePanels";
 import { WorkspaceView } from "@/features/workspace/WorkspaceView";
 import { savePostDraftToWorkspace } from "@/features/workspace/savePostDraftToWorkspace";
@@ -188,7 +181,6 @@ import {
   communityRenders,
   entranceRenders,
   getThemePreloadRenders,
-  patronageRenders,
   roomRenders,
   useSymposiumRenderPreload,
   type Theme
@@ -384,16 +376,19 @@ function SymposiumExperience({
   const [entryMode, setEntryMode] = useState<EntryMode>(() => entryModeForBrowserSession(initialShouldPlayEntrance));
   const [signedIn, setSignedIn] = useState(false);
   const shouldPlayEntrance = useBrowserSessionEntrance(initialShouldPlayEntrance);
-  const [activeRoom, setActiveRoom] = useState<RoomId>(roomForCanonicalRoute(initialRoute));
+  const [activeRoom, setActiveRoom] = useState<RoomId>(() =>
+    roomForCanonicalRoute(
+      initialRoute,
+      (postId) => inquiryItems.find((item) => item.id === postId)?.room
+    )
+  );
   const { items, itemsRef, replaceItems } = useInquiryEntityStore(inquiryItems);
   const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
   const [currentProfile, setCurrentProfile] = useState<ResearchProfile>(profile);
   const [followingHandles, setFollowingHandles] = useState<string[]>([]);
   const [profileSocialLists, setProfileSocialLists] = useState<Record<string, ProfileSocialLists>>({});
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
-  const [roomChip, setRoomChip] = useState(roomChips[0]);
   const [officeMode, setOfficeMode] = useState<OfficeMode>(officeModeForCanonicalRoute(initialRoute));
-  const [patronageMode, setPatronageMode] = useState<PatronageMode>(patronageModeForCanonicalRoute(initialRoute));
   const [selectedItemId, setSelectedItemId] = useState<string | null>(
     initialRoute.kind === "post" ? initialRoute.postId : null
   );
@@ -489,12 +484,9 @@ function SymposiumExperience({
 
   const activeRoomData = getRoom(activeRoom);
   const themedRoomRenders = roomRenders[theme];
-  const themedPatronageRenders = patronageRenders[theme];
   const themedCommunityRenders = communityRenders[theme];
   const activeRoomRender =
-    activeRoom === "funding"
-      ? themedPatronageRenders[patronageMode]
-      : activeRoom === "communities" && selectedCommunityId
+    activeRoom === "communities" && selectedCommunityId
         ? themedCommunityRenders.selected
         : themedRoomRenders[activeRoom];
   const themePreloadRenders = useMemo(() => getThemePreloadRenders(theme), [theme]);
@@ -646,15 +638,6 @@ function SymposiumExperience({
     [...nextItems].sort((a, b) => getPublishedRecency(b) - getPublishedRecency(a));
 
   const visibleItems = useMemo(() => {
-    const patronageItems = activeItems.filter((item) => item.room === "funding");
-    const selectedPatronageItems =
-      patronageMode === "lobby"
-        ? []
-        : patronageItems.filter((item) => matchesPatronageMode(item, patronageMode));
-    const patronageFallbackItems =
-      patronageMode === "lobby" || selectedPatronageItems.length ? selectedPatronageItems : patronageItems;
-    const patronageIds = new Set(patronageFallbackItems.map((item) => item.id));
-
     const roomFiltered = activeItems
       .filter((item) => {
         if (activeRoom === "hall") return item.kind === "paper" || item.kind === "thought";
@@ -668,7 +651,7 @@ function SymposiumExperience({
         if (activeRoom === "symposium") return item.kind === "paper" || item.kind === "thought";
         if (activeRoom === "library") return item.kind === "paper";
         if (activeRoom === "amphitheater") return item.kind === "thought" || item.kind === "note";
-        if (activeRoom === "funding") return patronageIds.has(item.id);
+        if (activeRoom === "funding") return item.room === "funding" && Boolean(item.patronage);
         if (activeRoom === "communities") return item.room === "communities";
         if (activeRoom === "opportunities") return item.room === "opportunities";
         return true;
@@ -681,12 +664,11 @@ function SymposiumExperience({
             isSavedBy(item, currentProfile.handle, profile.handle)
           );
         }
-        if (feedScope === "rooms") return matchesTopic(item, roomChip);
         return true;
       });
 
     return sortByPublishedRecency(roomFiltered);
-  }, [activeItems, activeRoom, currentProfile, feedScope, followingHandles, officeMode, patronageMode, roomChip]);
+  }, [activeItems, activeRoom, currentProfile, feedScope, followingHandles, officeMode]);
 
   const persistLocalSnapshot = (
     nextItems = items,
@@ -1270,7 +1252,10 @@ function SymposiumExperience({
   };
 
   const applyInitialRouteState = () => {
-    const snapshot = snapshotForCanonicalRoute(initialRoute);
+    const snapshot = snapshotForCanonicalRoute(
+      initialRoute,
+      (postId) => itemsRef.current.find((item) => item.id === postId)?.room
+    );
     setActiveRoom(snapshot.activeRoom);
     setSelectedItemId(snapshot.selectedItemId);
     setSelectedCommentId(snapshot.selectedCommentId);
@@ -1278,7 +1263,6 @@ function SymposiumExperience({
     setProfileSocialView(snapshot.profileSocialView);
     setProfileActiveTab(snapshot.profileTab);
     setOfficeMode(snapshot.officeMode);
-    setPatronageMode(snapshot.patronageMode);
     setSelectedCommunityId(snapshot.selectedCommunityId);
     setMessagesOpen(snapshot.messagesOpen);
     setSelectedConversationId(snapshot.selectedConversationId);
@@ -1795,7 +1779,6 @@ function SymposiumExperience({
       profileSocialView,
       profileTab: selectedProfileName ? profileActiveTab : "all",
       officeMode,
-      patronageMode,
       selectedCommunityId,
       messagesOpen,
       selectedConversationId,
@@ -1839,7 +1822,6 @@ function SymposiumExperience({
     setProfileSocialView(snapshot.profileSocialView ?? null);
     setProfileActiveTab(snapshot.profileTab);
     setOfficeMode(snapshot.officeMode);
-    setPatronageMode(snapshot.patronageMode);
     setSelectedCommunityId(snapshot.selectedCommunityId);
     const restoredSegmentStacks = cloneCommentSegmentStacks(snapshot.commentSegmentStacks ?? {});
     commentSegmentStacksRef.current = restoredSegmentStacks;
@@ -1911,7 +1893,6 @@ function SymposiumExperience({
       setCommentSegmentStacks({});
     }
     if (next.officeMode !== undefined) setOfficeMode(next.officeMode);
-    if (next.patronageMode !== undefined) setPatronageMode(next.patronageMode);
     if (next.selectedCommunityId !== undefined) setSelectedCommunityId(next.selectedCommunityId);
     setTabletOpen(false);
     setComposerOpen(false);
@@ -1933,26 +1914,12 @@ function SymposiumExperience({
       selectedProfileName: null,
       profileSocialView: null,
       officeMode: roomId === "office" ? mode : "desk",
-      patronageMode: roomId === "funding" ? "lobby" : patronageMode,
       selectedCommunityId: null
     });
   };
 
   const toggleOfficeMode = (mode: Exclude<OfficeMode, "desk">) => {
     enterRoom("office", activeRoom === "office" && officeMode === mode ? "desk" : mode);
-  };
-
-  const openPatronageMode = (mode: PatronageMode) => {
-    navigateView({
-      activeRoom: "funding",
-      selectedItemId: null,
-      selectedCommentId: null,
-      selectedProfileName: null,
-      profileSocialView: null,
-      officeMode: "desk",
-      patronageMode: mode,
-      selectedCommunityId: null
-    });
   };
 
   const openCommunity = (communityId: string) => {
@@ -1963,7 +1930,6 @@ function SymposiumExperience({
       selectedProfileName: null,
       profileSocialView: null,
       officeMode: "desk",
-      patronageMode: "lobby",
       selectedCommunityId: communityId
     });
   };
@@ -1976,7 +1942,6 @@ function SymposiumExperience({
       selectedProfileName: null,
       profileSocialView: null,
       officeMode: "desk",
-      patronageMode: "lobby",
       selectedCommunityId: null
     });
   };
@@ -2021,7 +1986,7 @@ function SymposiumExperience({
   };
 
   const routePostRoom = (kind: PostDraft["kind"]): Exclude<RoomId, "hall" | "office"> =>
-    kind === "paper" ? "library" : "amphitheater";
+    kind === "proposal" ? "funding" : kind === "paper" ? "library" : "amphitheater";
 
   const uploadPostAttachment = async (file: File): Promise<InquiryAttachment> => {
     const contentType = file.type || "application/octet-stream";
@@ -2062,15 +2027,17 @@ function SymposiumExperience({
     onStatus: setSyncStatus
   });
 
-  const createPost = async ({ title, body, document, kind, attachments, quoteSource }: PostDraft) => {
+  const createPost = async ({ title, body, document, kind, patronage, attachments, quoteSource }: PostDraft) => {
     const routedRoom = routePostRoom(kind);
+    const contentKind = kind === "proposal" ? "paper" : kind;
     const createdAt = new Date().toISOString();
     const postPayload = {
       title,
       body,
       document,
-      kind,
+      kind: contentKind,
       room: routedRoom,
+      patronage,
       authorHandle: currentProfile.handle,
       attachmentIds: attachments.map((attachment) => attachment.id),
       quoteSource: quoteSource
@@ -2795,6 +2762,7 @@ function SymposiumExperience({
       document: VersionedDocumentContract;
       attachments: InquiryAttachment[];
       quote: InquiryItem["quote"] | null;
+      patronage?: PatronageProposalInputContract;
     }
   ) => {
     const cleanTitle = draft.title.trim();
@@ -2817,6 +2785,9 @@ function SymposiumExperience({
             claims: [cleanBody],
             attachments: draft.attachments,
             quote: draft.quote ?? undefined,
+            patronage: draft.patronage
+              ? { ...draft.patronage, raisedMinorUnits: existing.patronage?.raisedMinorUnits ?? 0, supporterCount: existing.patronage?.supporterCount ?? 0, topSupporters: existing.patronage?.topSupporters ?? [] }
+              : existing.patronage,
             editedAt
           }
         : item
@@ -2837,6 +2808,7 @@ function SymposiumExperience({
           actorHandle: currentProfile.handle,
           expectedEditedAt: existing.editedAt ?? null,
           attachmentIds: draft.attachments.map((attachment) => attachment.id),
+          patronage: draft.patronage,
           quoteSource: !draft.quote
             ? existing.quote ? null : undefined
             : !existing.quote ||
@@ -3131,7 +3103,6 @@ function SymposiumExperience({
     <main
       className={`symposium-shell ${theme}`}
       data-room={activeRoom}
-      data-patronage-mode={activeRoom === "funding" ? patronageMode : undefined}
       data-community-selected={selectedCommunity ? "true" : undefined}
       data-view={selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
       style={{ "--room-bg": `url(${activeRoomRender})` } as CSSProperties}
@@ -3290,12 +3261,6 @@ function SymposiumExperience({
             initialDocumentId={initialRoute.kind === "workspace" ? initialRoute.noteId : undefined}
             initialCommentId={initialRoute.kind === "workspace" ? initialRoute.commentId : undefined}
           />
-        ) : activeRoom === "funding" && patronageMode === "lobby" ? (
-          <PatronageLobbyView
-            room={activeRoomData}
-            onOpenCivic={() => openPatronageMode("civic")}
-            onOpenPrivate={() => openPatronageMode("private")}
-          />
         ) : activeRoom === "communities" && selectedCommunity ? (
           <SelectedCommunityView
             community={selectedCommunity}
@@ -3329,12 +3294,8 @@ function SymposiumExperience({
             room={activeRoomData}
             items={visibleItems}
             officeMode={activeRoom === "office" ? officeMode : undefined}
-            patronageMode={activeRoom === "funding" ? patronageMode : undefined}
             feedScope={feedScope}
-            roomChip={roomChip}
             onFeedScope={setFeedScope}
-            onRoomChip={setRoomChip}
-            onPatronageMode={openPatronageMode}
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}

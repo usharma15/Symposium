@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  bigint,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -17,6 +19,7 @@ import type {
   ContentQuoteContract,
   ContentKindContract,
   InquiryItemContract,
+  PatronageProposalInputContract,
   ResearchCommunityContract,
   ResearchProfileContract,
   VersionedDocumentContract
@@ -235,6 +238,7 @@ export const posts = pgTable(
     signaledBy: jsonb("signaled_by").$type<string[]>().default(jsonArray).notNull(),
     forkedBy: jsonb("forked_by").$type<string[]>().default(jsonArray).notNull(),
     quote: jsonb("quote").$type<ContentQuoteContract>(),
+    patronage: jsonb("patronage").$type<InquiryItemContract["patronage"]>(),
     visibility: text("visibility").default("public").notNull(),
     searchText: text("search_text").notNull(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
@@ -250,6 +254,54 @@ export const posts = pgTable(
     index("posts_created_at_idx").on(table.createdAt),
     index("posts_quote_source_post_idx").on(sql`(${table.quote}->>'sourcePostId')`).where(sql`${table.quote} IS NOT NULL`),
     index("posts_quote_comment_source_idx").on(sql`(${table.quote}->>'sourceId')`).where(sql`${table.quote}->>'sourceType' = 'comment'`)
+  ]
+);
+
+export const patronageProposals = pgTable(
+  "patronage_proposals",
+  {
+    postId: text("post_id").primaryKey().references(() => posts.id, { onDelete: "cascade" }),
+    status: text("status").default("open").notNull(),
+    currency: text("currency").default("USD").notNull(),
+    goalMinorUnits: bigint("goal_minor_units", { mode: "number" }).notNull(),
+    deadline: date("deadline"),
+    revision: integer("revision").default(1).notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    index("patronage_proposals_status_updated_idx").on(table.status, table.updatedAt),
+    check("patronage_proposals_status_check", sql`${table.status} IN ('open', 'funded', 'closed')`),
+    check("patronage_proposals_currency_check", sql`${table.currency} IN ('USD', 'EUR', 'GBP', 'CAD', 'AUD')`),
+    check("patronage_proposals_goal_check", sql`${table.goalMinorUnits} > 0`),
+    check("patronage_proposals_revision_check", sql`${table.revision} >= 1`)
+  ]
+);
+
+export const patronageContributions = pgTable(
+  "patronage_contributions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    postId: text("post_id").notNull().references(() => posts.id, { onDelete: "cascade" }),
+    contributorHandle: text("contributor_handle").references(() => profiles.handle, { onDelete: "set null" }),
+    displayName: text("display_name").notNull(),
+    amountMinorUnits: bigint("amount_minor_units", { mode: "number" }).notNull(),
+    currency: text("currency").notNull(),
+    anonymous: boolean("anonymous").default(false).notNull(),
+    provider: text("provider").notNull(),
+    providerReference: text("provider_reference"),
+    status: text("status").default("pending").notNull(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    index("patronage_contributions_post_status_idx").on(table.postId, table.status, table.createdAt),
+    index("patronage_contributions_contributor_idx").on(table.contributorHandle, table.createdAt),
+    uniqueIndex("patronage_contributions_provider_reference_unique_idx").on(table.provider, table.providerReference),
+    check("patronage_contributions_amount_check", sql`${table.amountMinorUnits} > 0`),
+    check("patronage_contributions_currency_check", sql`${table.currency} IN ('USD', 'EUR', 'GBP', 'CAD', 'AUD')`),
+    check("patronage_contributions_status_check", sql`${table.status} IN ('pending', 'confirmed', 'refunded', 'failed')`)
   ]
 );
 
@@ -635,6 +687,7 @@ export const notes = pgTable(
     document: jsonb("content_document").$type<VersionedDocumentContract>(),
     kind: text("kind").default("note").notNull(),
     publicationTarget: text("publication_target").default("undecided").notNull(),
+    proposal: jsonb("proposal").$type<PatronageProposalInputContract>(),
     targetId: text("target_id"),
     lifecycle: text("lifecycle").default("draft").notNull(),
     visibility: text("visibility").default("private").notNull(),
@@ -651,7 +704,7 @@ export const notes = pgTable(
     index("notes_notebook_updated_idx").on(table.notebookId, table.updatedAt),
     check("notes_visibility_check", sql`${table.visibility} = 'private'`),
     check("notes_kind_check", sql`${table.kind} IN ('note', 'paper', 'thought', 'comment', 'reply', 'quick')`),
-    check("notes_publication_target_check", sql`${table.publicationTarget} IN ('undecided', 'paper', 'thought', 'comment', 'reply')`),
+    check("notes_publication_target_check", sql`${table.publicationTarget} IN ('undecided', 'paper', 'thought', 'proposal', 'comment', 'reply')`),
     check("notes_lifecycle_check", sql`${table.lifecycle} IN ('draft', 'published', 'archived')`),
     check("notes_revision_check", sql`${table.revision} >= 1`)
   ]
@@ -707,6 +760,7 @@ export const workspaceNoteRevisions = pgTable(
     document: jsonb("content_document").$type<VersionedDocumentContract>().notNull(),
     kind: text("kind").notNull(),
     publicationTarget: text("publication_target").notNull(),
+    proposal: jsonb("proposal").$type<PatronageProposalInputContract>(),
     targetId: text("target_id"),
     notebookId: uuid("notebook_id").references(() => workspaceNotebooks.id, { onDelete: "set null" }),
     attachmentIds: uuid("attachment_ids").array().default(sql`ARRAY[]::UUID[]`).notNull(),

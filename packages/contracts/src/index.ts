@@ -29,7 +29,38 @@ export const communityVisibilitySchema = z.enum(["public", "private"]);
 export const callStatusSchema = z.enum(["quiet", "voice live", "video live"]);
 export const liveCallStatusSchema = z.enum(["scheduled", "live", "ended", "cancelled"]);
 export const liveCallKindSchema = z.enum(["voice", "video"]);
-export const patronageVisibilitySchema = z.enum(["civic", "private"]);
+export const patronageProposalStatusSchema = z.enum(["open", "funded", "closed"]);
+export const patronageCurrencySchema = z.enum(["USD", "EUR", "GBP", "CAD", "AUD"]);
+export const patronageContributionStatusSchema = z.enum(["pending", "confirmed", "refunded", "failed"]);
+export const patronageProposalInputSchema = z.object({
+  status: patronageProposalStatusSchema.default("open"),
+  currency: patronageCurrencySchema.default("USD"),
+  goalMinorUnits: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  deadline: z.string().date().nullable().default(null)
+});
+export const patronageSupporterSchema = z.object({
+  displayName: z.string().trim().min(1).max(160),
+  amountMinorUnits: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  anonymous: z.boolean().default(false)
+});
+export const patronageProposalSchema = patronageProposalInputSchema.extend({
+  raisedMinorUnits: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+  supporterCount: z.number().int().nonnegative().default(0),
+  topSupporters: z.array(patronageSupporterSchema).max(10).default([])
+});
+export const patronageContributionSchema = z.object({
+  id: z.string().uuid(),
+  postId: z.string().trim().min(1).max(240),
+  contributorHandle: z.string().trim().min(1).max(80).nullable().default(null),
+  displayName: z.string().trim().min(1).max(160),
+  amountMinorUnits: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  currency: patronageCurrencySchema,
+  anonymous: z.boolean().default(false),
+  provider: z.string().trim().min(1).max(80),
+  status: patronageContributionStatusSchema,
+  createdAt: z.string().datetime(),
+  confirmedAt: z.string().datetime().nullable().default(null)
+});
 export const attachmentStatusSchema = z.enum(["pending", "uploaded", "previewed", "failed"]);
 export const attachmentKindSchema = z.enum([
   "image",
@@ -77,6 +108,8 @@ export const resourceTypeSchema = z.enum([
   "workspace",
   "note",
   "opportunity",
+  "proposal",
+  "contribution",
   "attachment"
 ]);
 export const resourceVisibilitySchema = z.enum(["private", "restricted", "community", "public"]);
@@ -251,6 +284,7 @@ export const workspacePublicationTargetSchema = z.enum([
   "undecided",
   "paper",
   "thought",
+  "proposal",
   "comment",
   "reply"
 ]);
@@ -522,6 +556,7 @@ export const inquiryItemSchema = z.object({
   comments: z.array(inquiryCommentSchema),
   attachments: z.array(inquiryAttachmentSchema).max(100).optional(),
   quote: contentQuoteSchema.optional(),
+  patronage: patronageProposalSchema.optional(),
   saved: z.boolean().optional(),
   savedBy: z.array(z.string()).optional(),
   signaledBy: z.array(z.string()).optional(),
@@ -562,11 +597,18 @@ export const createPostInputSchema = z.object({
   authorHandle: z.string().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.optional(),
+  patronage: patronageProposalInputSchema.optional(),
   attachments: z.array(postAttachmentInputSchema).max(10).default([])
 }).superRefine((input, context) => {
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
   if (input.kind !== "paper" && input.document && !documentFitsReducedEditor(input.document)) {
     context.addIssue({ code: "custom", path: ["document"], message: "Thoughts use the reduced editor formatting set." });
+  }
+  if (input.patronage && (input.kind !== "paper" || input.room !== "funding")) {
+    context.addIssue({ code: "custom", path: ["patronage"], message: "Patronage proposals publish as paper-grade posts in the Patronage Hall." });
+  }
+  if (input.room === "funding" && !input.patronage) {
+    context.addIssue({ code: "custom", path: ["patronage"], message: "Patronage Hall posts require proposal funding details." });
   }
   if (!input.attachmentIds?.length || !input.attachments.length) return;
   const legacyIds = input.attachments.map((attachment) => attachment.id);
@@ -589,10 +631,11 @@ export const updatePostInputSchema = z.object({
   expectedEditedAt: z.string().datetime().nullable().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.nullable().optional(),
+  patronage: patronageProposalInputSchema.optional(),
   actorHandle: z.string().optional()
 }).superRefine((input, context) => {
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
-  if ((input.attachmentIds !== undefined || input.quoteSource !== undefined || input.document !== undefined) && input.expectedEditedAt === undefined) {
+  if ((input.attachmentIds !== undefined || input.quoteSource !== undefined || input.document !== undefined || input.patronage !== undefined) && input.expectedEditedAt === undefined) {
     context.addIssue({
       code: "custom",
       path: ["expectedEditedAt"],
@@ -749,6 +792,7 @@ const workspaceDocumentFieldsSchema = z.object({
   publicationTarget: workspacePublicationTargetSchema.default("undecided"),
   notebookId: z.string().uuid().nullable().default(null),
   targetId: z.string().trim().min(1).max(240).nullable().default(null),
+  proposal: patronageProposalInputSchema.nullable().default(null),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).default([])
 });
 
@@ -759,6 +803,12 @@ export const createWorkspaceDocumentInputSchema = workspaceDocumentFieldsSchema.
   }
   if (input.kind === "quick") {
     context.addIssue({ code: "custom", path: ["kind"], message: "Quick Notes are created by filing the active Scribble." });
+  }
+  if (input.publicationTarget === "proposal" && (!input.proposal || input.kind !== "paper")) {
+    context.addIssue({ code: "custom", path: ["proposal"], message: "A Patronage Proposal uses a paper-grade draft with funding details." });
+  }
+  if (input.publicationTarget !== "proposal" && input.proposal) {
+    context.addIssue({ code: "custom", path: ["proposal"], message: "Funding details belong only to Patronage Proposal drafts." });
   }
 });
 
@@ -772,6 +822,12 @@ export const updateWorkspaceDocumentInputSchema = workspaceDocumentFieldsSchema.
   }
   if (input.kind === "quick" && !documentFitsScribbleEditor(input.document)) {
     context.addIssue({ code: "custom", path: ["document"], message: "Quick Notes use the Scribble formatting set." });
+  }
+  if (input.publicationTarget === "proposal" && (!input.proposal || input.kind !== "paper")) {
+    context.addIssue({ code: "custom", path: ["proposal"], message: "A Patronage Proposal uses a paper-grade draft with funding details." });
+  }
+  if (input.publicationTarget !== "proposal" && input.proposal) {
+    context.addIssue({ code: "custom", path: ["proposal"], message: "Funding details belong only to Patronage Proposal drafts." });
   }
 });
 
@@ -886,7 +942,7 @@ export const publishNoteInputSchema = z.object({
   title: z.string().trim().min(1).max(240).optional(),
   body: z.string().trim().min(1).max(20000).optional(),
   expectedRevision: z.number().int().positive().optional(),
-  publicationTarget: z.enum(["paper", "thought"]).optional(),
+  publicationTarget: z.enum(["paper", "thought", "proposal"]).optional(),
   visibility: z.enum(["private", "community", "public"]).default("public")
 });
 
@@ -973,6 +1029,10 @@ export type VersionedDocumentContract = z.infer<typeof versionedDocumentSchema>;
 export type ResearchProfileContract = z.infer<typeof researchProfileSchema>;
 export type CreateProfileInputContract = z.infer<typeof createProfileInputSchema>;
 export type InquiryItemContract = z.infer<typeof inquiryItemSchema>;
+export type PatronageProposalInputContract = z.infer<typeof patronageProposalInputSchema>;
+export type PatronageProposalContract = z.infer<typeof patronageProposalSchema>;
+export type PatronageSupporterContract = z.infer<typeof patronageSupporterSchema>;
+export type PatronageContributionContract = z.infer<typeof patronageContributionSchema>;
 export type InquiryAttachmentContract = z.infer<typeof inquiryAttachmentSchema>;
 export type ResearchCommunityContract = z.infer<typeof researchCommunitySchema>;
 export type CreatePostInputContract = z.infer<typeof createPostInputSchema>;

@@ -369,63 +369,13 @@ export function OfficeDeskView({
 
 
 
-export function PatronageLobbyView({
-
-  room,
-
-  onOpenCivic,
-
-  onOpenPrivate
-
-}: {
-
-  room: Room;
-
-  onOpenCivic: () => void;
-
-  onOpenPrivate: () => void;
-
-}) {
-
-  return (
-
-    <div className="patronage-lobby-view">
-
-      <RoomRender
-
-        room={room}
-
-        onOpenNotebook={() => undefined}
-
-        onOpenCivic={onOpenCivic}
-
-        onOpenPrivate={onOpenPrivate}
-
-        showPatronageHotspots
-
-      />
-
-    </div>
-
-  );
-
-}
-
-
-
 export function RoomRender({
 
   room,
 
   onOpenNotebook,
 
-  onOpenSaved,
-
-  onOpenCivic,
-
-  onOpenPrivate,
-
-  showPatronageHotspots = false
+  onOpenSaved
 
 }: {
 
@@ -435,17 +385,9 @@ export function RoomRender({
 
   onOpenSaved?: () => void;
 
-  onOpenCivic?: () => void;
-
-  onOpenPrivate?: () => void;
-
-  showPatronageHotspots?: boolean;
-
 }) {
 
   const isOffice = room.id === "office";
-
-  const isPatronage = room.id === "funding";
 
 
 
@@ -498,46 +440,6 @@ export function RoomRender({
             </CanonicalLink>
 
           </>
-
-        </div>
-
-      ) : null}
-
-      {isPatronage && showPatronageHotspots ? (
-
-        <div className="room-hotspots patronage-hotspots" aria-label="Patronage sections">
-
-          <CanonicalLink
-
-            className="patronage-hotspot patronage-hotspot-civic"
-
-            route={{ kind: "funding", view: "civic" }}
-
-            onNavigate={onOpenCivic ?? (() => undefined)}
-
-            aria-label="Open Civic Patronage"
-
-          >
-
-            <span>Civic</span>
-
-          </CanonicalLink>
-
-          <CanonicalLink
-
-            className="patronage-hotspot patronage-hotspot-private"
-
-            route={{ kind: "funding", view: "private" }}
-
-            onNavigate={onOpenPrivate ?? (() => undefined)}
-
-            aria-label="Open Private Patronage"
-
-          >
-
-            <span>Private</span>
-
-          </CanonicalLink>
 
         </div>
 

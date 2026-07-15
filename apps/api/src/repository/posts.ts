@@ -23,6 +23,13 @@ import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../service
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { markQuotedPostUnavailable, resolveContentQuote } from "../services/contentQuotes";
 import {
+  createPatronageProjection,
+  insertPatronageProposal,
+  patronagePostStatus,
+  updatePatronageProjection,
+  updatePatronageProposal
+} from "../services/patronage";
+import {
   assertUniqueAttachmentIds,
   canonicalAttachmentIds,
   replaceOwnerAttachments
@@ -53,6 +60,16 @@ type ActionMutationResult = {
   activity?: CanonicalActionActivityContract;
 };
 
+const lockedPostSelect = `SELECT
+  id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+  affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt", deleted_at AS "deletedAt",
+  status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
+  claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
+  signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage
+ FROM posts
+ WHERE id = $1
+ FOR UPDATE`;
+
 export const createPost = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = createPostInputSchema.parse(rawInput);
   const snapshot = await getInitialState();
@@ -60,6 +77,9 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
   const author = snapshot.profiles[handle];
   if (!author) throw new TRPCError({ code: "NOT_FOUND", message: "Author profile not found." });
   const isPaper = input.kind === "paper";
+  const patronage = createPatronageProjection(input.patronage);
+  const isProposal = Boolean(patronage);
+  const postStatus = patronagePostStatus(patronage, isPaper ? "Draft" : "New");
   const legacyRequestedAttachments = (input.attachments ?? []).map((attachment) => ({
     ...attachment,
     status: "uploaded" as const
@@ -83,15 +103,15 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     affiliation: author.location,
     date: "Just now",
     createdAt: new Date().toISOString(),
-    status: isPaper ? "Draft" : "New",
+    status: postStatus,
     metrics: { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" },
-    gatheringReason: "A new working post added to the live beta.",
+    gatheringReason: isProposal ? "A public Patronage proposal seeking practical support." : "A new working post added to the live beta.",
     excerpt: input.body,
     body: input.body,
     document: input.document,
-    tags: [input.room, input.kind, ...author.fields.slice(0, 2).map((field) => field.toLowerCase())],
+    tags: [input.room, input.kind, ...(isProposal ? ["patronage", "proposal"] : []), ...author.fields.slice(0, 2).map((field) => field.toLowerCase())],
     signals: [
-      { label: "Status", value: isPaper ? "Draft" : "New" },
+      { label: "Status", value: postStatus },
       { label: "Critiques", value: "0" },
       { label: "Forks", value: "0" },
       { label: "Next action", value: "Invite critique" }
@@ -103,6 +123,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     forks: [],
     comments: [],
     attachments: hasDatabase() ? [] : legacyRequestedAttachments,
+    patronage,
     saved: input.room === "office",
     savedBy: input.room === "office" ? [author.handle] : [],
     signaledBy: [],
@@ -128,12 +149,12 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       `INSERT INTO posts (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by, quote, search_text
+        tests, forks, saved, saved_by, signaled_by, forked_by, quote, search_text, patronage
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26, $27
+        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
       )`,
       [
         item.id,
@@ -162,9 +183,11 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
         JSON.stringify(item.signaledBy ?? []),
         JSON.stringify(item.forkedBy ?? []),
         item.quote ? JSON.stringify(item.quote) : null,
-        searchablePostText({ ...item, authorName: item.author })
+        searchablePostText({ ...item, authorName: item.author }),
+        item.patronage ? JSON.stringify(item.patronage) : null
       ]
     );
+    await insertPatronageProposal(client, item.id, item.patronage);
     if (input.document) {
       await client.query("UPDATE posts SET content_document = $2 WHERE id = $1", [item.id, JSON.stringify(input.document)]);
     }
@@ -266,43 +289,7 @@ export const applyPostAction = async (
       await client.query("COMMIT");
       return claim.response;
     }
-    const postResult = await client.query<SnapshotRow>(
-      `SELECT
-        id,
-        revision,
-        kind,
-        room,
-        title,
-        author_handle AS "authorHandle",
-        author_name AS "authorName",
-        affiliation,
-        date_label AS "dateLabel",
-        created_at AS "createdAt",
-        edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        status,
-        metrics,
-        gathering_reason AS "gatheringReason",
-        excerpt,
-        body,
-        content_document AS "document",
-        tags,
-        signals,
-        claims,
-        objections,
-        evidence,
-        tests,
-        forks,
-        saved,
-        saved_by AS "savedBy",
-        signaled_by AS "signaledBy",
-        forked_by AS "forkedBy",
-        quote
-       FROM posts
-       WHERE id = $1
-       FOR UPDATE`,
-      [postId]
-    );
+    const postResult = await client.query<SnapshotRow>(lockedPostSelect, [postId]);
 
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
@@ -496,6 +483,7 @@ export const updatePost = async (
     if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
+    const patronage = updatePatronageProjection(input.patronage, existing.patronage);
     return {
       ...existing,
       title: input.title,
@@ -503,6 +491,8 @@ export const updatePost = async (
       document: input.document ?? existing.document,
       excerpt: input.body,
       claims: [input.body],
+      status: patronagePostStatus(patronage, existing.status),
+      patronage,
       editedAt,
       revision: (existing.revision ?? 1) + 1
     };
@@ -521,19 +511,7 @@ export const updatePost = async (
       await client.query("COMMIT");
       return claim.response;
     }
-    const postResult = await client.query<SnapshotRow>(
-      `SELECT
-        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
-        affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
-        claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
-       FROM posts
-       WHERE id = $1
-       FOR UPDATE`,
-      [postId]
-    );
+    const postResult = await client.query<SnapshotRow>(lockedPostSelect, [postId]);
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
     if (
@@ -577,6 +555,8 @@ export const updatePost = async (
       : input.quoteSource === null
         ? undefined
         : await resolveContentQuote(client, input.quoteSource, { ownerId: postId, ownerType: "post" });
+    const patronage = updatePatronageProjection(input.patronage, row.patronage);
+    const status = patronagePostStatus(patronage, row.status);
 
     const revisionResult = await client.query<{ revision: number }>(
       `UPDATE posts
@@ -588,6 +568,8 @@ export const updatePost = async (
            search_text = $5,
            edited_at = $6,
            quote = $7,
+           patronage = $9,
+           status = $10,
            revision = revision + 1,
            updated_at = now()
        WHERE id = $1
@@ -600,9 +582,12 @@ export const updatePost = async (
         searchablePostText({ title: input.title, body: input.body, excerpt: input.body, authorName: row.authorName }),
         editedAt,
         quote ? JSON.stringify(quote) : null,
-        input.document ? JSON.stringify(input.document) : row.document ? JSON.stringify(row.document) : null
+        input.document ? JSON.stringify(input.document) : row.document ? JSON.stringify(row.document) : null,
+        patronage ? JSON.stringify(patronage) : null,
+        status
       ]
     );
+    await updatePatronageProposal(client, postId, input.patronage);
 
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
@@ -629,6 +614,8 @@ export const updatePost = async (
         excerpt: input.body,
         claims: [input.body],
         quote,
+        patronage,
+        status,
         editedAt,
         revision: revisionResult.rows[0].revision
       },
@@ -702,19 +689,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
       await client.query("COMMIT");
       return claim.response;
     }
-    const postResult = await client.query<SnapshotRow>(
-      `SELECT
-        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
-        affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
-        claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
-       FROM posts
-       WHERE id = $1
-       FOR UPDATE`,
-      [postId]
-    );
+    const postResult = await client.query<SnapshotRow>(lockedPostSelect, [postId]);
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
     if (
@@ -798,6 +773,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
              signaled_by = '[]'::jsonb,
              forked_by = '[]'::jsonb,
              quote = NULL,
+             patronage = NULL,
              search_text = $16,
              edited_at = NULL,
              deleted_at = $17,

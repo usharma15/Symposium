@@ -249,7 +249,12 @@ export const replaceLocalOwnerAttachments = async (input: {
       desired.some(
         (record) =>
           !record ||
-          record.ownerType !== input.ownerType ||
+          (record.ownerType !== input.ownerType && !(
+            !record.ownerId &&
+            record.actorHandle === input.actorHandle &&
+            ((record.ownerType === "post" && input.ownerType === "note") ||
+              (record.ownerType === "note" && input.ownerType === "post"))
+          )) ||
           record.status !== "uploaded" ||
           (record.actorHandle && record.actorHandle !== input.actorHandle) ||
           (record.ownerId && record.ownerId !== input.ownerId)
@@ -274,6 +279,7 @@ export const replaceLocalOwnerAttachments = async (input: {
       store.attachments[record.attachmentId] = {
         ...record,
         ownerId: input.ownerId,
+        ownerType: input.ownerType,
         updatedAt: new Date().toISOString()
       };
     }

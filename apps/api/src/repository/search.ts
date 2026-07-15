@@ -56,7 +56,7 @@ export const search = async (rawInput: unknown) => {
         affiliation, date_label AS "dateLabel", status, metrics, gathering_reason AS "gatheringReason",
         created_at AS "createdAt", edited_at AS "editedAt", deleted_at AS "deletedAt",
         excerpt, body, tags, signals, claims, objections, evidence, tests, forks, saved,
-        saved_by AS "savedBy", signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
+        saved_by AS "savedBy", signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage
        FROM posts
        WHERE search_text ILIKE $1
          AND deleted_at IS NULL

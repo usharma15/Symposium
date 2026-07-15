@@ -76,6 +76,7 @@ import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
 import { SymposiumDocumentEditor, SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
 import { appendedContentAttachments, documentForContent, emptySymposiumDocument, editorCapabilityForKind } from "@/lib/documentModel";
 import type { VersionedDocumentContract } from "@/packages/contracts/src";
+import type { PatronageProposalInputContract } from "@/packages/contracts/src";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
@@ -87,14 +88,28 @@ import {
   ScribbleCitable,
   useScribble
 } from "@/features/scribble/ScribbleContext";
+import {
+  PatronageFeedSummary,
+  PatronageProposalFields,
+  PatronageProposalRail
+} from "@/features/patronage/PatronageViews";
+import {
+  emptyPatronageDraftFields,
+  patronageDraftFieldsForProposal,
+  patronageInputForDraft
+} from "@/features/patronage/patronageModel";
+
+export type PostDraftKind = "paper" | "thought" | "proposal";
 
 export type PostDraft = {
   title: string;
   body: string;
   document: VersionedDocumentContract;
-  kind: Extract<InquiryItem["kind"], "paper" | "thought">;
+  kind: PostDraftKind;
+  patronage?: PatronageProposalInputContract;
   attachments: InquiryAttachment[];
   quoteSource?: ContentQuoteSource;
+  quoteSnapshot?: InquiryItem["quote"];
 };
 
 export type PostCreationResult = { ok: true } | { ok: false; error: string };
@@ -109,7 +124,12 @@ export const kindLabels: Record<InquiryItem["kind"], string> = {
 };
 const initial = profileInitials;
 
-const postKindOptions: PostDraft["kind"][] = ["thought", "paper"];
+const postKindOptions: PostDraftKind[] = ["thought", "paper", "proposal"];
+const composerKindLabels: Record<PostDraftKind, string> = {
+  thought: "Thought",
+  paper: "Paper",
+  proposal: "Patronage Proposal"
+};
 
 export function PostComposerModal({
   onClose,
@@ -136,12 +156,14 @@ export function PostComposerModal({
   const [submitting, setSubmitting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [attachedQuote, setAttachedQuote] = useState<AttachedQuote | null>(null);
+  const [patronageFields, setPatronageFields] = useState(emptyPatronageDraftFields);
 
   const submitPost = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const cleanTitle = title.trim();
     const cleanBody = body.trim();
-    if (!cleanTitle || !cleanBody || uploading || submitting || savingDraft) return;
+    const patronage = kind === "proposal" ? patronageInputForDraft(patronageFields) : undefined;
+    if (!cleanTitle || !cleanBody || uploading || submitting || savingDraft || (kind === "proposal" && !patronage)) return;
 
     setSubmitting(true);
     setAttachmentStatus(attachments.length ? "Publishing post with attachments" : "Publishing post");
@@ -150,10 +172,12 @@ export function PostComposerModal({
       body: cleanBody,
       document: documentValue,
       kind,
+      patronage: patronage ?? undefined,
       attachments,
       quoteSource: attachedQuote
         ? { sourceType: attachedQuote.selection.sourceType, sourceId: attachedQuote.selection.sourceId }
-        : undefined
+        : undefined,
+      quoteSnapshot: attachedQuote?.quote
     });
     setSubmitting(false);
     if (!result.ok) {
@@ -164,6 +188,7 @@ export function PostComposerModal({
     setBody("");
     setDocumentValue(emptySymposiumDocument());
     setKind("thought");
+    setPatronageFields(emptyPatronageDraftFields());
     setAttachments([]);
     setAttachedQuote(null);
     setAttachmentStatus("");
@@ -171,6 +196,11 @@ export function PostComposerModal({
 
   const saveDraft = async () => {
     if (uploading || submitting || savingDraft) return;
+    const patronage = kind === "proposal" ? patronageInputForDraft(patronageFields) : undefined;
+    if (kind === "proposal" && !patronage) {
+      setAttachmentStatus("Add a valid funding goal before saving this proposal draft");
+      return;
+    }
     setSavingDraft(true);
     setAttachmentStatus("Saving draft to Notes");
     const result = await onSaveDraft({
@@ -178,10 +208,12 @@ export function PostComposerModal({
       body,
       document: documentValue,
       kind,
+      patronage: patronage ?? undefined,
       attachments,
       quoteSource: attachedQuote
         ? { sourceType: attachedQuote.selection.sourceType, sourceId: attachedQuote.selection.sourceId }
-        : undefined
+        : undefined,
+      quoteSnapshot: attachedQuote?.quote
     });
     setSavingDraft(false);
     if (!result.ok) {
@@ -197,7 +229,7 @@ export function PostComposerModal({
         <div className="composer-modal-head">
           <div>
             <span>New post</span>
-            <strong>{kindLabels[kind]}</strong>
+            <strong>{composerKindLabels[kind]}</strong>
           </div>
           <button type="button" title="Close" onClick={onClose}>
             <X size={17} />
@@ -207,7 +239,7 @@ export function PostComposerModal({
           <select value={kind} onChange={(event) => setKind(event.target.value as PostDraft["kind"])}>
             {postKindOptions.map((option) => (
               <option key={option} value={option}>
-                {kindLabels[option]}
+                {composerKindLabels[option]}
               </option>
             ))}
           </select>
@@ -222,7 +254,7 @@ export function PostComposerModal({
             </button>
             <button
               type="submit"
-              disabled={uploading || submitting || savingDraft || !title.trim() || !body.trim()}
+              disabled={uploading || submitting || savingDraft || !title.trim() || !body.trim() || (kind === "proposal" && !patronageInputForDraft(patronageFields))}
             >
               {submitting ? "Posting…" : "Post"}
             </button>
@@ -233,13 +265,20 @@ export function PostComposerModal({
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Title"
         />
+        {kind === "proposal" ? (
+          <PatronageProposalFields
+            value={patronageFields}
+            onChange={setPatronageFields}
+            disabled={submitting || savingDraft}
+          />
+        ) : null}
         <SymposiumDocumentEditor
           value={documentValue}
-          capability={editorCapabilityForKind(kind)}
+          capability={editorCapabilityForKind(kind === "proposal" ? "paper" : kind)}
           attachments={attachments}
           profiles={profiles}
           disabled={submitting || savingDraft}
-          placeholder={`Write your ${kind} here`}
+          placeholder={kind === "proposal" ? "Develop the work, budget, milestones, risks, and evidence here" : `Write your ${kind} here`}
           onChange={(document, plainText) => { setDocumentValue(document); setBody(plainText); }}
           onAttachmentsChange={setAttachments}
           onBusyChange={setUploading}
@@ -275,6 +314,7 @@ export function PostEditModal({
     document: VersionedDocumentContract;
     attachments: InquiryAttachment[];
     quote: InquiryItem["quote"] | null;
+    patronage?: PatronageProposalInputContract;
   }) => Promise<void>;
   onDelete: (itemId: string) => void;
   onUploadAttachment: AttachmentUploadHandler;
@@ -289,13 +329,17 @@ export function PostEditModal({
     item.quote ? attachedQuoteFromSnapshot(item.quote) : null
   );
   const [busy, setBusy] = useState(false);
+  const [patronageFields, setPatronageFields] = useState(() =>
+    item.patronage ? patronageDraftFieldsForProposal(item.patronage) : emptyPatronageDraftFields()
+  );
 
   const submitEdit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (busy || !title.trim() || !body.trim()) return;
+    const patronage = item.patronage ? patronageInputForDraft(patronageFields) : undefined;
+    if (busy || !title.trim() || !body.trim() || (item.patronage && !patronage)) return;
     setBusy(true);
     try {
-      await onSave(item.id, { title, body, document: documentValue, attachments, quote: attachedQuote?.quote ?? null });
+      await onSave(item.id, { title, body, document: documentValue, attachments, quote: attachedQuote?.quote ?? null, patronage: patronage ?? undefined });
     } finally {
       setBusy(false);
     }
@@ -307,7 +351,7 @@ export function PostEditModal({
         <div className="composer-modal-head">
           <div>
             <span>Edit post</span>
-            <strong>{kindLabels[item.kind]}</strong>
+            <strong>{item.patronage ? "Patronage Proposal" : kindLabels[item.kind]}</strong>
           </div>
           <button type="button" title="Close" onClick={onClose}>
             <X size={17} />
@@ -325,13 +369,21 @@ export function PostEditModal({
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Title"
         />
+        {item.patronage ? (
+          <PatronageProposalFields
+            value={patronageFields}
+            onChange={setPatronageFields}
+            disabled={busy}
+            allowStatus
+          />
+        ) : null}
         <SymposiumDocumentEditor
           value={documentValue}
           capability={editorCapabilityForKind(item.kind)}
           attachments={attachments}
           profiles={profiles}
           disabled={busy}
-          placeholder={`Write your ${item.kind === "paper" ? "paper" : "thought"} here`}
+          placeholder={item.patronage ? "Develop the proposal here" : `Write your ${item.kind === "paper" ? "paper" : "thought"} here`}
           onChange={(document, plainText) => { setDocumentValue(document); setBody(plainText); }}
           onAttachmentsChange={setAttachments}
           onBusyChange={setBusy}
@@ -596,6 +648,7 @@ export function FeedPost({
             }) : undefined}
           />
         ) : null}
+        <PatronageFeedSummary item={item} />
         <PostTimeFooter item={item} />
         <SocialActions
           item={item}
@@ -792,6 +845,7 @@ export function DetailView({
   onOpenAttachmentPreview: AttachmentPreviewHandler;
 }) {
   const isPaper = item.kind === "paper";
+  const isProposal = Boolean(item.patronage);
   const postDeleted = isDeletedPost(item);
   const detailRef = useRef<HTMLElement | null>(null);
   const doiSlug = item.id.replace(/[^a-z0-9]+/gi, ".").replace(/\.+/g, ".").replace(/\.$/, "");
@@ -836,7 +890,7 @@ export function DetailView({
   });
 
   return (
-    <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}`}>
+    <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}${isProposal ? " patronage-detail" : ""}`}>
       <button className="back-button" type="button" onClick={onBack}>
         <ArrowLeft size={17} />
         Back to {room.feedLabel}
@@ -844,7 +898,7 @@ export function DetailView({
 
       <section className="detail-main" ref={detailRef}>
         <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />
-        <p className="eyebrow">{kindLabels[item.kind]}</p>
+        <p className="eyebrow">{isProposal ? "Patronage Proposal" : kindLabels[item.kind]}</p>
         <h1>{deletedPostContextTitle(item)}</h1>
         {postDeleted ? (
           <div className="detail-byline-button deleted-post-author" aria-label="Deleted post">
@@ -903,6 +957,11 @@ export function DetailView({
           }}
           actorHandle={actorHandle}
         />
+        {isProposal ? (
+          <div className="patronage-side-inline">
+            <PatronageProposalRail item={item} />
+          </div>
+        ) : null}
 
         <section className="comments-section" id={commentsSectionId}>
           <h2>Discussion</h2>
@@ -940,7 +999,9 @@ export function DetailView({
         </section>
       </section>
 
-      {isPaper ? (
+      {isProposal ? (
+        <PatronageProposalRail item={item} />
+      ) : isPaper ? (
         <aside className="paper-side">
           <section>
             <h2>Paper</h2>

@@ -330,7 +330,8 @@ export const tombstonePost = (item: InquiryItem, deletedAt = new Date().toISOStr
   tests: [],
   forks: [],
   attachments: [],
-  quote: undefined
+  quote: undefined,
+  patronage: undefined
 });
 
 export const tombstoneComment = (

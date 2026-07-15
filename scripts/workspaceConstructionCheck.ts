@@ -60,7 +60,8 @@ const workspaceDocument = (input: Partial<WorkspaceDocument> & Pick<WorkspaceDoc
       canShare: true,
       canDelete: true
     },
-    ...overrides
+    ...overrides,
+    proposal: overrides.proposal ?? null
   };
 };
 

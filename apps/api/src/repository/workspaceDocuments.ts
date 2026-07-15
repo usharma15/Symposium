@@ -191,6 +191,7 @@ const documentSelect = `
   owner.name AS "ownerName",
   note.kind,
   note.publication_target AS "publicationTarget",
+  note.proposal,
   note.target_id AS "targetId",
   note.title,
   note.body,
@@ -226,6 +227,7 @@ const mapDocument = (row: Record<string, unknown>) => {
     notebookId: row.notebookId ?? null,
     notebookName: row.notebookName ?? null,
     targetId: row.targetId ?? null,
+    proposal: row.proposal ?? null,
     publishedPostId: row.publishedPostId ?? null,
     createdAt: iso(row.createdAt as Date | string),
     updatedAt: iso(row.updatedAt as Date | string),
@@ -271,6 +273,7 @@ const insertRevision = async (
     document: unknown;
     kind: string;
     publicationTarget: string;
+    proposal: unknown;
     targetId: string | null;
     notebookId: string | null;
     attachmentIds: string[];
@@ -280,8 +283,8 @@ const insertRevision = async (
   const result = await client.query<{ id: string }>(
     `INSERT INTO workspace_note_revisions (
        note_id, revision, editor_handle, title, body, content_document, kind,
-       publication_target, target_id, notebook_id, attachment_ids, reason
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid[], $12)
+       publication_target, proposal, target_id, notebook_id, attachment_ids, reason
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::uuid[], $13)
      RETURNING id::text`,
     [
       input.noteId,
@@ -292,6 +295,7 @@ const insertRevision = async (
       JSON.stringify(input.document),
       input.kind,
       input.publicationTarget,
+      input.proposal ? JSON.stringify(input.proposal) : null,
       input.targetId,
       input.notebookId,
       input.attachmentIds,
@@ -371,8 +375,8 @@ export const createWorkspaceDocument = async (rawInput: unknown, actor: Actor, m
     const created = await client.query<{ id: string; revision: number }>(
       `INSERT INTO notes (
          workspace_id, owner_handle, notebook_id, title, body, content_document, kind,
-         publication_target, target_id, lifecycle, visibility
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', 'private')
+         publication_target, proposal, target_id, lifecycle, visibility
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'draft', 'private')
        RETURNING id::text, revision`,
       [
         workspace.id,
@@ -383,6 +387,7 @@ export const createWorkspaceDocument = async (rawInput: unknown, actor: Actor, m
         JSON.stringify(input.document),
         input.kind,
         input.publicationTarget,
+        input.proposal ? JSON.stringify(input.proposal) : null,
         input.targetId
       ]
     );
@@ -462,10 +467,11 @@ export const updateWorkspaceDocument = async (
          content_document = $5,
          kind = $6,
          publication_target = $7,
-         target_id = $8,
+         proposal = $8,
+         target_id = $9,
          revision = revision + 1,
          updated_at = now()
-       WHERE id = $1 AND revision = $9 AND deleted_at IS NULL
+       WHERE id = $1 AND revision = $10 AND deleted_at IS NULL
        RETURNING revision`,
       [
         noteId,
@@ -475,6 +481,7 @@ export const updateWorkspaceDocument = async (
         JSON.stringify(input.document),
         input.kind,
         input.publicationTarget,
+        input.proposal ? JSON.stringify(input.proposal) : null,
         input.targetId,
         input.expectedRevision
       ]

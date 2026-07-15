@@ -8,7 +8,7 @@ import {
 } from "@/lib/localAttachmentStore";
 import { cleanHandle, isDeletedPost } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
-import { contentQuoteSourceSchema, versionedDocumentSchema } from "@/packages/contracts/src";
+import { contentQuoteSourceSchema, patronageProposalInputSchema, versionedDocumentSchema } from "@/packages/contracts/src";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +24,7 @@ export async function PATCH(request: Request, context: Context) {
     attachmentIds?: unknown[];
     expectedEditedAt?: string | null;
     quoteSource?: unknown;
+    patronage?: unknown;
   }>(request);
 
   if (!body) {
@@ -54,10 +55,12 @@ export async function PATCH(request: Request, context: Context) {
     return jsonError("Choose an available post or comment to quote.", 400);
   }
   const parsedQuoteSource = quoteSource && "success" in quoteSource ? quoteSource.data : quoteSource;
+  const patronage = body.patronage === undefined ? undefined : patronageProposalInputSchema.safeParse(body.patronage);
+  if (patronage && !patronage.success) return jsonError("Add a valid funding goal and proposal status.", 400);
   const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const live = await proxyLiveBackend(`/v1/posts/${id}`, {
     method: "PATCH",
-    body: { ...input, actorHandle, attachmentIds, quoteSource: parsedQuoteSource, expectedEditedAt: body.expectedEditedAt },
+    body: { ...input, actorHandle, attachmentIds, quoteSource: parsedQuoteSource, patronage: patronage?.data, expectedEditedAt: body.expectedEditedAt },
     actorHandle,
     idempotencyKey
   });
@@ -76,8 +79,8 @@ export async function PATCH(request: Request, context: Context) {
     if (attachmentIds?.length && (existing.room === "office" || existing.kind === "draft")) {
       return jsonError("Private post attachments require protected delivery before they can be published.", 412);
     }
-    if ((attachmentIds || body.quoteSource !== undefined || body.document !== undefined) && body.expectedEditedAt === undefined) {
-      return jsonError("The current post edit version is required when changing attachments or quotes.", 400);
+    if ((attachmentIds || body.quoteSource !== undefined || body.document !== undefined || body.patronage !== undefined) && body.expectedEditedAt === undefined) {
+      return jsonError("The current post edit version is required when changing structured post content.", 400);
     }
     if (body.expectedEditedAt !== undefined && (existing.editedAt ?? null) !== body.expectedEditedAt) {
       return jsonError("This post changed after editing began. Refresh it before saving again.", 409);
@@ -90,7 +93,8 @@ export async function PATCH(request: Request, context: Context) {
       : parsedQuoteSource === null
         ? null
         : resolveLocalContentQuote(snapshot.items, parsedQuoteSource, { ownerId: id, ownerType: "post" });
-    const item = await updatePost(id, { ...input, attachments, quote }, actorHandle ?? "");
+    if (patronage?.success && !existing.patronage) return jsonError("Only Patronage proposals can receive funding details.", 400);
+    const item = await updatePost(id, { ...input, attachments, quote, patronage: patronage?.data }, actorHandle ?? "");
     if (!item) {
       return jsonError("Post not found or cannot be edited by this profile.", 404);
     }

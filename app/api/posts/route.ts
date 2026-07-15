@@ -4,7 +4,7 @@ import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { contentKinds, postRooms } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
-import { contentQuoteSourceSchema, versionedDocumentSchema } from "@/packages/contracts/src";
+import { contentQuoteSourceSchema, patronageProposalInputSchema, versionedDocumentSchema } from "@/packages/contracts/src";
 import {
   LocalAttachmentStoreError,
   replaceLocalOwnerAttachments,
@@ -28,6 +28,7 @@ export async function POST(request: Request) {
     attachmentIds?: unknown[];
     authorHandle?: string;
     quoteSource?: unknown;
+    patronage?: unknown;
   }>(request);
 
   if (!body) {
@@ -60,6 +61,11 @@ export async function POST(request: Request) {
   }
   const quoteSource = body.quoteSource === undefined ? undefined : contentQuoteSourceSchema.safeParse(body.quoteSource);
   if (quoteSource && !quoteSource.success) return jsonError("Choose an available post or comment to quote.", 400);
+  const patronage = body.patronage === undefined ? undefined : patronageProposalInputSchema.safeParse(body.patronage);
+  if (patronage && !patronage.success) return jsonError("Add a valid funding goal and proposal status.", 400);
+  if ((input.room === "funding") !== Boolean(patronage?.success) || (patronage?.success && input.kind !== "paper")) {
+    return jsonError("Patronage proposals publish as paper-grade posts in the Patronage Hall.", 400);
+  }
 
   const live = await proxyLiveBackend("/v1/posts", {
     method: "POST",
@@ -71,7 +77,8 @@ export async function POST(request: Request) {
       room: input.room,
       authorHandle: body.authorHandle,
       attachmentIds,
-      quoteSource: quoteSource?.data
+      quoteSource: quoteSource?.data,
+      patronage: patronage?.data
     },
     actorHandle: body.authorHandle ? String(body.authorHandle) : undefined,
     idempotencyKey
@@ -87,7 +94,7 @@ export async function POST(request: Request) {
       ? await resolveLocalPostAttachments(attachmentIds, String(body.authorHandle ?? ""))
       : [];
     const quote = resolveLocalContentQuote(snapshot.items, quoteSource?.data);
-    const item = await createPost({ ...input, attachments: localAttachments, quote }, String(body.authorHandle ?? ""));
+    const item = await createPost({ ...input, attachments: localAttachments, quote, patronage: patronage?.data }, String(body.authorHandle ?? ""));
     await replaceLocalOwnerAttachments({
       actorHandle: String(body.authorHandle ?? ""),
       attachmentIds,

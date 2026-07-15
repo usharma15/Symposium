@@ -195,6 +195,7 @@ export function WorkspaceView({
           publicationTarget: kind === "paper" ? "paper" : kind === "thought" ? "thought" : kind === "comment" ? "comment" : kind === "reply" ? "reply" : "undecided",
           notebookId: section === "notebooks" ? selectedNotebookId : null,
           targetId: null,
+          proposal: null,
           attachmentIds: []
         });
         setSelectedDocumentId(document.id);
@@ -313,7 +314,7 @@ export function WorkspaceView({
   };
 
   const publishCard = async (document: WorkspaceDocument) => {
-    if (document.kind === "note" || document.kind === "comment" || document.kind === "reply" || !document.body.trim()) {
+    if (document.kind === "note" || document.kind === "comment" || document.kind === "reply" || !document.body.trim() || (document.publicationTarget === "proposal" && !document.proposal)) {
       setSelectedDocumentId(document.id);
       setEditSelected(true);
       return;

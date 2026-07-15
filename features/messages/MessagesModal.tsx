@@ -32,7 +32,7 @@ export function MessagesModal({
       id: "campus-events-board",
       name: "Campus Events Board",
       type: "Group",
-      preview: "Office hours moved to the civic patronage table.",
+      preview: "Office hours moved to the public patronage table.",
       time: "1h"
     },
     {

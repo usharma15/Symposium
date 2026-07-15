@@ -16,6 +16,9 @@ export const workspaceKindLabel: Record<WorkspaceDocument["kind"], string> = {
   quick: "Quick Note"
 };
 
+export const workspaceDocumentLabel = (document: WorkspaceDocument) =>
+  document.publicationTarget === "proposal" ? "Patronage Proposal" : workspaceKindLabel[document.kind];
+
 export function WorkspaceDocumentCard({
   document,
   profiles,
@@ -57,7 +60,7 @@ export function WorkspaceDocumentCard({
       </div>
       <div className="post-body">
         <div className="workspace-draft-line">
-          <strong>Draft · {workspaceKindLabel[document.kind]}</strong>
+          <strong>Draft · {workspaceDocumentLabel(document)}</strong>
           {document.notebookName ? <><b aria-hidden="true">•</b><span>{document.notebookName}</span></> : null}
           {document.lifecycle === "published" ? <span className="workspace-published-badge">Published checkpoint</span> : null}
         </div>

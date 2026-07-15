@@ -47,13 +47,23 @@
     width: 100%;
   }
 
+  .feed-stream {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .feed-post {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
   .feed-toolbar {
     position: static;
     left: auto;
   }
 
   .segmented {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .segmented button,

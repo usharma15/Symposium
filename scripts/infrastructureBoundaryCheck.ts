@@ -6,6 +6,8 @@ import {
   events,
   noteBlocks,
   notes,
+  patronageContributions,
+  patronageProposals,
   posts,
   profileFollows,
   profiles,
@@ -21,7 +23,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0024_workspace_scribbles");
+  assert.equal(latestMigrationId, "0025_patronage_foundation");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -34,6 +36,9 @@ const main = async () => {
   assert.ok("revision" in profiles);
   assert.ok("revision" in profileFollows);
   assert.ok("revision" in notes);
+  assert.ok("patronage" in posts);
+  assert.ok("goalMinorUnits" in patronageProposals);
+  assert.ok("providerReference" in patronageContributions);
   assert.ok("revision" in noteBlocks);
   assert.ok("revision" in workspaceNotebooks);
   assert.ok("parentId" in workspaceNoteComments);

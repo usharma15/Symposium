@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Check, FolderInput, MoreHorizontal, Pencil, Trash2, Users } from "lucide-react";
-import { workspaceKindLabel } from "@/features/workspace/WorkspaceDocumentCard";
+import { workspaceDocumentLabel, workspaceKindLabel } from "@/features/workspace/WorkspaceDocumentCard";
 import type { WorkspaceDocument, WorkspaceNotebook } from "@/lib/workspaceTypes";
 
 type DocumentMenu = "actions" | "move" | null;
@@ -70,7 +70,7 @@ export function WorkspaceNavigatorDocument({
         <span className="workspace-sidebar-preview">{workspaceSidebarExcerpt(document)}</span>
         <span className="workspace-sidebar-meta">
           <time>{workspaceSidebarTimestamp(document.updatedAt)}</time>
-          <em>{workspaceKindLabel[document.kind]}</em>
+          <em>{workspaceDocumentLabel(document)}</em>
           {!compact && document.notebookName ? <small>{document.notebookName}</small> : null}
         </span>
       </button>

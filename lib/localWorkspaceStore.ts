@@ -44,7 +44,7 @@ import type {
 type StoredDocument = Omit<WorkspaceDocument, "attachments" | "access" | "collaboratorCount" | "commentCount">;
 type StoredRevision = Pick<
   StoredDocument,
-  "revision" | "title" | "body" | "document" | "kind" | "publicationTarget" | "targetId" | "notebookId"
+  "revision" | "title" | "body" | "document" | "kind" | "publicationTarget" | "proposal" | "targetId" | "notebookId"
 > & { attachmentIds: string[]; checkpointId: string; reason: string; createdAt: string };
 type StoredScribble = {
   id: string;
@@ -109,6 +109,10 @@ const loadStore = async () => {
     for (const workspace of Object.values(workspaces)) {
       workspace.notebookGrants ??= {};
       workspace.documentGrants ??= {};
+      for (const document of workspace.documents) document.proposal ??= null;
+      for (const revisions of Object.values(workspace.revisions)) {
+        for (const revision of revisions) revision.proposal ??= null;
+      }
       const publishedIds = workspace.documents
         .filter((document) => document.lifecycle === "published")
         .map((document) => document.id);
@@ -285,6 +289,7 @@ const revisionFor = (
   document: document.document,
   kind: document.kind,
   publicationTarget: document.publicationTarget,
+  proposal: document.proposal,
   targetId: document.targetId,
   notebookId: document.notebookId,
   attachmentIds,
@@ -440,6 +445,7 @@ export const fileLocalScribble = async (rawInput: unknown, actorHandle: string) 
       ownerName: handle.replace(/^@/, ""),
       kind: "quick",
       publicationTarget: "undecided",
+      proposal: null,
       targetId: null,
       title,
       body: workspace.scribble.body,
@@ -527,6 +533,7 @@ export const createLocalWorkspaceDocument = async (rawInput: unknown, actorHandl
       ownerName: handle.replace(/^@/, ""),
       kind: input.kind,
       publicationTarget: input.publicationTarget,
+      proposal: input.proposal,
       targetId: input.targetId,
       title: input.title,
       body: input.body,
@@ -579,6 +586,7 @@ export const updateLocalWorkspaceDocument = async (noteId: string, rawInput: unk
       document: input.document,
       kind: input.kind,
       publicationTarget: input.publicationTarget,
+      proposal: input.proposal,
       targetId: input.targetId,
       revision: existing.revision + 1,
       updatedAt: new Date().toISOString()

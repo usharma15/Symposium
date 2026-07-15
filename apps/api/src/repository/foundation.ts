@@ -466,12 +466,12 @@ const seedDatabase = async () => {
         `INSERT INTO posts (
           id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
           metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-          tests, forks, saved, saved_by, signaled_by, forked_by, search_text
+          tests, forks, saved, saved_by, signaled_by, forked_by, patronage, search_text
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9,
           $10, $11, $12, $13, $14, $15, $16, $17, $18,
-          $19, $20, $21, $22, $23, $24, $25, $26
+          $19, $20, $21, $22, $23, $24, $25, $26, $27
         )
         ON CONFLICT (id) DO NOTHING`,
         [
@@ -500,9 +500,37 @@ const seedDatabase = async () => {
           JSON.stringify(item.savedBy ?? (item.saved ? [defaultProfile.handle] : [])),
           JSON.stringify(item.signaledBy ?? []),
           JSON.stringify(item.forkedBy ?? []),
+          item.patronage ? JSON.stringify(item.patronage) : null,
           searchablePostText({ ...item, authorName: item.author })
         ]
       );
+      if (item.patronage) {
+        await client.query(
+          `INSERT INTO patronage_proposals (post_id, status, currency, goal_minor_units, deadline)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (post_id) DO NOTHING`,
+          [item.id, item.patronage.status, item.patronage.currency, item.patronage.goalMinorUnits, item.patronage.deadline]
+        );
+        for (const [supporterIndex, supporter] of item.patronage.topSupporters.entries()) {
+          const contributor = supporter.anonymous ? null : getProfileForName(supporter.displayName)?.handle ?? null;
+          await client.query(
+            `INSERT INTO patronage_contributions (
+               post_id, contributor_handle, display_name, amount_minor_units, currency,
+               anonymous, provider, provider_reference, status, confirmed_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, 'seed', $7, 'confirmed', now())
+             ON CONFLICT (provider_reference) DO NOTHING`,
+            [
+              item.id,
+              contributor,
+              supporter.displayName,
+              supporter.amountMinorUnits,
+              item.patronage.currency,
+              supporter.anonymous,
+              `seed:${item.id}:${supporterIndex}`
+            ]
+          );
+        }
+      }
       await insertCommentTree(client, item.id, comments);
     }
 
@@ -687,6 +715,7 @@ export const rowToItem = (
     comments,
     attachments: postAttachments.length ? postAttachments : undefined,
     quote: row.quote ?? undefined,
+    patronage: row.patronage ?? undefined,
     saved: row.saved,
     savedBy: json(row.savedBy, []),
     signaledBy: json(row.signaledBy, []),
@@ -762,7 +791,8 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           saved_by AS "savedBy",
           signaled_by AS "signaledBy",
           forked_by AS "forkedBy",
-          quote
+          quote,
+          patronage
          FROM posts
          ORDER BY created_at DESC`
       ),

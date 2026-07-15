@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import type { RoomId } from "@/lib/mockData";
-import type { PatronageMode } from "@/features/navigation/viewState";
 
 export type Theme = "day" | "night";
 
@@ -16,7 +15,7 @@ export const roomRenders: Record<Theme, Record<RoomId, string>> = {
     symposium: "/symposium-renders/symposium.png",
     library: "/symposium-renders/library-1.png",
     amphitheater: "/symposium-renders/amphitheatre-2.png",
-    funding: "/symposium-renders/patronage.png",
+    funding: "/symposium-renders/patronage-civic.png",
     communities: "/symposium-renders/communities.png",
     opportunities: "/symposium-renders/opportunities.png"
   },
@@ -26,22 +25,9 @@ export const roomRenders: Record<Theme, Record<RoomId, string>> = {
     symposium: "/symposium-renders/symposium-night.png",
     library: "/symposium-renders/library-night.png",
     amphitheater: "/symposium-renders/amphitheatre-night.png",
-    funding: "/symposium-renders/patronage-night.png",
+    funding: "/symposium-renders/patronage-civic-night.png",
     communities: "/symposium-renders/communities-night.png",
     opportunities: "/symposium-renders/opportunities-night.png"
-  }
-};
-
-export const patronageRenders: Record<Theme, Record<PatronageMode, string>> = {
-  day: {
-    lobby: "/symposium-renders/patronage.png",
-    civic: "/symposium-renders/patronage-civic.png",
-    private: "/symposium-renders/patronage-private.png"
-  },
-  night: {
-    lobby: "/symposium-renders/patronage-night.png",
-    civic: "/symposium-renders/patronage-civic-night.png",
-    private: "/symposium-renders/patronage-private-night.png"
   }
 };
 
@@ -61,8 +47,6 @@ const preloadRenders = Array.from(
     ...Object.values(entranceRenders),
     ...Object.values(roomRenders.day),
     ...Object.values(roomRenders.night),
-    ...Object.values(patronageRenders.day),
-    ...Object.values(patronageRenders.night),
     ...Object.values(communityRenders.day),
     ...Object.values(communityRenders.night)
   ])
@@ -73,7 +57,6 @@ export const getThemePreloadRenders = (theme: Theme) =>
     new Set([
       entranceRenders[theme],
       ...Object.values(roomRenders[theme]),
-      ...Object.values(patronageRenders[theme]),
       ...Object.values(communityRenders[theme])
     ])
   );

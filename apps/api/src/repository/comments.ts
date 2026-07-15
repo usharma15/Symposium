@@ -155,7 +155,7 @@ export const addComment = async (
         saved_by AS "savedBy",
         signaled_by AS "signaledBy",
         forked_by AS "forkedBy",
-        quote
+        quote, patronage
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -360,7 +360,7 @@ export const updateComment = async (
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -547,7 +547,7 @@ export const deleteComment = async (
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -750,7 +750,7 @@ export const applyCommentAction = async (
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage
        FROM posts
        WHERE id = $1
        FOR UPDATE`,

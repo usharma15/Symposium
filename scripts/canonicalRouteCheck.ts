@@ -4,6 +4,7 @@ import {
   canonicalRouteHref,
   parseCanonicalRoute
 } from "@/features/navigation/canonicalRoute";
+import { roomForCanonicalRoute } from "@/features/navigation/viewState";
 
 assert.equal(canonicalRouteHref({ kind: "hall" }), "/");
 assert.deepEqual(canonicalRouteForRoom("office"), { kind: "workspace" });
@@ -22,7 +23,8 @@ assert.deepEqual(parseCanonicalRoute("/workspace", "?view=notes&note=note%20one&
   noteId: "note one",
   commentId: "comment/one"
 });
-assert.equal(canonicalRouteHref({ kind: "funding", view: "private" }), "/funding?view=private");
+assert.equal(canonicalRouteHref({ kind: "funding" }), "/funding");
+assert.deepEqual(parseCanonicalRoute("/funding", "?view=private"), { kind: "funding" });
 assert.deepEqual(parseCanonicalRoute("/opportunities"), { kind: "opportunities" });
 assert.deepEqual(parseCanonicalRoute("/messages"), { kind: "messages" });
 assert.equal(
@@ -42,6 +44,10 @@ assert.deepEqual(parseCanonicalRoute("/posts/post%2Fone", "?comment=comment%20on
   postId: "post/one",
   commentId: "comment one"
 });
+assert.equal(
+  roomForCanonicalRoute({ kind: "post", postId: "proposal-one" }, (postId) => postId === "proposal-one" ? "funding" : undefined),
+  "funding"
+);
 assert.equal(canonicalRouteHref({ kind: "profile", handle: "@ada" }), "/profiles/ada");
 assert.deepEqual(parseCanonicalRoute("/profiles/ada"), { kind: "profile", handle: "@ada" });
 assert.equal(
@@ -77,7 +83,7 @@ console.log(
       ok: true,
       checked: [
         "room routes",
-        "workspace draft-comment deep links and funding views",
+        "workspace draft-comment deep links and unified funding route",
         "opportunities and messages",
         "post and comment round-trip",
         "profile filter and social-graph routes",

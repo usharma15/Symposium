@@ -18,7 +18,7 @@ type Context = { params: Promise<{ noteId: string }> };
 type PublishBody = {
   actorHandle?: string;
   expectedRevision?: number;
-  publicationTarget?: "paper" | "thought";
+  publicationTarget?: "paper" | "thought" | "proposal";
 };
 
 const publishLocalWorkspaceDiscussion = async (input: {
@@ -81,14 +81,22 @@ export async function POST(request: Request, context: Context) {
     if (!body?.expectedRevision) return jsonError("Publishing requires the exact draft revision.", 428);
     const { document, checkpoint } = await getLocalWorkspaceRevision(noteId, body.expectedRevision, actorHandle);
     if (!document.body.trim()) return jsonError("Add some content before publishing this draft.", 400);
-    const target = document.kind === "note" ? body.publicationTarget ?? document.publicationTarget : document.kind;
-    if (target === "paper" || target === "thought") {
+    const target = document.kind === "paper" && document.publicationTarget === "proposal"
+      ? "proposal"
+      : document.kind === "note"
+        ? body.publicationTarget ?? document.publicationTarget
+        : document.kind;
+    if (target === "paper" || target === "thought" || target === "proposal") {
+      if (target === "proposal" && !document.proposal) {
+        return jsonError("Add funding details before publishing this Patronage Proposal.", 400);
+      }
       const createdItem = await createPost({
         title: document.title,
         body: document.body,
         document: document.document,
-        kind: target,
-        room: target === "paper" ? "library" : "amphitheater",
+        kind: target === "proposal" ? "paper" : target,
+        room: target === "proposal" ? "funding" : target === "paper" ? "library" : "amphitheater",
+        patronage: target === "proposal" ? document.proposal ?? undefined : undefined,
         attachments: []
       }, actorHandle);
       const attachments = await promoteLocalWorkspaceDocumentAttachments(noteId, "post", createdItem.id, actorHandle);
