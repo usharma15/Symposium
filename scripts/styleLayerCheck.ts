@@ -88,6 +88,9 @@ const main = async () => {
   assert.match(feedStyles, /\.workspace-main-column[\s\S]*var\(--symposium-feed-width\)/);
   assert.match(responsiveStyles, /\.detail-layout\.simple-detail,[\s\S]*\.profile-page[\s\S]*width:\s*min\(var\(--symposium-feed-width\), calc\(100vw - 28px\)\)/);
   assert.match(documentStyles, /\.symposium-shell\.night[\s\S]*--document-surface-solid/);
+  assert.match(documentStyles, /\.symposium-shell\s*\{[^}]*--document-color-default:\s*var\(--ink\)[^}]*--document-color-gold:\s*#9a6b16/);
+  assert.match(documentStyles, /\.symposium-shell\.night\s*\{[^}]*--document-color-default:\s*var\(--ink\)[^}]*--document-color-blue:\s*#8ec5f4[^}]*--document-color-crimson:\s*#f0a0ad[^}]*--document-color-forest:\s*#8fd0ae[^}]*--document-color-gold:\s*#e7bd65/);
+  assert.match(documentStyles, /\.symposium-document ::selection,[\s\S]*\.document-editor-canvas \.tiptap ::selection\s*\{[^}]*color:\s*var\(--ink\)/);
   assert.match(documentStyles, /\.post-composer-modal,[\s\S]*padding-top:\s*0/);
   assert.match(documentStyles, /\.symposium-document-editor\s*\{[^}]*--document-editor-sticky-top:\s*0px/);
   assert.match(documentStyles, /\.document-editor-toolbar\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--document-editor-sticky-top\)/);
@@ -124,6 +127,7 @@ const main = async () => {
           "bounded attachment composer layout",
           "shared quote card and composer layout",
           "one canonical feed and clicked-post width",
+          "day and night document ink with theme-safe selection contrast",
           "flush sticky editor and opaque themed attachment surfaces",
           "focus-scoped inline comment and compact reply toolbars",
           "compact single-line post metrics across feed and detail surfaces",

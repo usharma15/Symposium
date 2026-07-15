@@ -22,6 +22,9 @@
   --document-size-normal: 1em;
   --document-size-large: 1.14em;
   --document-size-lead: 1.3em;
+}
+
+.symposium-shell {
   --document-color-default: var(--ink);
   --document-color-muted: var(--muted);
   --document-color-blue: #173f5f;
@@ -45,6 +48,12 @@
   --attachment-slide-accent: #234047;
   --attachment-slide-ink: #f5efe2;
   --attachment-slide-muted: #b8c4bf;
+  --document-color-default: var(--ink);
+  --document-color-muted: var(--muted);
+  --document-color-blue: #8ec5f4;
+  --document-color-crimson: #f0a0ad;
+  --document-color-forest: #8fd0ae;
+  --document-color-gold: #e7bd65;
 }
 
 .symposium-document {
@@ -93,6 +102,8 @@
 .document-mark-code { border-radius: 0.25rem; background: color-mix(in srgb, var(--ink) 8%, transparent); font-family: var(--document-font-mono); padding: 0.08em 0.28em; }
 .symposium-document a { color: color-mix(in srgb, var(--accent) 78%, var(--ink)); font-weight: 680; text-decoration: none; }
 .symposium-document a:hover { text-decoration: underline; text-underline-offset: 0.18em; }
+.symposium-document ::selection,
+.document-editor-canvas .tiptap ::selection { background: color-mix(in srgb, var(--aqua) 34%, transparent); color: var(--ink); }
 .document-code { overflow: auto; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--document-control-solid); padding: 1rem; font-family: var(--document-font-mono); font-size: 0.86rem; line-height: 1.55; }
 .document-list { padding-left: 1.4rem; }
 .document-list-dash { list-style: "—  "; }

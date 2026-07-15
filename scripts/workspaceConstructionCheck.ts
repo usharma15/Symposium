@@ -310,6 +310,7 @@ const main = async () => {
   assert.match(composerDrafts, /symposium-workspace-sync-v1/);
   assert.match(workspaceStyles, /\.room-layout\.workspace-room-layout[\s\S]*width: calc\(100vw - 48px\)/);
   assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar[\s\S]*position: fixed[\s\S]*inset: 104px auto 144px 24px/);
+  assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar\s*\{[^}]*justify-content: stretch[^}]*grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(workspaceStyles, /\.workspace-sidebar-scroll[\s\S]*overflow-y: auto[\s\S]*overscroll-behavior: contain/);
   assert.match(workspaceStyles, /\.workspace-sidebar-document[\s\S]*height: 64px/);
   assert.match(workspaceStyles, /\.workspace-notebook-create\s*\{[^}]*position: sticky[^}]*top: 0/);
@@ -323,6 +324,8 @@ const main = async () => {
   assert.match(workspaceStyles, /\.workspace-detail-nav\s*\{[^}]*background: var\(--document-surface-solid\)[^}]*color: var\(--ink\)/);
   assert.match(workspaceStyles, /\.workspace-search\s*\{[^}]*background: var\(--document-control-solid\)[^}]*color: var\(--ink\)/);
   assert.match(workspaceStyles, /\.workspace-search input\s*\{[^}]*background: transparent[^}]*color: inherit/);
+  assert.match(workspaceStyles, /\.symposium-shell\.night \.workspace-search input\s*\{[^}]*background: transparent[^}]*color: var\(--ink\)/);
+  assert.match(workspaceStyles, /\.symposium-shell\.night \.workspace-search input::placeholder\s*\{[^}]*color: rgba\(229, 219, 199, 0\.64\)[^}]*opacity: 1/);
   assert.match(workspaceStyles, /\.workspace-detail-nav button\.danger\s*\{[^}]*color: color-mix\(in srgb, #b42f2f 60%, var\(--ink\)\)/);
   assert.match(workspaceStyles, /\.workspace-editor-footer\s*\{[^}]*position: sticky;[^}]*bottom: 0/);
   assert.match(workspaceStyles, /\.workspace-editor \.document-editor-toolbar\s*\{[^}]*z-index: 8/);
@@ -350,13 +353,14 @@ const main = async () => {
       "revision-aware protection against out-of-order draft comment responses",
       "cross-tab convergence and no-store transport",
       "All, Notebooks, Quick Notes, and persistent search surfaces",
+      "constant full-width Notes controls across every workspace section",
       "fixed independently scrolling five-draft Notes navigator",
       "flat local-date draft metadata and expandable notebook navigation",
       "pinned notebook creation and inline note actions",
       "serialized save-before-navigation with guarded metadata mutations",
       "clean-editor convergence to newer cross-tab revisions",
       "immediate notebook document-count reconciliation",
-      "theme-tokened detail navigation and workspace search",
+      "theme-tokened detail navigation and artifact-free night search",
       "Note, Thought, and Paper-only draft creation",
       "canonical centered feed-width Notes composition",
       "New Post to private draft creation"
