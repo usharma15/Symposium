@@ -36,6 +36,17 @@
   white-space: nowrap;
 }
 
+.attachment-pagebar button.active {
+  border-color: color-mix(in srgb, var(--aqua) 68%, var(--line));
+  background: color-mix(in srgb, var(--aqua) 18%, var(--document-control-solid));
+}
+
+.attachment-pagebar .attachment-cite-range {
+  gap: 5px;
+  padding-inline: 8px;
+  width: auto;
+}
+
 .attachment-code-preview pre {
   background: color-mix(in srgb, #101817 94%, var(--paper));
   color: #eef4ed;
@@ -83,6 +94,19 @@
   z-index: 1;
   background: color-mix(in srgb, var(--aqua) 13%, var(--attachment-preview-elevated));
   font-weight: 820;
+}
+
+.attachment-sheet-scroll .attachment-sheet-cell-selectable {
+  cursor: crosshair;
+  user-select: none;
+}
+
+.attachment-sheet-scroll .attachment-sheet-cell-selectable:hover,
+.attachment-sheet-scroll .attachment-sheet-cell-selectable:focus-visible,
+.attachment-sheet-scroll .attachment-sheet-cell-selected {
+  background: color-mix(in srgb, var(--aqua) 24%, var(--attachment-preview-elevated));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aqua) 68%, var(--line));
+  outline: none;
 }
 
 .attachment-presentation-preview {

@@ -99,7 +99,6 @@ import {
 import { selectActiveProfile } from "@/features/identity/selectActiveProfile";
 import { useInquiryEntityStore } from "@/features/entities/useInquiryEntityStore";
 import {
-  AttachmentPreviewModal,
   buildPostAttachmentMetadata,
   type AttachmentPreviewHandler
 } from "@/features/attachments/AttachmentViews";
@@ -113,6 +112,7 @@ import {
 } from "@/features/attachments/attachmentUploadClient";
 import { useDedicatedAttachmentViewer } from "@/features/attachments/useDedicatedAttachmentViewer";
 import { ScribbleLauncher, ScribbleProvider } from "@/features/scribble/ScribbleContext";
+import { ScribbleAttachmentPreview } from "@/features/scribble/ScribbleAttachmentPreview";
 import {
   EntrySequence,
   HallView,
@@ -502,18 +502,9 @@ function SymposiumExperience({
   const attachmentPreviewBaseItem = attachmentPreview
     ? items.find((item) => item.id === attachmentPreview.itemId) ?? null
     : null;
-  const attachmentPreviewItem = attachmentPreviewBaseItem && attachmentPreview?.commentId
-    ? (() => {
-        const comment = findCommentById(attachmentPreviewBaseItem.comments, attachmentPreview.commentId as string);
-        return comment
-          ? {
-              ...attachmentPreviewBaseItem,
-              title: `Comment on ${attachmentPreviewBaseItem.title}`,
-              attachments: comment.attachments ?? []
-            }
-          : null;
-      })()
-    : attachmentPreviewBaseItem;
+  const attachmentPreviewComment = attachmentPreviewBaseItem && attachmentPreview?.commentId
+    ? findCommentById(attachmentPreviewBaseItem.comments, attachmentPreview.commentId)
+    : null;
 
   const activeItems = useMemo(() => items.filter((item) => !isDeletedPost(item)), [items]);
   const editingPostItem = editingPost ? items.find((item) => item.id === editingPost.id) ?? editingPost : null;
@@ -3458,9 +3449,10 @@ function SymposiumExperience({
         />
       ) : null}
 
-      {attachmentPreview && attachmentPreviewItem ? (
-        <AttachmentPreviewModal
-          item={attachmentPreviewItem}
+      {attachmentPreview && attachmentPreviewBaseItem && (!attachmentPreview.commentId || attachmentPreviewComment) ? (
+        <ScribbleAttachmentPreview
+          item={attachmentPreviewBaseItem}
+          comment={attachmentPreviewComment}
           attachmentId={attachmentPreview.attachmentId}
           onClose={closeAttachmentPreview}
         />

@@ -12,7 +12,7 @@ import {
   type ReactNode
 } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, FileInput, PenLine, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, FileInput, PenLine, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import {
   SymposiumDocumentEditor,
   type SymposiumDocumentEditorHandle
@@ -28,6 +28,7 @@ import type {
   VersionedDocumentContract
 } from "@/packages/contracts/src";
 import type { FiledScribble, ScribbleNotebook, ScribbleSnapshot, WorkspaceScribble } from "@/lib/workspaceTypes";
+import { documentSourceContextLabel, documentSourceKey } from "@/lib/documentCitations";
 
 type ScribbleSyncMessage = {
   type: "scribble-change";
@@ -125,6 +126,22 @@ const hasContent = (body: string, document: VersionedDocumentContract) =>
   Boolean(body.trim()) || document.nodes.some((node) => node.type !== "paragraph" || node.content.some((run) => run.text.trim()));
 
 type ScribbleCache = { scribble: WorkspaceScribble; dirty: boolean; baseRevision: number };
+type PendingScribbleSave = {
+  body: string;
+  document: VersionedDocumentContract;
+  fingerprint: string;
+  expectedRevision: number;
+  idempotencyKey: string;
+};
+
+const captureMatches = (left: SymposiumDocumentNode, right: SymposiumDocumentNode) => {
+  if (left.type !== right.type || (left.type !== "reference" && left.type !== "citation")) return false;
+  if (right.type !== "reference" && right.type !== "citation") return false;
+  if (!left.source || !right.source || documentSourceKey(left.source) !== documentSourceKey(right.source)) return false;
+  if (left.type === "reference" && right.type === "reference") return true;
+  if (left.type !== "citation" || right.type !== "citation") return false;
+  return left.excerpt === right.excerpt && JSON.stringify(left.locator ?? null) === JSON.stringify(right.locator ?? null);
+};
 
 const readCache = (handle: string): ScribbleCache | null => {
   try {
@@ -178,11 +195,14 @@ export function ScribbleProvider({
   const [undoDiscardRevision, setUndoDiscardRevision] = useState<number | null>(null);
   const [filed, setFiled] = useState<FiledScribble | null>(null);
   const [pendingNodes, setPendingNodes] = useState<SymposiumDocumentNode[]>([]);
+  const [retryAttempt, setRetryAttempt] = useState(0);
   const editorHandleRef = useRef<SymposiumDocumentEditorHandle>(null);
   const sourceIdRef = useRef(createClientMutationId("scribble-tab"));
   const loadingPromiseRef = useRef<Promise<void> | null>(null);
   const dirtyRef = useRef(false);
   const savingRef = useRef<Promise<boolean> | null>(null);
+  const pendingSaveRef = useRef<PendingScribbleSave | null>(null);
+  const pendingNodesRef = useRef<SymposiumDocumentNode[]>([]);
   const currentRef = useRef({ body, document: documentValue });
   const serverRevisionRef = useRef(0);
   currentRef.current = { body, document: documentValue };
@@ -192,6 +212,8 @@ export function ScribbleProvider({
     setScribble(next);
     if (!options.preserveLocal) {
       dirtyRef.current = false;
+      pendingSaveRef.current = null;
+      setRetryAttempt(0);
       setBody(next.body);
       setDocumentValue(next.document);
       currentRef.current = { body: next.body, document: next.document };
@@ -292,31 +314,42 @@ export function ScribbleProvider({
     changedAt: new Date().toISOString()
   }), [actorHandle, publishSync]);
 
-  const saveNow = useCallback(async () => {
+  const saveNow = useCallback(async (options: { keepalive?: boolean } = {}) => {
     if (!scribble || !dirtyRef.current || conflict) return !conflict;
     if (savingRef.current) return savingRef.current;
     const operation = (async () => {
       let successful = true;
       for (let attempt = 0; attempt < 4 && dirtyRef.current; attempt += 1) {
-        const candidate = currentRef.current;
-        const candidateFingerprint = fingerprint(candidate.body, candidate.document);
-        dirtyRef.current = false;
-        setStatus("Autosaving…");
+        const current = currentRef.current;
+        const currentFingerprint = fingerprint(current.body, current.document);
+        const candidate = pendingSaveRef.current ?? {
+          body: current.body,
+          document: current.document,
+          fingerprint: currentFingerprint,
+          expectedRevision: serverRevisionRef.current,
+          idempotencyKey: createClientMutationId("scribble-autosave")
+        };
+        pendingSaveRef.current = candidate;
+        dirtyRef.current = currentFingerprint !== candidate.fingerprint;
+        setStatus(retryAttempt ? "Retrying save…" : "Autosaving…");
         try {
           const result = await symposiumApi.request<{ scribble: WorkspaceScribble }>("/api/workspace/scribble", {
             method: "PATCH",
-            idempotencyKey: createClientMutationId("scribble-autosave"),
+            idempotencyKey: candidate.idempotencyKey,
+            keepalive: options.keepalive && JSON.stringify(candidate).length < 60 * 1024,
             body: {
               actorHandle,
               body: candidate.body,
               document: candidate.document,
-              expectedRevision: serverRevisionRef.current
+              expectedRevision: candidate.expectedRevision
             }
           });
-          const changedDuringSave = fingerprint(currentRef.current.body, currentRef.current.document) !== candidateFingerprint;
+          if (pendingSaveRef.current === candidate) pendingSaveRef.current = null;
+          const changedDuringSave = fingerprint(currentRef.current.body, currentRef.current.document) !== candidate.fingerprint;
           if (changedDuringSave) dirtyRef.current = true;
           applyServerScribble(result.scribble, { preserveLocal: changedDuringSave });
           announce(result.scribble.revision);
+          setRetryAttempt(0);
           setError(null);
           setStatus(changedDuringSave ? "Saving latest changes…" : "Saved everywhere");
         } catch (caught) {
@@ -325,9 +358,13 @@ export function ScribbleProvider({
           const message = caught instanceof Error ? caught.message : "Scribble could not be saved.";
           setError(message);
           if (caught instanceof SymposiumApiError && caught.status === 409) {
+            setRetryAttempt(0);
             setConflict(true);
             setStatus("Changed on another device");
-          } else setStatus("Save needs attention");
+          } else {
+            setRetryAttempt((current) => Math.min(6, current + 1));
+            setStatus("Save interrupted · retrying automatically");
+          }
           break;
         }
       }
@@ -339,27 +376,34 @@ export function ScribbleProvider({
     } finally {
       if (savingRef.current === operation) savingRef.current = null;
     }
-  }, [actorHandle, announce, applyServerScribble, conflict, scribble]);
+  }, [actorHandle, announce, applyServerScribble, conflict, retryAttempt, scribble]);
 
   useEffect(() => {
     if (!dirtyRef.current || conflict) return;
-    const timer = window.setTimeout(() => void saveNow(), 900);
+    const delay = retryAttempt ? Math.min(30_000, 1000 * (2 ** (retryAttempt - 1))) : 900;
+    const timer = window.setTimeout(() => void saveNow(), delay);
     return () => window.clearTimeout(timer);
-  }, [body, conflict, documentValue, saveNow]);
+  }, [body, conflict, documentValue, retryAttempt, saveNow]);
 
   useEffect(() => {
     const handleVisibility = () => {
-      if (document.visibilityState === "hidden") void saveNow();
+      if (document.visibilityState === "hidden") void saveNow({ keepalive: true });
     };
+    const handlePageHide = () => void saveNow({ keepalive: true });
+    const handleOnline = () => void saveNow();
     const handleLiveChange = (event: Event) => {
       const revision = Number((event as CustomEvent<{ revision?: number }>).detail?.revision ?? 0);
       if (revision && revision <= serverRevisionRef.current) return;
       void refresh().catch(() => undefined);
     };
     document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("online", handleOnline);
     window.addEventListener("symposium-scribble-change", handleLiveChange);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("online", handleOnline);
       window.removeEventListener("symposium-scribble-change", handleLiveChange);
     };
   }, [refresh, saveNow]);
@@ -369,7 +413,14 @@ export function ScribbleProvider({
     const [next, ...rest] = pendingNodes;
     if (!next) return;
     const timer = window.setTimeout(() => {
+      if (currentRef.current.document.nodes.some((node) => captureMatches(node, next))) {
+        pendingNodesRef.current = rest;
+        setPendingNodes((current) => current[0]?.id === next.id ? rest : current);
+        setStatus(next.type === "citation" ? "Citation already in Scribble" : "Source already in Scribble");
+        return;
+      }
       if (!editorHandleRef.current?.insertNode(next)) return;
+      pendingNodesRef.current = rest;
       setPendingNodes((current) => current[0]?.id === next.id ? rest : current);
       setStatus(next.type === "citation" ? "Citation added" : "Source added");
     }, 0);
@@ -378,7 +429,19 @@ export function ScribbleProvider({
 
   const queueNode = useCallback((node: SymposiumDocumentNode) => {
     setOpen(true);
-    setPendingNodes((current) => [...current, node]);
+    if (
+      currentRef.current.document.nodes.some((current) => captureMatches(current, node))
+      || pendingNodesRef.current.some((current) => captureMatches(current, node))
+    ) {
+      setStatus(node.type === "citation" ? "Citation already in Scribble" : "Source already in Scribble");
+      void ensureLoaded();
+      return;
+    }
+    setPendingNodes((current) => {
+      const next = [...current, node];
+      pendingNodesRef.current = next;
+      return next;
+    });
     void ensureLoaded();
   }, [ensureLoaded]);
 
@@ -427,6 +490,8 @@ export function ScribbleProvider({
         `/api/workspace/scribble?actorHandle=${encodeURIComponent(actorHandle)}`,
         { cache: "no-store" }
       );
+      pendingSaveRef.current = null;
+      setRetryAttempt(0);
       dirtyRef.current = true;
       applyServerScribble(snapshot.scribble, { preserveLocal: true });
       setNotebooks(snapshot.notebooks);
@@ -524,10 +589,16 @@ export function ScribbleProvider({
     }
   };
 
-  const sources = useMemo(() => documentValue.nodes
-    .filter((node): node is Extract<SymposiumDocumentNode, { type: "reference" | "citation" }> => node.type === "reference" || node.type === "citation")
-    .flatMap((node) => node.source ? [node.source] : [])
-    .filter((source, index, all) => all.findIndex((candidate) => candidate.kind === source.kind && candidate.sourceId === source.sourceId) === index), [documentValue]);
+  const sources = useMemo(() => {
+    const entries = new Map<string, { source: DocumentSourceSnapshotContract; count: number }>();
+    for (const node of documentValue.nodes) {
+      if ((node.type !== "reference" && node.type !== "citation") || !node.source) continue;
+      const key = documentSourceKey(node.source);
+      const current = entries.get(key);
+      entries.set(key, { source: node.source, count: (current?.count ?? 0) + 1 });
+    }
+    return [...entries.values()];
+  }, [documentValue]);
 
   const value = useMemo<ScribbleContextValue>(() => ({
     open,
@@ -557,7 +628,7 @@ export function ScribbleProvider({
               <button type="button" title="Close Scribble" onClick={() => { setOpen(false); void saveNow(); }}><X size={17} /></button>
             </div>
           </header>
-          {sources.length ? <div className="scribble-source-shelf" aria-label="Scribble sources">{sources.slice(-4).map((source) => <Link key={`${source.kind}:${source.sourceId}`} href={source.canonicalPath}><small>{source.kind}</small><strong>{source.title ?? source.author ?? "Source"}</strong></Link>)}</div> : null}
+          {sources.length ? <div className="scribble-source-shelf" aria-label="Scribble sources">{sources.map(({ source, count }) => <Link key={documentSourceKey(source)} href={source.canonicalPath} title={documentSourceContextLabel(source)}><small>{documentSourceContextLabel(source)}</small><strong>{source.title ?? source.author ?? "Source"}{count > 1 ? ` · ${count}` : ""}</strong></Link>)}</div> : null}
           <div className="scribble-editor-scroll">
             {loading && !loaded ? <div className="scribble-loading">Opening your Scribble…</div> : null}
             {loaded && scribble ? (
@@ -576,7 +647,7 @@ export function ScribbleProvider({
             ) : null}
           </div>
           {conflict ? <div className="scribble-conflict" role="alert"><span>Your local words are preserved. Another device saved a newer revision.</span><div><button type="button" disabled={busy} onClick={() => void refresh(true)}>Use newer</button><button type="button" disabled={busy} onClick={() => void keepLocalAfterConflict()}>Keep this copy</button></div></div> : null}
-          {error ? <div className="scribble-error" role="alert">{error}</div> : null}
+          {error ? <div className="scribble-error" role="alert"><span>{error}</span>{!conflict ? <button type="button" disabled={busy} onClick={() => void saveNow()}><RefreshCw size={14} />Retry now</button> : null}</div> : null}
           {undoDiscardRevision ? <div className="scribble-recovery"><span>Scribble discarded.</span><button type="button" disabled={busy} onClick={() => void restoreDiscard()}><RotateCcw size={15} />Undo discard</button></div> : null}
           {filed ? <div className="scribble-filed"><Check size={15} /><span>Filed as “{filed.title}”{filed.notebookName ? ` in ${filed.notebookName}` : " in All"}.</span></div> : null}
           <footer className="scribble-footer">

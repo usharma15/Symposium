@@ -3,7 +3,8 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { ArrowLeft, Check, Clock3, Pencil, Send, Trash2, Users } from "lucide-react";
 import { SymposiumDocumentEditor, SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
-import { AttachmentPreviewModal, type AttachmentUploadHandler } from "@/features/attachments/AttachmentViews";
+import type { AttachmentUploadHandler } from "@/features/attachments/AttachmentViews";
+import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
 import {
   CommentComposer,
   CommentThread,

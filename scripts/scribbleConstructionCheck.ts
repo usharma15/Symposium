@@ -10,6 +10,7 @@ import {
   updateScribbleInputSchema,
   type VersionedDocumentContract
 } from "@/packages/contracts/src";
+import { documentCitationLocatorLabel } from "@/lib/documentCitations";
 
 const main = async () => {
 const root = process.cwd();
@@ -21,6 +22,10 @@ const source = {
   routes: await readFile(path.join(root, "apps/api/src/routes/workspaceRoutes.ts"), "utf8"),
   localStore: await readFile(path.join(root, "lib/localWorkspaceStore.ts"), "utf8"),
   context: await readFile(path.join(root, "features/scribble/ScribbleContext.tsx"), "utf8"),
+  attachmentWrapper: await readFile(path.join(root, "features/scribble/ScribbleAttachmentPreview.tsx"), "utf8"),
+  attachments: await readFile(path.join(root, "features/attachments/AttachmentViews.tsx"), "utf8"),
+  attachmentModal: await readFile(path.join(root, "features/attachments/AttachmentPreviewModal.tsx"), "utf8"),
+  structuredAttachments: await readFile(path.join(root, "features/attachments/StructuredAttachmentPreviews.tsx"), "utf8"),
   editor: await readFile(path.join(root, "features/content/SymposiumTiptapEditor.tsx"), "utf8"),
   drawing: await readFile(path.join(root, "features/content/DocumentDrawing.tsx"), "utf8"),
   posts: await readFile(path.join(root, "features/posts/PostViews.tsx"), "utf8"),
@@ -79,6 +84,9 @@ assert.equal(updateScribbleInputSchema.safeParse({
 }).success, false);
 assert.equal(fileScribbleInputSchema.safeParse({ expectedRevision: 4, notebookId: null }).success, true);
 assert.equal(restoreScribbleInputSchema.safeParse({ expectedRevision: 5, discardedRevision: 4 }).success, true);
+assert.equal(documentCitationLocatorLabel({ kind: "image-region", x: 0.1, y: 0.2, width: 0.25, height: 0.4 }), "Image region · 25% × 40%");
+assert.equal(documentCitationLocatorLabel({ kind: "spreadsheet-range", sheet: "Results", range: "B2:D8" }), "Results · B2:D8");
+assert.equal(documentCitationLocatorLabel({ kind: "presentation-slide", slide: 7 }), "Slide 7");
 
 assert.match(source.migration, /0024_workspace_scribbles/);
 assert.match(source.migration, /UNIQUE \(owner_handle\)/);
@@ -95,21 +103,39 @@ assert.match(source.localStore, /scribbleHistory/);
 assert.match(source.localStore, /slice\(-500\)/);
 assert.match(source.context, /symposium-scribble-sync-v1/);
 assert.match(source.context, /dirty: parsed\.dirty === true/);
-  assert.match(source.context, /Recovering unsaved Scribble/);
-  assert.match(source.context, /Keep this copy/);
-  assert.match(source.context, /ref=\{editorHandleRef\}/);
-  assert.match(source.context, /window\.setTimeout\(\(\) => \{/);
-assert.match(source.context, /window\.setTimeout\(\(\) => void saveNow\(\), 900\)/);
+assert.match(source.context, /Recovering unsaved Scribble/);
+assert.match(source.context, /Keep this copy/);
+assert.match(source.context, /ref=\{editorHandleRef\}/);
+assert.match(source.context, /window\.setTimeout\(\(\) => \{/);
+assert.match(source.context, /pendingSaveRef/);
+assert.match(source.context, /idempotencyKey: candidate\.idempotencyKey/);
+assert.match(source.context, /Math\.min\(30_000, 1000 \* \(2 \*\* \(retryAttempt - 1\)\)\)/);
+assert.match(source.context, /window\.addEventListener\("pagehide"/);
+assert.match(source.context, /window\.addEventListener\("online"/);
+assert.match(source.context, /keepalive: options\.keepalive/);
+assert.match(source.context, /captureMatches/);
 assert.match(source.editor, /capability === "scribble"[^\n]*Insert drawing/);
 assert.match(source.editor, /capability === "scribble"[^\n]*Insert code block/);
+assert.match(source.editor, /insertContentAt\(editor\.state\.selection\.to/);
+assert.match(source.editor, /setEditable\(!disabled, false\)/);
 assert.match(source.drawing, /setPointerCapture/);
-  assert.match(source.posts, /ScribbleCitable/);
-  assert.match(source.posts, /window\.getSelection\(\)\?\.toString\(\)\.trim\(\)/);
+assert.match(source.posts, /ScribbleCitable/);
+assert.match(source.posts, /window\.getSelection\(\)\?\.toString\(\)\.trim\(\)/);
 assert.match(source.comments, /ScribbleCitable/);
+assert.match(source.attachmentWrapper, /locator\.kind === "whole"/);
+assert.match(source.attachmentWrapper, /scribble\.addCitation\(source, excerpt, locator\)/);
+assert.match(source.attachments, /orderedImageRegion/);
+assert.match(source.attachments, /data-attachment-selectable/);
+assert.match(source.attachmentModal, /Cite selection/);
+assert.match(source.structuredAttachments, /kind: "spreadsheet-range"/);
+assert.match(source.structuredAttachments, /kind: "presentation-slide"/);
 assert.match(source.workspace, /document\.kind === "quick"/);
 assert.match(source.shell, /<ScribbleProvider/);
 assert.match(source.shell, /<ScribbleLauncher/);
+assert.match(source.shell, /<ScribbleAttachmentPreview/);
 assert.match(source.styles, /width: calc\(\(100vw - min\(var\(--symposium-feed-width\)/);
+assert.match(source.styles, /border-radius: 10px/);
+assert.doesNotMatch(source.styles, /border-left: 0/);
 
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), "symposium-scribble-check-"));
 try {
@@ -161,9 +187,11 @@ console.log(JSON.stringify({
     "persistent singleton and bounded revision history",
     "revision-guarded autosave, filing, discard, and restore",
     "private API, local fallback, live event, and cross-tab parity",
-    "offline dirty-cache recovery and explicit conflict resolution",
-    "equation, vector drawing, code, references, and text citations",
-    "site-wide launcher, post, comment, attachment, and Workspace integration",
+    "offline dirty-cache recovery, replay-safe retries, and explicit conflict resolution",
+    "equation, vector drawing, code, references, and deduplicated citations",
+    "whole-file, image-region, selected-text, spreadsheet-range, and slide capture",
+    "site-wide launcher, post, comment, attachment viewer, and Workspace integration",
+    "four-corner panel treatment and locator-aware source cards",
     "non-publishable and non-shareable filed Quick Notes"
   ]
 }, null, 2));

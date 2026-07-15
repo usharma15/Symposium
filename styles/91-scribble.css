@@ -10,8 +10,7 @@
   grid-template-rows: auto auto minmax(0, 1fr) auto auto auto auto;
   overflow: hidden;
   border: 1px solid rgba(255, 253, 245, 0.28);
-  border-left: 0;
-  border-radius: 0 10px 10px 0;
+  border-radius: 10px;
   background: var(--document-surface-solid);
   color: var(--ink);
   box-shadow: 20px 28px 80px rgba(0, 0, 0, 0.3);
@@ -71,7 +70,8 @@
 .scribble-editor-scroll .document-editor-toolbar > div { flex: 0 0 auto; }
 .scribble-loading { color: var(--muted); padding: 1rem; }
 
-.scribble-error { color: #a83d47; font-size: 0.76rem; padding: 0.45rem 0.7rem; }
+.scribble-error { align-items: center; color: #a83d47; display: flex; font-size: 0.76rem; gap: 0.5rem; justify-content: space-between; padding: 0.45rem 0.7rem; }
+.scribble-error button { align-items: center; display: inline-flex; flex: 0 0 auto; gap: 0.3rem; white-space: nowrap; }
 .scribble-conflict,
 .scribble-recovery,
 .scribble-filed { align-items: center; display: flex; gap: 0.5rem; border-top: 1px solid var(--line); font-size: 0.76rem; }
@@ -109,6 +109,38 @@
   font-weight: 820;
 }
 
+.attachment-citation-controls { align-items: center; display: inline-flex; gap: 0.35rem; }
+.attachment-modal-toolbar > .attachment-citation-controls { left: 0; max-width: calc(50% - 72px); position: absolute; }
+.attachment-modal .attachment-citation-button { gap: 0.35rem; padding-inline: 0.55rem; white-space: nowrap; width: auto; }
+.attachment-modal .attachment-citation-button.active { border-color: color-mix(in srgb, var(--aqua) 68%, var(--line)); background: color-mix(in srgb, var(--aqua) 18%, var(--document-control-solid)); }
+.attachment-modal .attachment-citation-button.primary { background: var(--aqua); border-color: color-mix(in srgb, var(--aqua) 72%, var(--line)); color: var(--panel-strong); }
+.attachment-citation-controls.compact .attachment-citation-button { min-width: 34px; padding: 0.35rem; width: 34px; }
+
+.attachment-expanded-image { flex: 0 0 auto; position: relative; }
+.attachment-expanded-image > img { height: 100%; width: 100%; }
+.attachment-image-region-overlay { cursor: crosshair; inset: 0; position: absolute; touch-action: none; user-select: none; }
+.attachment-image-region-overlay::before { background: rgba(4, 10, 10, 0.18); content: ""; inset: 0; position: absolute; }
+.attachment-image-region-selection { background: rgba(196, 240, 238, 0.14); border: 2px solid #c4f0ee; box-shadow: 0 0 0 9999px rgba(4, 10, 10, 0.3); pointer-events: none; position: absolute; }
+.attachment-modal-stage.selecting-image-region { cursor: crosshair; }
+
+.attachment-selection-citation-action {
+  align-items: center;
+  background: #172322 !important;
+  border: 1px solid rgba(255, 253, 245, 0.28) !important;
+  border-radius: 0.5rem !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.34);
+  color: #fffdf5 !important;
+  display: inline-flex !important;
+  font-size: 0.74rem;
+  font-weight: 820;
+  gap: 0.35rem;
+  min-height: 2.25rem !important;
+  padding: 0 0.65rem !important;
+  position: fixed;
+  width: auto !important;
+  z-index: 70;
+}
+
 @media (max-width: 1020px) {
   .scribble-panel { width: 300px; }
 }
@@ -120,4 +152,8 @@
     min-width: 0;
   }
   .scribble-editor-scroll .document-editor-toolbar { flex-wrap: nowrap; overflow-x: auto; }
+  .attachment-modal-toolbar > .attachment-citation-controls { max-width: calc(100% - 42px); position: static; }
+  .attachment-modal-toolbar { flex-wrap: wrap; justify-content: flex-start; }
+  .attachment-modal-toolbar .attachment-zoom-controls { margin-inline: auto; }
+  .attachment-citation-controls:not(.compact) .attachment-citation-button span { display: none; }
 }

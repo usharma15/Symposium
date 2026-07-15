@@ -2,7 +2,6 @@
 
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -16,16 +15,10 @@ import {
   FileText,
   FileSpreadsheet,
   Film,
-  ExternalLink,
-  Fullscreen,
   ImageIcon,
   Paperclip,
   Presentation,
-  RotateCcw,
-  Shrink,
-  X,
-  ZoomIn,
-  ZoomOut
+  X
 } from "lucide-react";
 import type { InquiryAttachment, InquiryItem } from "@/lib/mockData";
 import {
@@ -40,14 +33,21 @@ import { buildStructuredAttachmentMetadata } from "@/lib/structuredAttachmentPre
 import { StructuredAttachmentPreviewPane } from "@/features/attachments/StructuredAttachmentPreviews";
 import { AttachmentScribbleButton } from "@/features/attachments/AttachmentScribbleButton";
 import { feedPreviewAttachments } from "@/lib/documentModel";
-import { deletedPostContextTitle, isDeletedPost } from "@/lib/symposiumCore";
-import { isSafeExternalUrl } from "@/packages/contracts/src";
+import { isDeletedPost } from "@/lib/symposiumCore";
+import { isSafeExternalUrl, type DocumentCitationLocatorContract } from "@/packages/contracts/src";
 
 export type AttachmentPreviewHandler = (item: InquiryItem, attachmentId: string) => void;
 export type AttachmentUploadHandler = (file: File) => Promise<InquiryAttachment>;
+export type AttachmentCitationCapture = {
+  attachment: InquiryAttachment;
+  excerpt: string;
+  locator: DocumentCitationLocatorContract;
+};
 type AttachmentRenderMode = "feed" | "detail" | "modal" | "expanded";
 type MediaIntrinsicSize = { width: number; height: number };
-type AttachmentViewportSize = { width: number; height: number };
+export type AttachmentViewportSize = { width: number; height: number };
+type UnitPoint = { x: number; y: number };
+export type ImageRegion = Extract<DocumentCitationLocatorContract, { kind: "image-region" }>;
 type DocxPreviewRun = { text: string; bold: boolean; italic: boolean; underline: boolean };
 type DocxPreviewBlock = {
   id: string;
@@ -93,8 +93,27 @@ const maxAttachmentZoom = 5;
 const zoomInStep = 0.2;
 const zoomOutStep = 0.1;
 
-const clampAttachmentZoom = (value: number) =>
+export const clampAttachmentZoom = (value: number) =>
   Math.min(maxAttachmentZoom, Math.max(minAttachmentZoom, Math.round(value * 100) / 100));
+
+const orderedImageRegion = (start: UnitPoint, end: UnitPoint): ImageRegion => ({
+  kind: "image-region",
+  x: Math.min(start.x, end.x),
+  y: Math.min(start.y, end.y),
+  width: Math.max(0.001, Math.abs(end.x - start.x)),
+  height: Math.max(0.001, Math.abs(end.y - start.y))
+});
+
+export const textOffsetWithin = (element: Element, node: Node, offset: number) => {
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.setEnd(node, offset);
+    return range.toString().length;
+  } catch {
+    return undefined;
+  }
+};
 
 const fitMediaSizeToViewport = (
   intrinsicSize: MediaIntrinsicSize | null,
@@ -119,7 +138,7 @@ const attachmentPageCount = (attachment: InquiryAttachment, fallbackText = "") =
   return 1;
 };
 
-const attachmentRenderKind = (attachment: InquiryAttachment) =>
+export const attachmentRenderKind = (attachment: InquiryAttachment) =>
   attachmentKindForContentType(attachment.contentType, attachment.fileName);
 
 const attachmentForRendering = (attachment: InquiryAttachment): InquiryAttachment => {
@@ -400,20 +419,20 @@ export function AttachmentComposerField({
   );
 }
 
-const startAttachmentDrag = (attachment: InquiryAttachment) => (event: React.DragEvent<HTMLElement>) => {
+export const startAttachmentDrag = (attachment: InquiryAttachment) => (event: React.DragEvent<HTMLElement>) => {
   if (!attachment.url) return;
   const url = new URL(attachment.url, window.location.href).toString();
   event.dataTransfer.effectAllowed = "copy";
   event.dataTransfer.setData("DownloadURL", `${attachment.contentType}:${attachment.fileName}:${url}`);
 };
-function postPreviewAttachments(item: InquiryItem) {
+export function postPreviewAttachments(item: InquiryItem) {
   if (isDeletedPost(item)) return [];
   return feedPreviewAttachments(item.document, item.attachments ?? [])
     .filter((attachment) => attachment.url)
     .map(attachmentForRendering);
 }
 
-const visibleAttachments = (attachments: InquiryAttachment[]) =>
+export const visibleAttachments = (attachments: InquiryAttachment[]) =>
   attachments.filter((attachment) => attachment.url).map(attachmentForRendering);
 
 export function AttachmentCarousel({ attachments: sourceAttachments, label = "Attachments", onOpenPreview, variant = "feed", onAddToScribble }: {
@@ -665,7 +684,7 @@ function TextAttachmentPreview({
         ) : null}
       </div>
       {pageText ? (
-        <pre style={mode === "expanded" ? { fontSize: `${0.86 * zoom}rem` } : undefined}>{pageText}</pre>
+        <pre data-attachment-selectable="true" data-attachment-page={boundedPage} style={mode === "expanded" ? { fontSize: `${0.86 * zoom}rem` } : undefined}>{pageText}</pre>
       ) : (
         <div className="attachment-file-shell">
           {attachmentIcon(attachment)}
@@ -753,6 +772,8 @@ function DocxAttachmentPreview({
         if (!renderedPages.length) throw new Error("Document pages missing.");
         renderedPages.forEach((renderedPage, index) => {
           renderedPage.hidden = index !== 0;
+          renderedPage.dataset.attachmentSelectable = "true";
+          renderedPage.dataset.attachmentPage = String(index + 1);
         });
         const firstPageWidth = renderedPages[0]?.getBoundingClientRect().width ?? 0;
         const updateFitScale = () => {
@@ -828,7 +849,7 @@ function DocxAttachmentPreview({
           aria-label={`${attachment.fileName} document preview`}
         />
         {!renderedPageCount ? (
-          <article className="attachment-docx-page attachment-docx-fallback">
+          <article className="attachment-docx-page attachment-docx-fallback" data-attachment-selectable="true" data-attachment-page={boundedPage}>
             {fallbackPageBlocks.length ? (
               fallbackPageBlocks.map((block) => (
                 <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
@@ -865,14 +886,82 @@ function DocxAttachmentPreview({
   );
 }
 
+function ImageRegionOverlay({
+  active,
+  region,
+  onChange
+}: {
+  active: boolean;
+  region: ImageRegion | null;
+  onChange: (region: ImageRegion | null) => void;
+}) {
+  const startRef = useRef<UnitPoint | null>(null);
+  const pointerRef = useRef<number | null>(null);
+
+  const pointForEvent = (event: React.PointerEvent<HTMLDivElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / Math.max(1, bounds.width))),
+      y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / Math.max(1, bounds.height)))
+    };
+  };
+
+  if (!active) return null;
+  return (
+    <div
+      className="attachment-image-region-overlay"
+      role="application"
+      aria-label="Drag over the image to select a region"
+      onPointerDown={(event) => {
+        if (event.button !== 0 && event.pointerType === "mouse") return;
+        event.preventDefault();
+        event.stopPropagation();
+        const point = pointForEvent(event);
+        startRef.current = point;
+        pointerRef.current = event.pointerId;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        onChange(orderedImageRegion(point, point));
+      }}
+      onPointerMove={(event) => {
+        if (pointerRef.current !== event.pointerId || !startRef.current) return;
+        event.preventDefault();
+        onChange(orderedImageRegion(startRef.current, pointForEvent(event)));
+      }}
+      onPointerUp={(event) => {
+        if (pointerRef.current !== event.pointerId || !startRef.current) return;
+        event.preventDefault();
+        const next = orderedImageRegion(startRef.current, pointForEvent(event));
+        pointerRef.current = null;
+        startRef.current = null;
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        onChange(next.width >= 0.01 && next.height >= 0.01 ? next : null);
+      }}
+      onPointerCancel={(event) => {
+        if (pointerRef.current !== event.pointerId) return;
+        pointerRef.current = null;
+        startRef.current = null;
+        onChange(null);
+      }}
+    >
+      {region ? <span className="attachment-image-region-selection" style={{ left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%` }} /> : null}
+    </div>
+  );
+}
+
 function ExpandedMediaPreview({
   attachment,
   zoom,
-  viewportSize
+  viewportSize,
+  imageSelectionActive = false,
+  imageRegion = null,
+  onImageRegionChange = () => undefined
 }: {
   attachment: InquiryAttachment;
   zoom: number;
   viewportSize: AttachmentViewportSize | null;
+  imageSelectionActive?: boolean;
+  imageRegion?: ImageRegion | null;
+  onImageRegionChange?: (region: ImageRegion | null) => void;
 }) {
   const kind = attachmentRenderKind(attachment);
   const [intrinsicSize, setIntrinsicSize] = useState<MediaIntrinsicSize | null>(() =>
@@ -900,17 +989,19 @@ function ExpandedMediaPreview({
   if (kind === "image" && attachment.url) {
     return (
       <div className="attachment-expanded-media" style={mediaShellStyle}>
-        <img
-          src={attachment.url}
-          alt=""
-          style={mediaStyle}
-          onLoad={(event) => {
-            const image = event.currentTarget;
-            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-              setIntrinsicSize({ width: image.naturalWidth, height: image.naturalHeight });
-            }
-          }}
-        />
+        <div className="attachment-expanded-image" style={mediaStyle ?? { width: "100%", height: "100%" }}>
+          <img
+            src={attachment.url}
+            alt=""
+            onLoad={(event) => {
+              const image = event.currentTarget;
+              if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                setIntrinsicSize({ width: image.naturalWidth, height: image.naturalHeight });
+              }
+            }}
+          />
+          <ImageRegionOverlay active={imageSelectionActive} region={imageRegion} onChange={onImageRegionChange} />
+        </div>
       </div>
     );
   }
@@ -938,18 +1029,26 @@ function ExpandedMediaPreview({
   return null;
 }
 
-function AttachmentExpandedPane({
+export function AttachmentExpandedPane({
   attachment,
   zoom,
-  viewportSize
+  viewportSize,
+  imageSelectionActive,
+  imageRegion,
+  onImageRegionChange,
+  onCite
 }: {
   attachment: InquiryAttachment;
   zoom: number;
   viewportSize: AttachmentViewportSize | null;
+  imageSelectionActive: boolean;
+  imageRegion: ImageRegion | null;
+  onImageRegionChange: (region: ImageRegion | null) => void;
+  onCite?: (excerpt: string, locator: DocumentCitationLocatorContract) => void;
 }) {
   const kind = attachmentRenderKind(attachment);
   if (kind === "image" || kind === "video") {
-    return <ExpandedMediaPreview attachment={attachment} zoom={zoom} viewportSize={viewportSize} />;
+    return <ExpandedMediaPreview attachment={attachment} zoom={zoom} viewportSize={viewportSize} imageSelectionActive={imageSelectionActive} imageRegion={imageRegion} onImageRegionChange={onImageRegionChange} />;
   }
 
   if (kind === "pdf" && attachment.url) {
@@ -957,7 +1056,7 @@ function AttachmentExpandedPane({
   }
 
   if (kind === "code" || kind === "spreadsheet" || kind === "presentation") {
-    return <StructuredAttachmentPreviewPane attachment={attachmentForRendering(attachment)} mode="expanded" zoom={zoom} />;
+    return <StructuredAttachmentPreviewPane attachment={attachmentForRendering(attachment)} mode="expanded" zoom={zoom} onCite={onCite} />;
   }
 
   if (kind === "document" && isDocxAttachment(attachment)) {
@@ -975,222 +1074,6 @@ function AttachmentExpandedPane({
         <strong>{attachment.fileName}</strong>
         <span>{formatAttachmentBytes(attachment.byteSize)}</span>
       </div>
-    </div>
-  );
-}
-
-export function AttachmentPreviewModal({
-  item,
-  attachments: sourceAttachments,
-  contextTitle,
-  attachmentId,
-  onClose
-}: { item?: InquiryItem; attachments?: InquiryAttachment[]; contextTitle?: string; attachmentId: string; onClose: () => void }) {
-  const attachments = sourceAttachments ? visibleAttachments(sourceAttachments) : item ? postPreviewAttachments(item) : [];
-  const attachmentIdsKey = attachments.map((attachment) => attachment.id).join("|");
-  const initialIndex = Math.max(0, attachments.findIndex((attachment) => attachment.id === attachmentId));
-  const [activeIndex, setActiveIndex] = useState(initialIndex);
-  const activeAttachment = attachments[Math.min(activeIndex, Math.max(attachments.length - 1, 0))];
-  const [zoom, setZoom] = useState(1);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [stageSize, setStageSize] = useState<AttachmentViewportSize | null>(null);
-  const modalRef = useRef<HTMLElement | null>(null);
-  const stageRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    setActiveIndex(Math.max(0, attachments.findIndex((attachment) => attachment.id === attachmentId)));
-  }, [attachmentId, attachmentIdsKey]);
-
-  useEffect(() => {
-    if (!activeAttachment) return;
-    setZoom(1);
-  }, [activeAttachment?.id]);
-
-  useLayoutEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    const updateStageSize = () => {
-      const nextSize = {
-        width: stage.clientWidth,
-        height: stage.clientHeight
-      };
-      if (nextSize.width <= 0 || nextSize.height <= 0) return;
-      setStageSize((currentSize) =>
-        currentSize?.width === nextSize.width && currentSize?.height === nextSize.height ? currentSize : nextSize
-      );
-    };
-    updateStageSize();
-    const resizeObserver = new ResizeObserver(updateStageSize);
-    resizeObserver.observe(stage);
-    window.addEventListener("resize", updateStageSize);
-    return () => {
-      resizeObserver.disconnect();
-      window.removeEventListener("resize", updateStageSize);
-    };
-  }, []);
-
-  useLayoutEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    let secondFrame = 0;
-    let firstTimeout = 0;
-    let secondTimeout = 0;
-    const centerStage = () => {
-      stage.scrollLeft = Math.max(0, (stage.scrollWidth - stage.clientWidth) / 2);
-      stage.scrollTop = Math.max(0, (stage.scrollHeight - stage.clientHeight) / 2);
-    };
-    const frame = window.requestAnimationFrame(() => {
-      centerStage();
-      secondFrame = window.requestAnimationFrame(centerStage);
-      firstTimeout = window.setTimeout(centerStage, 60);
-      secondTimeout = window.setTimeout(centerStage, 180);
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-      if (secondFrame) window.cancelAnimationFrame(secondFrame);
-      if (firstTimeout) window.clearTimeout(firstTimeout);
-      if (secondTimeout) window.clearTimeout(secondTimeout);
-    };
-  }, [activeAttachment?.id, stageSize?.height, stageSize?.width, zoom]);
-
-  useEffect(() => {
-    const onFullscreenChange = () => {
-      setIsFullscreen(document.fullscreenElement === modalRef.current);
-    };
-    document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
-  }, []);
-
-  useEffect(() => {
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape" && !document.fullscreenElement) onClose();
-      if (event.key === "ArrowLeft" && attachments.length > 1) {
-        event.preventDefault();
-        setActiveIndex((current) => (current - 1 + attachments.length) % attachments.length);
-      }
-      if (event.key === "ArrowRight" && attachments.length > 1) {
-        event.preventDefault();
-        setActiveIndex((current) => (current + 1) % attachments.length);
-      }
-      if ((event.key === "+" || event.key === "=") && activeAttachment) {
-        event.preventDefault();
-        setZoom((current) => clampAttachmentZoom(current + zoomInStep));
-      }
-      if (event.key === "-" && activeAttachment) {
-        event.preventDefault();
-        setZoom((current) => clampAttachmentZoom(current - zoomOutStep));
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [activeAttachment, attachments.length, onClose]);
-
-  if (!activeAttachment) return null;
-
-  const closeModal = () => {
-    if (document.fullscreenElement === modalRef.current) {
-      void document.exitFullscreen().then(onClose, onClose);
-      return;
-    }
-    onClose();
-  };
-
-  const resetZoom = () => setZoom(1);
-  const adjustZoom = (delta: number) => {
-    setZoom((current) => clampAttachmentZoom(current + delta));
-  };
-  const toggleFullscreen = async () => {
-    try {
-      if (document.fullscreenElement === modalRef.current) {
-        await document.exitFullscreen();
-      } else {
-        await modalRef.current?.requestFullscreen();
-      }
-    } catch {
-      setIsFullscreen(false);
-    }
-  };
-  const zoomControls = (
-    <div className="attachment-zoom-controls">
-      <button type="button" title="Zoom out" onClick={() => adjustZoom(-zoomOutStep)}>
-        <ZoomOut size={15} />
-      </button>
-      <span>{Math.round(zoom * 100)}%</span>
-      <button type="button" title="Zoom in" onClick={() => adjustZoom(zoomInStep)}>
-        <ZoomIn size={15} />
-      </button>
-      <button type="button" title="Reset zoom" onClick={resetZoom}>
-        <RotateCcw size={15} />
-      </button>
-    </div>
-  );
-  const fullscreenButton = (
-    <button type="button" title={isFullscreen ? "Exit full screen" : "Full screen"} onClick={toggleFullscreen}>
-      {isFullscreen ? <Shrink size={15} /> : <Fullscreen size={15} />}
-    </button>
-  );
-  const openDedicatedViewer = () => {
-    if (!item || item.id === "composer-preview") return;
-    const href = `/posts/${encodeURIComponent(item.id)}?viewer=full&attachment=${encodeURIComponent(activeAttachment.id)}`;
-    window.open(href, "_blank", "noopener,noreferrer");
-  };
-
-  return (
-    <div className="attachment-modal-backdrop" role="presentation" onClick={closeModal}>
-      <section
-        ref={modalRef}
-        className={`attachment-modal${isFullscreen ? " attachment-modal-fullscreen" : ""}`}
-        aria-label="Attachment preview"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header>
-          <div className="attachment-modal-title">
-            <span>{item ? deletedPostContextTitle(item) : contextTitle ?? "Private draft attachment"}</span>
-          </div>
-          <div className="attachment-modal-header-controls" role="group" aria-label="Attachment viewing controls">
-            {isFullscreen ? zoomControls : null}
-            {isFullscreen ? fullscreenButton : null}
-            {item && item.id !== "composer-preview" ? <button type="button" title="Open in a new tab" onClick={openDedicatedViewer}><ExternalLink size={15} /></button> : null}
-            {activeAttachment.url ? <a href={activeAttachment.url} target="_blank" rel="noopener noreferrer" title="Open original file" aria-label="Open original file"><FileText size={15} /></a> : null}
-            <button type="button" title="Close" onClick={closeModal}>
-              <X size={17} />
-            </button>
-          </div>
-        </header>
-
-        {!isFullscreen ? (
-          <div className="attachment-modal-toolbar" aria-label="Attachment viewing controls">
-            {zoomControls}
-            {fullscreenButton}
-          </div>
-        ) : null}
-
-        <div
-          ref={stageRef}
-          className={`attachment-modal-stage attachment-modal-stage-${activeAttachment.kind}`}
-          draggable={Boolean(activeAttachment.url)}
-          onDragStart={startAttachmentDrag(activeAttachment)}
-        >
-          <AttachmentExpandedPane attachment={activeAttachment} zoom={zoom} viewportSize={stageSize} />
-        </div>
-
-        <footer className="attachment-modal-footer">
-          {attachments.length > 1 ? (
-            <div className="attachment-modal-navigation">
-              <button type="button" title="Previous attachment" onClick={() => setActiveIndex((current) => (current - 1 + attachments.length) % attachments.length)}>
-                <ChevronLeft size={17} />
-              </button>
-              <span>{activeIndex + 1}/{attachments.length}</span>
-              <button type="button" title="Next attachment" onClick={() => setActiveIndex((current) => (current + 1) % attachments.length)}>
-                <ChevronRight size={17} />
-              </button>
-            </div>
-          ) : (
-            <span />
-          )}
-          <small>{formatAttachmentBytes(activeAttachment.byteSize)}</small>
-        </footer>
-      </section>
     </div>
   );
 }

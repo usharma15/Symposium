@@ -11,6 +11,7 @@ import {
 import { cleanHandle } from "@/lib/symposiumCore";
 import { AttachmentCarousel } from "@/features/attachments/AttachmentViews";
 import { DocumentDrawingPreview } from "@/features/content/DocumentDrawing";
+import { documentCitationLocatorLabel, documentSourceContextLabel } from "@/lib/documentCitations";
 
 const runStyle = (run: SymposiumTextRun): CSSProperties => ({
   ...(run.font ? { fontFamily: `var(--document-font-${run.font})` } : {}),
@@ -128,9 +129,9 @@ export function SymposiumDocumentRenderer({
       const Tag = node.style === "decimal" || node.style.includes("alpha") ? "ol" : "ul";
       return <Tag key={node.id} data-document-block-id={node.id} className={`document-list document-list-${node.style}`} style={{ marginLeft: `${node.depth * 1.25}rem` }}>{node.items.map((item, index) => <li key={index}><TextRuns content={item} profiles={profiles} /></li>)}</Tag>;
     }
-    if (node.type === "reference") return <a key={node.id} data-document-block-id={node.id} className="document-reference document-source-card" href={node.source?.canonicalPath ?? `/${node.resource.type}s/${encodeURIComponent(node.resource.id)}`}><small>{node.source?.kind ?? node.resource.type}{node.source?.author ? ` · ${node.source.author}` : ""}</small><strong>{node.source?.title ?? node.resource.label ?? node.resource.id}</strong>{node.source?.body ? <span>{node.source.body}</span> : null}</a>;
+    if (node.type === "reference") return <a key={node.id} data-document-block-id={node.id} className="document-reference document-source-card" href={node.source?.canonicalPath ?? `/${node.resource.type}s/${encodeURIComponent(node.resource.id)}`}><small>{node.source ? documentSourceContextLabel(node.source) : node.resource.type}</small><strong>{node.source?.title ?? node.resource.label ?? node.resource.id}</strong>{node.source?.body ? <span>{node.source.body}</span> : null}</a>;
     if (node.type === "citation") {
-      const content = <><small>Cited excerpt{node.source?.author ? ` · ${node.source.author}` : ""}</small><blockquote>{node.excerpt ?? node.label}</blockquote></>;
+      const content = <><small>{documentCitationLocatorLabel(node.locator)}{node.source?.author ? ` · ${node.source.author}` : ""}</small><blockquote>{node.excerpt ?? node.label}</blockquote></>;
       const href = node.source?.canonicalPath ?? node.href;
       return href ? <a key={node.id} data-document-block-id={node.id} className="document-citation document-source-card" href={href} {...(href.startsWith("http") ? { target: "_blank", rel: "noopener noreferrer nofollow" } : {})}>{content}</a> : <span key={node.id} data-document-block-id={node.id} className="document-citation document-source-card">{content}</span>;
     }

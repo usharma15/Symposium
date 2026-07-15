@@ -4,6 +4,7 @@ export type SymposiumApiRequestOptions = {
   cache?: RequestCache;
   idempotencyKey?: string;
   headers?: HeadersInit;
+  keepalive?: boolean;
   signal?: AbortSignal;
 };
 
@@ -54,6 +55,7 @@ export const createSymposiumApiClient = (fetchImpl: FetchLike = globalThis.fetch
         headers,
         body: hasBody ? JSON.stringify(options.body) : undefined,
         cache: options.cache,
+        keepalive: options.keepalive,
         signal: options.signal
       });
     } catch (cause) {

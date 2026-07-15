@@ -24,7 +24,8 @@ const main = async () => {
     method: "PATCH",
     idempotencyKey: "mutation-1",
     body: { title: "Revision-safe" },
-    cache: "no-store"
+    cache: "no-store",
+    keepalive: true
   });
   assert.deepEqual(result, { ok: true });
   assert.equal(requests[0]?.input, "/api/posts/p1");
@@ -32,6 +33,7 @@ const main = async () => {
   assert.equal(new Headers(requests[0]?.init?.headers).get("Idempotency-Key"), "mutation-1");
   assert.equal(new Headers(requests[0]?.init?.headers).get("Content-Type"), "application/json");
   assert.equal(requests[0]?.init?.body, JSON.stringify({ title: "Revision-safe" }));
+  assert.equal(requests[0]?.init?.keepalive, true);
 
   const conflictClient = createSymposiumApiClient(async () => jsonResponse({ error: "Still processing" }, 409));
   const conflict = await conflictClient.request("/api/posts", { method: "POST", body: {} }).catch((error) => error);
@@ -68,6 +70,7 @@ const main = async () => {
   console.log(JSON.stringify({ ok: true, checked: [
     "JSON request normalization",
     "idempotency header propagation",
+    "lifecycle keepalive propagation",
     "structured API errors",
     "retry retention policy",
     "stable retry mutation identities",

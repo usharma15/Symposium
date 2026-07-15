@@ -18,6 +18,7 @@ import {
   AlignRight,
   Bold,
   Code2,
+  ExternalLink,
   FilePlus2,
   Heading1,
   Heading2,
@@ -62,11 +63,12 @@ import {
 import {
   AttachmentCarousel,
   AttachmentComposerField,
-  AttachmentPreviewModal,
   type AttachmentUploadHandler
 } from "@/features/attachments/AttachmentViews";
+import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
 import { DocumentDrawingDialog, DocumentDrawingPreview } from "@/features/content/DocumentDrawing";
-import type { DocumentDrawingContract } from "@/packages/contracts/src";
+import type { DocumentCitationLocatorContract, DocumentDrawingContract, DocumentSourceSnapshotContract } from "@/packages/contracts/src";
+import { documentCitationLocatorLabel, documentSourceContextLabel } from "@/lib/documentCitations";
 
 type EditorContextValue = {
   attachments: InquiryAttachment[];
@@ -496,29 +498,31 @@ function DrawingNodeView({ node, updateAttributes, selected, deleteNode }: NodeV
 }
 
 function ReferenceNodeView({ node, selected, deleteNode }: NodeViewProps) {
-  const source = node.attrs.source as Record<string, unknown> | null;
+  const source = node.attrs.source as DocumentSourceSnapshotContract | null;
   const resource = node.attrs.resource as Record<string, unknown> | null;
-  const title = typeof source?.title === "string" ? source.title : typeof resource?.label === "string" ? resource.label : "Referenced source";
-  const body = typeof source?.body === "string" ? source.body : "";
-  const author = typeof source?.author === "string" ? source.author : "";
+  const title = source?.title ?? (typeof resource?.label === "string" ? resource.label : "Referenced source");
+  const body = source?.body ?? "";
   return (
     <NodeViewWrapper className={`document-source-editor document-atomic-node${selected ? " selected" : ""}`}>
       <button type="button" className="document-atomic-delete" title="Remove reference" aria-label="Remove reference" onClick={deleteNode}><Trash2 size={15} /></button>
-      <small>{typeof source?.kind === "string" ? source.kind : "source"}{author ? ` · ${author}` : ""}</small>
+      <small>{source ? documentSourceContextLabel(source) : "source"}</small>
       <strong>{title}</strong>
       {body ? <p>{body}</p> : null}
+      {source?.canonicalPath ? <a className="document-source-open" href={source.canonicalPath} title="Open source"><ExternalLink size={14} />Open source</a> : null}
     </NodeViewWrapper>
   );
 }
 
 function CitationNodeView({ node, selected, deleteNode }: NodeViewProps) {
-  const source = node.attrs.source as Record<string, unknown> | null;
+  const source = node.attrs.source as DocumentSourceSnapshotContract | null;
+  const locator = node.attrs.locator as DocumentCitationLocatorContract | null;
   const excerpt = typeof node.attrs.excerpt === "string" ? node.attrs.excerpt : typeof node.attrs.label === "string" ? node.attrs.label : "Citation";
   return (
     <NodeViewWrapper className={`document-source-editor document-citation-editor document-atomic-node${selected ? " selected" : ""}`}>
       <button type="button" className="document-atomic-delete" title="Remove citation" aria-label="Remove citation" onClick={deleteNode}><Trash2 size={15} /></button>
-      <small>Cited excerpt{typeof source?.author === "string" ? ` · ${source.author}` : ""}</small>
+      <small>{documentCitationLocatorLabel(locator)}{source?.author ? ` · ${source.author}` : ""}</small>
       <blockquote>{excerpt}</blockquote>
+      {source?.canonicalPath ? <a className="document-source-open" href={source.canonicalPath} title="Open cited source"><ExternalLink size={14} />Open source</a> : null}
     </NodeViewWrapper>
   );
 }
@@ -895,11 +899,14 @@ export const SymposiumDocumentEditor = forwardRef<SymposiumDocumentEditorHandle,
   }, [capability, placeholder]);
 
   useImperativeHandle(ref, () => ({
-    insertNode: (node) => Boolean(editor?.chain().focus().insertContent(canonicalNodeToJSON(node)).run()),
+    insertNode: (node) => {
+      if (!editor || editor.isDestroyed) return false;
+      return editor.chain().focus().insertContentAt(editor.state.selection.to, canonicalNodeToJSON(node)).run();
+    },
     focus: () => { editor?.commands.focus(); }
   }), [editor]);
 
-  useEffect(() => editor?.setEditable(!disabled), [disabled, editor]);
+  useEffect(() => editor?.setEditable(!disabled, false), [disabled, editor]);
 
   useEffect(() => {
     settingsRef.current = documentValue.settings ?? defaultDocumentSettings;
