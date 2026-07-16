@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { PROFILE_ACTIVITY_SQL } from "@/apps/api/src/repository/actions";
 import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
 import {
   itemMatchesProfilePostAction,
@@ -92,6 +93,20 @@ assert.deepEqual(
   savedSlots
 );
 
+for (const qualifiedReference of [
+  "post_action.revision",
+  "post_action.updated_at",
+  "comment_action.revision",
+  "comment_action.updated_at"
+]) {
+  assert.ok(
+    PROFILE_ACTIVITY_SQL.includes(qualifiedReference),
+    `Profile activity joins must qualify ${qualifiedReference}.`
+  );
+}
+assert.ok(PROFILE_ACTIVITY_SQL.includes("FROM post_actions AS post_action"));
+assert.ok(PROFILE_ACTIVITY_SQL.includes("FROM comment_actions AS comment_action"));
+
 console.log(
   JSON.stringify(
     {
@@ -100,7 +115,8 @@ console.log(
         "self-authored profile actions",
         "activity deduplication",
         "live slot reconciliation",
-        "profile tab isolation"
+        "profile tab isolation",
+        "unambiguous live activity query"
       ]
     },
     null,

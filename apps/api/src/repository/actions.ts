@@ -195,50 +195,40 @@ type ProfileActivityRow = ActionLedgerRow & {
   postId: string;
 };
 
-export const listCanonicalProfileActivity = async (
-  client: PoolClient,
-  actorHandle: string,
-  allowedActions: ToggleActionContract[],
-  query: ProfileActivityQueryContract,
-  includeInactive: boolean
-): Promise<ProfileActivityResponseContract> => {
-  if (!allowedActions.length) return { entries: [], nextCursor: null };
-  const cursor = decodeActivityCursor(query.cursor);
-  const result = await client.query<ProfileActivityRow>(
-    `WITH profile_activity AS (
+export const PROFILE_ACTIVITY_SQL = `WITH profile_activity AS (
        SELECT
          'post'::text AS "subjectType",
-         post_id AS "subjectId",
-         post_id AS "postId",
-         actor_handle AS "actorHandle",
-         action,
-         active,
-         count,
-         revision,
-         updated_at AS "updatedAt"
-       FROM post_actions
-       JOIN posts post ON post.id = post_actions.post_id
-       WHERE actor_handle = $1
-         AND action = ANY($2::text[])
-         AND ($8::boolean OR active = true)
+         post_action.post_id AS "subjectId",
+         post_action.post_id AS "postId",
+         post_action.actor_handle AS "actorHandle",
+         post_action.action,
+         post_action.active,
+         post_action.count,
+         post_action.revision,
+         post_action.updated_at AS "updatedAt"
+       FROM post_actions AS post_action
+       JOIN posts AS post ON post.id = post_action.post_id
+       WHERE post_action.actor_handle = $1
+         AND post_action.action = ANY($2::text[])
+         AND ($8::boolean OR post_action.active = true)
          AND post.deleted_at IS NULL
          AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
        UNION ALL
        SELECT
          'comment'::text AS "subjectType",
-         comment_id AS "subjectId",
-         post_id AS "postId",
-         actor_handle AS "actorHandle",
-         action,
-         active,
-         count,
-         revision,
-         updated_at AS "updatedAt"
-       FROM comment_actions
-       JOIN posts post ON post.id = comment_actions.post_id
-       WHERE actor_handle = $1
-         AND action = ANY($2::text[])
-         AND ($8::boolean OR active = true)
+         comment_action.comment_id AS "subjectId",
+         comment_action.post_id AS "postId",
+         comment_action.actor_handle AS "actorHandle",
+         comment_action.action,
+         comment_action.active,
+         comment_action.count,
+         comment_action.revision,
+         comment_action.updated_at AS "updatedAt"
+       FROM comment_actions AS comment_action
+       JOIN posts AS post ON post.id = comment_action.post_id
+       WHERE comment_action.actor_handle = $1
+         AND comment_action.action = ANY($2::text[])
+         AND ($8::boolean OR comment_action.active = true)
          AND post.deleted_at IS NULL
          AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
      )
@@ -249,7 +239,19 @@ export const listCanonicalProfileActivity = async (
        ("updatedAt", "subjectType", "subjectId", action) < ($3::timestamptz, $4::text, $5::text, $6::text)
      )
      ORDER BY "updatedAt" DESC, "subjectType" DESC, "subjectId" DESC, action DESC
-     LIMIT $7`,
+     LIMIT $7`;
+
+export const listCanonicalProfileActivity = async (
+  client: PoolClient,
+  actorHandle: string,
+  allowedActions: ToggleActionContract[],
+  query: ProfileActivityQueryContract,
+  includeInactive: boolean
+): Promise<ProfileActivityResponseContract> => {
+  if (!allowedActions.length) return { entries: [], nextCursor: null };
+  const cursor = decodeActivityCursor(query.cursor);
+  const result = await client.query<ProfileActivityRow>(
+    PROFILE_ACTIVITY_SQL,
     [
       actorHandle,
       allowedActions,
