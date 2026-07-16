@@ -9,11 +9,12 @@ import {
   type FormEvent
 } from "react";
 import { MessageCircle, Settings, UserRound, X } from "lucide-react";
-import type { CanonicalActionActivityContract, ToggleActionContract } from "@/packages/contracts/src";
+import type { CanonicalActionActivityContract, ProfileActivityCountsContract, ToggleActionContract } from "@/packages/contracts/src";
 import {
   profile,
   type InquiryComment,
   type InquiryItem,
+  type ResearchCommunity,
   type ResearchProfile
 } from "@/lib/mockData";
 import {
@@ -30,10 +31,13 @@ import {
 import {
   canonicalActionState,
   itemMatchesProfilePostAction,
+  profileCommentsArePubliclyListable,
+  profileItemIsPubliclyListable,
   reconcileProfileActivitySlots,
   selectProfileActivitySlots,
   uniqueProfileActivityEntries
 } from "@/lib/profileActivity";
+import { CommunityActivityBadge } from "@/features/communities/CommunityActivityBadge";
 import type { CommentActionHandler, PostActionHandler } from "@/features/actions/actionTypes";
 import {
   AttachmentCarousel,
@@ -206,6 +210,9 @@ export function ProfileView({
   activityRevision,
   canonicalActivities,
   canonicalActivityLoaded,
+  hiddenCommunityCounts,
+  communities,
+  onOpenCommunity,
   onActiveTabChange,
   onSocialViewChange,
   onEditPost,
@@ -242,6 +249,9 @@ export function ProfileView({
   activityRevision: number;
   canonicalActivities: CanonicalActionActivityContract[];
   canonicalActivityLoaded: boolean;
+  hiddenCommunityCounts: ProfileActivityCountsContract;
+  communities: ResearchCommunity[];
+  onOpenCommunity: (communityId: string) => void;
   onActiveTabChange: (tab: ProfileTab) => void;
   onSocialViewChange: (view: ProfileSocialView | null) => void;
   onEditPost: (item: InquiryItem) => void;
@@ -251,6 +261,9 @@ export function ProfileView({
 }) {
   const [visibleSlots, setVisibleSlots] = useState<ProfileActivitySlot[]>([]);
   const visibleSlotContextRef = useRef("");
+  const profileItems = items.filter((item) => profileItemIsPubliclyListable(item, communities));
+  const profileCommentItems = profileItems.filter((item) => profileCommentsArePubliclyListable(item, communities));
+  const communityById = new Map(communities.map((community) => [community.id, community]));
   const byPublishedRecency = (nextItems: InquiryItem[]) =>
     [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, "authored") - getProfileRecency(a, person.handle, "authored"));
   const byProfileRecency = (nextItems: InquiryItem[], kind: ProfileActivityKind) =>
@@ -300,7 +313,7 @@ export function ProfileView({
     if (!canonicalActivityLoaded) return commentMatchesProfileActivity(comment, person, kind);
     return Boolean(canonicalActionState(canonicalActivities, "comment", comment.id, person.handle, kind)?.active);
   };
-  const authored = byPublishedRecency(items.filter(isAuthor));
+  const authored = byPublishedRecency(profileItems.filter(isAuthor));
   const papers = authored.filter((item) => itemHasPostType(item, "paper"));
   const thoughts = authored.filter((item) => itemHasPostType(item, "thought"));
   const proposals = authored.filter((item) => itemHasPostType(item, "proposal"));
@@ -308,30 +321,30 @@ export function ProfileView({
   const commentRecency = (item: InquiryItem, comment: InquiryComment, kind: ProfileCommentActivityKind) =>
     getProfileCommentRecency(item, comment, person.handle, kind);
   const commentActivities = collectProfileComments(
-    items,
+    profileCommentItems,
     person,
     "comments",
     commentRecency,
     canonicalCommentActionMatches
   );
   const commentReshares = canShowReshares
-    ? collectProfileComments(items, person, "fork", commentRecency, canonicalCommentActionMatches)
+    ? collectProfileComments(profileCommentItems, person, "fork", commentRecency, canonicalCommentActionMatches)
     : [];
   const commentLikes = canShowLikes
-    ? collectProfileComments(items, person, "signal", commentRecency, canonicalCommentActionMatches)
+    ? collectProfileComments(profileCommentItems, person, "signal", commentRecency, canonicalCommentActionMatches)
     : [];
   const commentSaved = canShowSaved
-    ? collectProfileComments(items, person, "save", commentRecency, canonicalCommentActionMatches)
+    ? collectProfileComments(profileCommentItems, person, "save", commentRecency, canonicalCommentActionMatches)
     : [];
   const reshares = canShowReshares
-    ? byProfileRecency(items.filter((item) => canonicalPostActionActive(item, "fork")), "fork")
+    ? byProfileRecency(profileItems.filter((item) => canonicalPostActionActive(item, "fork")), "fork")
     : [];
   const likes = canShowLikes
-    ? byProfileRecency(items.filter((item) => canonicalPostActionActive(item, "signal")), "signal")
+    ? byProfileRecency(profileItems.filter((item) => canonicalPostActionActive(item, "signal")), "signal")
     : [];
   const saved = canShowSaved
     ? byProfileRecency(
-        items.filter((item) => canonicalPostActionActive(item, "save")),
+        profileItems.filter((item) => canonicalPostActionActive(item, "save")),
         "save"
       )
     : [];
@@ -378,15 +391,15 @@ export function ProfileView({
   };
 
   const tabCounts: Record<ProfileTab, number> = {
-    all: allActivity.length,
-    papers: papers.length,
-    thoughts: thoughts.length,
-    proposals: proposals.length,
-    opportunities: opportunities.length,
-    comments: commentActivities.length,
-    reshares: reshareTabEntries.length,
-    likes: likeEntries.length + commentLikeEntries.length,
-    saved: savedEntries.length + commentSavedEntries.length
+    all: allActivity.length + hiddenCommunityCounts.all,
+    papers: papers.length + hiddenCommunityCounts.papers,
+    thoughts: thoughts.length + hiddenCommunityCounts.thoughts,
+    proposals: proposals.length + hiddenCommunityCounts.proposals,
+    opportunities: opportunities.length + hiddenCommunityCounts.opportunities,
+    comments: commentActivities.length + hiddenCommunityCounts.comments,
+    reshares: reshareTabEntries.length + hiddenCommunityCounts.reshares,
+    likes: likeEntries.length + commentLikeEntries.length + hiddenCommunityCounts.likes,
+    saved: savedEntries.length + commentSavedEntries.length + hiddenCommunityCounts.saved
   };
 
   const tabs: Array<{ id: ProfileTab; label: string }> = [
@@ -418,7 +431,7 @@ export function ProfileView({
   }, [visibleSlotContext, visibleSlotMembership]);
 
   const resolveSlot = (slot: ProfileActivitySlot): ProfileActivityEntry | null => {
-    const item = items.find((candidate) => candidate.id === slot.itemId);
+    const item = profileItems.find((candidate) => candidate.id === slot.itemId);
     if (!item) return null;
 
     if (slot.type === "post") {
@@ -517,6 +530,8 @@ export function ProfileView({
               <ProfileCommentCard
                 key={entry.id}
                 activity={entry.activity}
+                community={entry.activity.item.communityId ? communityById.get(entry.activity.item.communityId) : undefined}
+                onOpenCommunity={onOpenCommunity}
                 profiles={profiles}
                 onSelect={onSelect}
                 onOpenProfile={onOpenProfile}
@@ -541,6 +556,9 @@ export function ProfileView({
                 onDeletePost={onDeletePost}
                 actorHandle={actorHandle}
                 profiles={profiles}
+                community={entry.item.communityId ? communityById.get(entry.item.communityId) : undefined}
+                onOpenCommunity={onOpenCommunity}
+                showCommunityContext={Boolean(entry.item.communityId)}
                 surface="profile"
                 onOpenAttachmentPreview={onOpenAttachmentPreview}
               />
@@ -571,6 +589,8 @@ export function ProfileView({
 
 function ProfileCommentCard({
   activity,
+  community,
+  onOpenCommunity,
   profiles,
   onSelect,
   onOpenProfile,
@@ -583,6 +603,8 @@ function ProfileCommentCard({
   actorHandle
 }: {
   activity: ProfileCommentActivity;
+  community?: ResearchCommunity;
+  onOpenCommunity: (communityId: string) => void;
   profiles: Record<string, ResearchProfile>;
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
@@ -659,6 +681,13 @@ function ProfileCommentCard({
           />
         </div>
       </header>
+      {community ? (
+        <CommunityActivityBadge
+          community={community}
+          onOpenCommunity={onOpenCommunity}
+          onClick={(event) => event.stopPropagation()}
+        />
+      ) : null}
       <SymposiumDocumentRenderer
         document={activity.comment.document}
         body={activity.comment.body}

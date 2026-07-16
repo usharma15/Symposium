@@ -152,7 +152,9 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       await client.query("COMMIT");
       return claim.response;
     }
-    item.quote = await resolveContentQuote(client, input.quoteSource, { ownerId: item.id, ownerType: "post", actorHandle: handle });
+    item.quote = await resolveContentQuote(client, input.quoteSource, {
+      ownerId: item.id, ownerType: "post", actorHandle: handle, targetCommunityId: item.communityId, targetPostType: item.postType
+    });
     await client.query(
       `INSERT INTO posts (
         id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, created_at, status,
@@ -579,7 +581,10 @@ export const updatePost = async (
       ? row.quote
       : input.quoteSource === null
         ? undefined
-        : await resolveContentQuote(client, input.quoteSource, { ownerId: postId, ownerType: "post", actorHandle: handle });
+        : await resolveContentQuote(client, input.quoteSource, {
+            ownerId: postId, ownerType: "post", actorHandle: handle,
+            targetCommunityId: row.communityId, targetPostType: row.postType
+          });
     const patronage = updatePatronageProjection(input.patronage, row.patronage);
     const opportunity = updateOpportunityProjection(input.opportunity, row.opportunity);
     const status = opportunityPostStatus(opportunity, patronagePostStatus(patronage, row.status));

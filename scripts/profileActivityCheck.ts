@@ -106,6 +106,10 @@ for (const qualifiedReference of [
 }
 assert.ok(PROFILE_ACTIVITY_SQL.includes("FROM post_actions AS post_action"));
 assert.ok(PROFILE_ACTIVITY_SQL.includes("FROM comment_actions AS comment_action"));
+assert.ok(
+  PROFILE_ACTIVITY_SQL.includes("post.post_type = 'paper' OR community.visibility = 'public'"),
+  "Profile activity rows must hide current private-community activity while retaining papers."
+);
 
 console.log(
   JSON.stringify(
@@ -116,7 +120,8 @@ console.log(
         "activity deduplication",
         "live slot reconciliation",
         "profile tab isolation",
-        "unambiguous live activity query"
+        "unambiguous live activity query",
+        "private-community profile visibility boundary"
       ]
     },
     null,

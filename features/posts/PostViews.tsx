@@ -26,6 +26,7 @@ import {
   type InquiryAttachment,
   type InquiryComment,
   type InquiryItem,
+  type ResearchCommunity,
   type ContentQuoteSource,
   type ResearchProfile,
   type Room
@@ -78,6 +79,7 @@ import { appendedContentAttachments, documentForContent, emptySymposiumDocument,
 import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import type { OpportunityPostInputContract, PatronageProposalInputContract } from "@/packages/contracts/src";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
+import { CommunityActivityBadge } from "@/features/communities/CommunityActivityBadge";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
@@ -611,6 +613,9 @@ export function FeedPost({
   onOpenAttachmentPreview,
   actorHandle,
   profiles,
+  community,
+  onOpenCommunity,
+  showCommunityContext = false,
   surface = "feed"
 }: {
   item: InquiryItem;
@@ -624,6 +629,9 @@ export function FeedPost({
   onOpenAttachmentPreview: AttachmentPreviewHandler;
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
+  community?: ResearchCommunity;
+  onOpenCommunity?: (communityId: string) => void;
+  showCommunityContext?: boolean;
   surface?: ViewSurface;
 }) {
   const postRef = useRef<HTMLElement | null>(null);
@@ -664,6 +672,13 @@ export function FeedPost({
         onOpenProfile={onOpenProfile}
         onClickStop={(event) => event.stopPropagation()}
       />
+      {showCommunityContext && community && onOpenCommunity ? (
+        <CommunityActivityBadge
+          community={community}
+          onOpenCommunity={onOpenCommunity}
+          onClick={(event) => event.stopPropagation()}
+        />
+      ) : null}
       <div className="post-body">
         <h2>
           <CanonicalLink

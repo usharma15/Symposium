@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import type {
   CanonicalActionActivityContract,
+  ProfileActivityCountsContract,
   ProfileActivityQueryContract,
   ProfileActivityResponseContract,
   ToggleActionContract
@@ -195,6 +196,125 @@ type ProfileActivityRow = ActionLedgerRow & {
   postId: string;
 };
 
+type HiddenCommunityActivityRow = ProfileActivityCountsContract & { allWithoutReshares: number };
+
+const hiddenCommunityActivityCounts = async (
+  client: PoolClient,
+  actorHandle: string,
+  allowedActions: ToggleActionContract[]
+): Promise<ProfileActivityCountsContract> => {
+  const result = await client.query<HiddenCommunityActivityRow>(
+    `WITH private_community_posts AS (
+       SELECT post.id, post.post_type, post.author_handle, post.quote
+       FROM posts post
+       INNER JOIN communities community ON community.id = post.community_id
+       WHERE community.visibility = 'private'
+         AND post.deleted_at IS NULL
+         AND post.room <> 'office'
+         AND post.kind <> 'draft'
+     ),
+     hidden_posts AS (
+       SELECT * FROM private_community_posts WHERE post_type IS DISTINCT FROM 'paper'
+     ),
+     authored_posts AS (
+       SELECT ('post:' || post.id) AS key, post.post_type, post.quote
+       FROM hidden_posts post
+       WHERE post.author_handle = $1
+     ),
+     hidden_comments AS (
+       SELECT comment.id, comment.author_handle, comment.quote
+       FROM comments comment
+       INNER JOIN private_community_posts post ON post.id = comment.post_id
+       WHERE comment.deleted_at IS NULL
+     ),
+     authored_comments AS (
+       SELECT ('comment:' || comment.id) AS key, comment.quote
+       FROM hidden_comments comment
+       WHERE comment.author_handle = $1
+     ),
+     fork_subjects AS (
+       SELECT ('post:' || action.post_id) AS key
+       FROM post_actions action
+       INNER JOIN hidden_posts post ON post.id = action.post_id
+       WHERE action.actor_handle = $1 AND action.action = 'fork' AND action.active = true
+       UNION
+       SELECT ('comment:' || action.comment_id) AS key
+       FROM comment_actions action
+       INNER JOIN hidden_comments comment ON comment.id = action.comment_id
+       WHERE action.actor_handle = $1 AND action.action = 'fork' AND action.active = true
+       UNION
+       SELECT key FROM authored_posts WHERE quote IS NOT NULL
+       UNION
+       SELECT key FROM authored_comments WHERE quote IS NOT NULL
+     ),
+     like_subjects AS (
+       SELECT ('post:' || action.post_id) AS key
+       FROM post_actions action
+       INNER JOIN hidden_posts post ON post.id = action.post_id
+       WHERE action.actor_handle = $1 AND action.action = 'signal' AND action.active = true
+       UNION
+       SELECT ('comment:' || action.comment_id) AS key
+       FROM comment_actions action
+       INNER JOIN hidden_comments comment ON comment.id = action.comment_id
+       WHERE action.actor_handle = $1 AND action.action = 'signal' AND action.active = true
+     ),
+     saved_subjects AS (
+       SELECT ('post:' || action.post_id) AS key
+       FROM post_actions action
+       INNER JOIN hidden_posts post ON post.id = action.post_id
+       WHERE action.actor_handle = $1 AND action.action = 'save' AND action.active = true
+       UNION
+       SELECT ('comment:' || action.comment_id) AS key
+       FROM comment_actions action
+       INNER JOIN hidden_comments comment ON comment.id = action.comment_id
+       WHERE action.actor_handle = $1 AND action.action = 'save' AND action.active = true
+     ),
+     base_all AS (
+       SELECT key FROM authored_posts
+       UNION SELECT key FROM authored_comments
+     ),
+     complete_all AS (
+       SELECT key FROM base_all
+       UNION SELECT key FROM fork_subjects
+     )
+     SELECT
+       (SELECT count(*)::int FROM complete_all) AS "all",
+       (SELECT count(*)::int FROM base_all) AS "allWithoutReshares",
+       0::int AS papers,
+       (SELECT count(*)::int FROM authored_posts WHERE post_type = 'thought') AS thoughts,
+       (SELECT count(*)::int FROM authored_posts WHERE post_type = 'proposal') AS proposals,
+       (SELECT count(*)::int FROM authored_posts WHERE post_type = 'opportunity') AS opportunities,
+       (SELECT count(*)::int FROM authored_comments) AS comments,
+       (SELECT count(*)::int FROM fork_subjects) AS reshares,
+       (SELECT count(*)::int FROM like_subjects) AS likes,
+       (SELECT count(*)::int FROM saved_subjects) AS saved`,
+    [actorHandle]
+  );
+  const counts = result.rows[0] ?? {
+    all: 0,
+    allWithoutReshares: 0,
+    papers: 0,
+    thoughts: 0,
+    proposals: 0,
+    opportunities: 0,
+    comments: 0,
+    reshares: 0,
+    likes: 0,
+    saved: 0
+  };
+  return {
+    all: allowedActions.includes("fork") ? Number(counts.all) : Number(counts.allWithoutReshares),
+    papers: 0,
+    thoughts: Number(counts.thoughts),
+    proposals: Number(counts.proposals),
+    opportunities: Number(counts.opportunities),
+    comments: Number(counts.comments),
+    reshares: allowedActions.includes("fork") ? Number(counts.reshares) : 0,
+    likes: allowedActions.includes("signal") ? Number(counts.likes) : 0,
+    saved: allowedActions.includes("save") ? Number(counts.saved) : 0
+  };
+};
+
 export const PROFILE_ACTIVITY_SQL = `WITH profile_activity AS (
        SELECT
          'post'::text AS "subjectType",
@@ -208,11 +328,13 @@ export const PROFILE_ACTIVITY_SQL = `WITH profile_activity AS (
          post_action.updated_at AS "updatedAt"
        FROM post_actions AS post_action
        JOIN posts AS post ON post.id = post_action.post_id
+       LEFT JOIN communities AS community ON community.id = post.community_id
        WHERE post_action.actor_handle = $1
          AND post_action.action = ANY($2::text[])
          AND ($8::boolean OR post_action.active = true)
          AND post.deleted_at IS NULL
          AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
+         AND (post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public')
        UNION ALL
        SELECT
          'comment'::text AS "subjectType",
@@ -226,11 +348,13 @@ export const PROFILE_ACTIVITY_SQL = `WITH profile_activity AS (
          comment_action.updated_at AS "updatedAt"
        FROM comment_actions AS comment_action
        JOIN posts AS post ON post.id = comment_action.post_id
+       LEFT JOIN communities AS community ON community.id = post.community_id
        WHERE comment_action.actor_handle = $1
          AND comment_action.action = ANY($2::text[])
          AND ($8::boolean OR comment_action.active = true)
          AND post.deleted_at IS NULL
          AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
+         AND (post.community_id IS NULL OR community.visibility = 'public')
      )
      SELECT *
      FROM profile_activity
@@ -248,7 +372,8 @@ export const listCanonicalProfileActivity = async (
   query: ProfileActivityQueryContract,
   includeInactive: boolean
 ): Promise<ProfileActivityResponseContract> => {
-  if (!allowedActions.length) return { entries: [], nextCursor: null };
+  const hiddenCommunityCounts = await hiddenCommunityActivityCounts(client, actorHandle, allowedActions);
+  if (!allowedActions.length) return { entries: [], nextCursor: null, hiddenCommunityCounts };
   const cursor = decodeActivityCursor(query.cursor);
   const result = await client.query<ProfileActivityRow>(
     PROFILE_ACTIVITY_SQL,
@@ -271,6 +396,7 @@ export const listCanonicalProfileActivity = async (
   const entries = hasNextPage ? activities.slice(0, query.limit) : activities;
   return {
     entries,
-    nextCursor: hasNextPage && entries.length ? encodeActivityCursor(entries[entries.length - 1]) : null
+    nextCursor: hasNextPage && entries.length ? encodeActivityCursor(entries[entries.length - 1]) : null,
+    hiddenCommunityCounts
   };
 };

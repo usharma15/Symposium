@@ -2,6 +2,8 @@ import { getSnapshot } from "@/lib/dataStore";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 import type { ToggleActionContract } from "@/packages/contracts/src";
+import { hiddenCommunityActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { listLocalCommunities } from "@/lib/localCommunityStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,12 +51,19 @@ export async function GET(request: Request, context: Context) {
     }
   }
   const allowed = new Set(allowedActions);
+  const communities = await listLocalCommunities();
+  const itemById = new Map(snapshot.items.map((item) => [item.id, item]));
   const entries = Object.values(snapshot.actionLedger)
     .filter(
       (activity) =>
         cleanHandle(activity.actorHandle) === targetHandle &&
         allowed.has(activity.action) &&
-        (ownProfile || activity.active)
+        (ownProfile || activity.active) &&
+        Boolean(itemById.get(activity.postId) && (
+          activity.subjectType === "comment"
+            ? profileCommentsArePubliclyListable(itemById.get(activity.postId)!, communities)
+            : profileItemIsPubliclyListable(itemById.get(activity.postId)!, communities)
+        ))
     )
     .sort((a, b) => {
       const timestampDelta = Date.parse(b.occurredAt) - Date.parse(a.occurredAt);
@@ -71,6 +80,7 @@ export async function GET(request: Request, context: Context) {
     nextCursor:
       nextOffset < entries.length
         ? Buffer.from(JSON.stringify({ offset: nextOffset })).toString("base64url")
-        : null
+        : null,
+    hiddenCommunityCounts: hiddenCommunityActivityCounts(snapshot.items, communities, targetHandle, allowedActions)
   });
 }

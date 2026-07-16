@@ -1,6 +1,107 @@
-import type { CanonicalActionActivityContract, ToggleActionContract } from "@/packages/contracts/src";
-import type { InquiryComment, InquiryItem, ResearchProfile } from "@/lib/mockData";
+import type { CanonicalActionActivityContract, ProfileActivityCountsContract, ToggleActionContract } from "@/packages/contracts/src";
+import type { InquiryComment, InquiryItem, ResearchCommunity, ResearchProfile } from "@/lib/mockData";
 import { cleanHandle, hasHandle, isDeletedComment, isDeletedPost, isSavedBy } from "@/lib/symposiumCore";
+import { itemHasPostType } from "@/lib/postSemantics";
+
+export const emptyProfileActivityCounts = (): ProfileActivityCountsContract => ({
+  all: 0,
+  papers: 0,
+  thoughts: 0,
+  proposals: 0,
+  opportunities: 0,
+  comments: 0,
+  reshares: 0,
+  likes: 0,
+  saved: 0
+});
+
+export const profileItemIsPubliclyListable = (
+  item: InquiryItem,
+  communities: ResearchCommunity[]
+) => {
+  if (!item.communityId || itemHasPostType(item, "paper")) return true;
+  return communities.find((community) => community.id === item.communityId)?.visibility === "public";
+};
+
+export const profileCommentsArePubliclyListable = (
+  item: InquiryItem,
+  communities: ResearchCommunity[]
+) => !item.communityId || communities.find((community) => community.id === item.communityId)?.visibility === "public";
+
+export const hiddenCommunityActivityCounts = (
+  items: InquiryItem[],
+  communities: ResearchCommunity[],
+  rawActorHandle: string,
+  allowedActions: ToggleActionContract[] = ["save", "signal", "fork"]
+): ProfileActivityCountsContract => {
+  const actorHandle = cleanHandle(rawActorHandle);
+  const allowed = new Set(allowedActions);
+  const all = new Set<string>();
+  const comments = new Set<string>();
+  const reshares = new Set<string>();
+  const likes = new Set<string>();
+  const saved = new Set<string>();
+  const authored = {
+    papers: new Set<string>(),
+    thoughts: new Set<string>(),
+    proposals: new Set<string>(),
+    opportunities: new Set<string>()
+  };
+
+  const visitComments = (item: InquiryItem, nextComments: InquiryComment[]) => {
+    for (const comment of nextComments) {
+      if (!comment.id || isDeletedComment(comment)) continue;
+      const key = `comment:${comment.id}`;
+      if (cleanHandle(comment.authorHandle ?? comment.author) === actorHandle) {
+        comments.add(key);
+        all.add(key);
+        if (comment.quote && allowed.has("fork")) reshares.add(key);
+      }
+      if (allowed.has("fork") && hasHandle(comment.forkedBy, actorHandle)) {
+        reshares.add(key);
+        all.add(key);
+      }
+      if (allowed.has("signal") && hasHandle(comment.signaledBy, actorHandle)) likes.add(key);
+      if (allowed.has("save") && hasHandle(comment.savedBy, actorHandle)) saved.add(key);
+      visitComments(item, comment.replies ?? []);
+    }
+  };
+
+  for (const item of items) {
+    if (isDeletedPost(item)) continue;
+    const hiddenPost = !profileItemIsPubliclyListable(item, communities);
+    const hiddenComments = !profileCommentsArePubliclyListable(item, communities);
+    if (!hiddenPost && !hiddenComments) continue;
+    const key = `post:${item.id}`;
+    if (hiddenPost && cleanHandle(item.authorHandle ?? item.author) === actorHandle) {
+      all.add(key);
+      if (itemHasPostType(item, "paper")) authored.papers.add(key);
+      if (itemHasPostType(item, "thought")) authored.thoughts.add(key);
+      if (itemHasPostType(item, "proposal")) authored.proposals.add(key);
+      if (itemHasPostType(item, "opportunity")) authored.opportunities.add(key);
+      if (item.quote && allowed.has("fork")) reshares.add(key);
+    }
+    if (hiddenPost && allowed.has("fork") && hasHandle(item.forkedBy, actorHandle)) {
+      reshares.add(key);
+      all.add(key);
+    }
+    if (hiddenPost && allowed.has("signal") && hasHandle(item.signaledBy, actorHandle)) likes.add(key);
+    if (hiddenPost && allowed.has("save") && hasHandle(item.savedBy, actorHandle)) saved.add(key);
+    if (hiddenComments) visitComments(item, item.comments);
+  }
+
+  return {
+    all: all.size,
+    papers: authored.papers.size,
+    thoughts: authored.thoughts.size,
+    proposals: authored.proposals.size,
+    opportunities: authored.opportunities.size,
+    comments: comments.size,
+    reshares: reshares.size,
+    likes: likes.size,
+    saved: saved.size
+  };
+};
 
 export type ProfilePostActionKind = "fork" | "signal" | "save";
 

@@ -208,7 +208,10 @@ export const addComment = async (
       uploaderHandle: handle
     });
     comment.attachments = attachmentChange.attachments.map(rowToAttachment);
-    comment.quote = await resolveContentQuote(client, input.quoteSource, { ownerId: comment.id as string, ownerType: "comment", actorHandle: handle });
+    comment.quote = await resolveContentQuote(client, input.quoteSource, {
+      ownerId: comment.id as string, ownerType: "comment", actorHandle: handle,
+      targetCommunityId: lockedItem.communityId, targetPostType: lockedItem.postType
+    });
 
     const lockedNextCritiques = incrementMetric(lockedItem.metrics.critiques, 1);
     const lockedNextMetrics = { ...lockedItem.metrics, critiques: lockedNextCritiques };
@@ -420,7 +423,10 @@ export const updateComment = async (
       uploaderHandle: handle
     });
     removedAttachmentIds = attachmentChange.removedAttachmentIds;
-    const quote = await resolveUpdatedContentQuote(client, original.quote, input.quoteSource, { ownerId: commentId, ownerType: "comment", actorHandle: handle });
+    const quote = await resolveUpdatedContentQuote(client, original.quote, input.quoteSource, {
+      ownerId: commentId, ownerType: "comment", actorHandle: handle,
+      targetCommunityId: row.communityId, targetPostType: row.postType
+    });
 
     const mapped = mapCommentTree(existingComments, commentId, (comment) => ({
       ...comment,

@@ -14,6 +14,7 @@ import type {
 } from "../../../../packages/contracts/src";
 import { attachmentKindForFile } from "../../../../packages/contracts/src";
 import {
+  communityActivityItems,
   getProfileForName,
   inquiryItems,
   profile,
@@ -376,8 +377,11 @@ const insertCommentTree = async (
   for (const comment of comments) {
     const author = getProfileForName(comment.author);
     await client.query(
-      `INSERT INTO comments (id, post_id, parent_id, author_handle, author_name, stance, body)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO comments (
+         id, post_id, parent_id, author_handle, author_name, stance, body, content_document,
+         metrics, saved_by, signaled_by, forked_by, quote, created_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        ON CONFLICT (id) DO NOTHING`,
       [
         comment.id ?? newId("comment"),
@@ -386,7 +390,14 @@ const insertCommentTree = async (
         comment.authorHandle ?? author.handle,
         comment.author,
         comment.stance,
-        comment.body
+        comment.body,
+        comment.document ? JSON.stringify(comment.document) : null,
+        JSON.stringify(comment.metrics ?? { signal: "0", forks: "0", saves: "0", reads: "0" }),
+        JSON.stringify(comment.savedBy ?? []),
+        JSON.stringify(comment.signaledBy ?? []),
+        JSON.stringify(comment.forkedBy ?? []),
+        comment.quote ? JSON.stringify(comment.quote) : null,
+        comment.createdAt && Number.isFinite(Date.parse(comment.createdAt)) ? comment.createdAt : new Date().toISOString()
       ]
     );
     await insertCommentTree(client, postId, comment.replies ?? []);
@@ -394,6 +405,7 @@ const insertCommentTree = async (
 };
 
 const communityActivityFixtureRevision = "communities-activity-v3";
+const communityContentFixtureRevision = "communities-content-v1";
 
 const syncCommunityActivityFixtures = async (client: PoolClient) => {
   const alreadyApplied = await client.query("SELECT 1 FROM fixture_revisions WHERE id = $1", [communityActivityFixtureRevision]);
@@ -490,6 +502,175 @@ const syncCommunityActivityFixtures = async (client: PoolClient) => {
   await client.query("INSERT INTO fixture_revisions (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", [communityActivityFixtureRevision]);
 };
 
+type FixtureComment = InquiryCommentContract & { postId: string };
+
+const flattenFixtureComments = (postId: string, comments: InquiryCommentContract[]): FixtureComment[] =>
+  comments.flatMap((comment) => [
+    { ...comment, postId },
+    ...flattenFixtureComments(postId, comment.replies ?? [])
+  ]);
+
+const fixtureActionRows = (
+  subjectId: string,
+  postId: string,
+  createdAt: string,
+  actionHandles: Pick<InquiryItemContract, "savedBy" | "signaledBy" | "forkedBy">
+) => ([
+  ["save", actionHandles.savedBy ?? []],
+  ["signal", actionHandles.signaledBy ?? []],
+  ["fork", actionHandles.forkedBy ?? []]
+] as const).flatMap(([action, handles], actionIndex) => handles.map((actorHandle, actorIndex) => ({
+  subject_id: subjectId,
+  post_id: postId,
+  actor_handle: cleanHandle(actorHandle),
+  action,
+  occurred_at: new Date(Date.parse(createdAt) + (actionIndex * 20 + actorIndex + 1) * 60_000).toISOString()
+})));
+
+const syncCommunityContentFixtures = async (client: PoolClient) => {
+  const alreadyApplied = await client.query("SELECT 1 FROM fixture_revisions WHERE id = $1", [communityContentFixtureRevision]);
+  if (alreadyApplied.rowCount) return;
+
+  const posts = communityActivityItems.map((item) => ({
+    id: item.id,
+    kind: item.kind,
+    post_type: postTypeForItem(item),
+    room: item.room,
+    community_id: item.communityId,
+    title: item.title,
+    author_handle: item.authorHandle ?? getProfileForName(item.author).handle,
+    author_name: item.author,
+    affiliation: item.affiliation,
+    date_label: item.date,
+    created_at: item.createdAt,
+    status: item.status,
+    metrics: item.metrics,
+    gathering_reason: item.gatheringReason,
+    excerpt: item.excerpt,
+    body: item.body,
+    tags: item.tags,
+    signals: item.signals,
+    claims: item.claims,
+    objections: item.objections,
+    evidence: item.evidence,
+    tests: item.tests,
+    forks: item.forks,
+    saved: Boolean(item.saved),
+    saved_by: item.savedBy ?? [],
+    signaled_by: item.signaledBy ?? [],
+    forked_by: item.forkedBy ?? [],
+    quote: item.quote ?? null,
+    patronage: item.patronage ?? null,
+    opportunity: item.opportunity ?? null,
+    search_text: searchablePostText({ ...item, authorName: item.author }),
+    visibility: item.postType === "paper" ? "public" : "community"
+  }));
+  await client.query(
+    `INSERT INTO posts (
+       id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation,
+       date_label, created_at, status, metrics, gathering_reason, excerpt, body, tags, signals,
+       claims, objections, evidence, tests, forks, saved, saved_by, signaled_by, forked_by,
+       quote, patronage, opportunity, search_text, visibility
+     )
+     SELECT
+       row.id, row.kind, row.post_type, row.room, row.community_id, row.title, row.author_handle,
+       row.author_name, row.affiliation, row.date_label, row.created_at::timestamptz, row.status,
+       row.metrics, row.gathering_reason, row.excerpt, row.body, row.tags, row.signals, row.claims,
+       row.objections, row.evidence, row.tests, row.forks, row.saved, row.saved_by, row.signaled_by,
+       row.forked_by, row.quote, row.patronage, row.opportunity, row.search_text, row.visibility
+     FROM jsonb_to_recordset($1::jsonb) AS row(
+       id text, kind text, post_type text, room text, community_id text, title text,
+       author_handle text, author_name text, affiliation text, date_label text, created_at text,
+       status text, metrics jsonb, gathering_reason text, excerpt text, body text, tags jsonb,
+       signals jsonb, claims jsonb, objections jsonb, evidence jsonb, tests jsonb, forks jsonb,
+       saved boolean, saved_by jsonb, signaled_by jsonb, forked_by jsonb, quote jsonb,
+       patronage jsonb, opportunity jsonb, search_text text, visibility text
+     )
+     ON CONFLICT (id) DO NOTHING`,
+    [JSON.stringify(posts)]
+  );
+
+  const comments = communityActivityItems.flatMap((item) => flattenFixtureComments(item.id, item.comments));
+  await client.query(
+    `INSERT INTO comments (
+       id, post_id, parent_id, author_handle, author_name, stance, body, metrics,
+       saved_by, signaled_by, forked_by, quote, created_at
+     )
+     SELECT
+       row.id, row.post_id, row.parent_id, row.author_handle, row.author_name, row.stance,
+       row.body, row.metrics, row.saved_by, row.signaled_by, row.forked_by, row.quote,
+       row.created_at::timestamptz
+     FROM jsonb_to_recordset($1::jsonb) AS row(
+       id text, post_id text, parent_id text, author_handle text, author_name text, stance text,
+       body text, metrics jsonb, saved_by jsonb, signaled_by jsonb, forked_by jsonb,
+       quote jsonb, created_at text
+     )
+     ON CONFLICT (id) DO NOTHING`,
+    [JSON.stringify(comments.map((comment) => ({
+      id: comment.id,
+      post_id: comment.postId,
+      parent_id: comment.parentId ?? null,
+      author_handle: comment.authorHandle ?? getProfileForName(comment.author).handle,
+      author_name: comment.author,
+      stance: comment.stance,
+      body: comment.body,
+      metrics: comment.metrics ?? { signal: "0", forks: "0", saves: "0", reads: "0" },
+      saved_by: comment.savedBy ?? [],
+      signaled_by: comment.signaledBy ?? [],
+      forked_by: comment.forkedBy ?? [],
+      quote: comment.quote ?? null,
+      created_at: comment.createdAt
+    })))]
+  );
+
+  const proposals = communityActivityItems.filter((item) => item.patronage).map((item) => ({
+    post_id: item.id,
+    status: item.patronage!.status,
+    currency: item.patronage!.currency,
+    goal_minor_units: item.patronage!.goalMinorUnits,
+    deadline: item.patronage!.deadline
+  }));
+  await client.query(
+    `INSERT INTO patronage_proposals (post_id, status, currency, goal_minor_units, deadline)
+     SELECT row.post_id, row.status, row.currency, row.goal_minor_units, row.deadline::date
+     FROM jsonb_to_recordset($1::jsonb) AS row(
+       post_id text, status text, currency text, goal_minor_units bigint, deadline text
+     )
+     ON CONFLICT (post_id) DO NOTHING`,
+    [JSON.stringify(proposals)]
+  );
+
+  const postActions = communityActivityItems.flatMap((item) =>
+    fixtureActionRows(item.id, item.id, item.createdAt as string, item)
+  );
+  await client.query(
+    `INSERT INTO post_actions (post_id, actor_handle, action, active, count, revision, created_at, updated_at)
+     SELECT row.subject_id, row.actor_handle, row.action, true, 1, 1, row.occurred_at::timestamptz, row.occurred_at::timestamptz
+     FROM jsonb_to_recordset($1::jsonb) AS row(
+       subject_id text, post_id text, actor_handle text, action text, occurred_at text
+     )
+     ON CONFLICT (post_id, actor_handle, action) DO NOTHING`,
+    [JSON.stringify(postActions)]
+  );
+  const commentActions = comments.flatMap((comment) =>
+    fixtureActionRows(comment.id as string, comment.postId, comment.createdAt as string, comment)
+  );
+  await client.query(
+    `INSERT INTO comment_actions (
+       comment_id, post_id, actor_handle, action, active, count, revision, created_at, updated_at
+     )
+     SELECT row.subject_id, row.post_id, row.actor_handle, row.action, true, 1, 1,
+       row.occurred_at::timestamptz, row.occurred_at::timestamptz
+     FROM jsonb_to_recordset($1::jsonb) AS row(
+       subject_id text, post_id text, actor_handle text, action text, occurred_at text
+     )
+     ON CONFLICT (comment_id, actor_handle, action) DO NOTHING`,
+    [JSON.stringify(commentActions)]
+  );
+
+  await client.query("INSERT INTO fixture_revisions (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", [communityContentFixtureRevision]);
+};
+
 const seedDatabase = async () => {
   if (!hasDatabase() || env.SYMPOSIUM_SEED_ON_BOOT === false) return;
   await ensureDatabase();
@@ -502,6 +683,7 @@ const seedDatabase = async () => {
     const existing = await client.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM posts");
     if (Number(existing.rows[0]?.count ?? 0) > 0) {
       await syncCommunityActivityFixtures(client);
+      await syncCommunityContentFixtures(client);
       await client.query("COMMIT");
       return;
     }
@@ -576,12 +758,12 @@ const seedDatabase = async () => {
         `INSERT INTO posts (
           id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, created_at, status,
           metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-          tests, forks, saved, saved_by, signaled_by, forked_by, patronage, opportunity, search_text, visibility
+          tests, forks, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity, search_text, visibility
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
           $11, $12, $13, $14, $15, $16, $17, $18, $19,
-          $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
+          $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
         )
         ON CONFLICT (id) DO NOTHING`,
         [
@@ -612,6 +794,7 @@ const seedDatabase = async () => {
           JSON.stringify(item.savedBy ?? (item.saved ? [defaultProfile.handle] : [])),
           JSON.stringify(item.signaledBy ?? []),
           JSON.stringify(item.forkedBy ?? []),
+          item.quote ? JSON.stringify(item.quote) : null,
           item.patronage ? JSON.stringify(item.patronage) : null,
           item.opportunity ? JSON.stringify(item.opportunity) : null,
           searchablePostText({ ...item, authorName: item.author }),
@@ -647,6 +830,8 @@ const seedDatabase = async () => {
       }
       await insertCommentTree(client, item.id, comments);
     }
+
+    await syncCommunityContentFixtures(client);
 
     await client.query("COMMIT");
   } catch (error) {

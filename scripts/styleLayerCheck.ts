@@ -19,6 +19,7 @@ const layers = [
   "89-opportunities.css",
   "89-communities.css",
   "89-community-people.css",
+  "89-community-activity.css",
   "89-workspace-sharing.css",
   "89-post-tones.css",
   "90-immersive-responsive.css",

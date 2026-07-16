@@ -31,6 +31,7 @@ import type {
   CanonicalActionActivityContract,
   OpportunityPostInputContract,
   PatronageProposalInputContract,
+  ProfileActivityCountsContract,
   ProfileActivityResponseContract,
   ToggleActionContract,
   VersionedDocumentContract
@@ -59,6 +60,7 @@ import {
   canonicalActionState,
   canonicalActivityKey,
   createLocalCanonicalActivity,
+  emptyProfileActivityCounts,
   isCanonicalActionActivity,
   mergeCanonicalActivities,
   reconcileCanonicalActivityRefresh
@@ -224,11 +226,7 @@ type LiveEventPayload = {
   commentId?: string;
 };
 
-type ProfileActivitySnapshot = {
-  entries: CanonicalActionActivityContract[];
-  loaded: boolean;
-  nextCursor: string | null;
-};
+type ProfileActivitySnapshot = { entries: CanonicalActionActivityContract[]; loaded: boolean; nextCursor: string | null; hiddenCommunityCounts: ProfileActivityCountsContract };
 
 type SymposiumLiveEvent = {
   id?: string;
@@ -1575,11 +1573,8 @@ function SymposiumExperience({
     pendingCanonicalActionKeysRef.current.delete(key);
     canonicalActionRevisionRef.current[key] = activity.revision;
     const handle = cleanHandle(activity.actorHandle);
-    const current = profileActivityByHandleRef.current[handle] ?? {
-      entries: [],
-      loaded: false,
-      nextCursor: null
-    };
+    const current = profileActivityByHandleRef.current[handle]
+      ?? { entries: [], loaded: false, nextCursor: null, hiddenCommunityCounts: emptyProfileActivityCounts() };
     setProfileActivitySnapshot(handle, {
       ...current,
       entries: mergeCanonicalActivities(current.entries, [activity])
@@ -1620,7 +1615,8 @@ function SymposiumExperience({
     setProfileActivitySnapshot(clean, {
       entries,
       loaded: true,
-      nextCursor: response.nextCursor
+      nextCursor: response.nextCursor,
+      hiddenCommunityCounts: response.hiddenCommunityCounts
     });
   };
 
@@ -1631,6 +1627,7 @@ function SymposiumExperience({
     profileActivityRequestRef.current[clean] = requestId;
     const requestStartRevisions = { ...canonicalActionRevisionRef.current };
     const entries: CanonicalActionActivityContract[] = [];
+    let hiddenCommunityCounts = emptyProfileActivityCounts();
     const seenCursors = new Set<string>();
     let cursor: string | null = null;
     do {
@@ -1641,6 +1638,7 @@ function SymposiumExperience({
         { cache: "no-store" }
       );
       entries.push(...(data.entries ?? []).filter(isCanonicalActionActivity));
+      if (data.hiddenCommunityCounts) hiddenCommunityCounts = data.hiddenCommunityCounts;
       const nextCursor = typeof data.nextCursor === "string" ? data.nextCursor : null;
       if (!nextCursor || seenCursors.has(nextCursor)) {
         cursor = null;
@@ -1653,7 +1651,8 @@ function SymposiumExperience({
     if (profileActivityRequestRef.current[clean] !== requestId) return;
     replaceCanonicalProfileActivity(clean, {
       entries,
-      nextCursor: null
+      nextCursor: null,
+      hiddenCommunityCounts
     }, requestStartRevisions);
   };
 
@@ -1666,11 +1665,8 @@ function SymposiumExperience({
     active: boolean
   ) => {
     const handle = cleanHandle(actorHandle);
-    const current = profileActivityByHandleRef.current[handle] ?? {
-      entries: [],
-      loaded: false,
-      nextCursor: null
-    };
+    const current = profileActivityByHandleRef.current[handle]
+      ?? { entries: [], loaded: false, nextCursor: null, hiddenCommunityCounts: emptyProfileActivityCounts() };
     const previous = canonicalActionState(current.entries, subjectType, subjectId, handle, action);
     const key = canonicalActivityKey({ subjectType, subjectId, actorHandle: handle, action });
     pendingCanonicalActionKeysRef.current.add(key);
@@ -3294,6 +3290,9 @@ function SymposiumExperience({
             activityRevision={profileActivityRevision}
             canonicalActivities={profileActivityByHandle[selectedProfile.handle]?.entries ?? []}
             canonicalActivityLoaded={profileActivityByHandle[selectedProfile.handle]?.loaded ?? false}
+            hiddenCommunityCounts={profileActivityByHandle[selectedProfile.handle]?.hiddenCommunityCounts ?? emptyProfileActivityCounts()}
+            communities={communities}
+            onOpenCommunity={openCommunity}
             onActiveTabChange={changeProfileTab}
             onSocialViewChange={changeProfileSocialView}
             onEditPost={setEditingPost}

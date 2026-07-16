@@ -15,8 +15,9 @@ import {
 } from "../features/communities/communityPolicy";
 import { getCommunityItems } from "../features/discovery/discoveryPolicy";
 import { projectCommunityItemsForViewer } from "../lib/communityContentProjection";
-import { researchCommunities } from "../lib/mockData";
+import { communityActivityItems, researchCommunities } from "../lib/mockData";
 import { listLocalCommunityMembers } from "../lib/localCommunityStore";
+import { hiddenCommunityActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "../lib/profileActivity";
 
 const profile = { handle: "@viewer" };
 const community = researchCommunitySchema.parse({
@@ -167,7 +168,32 @@ for (const seededCommunity of researchCommunities) {
   assert.ok((seededCommunity.moderatorHandles?.length ?? 0) >= 3, `${seededCommunity.name} needs visible moderators.`);
   assert.ok((seededCommunity.announcements?.length ?? 0) >= 6, `${seededCommunity.name} needs active announcements.`);
   assert.ok((seededCommunity.guidelines?.length ?? 0) >= 300, `${seededCommunity.name} needs useful guidelines.`);
+  const activity = communityActivityItems.filter((entry) => entry.communityId === seededCommunity.id);
+  assert.ok(activity.length >= 6, `${seededCommunity.name} needs a substantial community feed.`);
+  for (const postType of ["paper", "thought", "proposal", "opportunity"] as const) {
+    assert.ok(activity.some((entry) => entry.postType === postType), `${seededCommunity.name} needs ${postType} activity.`);
+  }
+  assert.ok(activity.every((entry) => entry.comments.length >= 3), `${seededCommunity.name} activity needs real discussion.`);
+  assert.ok(activity.every((entry) => Boolean(entry.quote)), `${seededCommunity.name} activity needs quote trails.`);
+  assert.ok(activity.every((entry) => (entry.signaledBy?.length ?? 0) >= 8 && (entry.savedBy?.length ?? 0) >= 5 && (entry.forkedBy?.length ?? 0) >= 3), `${seededCommunity.name} activity needs likes, saves, and reshares.`);
 }
+
+const privateCommunity = researchCommunities.find((entry) => entry.visibility === "private")!;
+const privateActivity = communityActivityItems.filter((entry) => entry.communityId === privateCommunity.id);
+const seededPrivateThought = privateActivity.find((entry) => entry.postType === "thought")!;
+const seededPrivatePaper = privateActivity.find((entry) => entry.postType === "paper")!;
+assert.equal(profileItemIsPubliclyListable(seededPrivateThought, researchCommunities), false, "Private community activity must never enter public profile lists.");
+assert.equal(profileItemIsPubliclyListable(seededPrivatePaper, researchCommunities), true, "Private-community papers must remain profile-visible.");
+assert.equal(profileCommentsArePubliclyListable(seededPrivatePaper, researchCommunities), false, "Private-community paper discussions must remain absent from public profiles.");
+assert.equal(profileItemIsPubliclyListable({ ...seededPrivateThought, communityId: "missing-community" }, researchCommunities), false, "Unknown community state must fail closed on public profiles.");
+const privateActor = seededPrivateThought.authorHandle!;
+const hiddenCounts = hiddenCommunityActivityCounts(communityActivityItems, researchCommunities, privateActor);
+assert.ok(hiddenCounts.all > 0 && hiddenCounts.thoughts > 0, "Hidden private activity must still advance public profile totals.");
+const privatePaperCommentActor = seededPrivatePaper.comments[0]!.authorHandle!;
+assert.ok(
+  hiddenCommunityActivityCounts(communityActivityItems, researchCommunities, privatePaperCommentActor).comments > 0,
+  "Comments around private-community papers must advance totals without entering profile lists."
+);
 
 const main = async () => {
 const firstCommunity = researchCommunities[0]!;
@@ -188,9 +214,10 @@ const sources = await Promise.all([
   readFile(new URL("../components/SymposiumV0.tsx", import.meta.url), "utf8"),
   readFile(new URL("../features/posts/PostViews.tsx", import.meta.url), "utf8"),
   readFile(new URL("../styles/89-communities.css", import.meta.url), "utf8"),
-  readFile(new URL("../lib/localCommunityStore.ts", import.meta.url), "utf8")
+  readFile(new URL("../lib/localCommunityStore.ts", import.meta.url), "utf8"),
+  readFile(new URL("../apps/api/src/services/contentQuotes.ts", import.meta.url), "utf8")
 ]);
-const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, communityStyles, localStore] = sources;
+const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, communityStyles, localStore, quoteService] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
@@ -206,12 +233,14 @@ assert.match(foundation, /citationOnlyItemProjection/, "Bootstrap delivery must 
 assert.match(foundation, /syncCommunityActivityFixtures/, "Community activity fixtures must hydrate the durable live backend.");
 assert.match(foundation, /fixture_revisions/, "Community activity enrichment must not rerun on every backend cold start.");
 assert.match(foundation, /communityCalls/, "Canonical bootstrap refreshes must reconcile community calls.");
+assert.match(foundation, /communities-content-v1/, "Rich community content must hydrate the durable backend exactly once.");
 assert.match(foundation, /community\.memberHandles\.slice\(0, communityMemberPreviewLimit\)/, "General bootstrap delivery must cap member previews; the directory endpoint owns full pagination.");
 assert.match(membershipRoute, /action === "leave"/, "The single membership control must support leave through the same client route.");
 assert.match(shell, /selectedCommunity && canParticipateInCommunity/, "The global composer must default to the selected community when participation is allowed.");
 assert.match(postViews, /Post destination/, "The global composer must allow switching between community and global publication.");
 assert.doesNotMatch(communityStyles, /data-room=\"communities\"[^}]+display:\s*none/, "Communities must never hide the global bottom launchers.");
 assert.match(localStore, /version: 4/, "Existing local community state must migrate to recency-aware memberships.");
+assert.match(quoteService, /Private community content can only be quoted inside that community or cited by a public paper/, "Private quote sources need one canonical destination boundary.");
 
 console.log("community construction checks passed");
 };

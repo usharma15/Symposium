@@ -1,0 +1,55 @@
+/* Community provenance markers on public profile activity cards. */
+
+.community-activity-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: min(100%, 360px);
+  margin: 3px 0 9px 72px;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--aqua) 34%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--aqua-soft) 72%, var(--panel));
+  color: color-mix(in srgb, var(--ink) 84%, var(--aqua));
+  font-size: 0.72rem;
+  font-weight: 820;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.community-activity-badge span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.community-activity-badge small {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.community-activity-badge:hover {
+  border-color: color-mix(in srgb, var(--aqua) 62%, var(--line));
+  background: color-mix(in srgb, var(--aqua-soft) 88%, var(--panel));
+}
+
+.profile-comment-card > .community-activity-badge {
+  margin: 8px 0 8px;
+}
+
+.symposium-shell.night .community-activity-badge {
+  border-color: color-mix(in srgb, var(--aqua) 42%, var(--line));
+  background: color-mix(in srgb, var(--aqua) 10%, var(--panel));
+  color: var(--paper);
+}
+
+@media (max-width: 700px) {
+  .community-activity-badge {
+    margin-left: 0;
+  }
+}

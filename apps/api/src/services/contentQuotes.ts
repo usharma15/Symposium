@@ -20,6 +20,8 @@ type PostQuoteSourceRow = {
   body: string;
   createdAt: Date | string;
   attachmentCount: string | number;
+  sourceCommunityId: string | null;
+  sourceCommunityVisibility: string | null;
 };
 
 type CommentQuoteSourceRow = {
@@ -33,6 +35,16 @@ type CommentQuoteSourceRow = {
   body: string;
   createdAt: Date | string;
   attachmentCount: string | number;
+  sourceCommunityId: string | null;
+  sourceCommunityVisibility: string | null;
+};
+
+type QuoteOwner = {
+  ownerId: string;
+  ownerType: QuoteOwnerType;
+  actorHandle?: string;
+  targetCommunityId?: string | null;
+  targetPostType?: PostTypeContract | null;
 };
 
 const unavailableSource = () =>
@@ -43,10 +55,29 @@ const unavailableSource = () =>
 
 const attachmentCount = (value: string | number) => Math.min(Math.max(Number(value) || 0, 0), 10);
 
+const assertPrivateSourceDestination = (
+  source: Pick<PostQuoteSourceRow, "sourceCommunityId" | "sourceCommunityVisibility">,
+  owner?: QuoteOwner
+) => {
+  if (source.sourceCommunityVisibility !== "private") return;
+  const staysInsideCommunity = Boolean(
+    source.sourceCommunityId &&
+    owner?.targetCommunityId === source.sourceCommunityId &&
+    owner.targetPostType !== "paper"
+  );
+  const becomesPublicPaperCitation = owner?.ownerType === "post" && owner.targetPostType === "paper";
+  if (!staysInsideCommunity && !becomesPublicPaperCitation) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Private community content can only be quoted inside that community or cited by a public paper."
+    });
+  }
+};
+
 export const resolveContentQuote = async (
   client: PoolClient,
   source: ContentQuoteSourceContract | undefined,
-  owner?: { ownerId: string; ownerType: QuoteOwnerType; actorHandle?: string }
+  owner?: QuoteOwner
 ): Promise<ContentQuoteContract | undefined> => {
   if (!source) return undefined;
   if (owner?.ownerType === source.sourceType && owner.ownerId === source.sourceId) {
@@ -65,12 +96,15 @@ export const resolveContentQuote = async (
          post.author_name AS "authorName",
          post.body,
          post.created_at AS "createdAt",
+         post.community_id AS "sourceCommunityId",
+         community.visibility AS "sourceCommunityVisibility",
          (SELECT count(*)
             FROM attachments attachment
            WHERE attachment.owner_type = 'post'
              AND attachment.owner_id = post.id
              AND attachment.status IN ('uploaded', 'previewed')) AS "attachmentCount"
        FROM posts post
+       LEFT JOIN communities community ON community.id = post.community_id
        WHERE post.id = $1
          AND post.deleted_at IS NULL
          AND (
@@ -96,6 +130,7 @@ export const resolveContentQuote = async (
     );
     const row = result.rows[0];
     if (!row) throw unavailableSource();
+    assertPrivateSourceDestination(row, owner);
     return {
       sourceType: "post",
       sourceId: row.id,
@@ -124,6 +159,8 @@ export const resolveContentQuote = async (
        comment.author_name AS "authorName",
        comment.body,
        comment.created_at AS "createdAt",
+       post.community_id AS "sourceCommunityId",
+       community.visibility AS "sourceCommunityVisibility",
        (SELECT count(*)
           FROM attachments attachment
          WHERE attachment.owner_type = 'comment'
@@ -131,6 +168,7 @@ export const resolveContentQuote = async (
            AND attachment.status IN ('uploaded', 'previewed')) AS "attachmentCount"
      FROM comments comment
      INNER JOIN posts post ON post.id = comment.post_id
+     LEFT JOIN communities community ON community.id = post.community_id
      WHERE comment.id = $1
        AND comment.deleted_at IS NULL
        AND post.deleted_at IS NULL
@@ -157,6 +195,7 @@ export const resolveContentQuote = async (
   );
   const row = result.rows[0];
   if (!row) throw unavailableSource();
+  assertPrivateSourceDestination(row, owner);
   return {
     sourceType: "comment",
     sourceId: row.id,
@@ -177,7 +216,7 @@ export const resolveUpdatedContentQuote = (
   client: PoolClient,
   current: ContentQuoteContract | undefined,
   source: ContentQuoteSourceContract | null | undefined,
-  owner: { ownerId: string; ownerType: QuoteOwnerType; actorHandle?: string }
+  owner: QuoteOwner
 ) => source === undefined ? current : source === null ? undefined : resolveContentQuote(client, source, owner);
 
 const unavailableQuoteSql = `jsonb_build_object(

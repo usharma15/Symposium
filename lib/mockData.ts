@@ -22,6 +22,7 @@ import type {
   ResearchProfileContract,
   RoomIdContract
 } from "@/packages/contracts/src";
+import { buildCommunityContentFixtures } from "@/lib/communityContentFixtures";
 
 export type RoomId = RoomIdContract;
 export type FeedScope = "suggested" | "following";
@@ -1454,6 +1455,11 @@ export const researchCommunities: ResearchCommunity[] = baseResearchCommunities.
   };
 });
 
+export const communityActivityItems: InquiryItem[] = buildCommunityContentFixtures(
+  researchCommunities,
+  Object.values(profilesByName)
+);
+
 const pickHandles = (seed: number, count: number) =>
   Array.from({ length: Math.min(count, participantHandles.length) }, (_, offset) => {
     const index = (seed * 7 + offset * 11) % participantHandles.length;
@@ -1610,7 +1616,7 @@ const seedPatronage = (index: number): NonNullable<InquiryItem["patronage"]> => 
   };
 };
 
-export const inquiryItems: InquiryItem[] = [...coreInquiryItems, ...generatedInquiryItems].map((item, index) => ({
+export const inquiryItems: InquiryItem[] = [...coreInquiryItems, ...communityActivityItems, ...generatedInquiryItems].map((item, index) => ({
   ...item,
   postType: item.room === "office"
     ? undefined

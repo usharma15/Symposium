@@ -827,9 +827,22 @@ export const profileActivityQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).default(200)
 });
 
+export const profileActivityCountsSchema = z.object({
+  all: z.number().int().nonnegative(),
+  papers: z.number().int().nonnegative(),
+  thoughts: z.number().int().nonnegative(),
+  proposals: z.number().int().nonnegative(),
+  opportunities: z.number().int().nonnegative(),
+  comments: z.number().int().nonnegative(),
+  reshares: z.number().int().nonnegative(),
+  likes: z.number().int().nonnegative(),
+  saved: z.number().int().nonnegative()
+});
+
 export const profileActivityResponseSchema = z.object({
   entries: z.array(canonicalActionActivitySchema),
-  nextCursor: z.string().nullable()
+  nextCursor: z.string().nullable(),
+  hiddenCommunityCounts: profileActivityCountsSchema
 });
 
 export const joinCommunityInputSchema = z.object({
@@ -1227,6 +1240,7 @@ export type UpdateCommentInputContract = z.infer<typeof updateCommentInputSchema
 export type PostActionInputContract = z.infer<typeof postActionInputSchema>;
 export type CanonicalActionActivityContract = z.infer<typeof canonicalActionActivitySchema>;
 export type ProfileActivityQueryContract = z.infer<typeof profileActivityQuerySchema>;
+export type ProfileActivityCountsContract = z.infer<typeof profileActivityCountsSchema>;
 export type ProfileActivityResponseContract = z.infer<typeof profileActivityResponseSchema>;
 export type AttachmentStatusContract = z.infer<typeof attachmentStatusSchema>;
 export type AttachmentKindContract = z.infer<typeof attachmentKindSchema>;
