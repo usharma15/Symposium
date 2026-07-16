@@ -24,6 +24,9 @@
 
   .detail-side {
     position: static;
+    width: auto;
+    max-height: none;
+    overflow: visible;
   }
 }
 

@@ -55,27 +55,33 @@ const postFor = async (postId: string) => {
   return { post, snapshot };
 };
 
-const hydrate = async (application: StoredApplication, actorHandle: string): Promise<OpportunityApplicationContract> => ({
-  ...application,
-  attachments: await localAttachmentsForOwner("opportunity_application", application.id, actorHandle)
-});
+const hydrate = async (application: StoredApplication, actorHandle: string, profileEmail?: string): Promise<OpportunityApplicationContract> => {
+  const applicantEmail = profileEmail
+    ?? (await getSnapshot()).profiles[application.applicantHandle]?.email
+    ?? application.applicantEmail;
+  return {
+    ...application,
+    applicantEmail,
+    attachments: await localAttachmentsForOwner("opportunity_application", application.id, actorHandle)
+  };
+};
 
 export const listLocalOpportunityApplications = async (postId: string, actorHandle: string) => {
-  const { post } = await postFor(postId);
+  const { post, snapshot } = await postFor(postId);
   if (post.authorHandle !== actorHandle) throw new LocalOpportunityApplicationError("Only the opportunity poster can review applications.", 403);
   const store = await load();
   const rows = Object.values(store.applications)
     .filter((application) => application.postId === postId)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  return Promise.all(rows.map((application) => hydrate(application, actorHandle)));
+  return Promise.all(rows.map((application) => hydrate(application, actorHandle, snapshot.profiles[application.applicantHandle]?.email)));
 };
 
 export const getOwnLocalOpportunityApplication = async (postId: string, actorHandle: string) => {
-  await postFor(postId);
+  const { snapshot } = await postFor(postId);
   const store = await load();
   const row = Object.values(store.applications).find((application) => application.postId === postId && application.applicantHandle === actorHandle);
   if (!row) return null;
-  return { ...(await hydrate(row, actorHandle)), shortlisted: false, comments: [] };
+  return { ...(await hydrate(row, actorHandle, snapshot.profiles[row.applicantHandle]?.email)), shortlisted: false, comments: [] };
 };
 
 export const createLocalOpportunityApplication = async (input: {

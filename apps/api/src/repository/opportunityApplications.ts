@@ -25,6 +25,7 @@ type ApplicationRow = {
   applicantHandle: string;
   applicantName: string;
   applicantAffiliation: string;
+  applicantEmail: string | null;
   statement: string;
   shortlisted: boolean;
   createdAt: Date | string;
@@ -48,6 +49,7 @@ const applicationSelect = `SELECT
   application.applicant_handle AS "applicantHandle",
   profile.name AS "applicantName",
   profile.location AS "applicantAffiliation",
+  profile.email AS "applicantEmail",
   application.statement,
   application.shortlisted,
   application.created_at AS "createdAt",
@@ -124,6 +126,7 @@ const hydrate = async (client: PoolClient, rows: ApplicationRow[], actor: string
   const [comments, attachments] = await Promise.all([commentsFor(client, ids), attachmentsFor(client, ids, actor)]);
   return rows.map((row): OpportunityApplicationContract => ({
     ...row,
+    applicantEmail: row.applicantEmail || undefined,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
     comments: comments.get(row.id) ?? [],
@@ -191,6 +194,7 @@ export const createOpportunityApplication = async (rawInput: unknown, actor: Act
        RETURNING id::text, revision, post_id AS "postId", applicant_handle AS "applicantHandle",
          (SELECT name FROM profiles WHERE handle = applicant_handle) AS "applicantName",
          (SELECT location FROM profiles WHERE handle = applicant_handle) AS "applicantAffiliation",
+         (SELECT email FROM profiles WHERE handle = applicant_handle) AS "applicantEmail",
          statement, shortlisted, created_at AS "createdAt", updated_at AS "updatedAt"`,
       [id, input.postId, handle, input.statement]
     );

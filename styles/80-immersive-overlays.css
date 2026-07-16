@@ -384,6 +384,8 @@
   right: 24px;
   top: 120px;
   width: 276px;
+  max-height: calc(100vh - 120px - var(--symposium-side-rail-bottom-clearance));
+  overflow-y: auto;
 }
 
 .paper-side {

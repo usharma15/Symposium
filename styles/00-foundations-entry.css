@@ -19,6 +19,12 @@
   --small-shadow: 0 12px 34px rgba(15, 29, 31, 0.12);
   --radius: 8px;
   --symposium-feed-width: 840px;
+  --symposium-shell-edge: 24px;
+  --symposium-side-rail-top: 104px;
+  --symposium-topbar-brand-slot: 112px;
+  --symposium-view-nav-width: 156px;
+  --symposium-left-rail-width: calc(var(--symposium-topbar-brand-slot) + 8px + var(--symposium-view-nav-width));
+  --symposium-side-rail-bottom-clearance: 154px;
 }
 
 * {

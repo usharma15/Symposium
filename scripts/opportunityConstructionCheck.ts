@@ -104,6 +104,7 @@ assert.doesNotMatch(applicationRepository, /UPDATE opportunity_applications[\s\S
 assert.match(applicationRepository, /queueAttachmentsForOwnerStorageDeletion/);
 assert.match(applicationRepository, /visibility: "private"/);
 assert.match(applicationRepository, /comments: \[\]/);
+assert.match(applicationRepository, /profile\.email AS "applicantEmail"/);
 assert.match(compatibilityRepository, /Canonical persistence and live events/);
 assert.doesNotMatch(compatibilityRepository, /INSERT INTO opportunity_posts/);
 assert.match(routes, /opportunity\/applications\/:applicationId/);
@@ -113,6 +114,7 @@ assert.match(applicationPage, /applicationId/);
 assert.match(attachmentRepository, /"opportunity_application", "profile"/);
 assert.match(localStore, /delete store\.applications\[applicationId\]/);
 assert.match(localStore, /deleteLocalOwnerAttachments\("opportunity_application"/);
+assert.match(localStore, /profiles\[application\.applicantHandle\]\?\.email/);
 assert.match(views, /Shortlisted/);
 assert.match(views, /Private review notes/);
 assert.match(views, /Permanently delete/);
@@ -124,7 +126,11 @@ assert.match(views, /ApplicationDocumentMiniViewer/);
 assert.match(views, /target="_blank"/);
 assert.match(views, /fill=\{application\.shortlisted \? "currentColor" : "none"\}/);
 assert.match(views, /opportunity-candidate-side/);
+assert.match(views, /!selected \? <aside className="opportunity-review-filters"/);
 assert.match(views, /Degree[\s\S]{0,120}Not available yet/);
+assert.match(views, /<dt>Contact<\/dt>/);
+const candidateMarkup = views.slice(views.indexOf('{selected ? <aside className="opportunity-candidate-side"'));
+assert.doesNotMatch(candidateMarkup, /<dt>(Profile|Current affiliation|Submitted|Documents)<\/dt>/);
 assert.match(views, /opportunity-attach[\s\S]{0,500}opportunity-attachment-list/);
 assert.match(views, /const uploadDocuments = async \(files: File\[\]\)/);
 assert.doesNotMatch(views, /data\.applications\[0\]/);
@@ -135,8 +141,10 @@ assert.match(experience, /ownerType: "opportunity_application"/);
 assert.match(shell, /useOpportunityApplicationComposer/);
 assert.match(styles, /\.opportunity-review-layout/);
 assert.match(styles, /\.detail-layout\.simple-detail\.opportunity-detail \{[^}]*grid-template-columns: minmax\(0, var\(--symposium-feed-width\)\);[^}]*width: min\(var\(--symposium-feed-width\), calc\(100vw - 48px\)\)/);
-assert.match(styles, /\.opportunity-side-inline \{[^}]*left: calc\(100% \+ 16px\);[^}]*width: calc\(\(100vw - var\(--symposium-feed-width\)\) \/ 2 - 40px\)/);
-assert.match(styles, /\.opportunity-review-filters \{[^}]*right: calc\(100% \+ 16px\)/);
+assert.match(styles, /\.opportunity-side-inline \{[^}]*position: fixed;[^}]*right: var\(--symposium-shell-edge\)/);
+assert.match(styles, /\.opportunity-review-filters \{[^}]*position: fixed;[^}]*left: var\(--symposium-shell-edge\);[^}]*width: var\(--symposium-left-rail-width\)/);
+assert.match(styles, /\.opportunity-candidate-side \{[^}]*position: fixed;[^}]*right: var\(--symposium-shell-edge\)/);
+assert.doesNotMatch(styles, /data-view="opportunity-applications"[^}]*display: none/);
 assert.match(styles, /\.opportunity-applicant-feed > article \{[^}]*grid-template-columns: minmax\(0,1fr\) 218px/);
 assert.match(styles, /\.opportunity-attach \{ order: -1;/);
 assert.match(styles, /\.symposium-shell\.night/);
@@ -152,8 +160,10 @@ console.log(JSON.stringify({
     "owner-only application review and applicant privacy",
     "canonical review deep links and open-in-new-tab behavior",
     "controlled application selection and coalesced live synchronization",
-    "centered Opportunity details with right-margin-aligned metadata rail",
+    "viewport-fixed Opportunity details and application-review side rails",
     "compact applicant feed, document swiper, and candidate detail rail",
+    "detail-only candidate actions and concise contact metadata",
+    "persistent global Search, Scribble, New Post, and AI Tablet launchers",
     "fixed-first document attachment selector",
     "day and night maroon semantic treatment",
     "legacy API compatibility without legacy storage writes"

@@ -139,22 +139,20 @@
 }
 
 .patronage-side-inline {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: calc(100% + 16px);
+  position: fixed;
+  z-index: 9;
+  top: 112px;
+  right: var(--symposium-shell-edge);
   width: 276px;
 }
 
 .patronage-side-inline > .patronage-side {
   display: grid;
   gap: 12px;
-  position: sticky;
-  z-index: 4;
-  top: 112px;
+  position: static;
   overflow-y: auto;
   width: 100%;
-  max-height: calc(100vh - 144px);
+  max-height: calc(100vh - 112px - var(--symposium-side-rail-bottom-clearance));
   scrollbar-width: thin;
 }
 
@@ -345,6 +343,7 @@
 @media (max-width: 1439px) {
   .patronage-side-inline {
     position: static;
+    inset: auto;
     width: 100%;
     margin-top: 24px;
   }

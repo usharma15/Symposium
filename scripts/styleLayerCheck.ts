@@ -80,10 +80,21 @@ const main = async () => {
 
   const documentStyles = sources.get("85-symposium-document.css") ?? "";
   const patronageStyles = sources.get("89-patronage.css") ?? "";
+  const opportunityStyles = sources.get("89-opportunities.css") ?? "";
+  const communityStyles = sources.get("60-immersive-communities-feed.css") ?? "";
+  const workspaceStyles = sources.get("88-workspace.css") ?? "";
+  const immersiveOverlayStyles = sources.get("80-immersive-overlays.css") ?? "";
   assert.match(patronageStyles, /\.patronage-proposal-fields/);
   assert.match(patronageStyles, /\.patronage-feed-summary/);
   assert.match(patronageStyles, /\.patronage-side-inline > \.patronage-side/);
   assert.match(patronageStyles, /\.symposium-shell\.night \.patronage-feed-summary/);
+  assert.match(patronageStyles, /\.patronage-side-inline\s*\{[^}]*position:\s*fixed/);
+  assert.match(opportunityStyles, /\.opportunity-side-inline\s*\{[^}]*position:\s*fixed/);
+  assert.match(opportunityStyles, /\.opportunity-review-filters\s*\{[^}]*position:\s*fixed/);
+  assert.match(opportunityStyles, /\.opportunity-candidate-side\s*\{[^}]*position:\s*fixed/);
+  assert.match(communityStyles, /\.selected-community-panel\s*\{[^}]*position:\s*fixed/);
+  assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar\s*\{[^}]*position:\s*fixed/);
+  assert.match(immersiveOverlayStyles, /\.paper-detail > \.paper-side\s*\{[^}]*position:\s*fixed/);
   assert.match(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*pointer-events:\s*none/);
   assert.doesNotMatch(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*opacity:/);
   const attachmentStyles = [sources.get("20-legacy-content.css") ?? "", sources.get("87-structured-attachments.css") ?? ""].join("\n");
@@ -144,6 +155,7 @@ const main = async () => {
           "bounded attachment composer layout",
           "shared quote card and composer layout",
           "one canonical feed and clicked-post width",
+          "viewport-fixed desktop left and right panel contract",
           "day and night document ink with theme-safe selection contrast",
           "flush sticky editor and opaque themed attachment surfaces",
           "focus-scoped inline comment and compact reply toolbars",

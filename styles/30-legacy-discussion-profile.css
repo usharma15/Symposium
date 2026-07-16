@@ -280,9 +280,13 @@
 }
 
 .detail-side {
-  position: sticky;
+  position: fixed;
+  z-index: 9;
   top: 92px;
-  align-self: start;
+  right: var(--symposium-shell-edge);
+  width: 320px;
+  max-height: calc(100vh - 92px - var(--symposium-side-rail-bottom-clearance));
+  overflow-y: auto;
   padding: 16px;
 }
 

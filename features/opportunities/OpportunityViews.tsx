@@ -101,6 +101,10 @@ const applicationDateLabel = (createdAt: string) => new Intl.DateTimeFormat(unde
   month: "short", day: "numeric", year: "numeric"
 }).format(new Date(createdAt));
 
+const applicationContact = (application: OpportunityApplicationContract) => application.applicantEmail
+  ?? application.statement.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
+  ?? null;
+
 export function OpportunityFeedSummary({ item }: { item: InquiryItem }) {
   const opportunity = item.opportunity;
   if (!opportunity) return null;
@@ -284,12 +288,13 @@ export function OpportunityApplicationsView({ item, actorHandle, selectedApplica
     finally { setBusy(false); }
   };
   const activeAttachment = selected?.attachments[attachmentIndex] ?? null;
+  const selectedContact = selected ? applicationContact(selected) : null;
   const showApplicantFeed = (nextShortlistedOnly = shortlistedOnly) => { setShortlistedOnly(nextShortlistedOnly); onSelectApplication(null); };
   return <div className="opportunity-review-layout" data-mode={selected ? "detail" : "feed"}>
-    <aside className="opportunity-review-filters"><section><button className="back-button" type="button" onClick={onBack}><ArrowLeft size={17} />Back to opportunity</button><p className="eyebrow">Applications</p><h1>{item.title}</h1><nav>
+    {!selected ? <aside className="opportunity-review-filters"><section><button className="back-button" type="button" onClick={onBack}><ArrowLeft size={17} />Back to opportunity</button><p className="eyebrow">Applications</p><h1>{item.title}</h1><nav>
       <button type="button" className={!shortlistedOnly ? "active" : ""} aria-pressed={!shortlistedOnly} onClick={() => showApplicantFeed(false)}>All <span>{applications.length}</span></button>
       <button type="button" className={shortlistedOnly ? "active" : ""} aria-pressed={shortlistedOnly} onClick={() => showApplicantFeed(true)}><Star size={14} fill={shortlistedOnly ? "currentColor" : "none"} />Shortlisted <span>{applications.filter((application) => application.shortlisted).length}</span></button>
-    </nav><label><span>Sort</span><select value={sort} onChange={(event) => { setSort(event.target.value as typeof sort); onSelectApplication(null); }}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Applicant name</option></select></label></section></aside>
+    </nav><label><span>Sort</span><select value={sort} onChange={(event) => { setSort(event.target.value as typeof sort); onSelectApplication(null); }}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Applicant name</option></select></label></section></aside> : null}
     {selected ? <main className="opportunity-application-detail">
       <button className="back-button" type="button" onClick={() => onSelectApplication(null)}><ArrowLeft size={17} />Back to applicant feed</button>
       <article>
@@ -313,8 +318,8 @@ export function OpportunityApplicationsView({ item, actorHandle, selectedApplica
       })}
       {!filtered.length && !status ? <div className="opportunity-review-empty"><BriefcaseBusiness size={28} /><strong>No matching applicants</strong><span>Try the complete application feed.</span></div> : null}
     </main>}
-    {selected ? <aside className="opportunity-candidate-side"><section><div className="opportunity-side-heading"><span>Candidate</span><strong className={selected.shortlisted ? "opportunity-candidate-status shortlisted" : "opportunity-candidate-status"}>{selected.shortlisted ? "Shortlisted" : "Reviewing"}</strong></div><dl>
-      <div><dt>Applicant</dt><dd>{selected.applicantName}</dd></div><div><dt>Profile</dt><dd>{selected.applicantHandle}</dd></div><div><dt>Current affiliation</dt><dd>{selected.applicantAffiliation || "Not provided"}</dd></div><div><dt>Degree</dt><dd className="pending">Not available yet</dd></div><div><dt>Experience</dt><dd className="pending">Not available yet</dd></div><div><dt>Submitted</dt><dd>{applicationDateLabel(selected.createdAt)}</dd></div><div><dt>Documents</dt><dd>{selected.attachments.length}</dd></div>
-    </dl><div className="opportunity-candidate-actions"><button type="button" className={selected.shortlisted ? "active" : ""} aria-pressed={selected.shortlisted} disabled={busy} onClick={() => void toggleShortlist(selected)}><Star size={16} fill={selected.shortlisted ? "currentColor" : "none"} />{selected.shortlisted ? "Shortlisted" : "Shortlist"}</button><button type="button" className="danger-action" disabled={busy} onClick={() => void remove(selected)}><Trash2 size={16} />Delete application</button></div></section></aside> : null}
+    {selected ? <aside className="opportunity-candidate-side"><section><div className="opportunity-side-heading"><span>Candidate</span><strong className={selected.shortlisted ? "opportunity-candidate-status shortlisted" : "opportunity-candidate-status"}>{selected.shortlisted ? "Shortlisted" : "Reviewing"}</strong></div><div className="opportunity-candidate-actions"><button type="button" className={selected.shortlisted ? "active" : ""} aria-pressed={selected.shortlisted} disabled={busy} onClick={() => void toggleShortlist(selected)}><Star size={16} fill={selected.shortlisted ? "currentColor" : "none"} />{selected.shortlisted ? "Shortlisted" : "Shortlist"}</button><button type="button" className="danger-action" disabled={busy} onClick={() => void remove(selected)}><Trash2 size={16} />Delete application</button></div><dl>
+      <div><dt>Applicant</dt><dd>{selected.applicantName}</dd></div><div><dt>Degree</dt><dd className="pending">Not available yet</dd></div><div><dt>Experience</dt><dd className="pending">Not available yet</dd></div><div><dt>Contact</dt><dd className={selectedContact ? "" : "pending"}>{selectedContact ? <a href={`mailto:${selectedContact}`}>{selectedContact}</a> : "Not available yet"}</dd></div>
+    </dl></section></aside> : null}
   </div>;
 }

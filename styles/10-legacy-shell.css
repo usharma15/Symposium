@@ -186,9 +186,9 @@
   position: fixed;
   z-index: 30;
   top: 16px;
-  left: 24px;
-  right: 24px;
-  --brand-nav-slot: 112px;
+  left: var(--symposium-shell-edge);
+  right: var(--symposium-shell-edge);
+  --brand-nav-slot: var(--symposium-topbar-brand-slot);
   display: grid;
   align-items: center;
   grid-template-columns: var(--brand-nav-slot) auto minmax(0, 1fr);
