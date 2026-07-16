@@ -1743,6 +1743,24 @@ const migrations: Migration[] = [
       END
       $$;
     `
+  },
+  {
+    id: "0029_community_activity_delivery",
+    sql: `
+      CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+      CREATE TABLE IF NOT EXISTS fixture_revisions (
+        id TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS community_memberships_listing_idx
+        ON community_memberships (community_id, status, created_at DESC, profile_handle DESC);
+      CREATE INDEX IF NOT EXISTS profiles_name_search_idx
+        ON profiles USING gin (name gin_trgm_ops);
+      CREATE INDEX IF NOT EXISTS profiles_handle_search_idx
+        ON profiles USING gin (handle gin_trgm_ops);
+    `
   }
 ];
 

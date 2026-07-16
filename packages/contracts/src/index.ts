@@ -1129,6 +1129,29 @@ export const communityCallSchema = z.object({
   participantHandles: z.array(z.string()).default([])
 });
 
+export const communityMemberRoleSchema = z.enum(["owner", "moderator", "member"]);
+
+export const communityMemberSchema = z.object({
+  handle: z.string(),
+  name: z.string(),
+  avatarUrl: safeExternalUrlSchema.optional(),
+  role: communityMemberRoleSchema,
+  joinedAt: z.string().datetime()
+});
+
+export const communityMemberQuerySchema = z.object({
+  q: z.string().trim().max(120).default(""),
+  cursor: z.string().trim().max(500).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  role: z.enum(["all", "moderators"]).default("all")
+});
+
+export const communityMemberPageSchema = z.object({
+  members: z.array(communityMemberSchema),
+  nextCursor: z.string().nullable(),
+  total: z.number().int().nonnegative()
+});
+
 export const opportunitySchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -1162,6 +1185,7 @@ export const bootstrapResponseSchema = z.object({
   profiles: z.record(z.string(), researchProfileSchema),
   items: z.array(inquiryItemSchema),
   communities: z.array(researchCommunitySchema).optional(),
+  communityCalls: z.record(z.string(), z.array(communityCallSchema)).optional(),
   defaultProfile: researchProfileSchema
 });
 
@@ -1210,6 +1234,10 @@ export type BootstrapResponseContract = z.infer<typeof bootstrapResponseSchema>;
 export type FollowProfileInputContract = z.infer<typeof followProfileInputSchema>;
 export type ProfileFollowContract = z.infer<typeof profileFollowSchema>;
 export type CommunityCallContract = z.infer<typeof communityCallSchema>;
+export type CommunityMemberRoleContract = z.infer<typeof communityMemberRoleSchema>;
+export type CommunityMemberContract = z.infer<typeof communityMemberSchema>;
+export type CommunityMemberQueryContract = z.infer<typeof communityMemberQuerySchema>;
+export type CommunityMemberPageContract = z.infer<typeof communityMemberPageSchema>;
 export type CreateCommunityCallInputContract = z.infer<typeof createCommunityCallInputSchema>;
 export type OpportunityContract = z.infer<typeof opportunitySchema>;
 export type CreateOpportunityInputContract = z.infer<typeof createOpportunityInputSchema>;

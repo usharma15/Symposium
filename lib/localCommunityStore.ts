@@ -3,21 +3,25 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
   CommunityCallContract,
+  CommunityMemberPageContract,
+  CommunityMemberQueryContract,
   CommunityMembershipStatusContract,
   CreateCommunityInputContract,
   CreateCommunityCallInputContract
 } from "@/packages/contracts/src";
-import { researchCommunities, type ResearchCommunity } from "@/lib/mockData";
+import { profile, profilesByName, researchCommunities, type ResearchCommunity, type ResearchProfile } from "@/lib/mockData";
+import { seededCommunityCallMap } from "@/lib/communityFixtures";
 import { cleanHandle } from "@/lib/symposiumCore";
 
 type StoredMembership = {
   status: Exclude<CommunityMembershipStatusContract, "none"> | "removed";
   role: "owner" | "moderator" | "member";
+  joinedAt: string;
   lastAccessedAt?: string;
 };
 
 type LocalCommunityState = {
-  version: 2;
+  version: 4;
   communities: ResearchCommunity[];
   memberships: Record<string, Record<string, StoredMembership>>;
   calls: CommunityCallContract[];
@@ -34,57 +38,8 @@ const withLock = <T>(operation: () => Promise<T>) => {
   return result;
 };
 
-const seedCommunityCalls = (): CommunityCallContract[] => {
-  const now = Date.now();
-  return researchCommunities.flatMap((community, index) => {
-    const hostHandle = community.moderatorHandles?.[0] ?? community.memberHandles[0];
-    if (!hostHandle) return [];
-    const calls: CommunityCallContract[] = [
-      {
-        id: `00000000-0000-4000-8000-${String(100 + index * 2).padStart(12, "0")}`,
-        communityId: community.id,
-        hostHandle,
-        title: index % 3 === 0 ? "Weekly work review" : index % 3 === 1 ? "Open methods clinic" : "Member artifact table",
-        kind: index % 2 === 0 ? "video" : "voice",
-        status: "scheduled",
-        startsAt: new Date(now + (index % 6 + 1) * 18 * 60 * 60 * 1000).toISOString(),
-        provider: "symposium",
-        providerRoomId: `${community.id}-weekly-review`,
-        participantHandles: community.memberHandles.slice(0, 4 + (index % 5))
-      },
-      {
-        id: `00000000-0000-4000-8000-${String(101 + index * 2).padStart(12, "0")}`,
-        communityId: community.id,
-        hostHandle: community.moderatorHandles?.[1] ?? hostHandle,
-        title: index % 2 === 0 ? "Paper and source packet salon" : "New member working session",
-        kind: index % 2 === 0 ? "voice" : "video",
-        status: "scheduled",
-        startsAt: new Date(now + (index % 8 + 4) * 24 * 60 * 60 * 1000).toISOString(),
-        provider: "symposium",
-        providerRoomId: `${community.id}-salon`,
-        participantHandles: community.memberHandles.slice(3, 8 + (index % 4))
-      }
-    ];
-    if (community.callStatus !== "quiet") {
-      calls.unshift({
-        id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
-        communityId: community.id,
-        hostHandle,
-        title: community.callStatus === "video live" ? "Open video workroom" : "Open voice workroom",
-        kind: community.callStatus === "video live" ? "video" : "voice",
-        status: "live",
-        startsAt: new Date(now - (index % 5 + 1) * 11 * 60_000).toISOString(),
-        provider: "symposium",
-        providerRoomId: `${community.id}-live`,
-        participantHandles: community.memberHandles.slice(0, Math.min(community.online, 10))
-      });
-    }
-    return calls;
-  });
-};
-
 const seedState = (): LocalCommunityState => ({
-  version: 2,
+  version: 4,
   communities: researchCommunities,
   memberships: Object.fromEntries(researchCommunities.map((community, communityIndex) => [
     community.id,
@@ -93,25 +48,26 @@ const seedState = (): LocalCommunityState => ({
       role: (community.moderatorHandles ?? []).map(cleanHandle).includes(cleanHandle(handle))
         ? index === 0 ? "owner" as const : "moderator" as const
         : "member" as const,
+      joinedAt: new Date(Date.UTC(2026, 6, 15 - Math.floor(index / 18), 18 - (communityIndex % 5), index % 60)).toISOString(),
       lastAccessedAt: cleanHandle(handle) === "@udayan"
         ? new Date(Date.UTC(2026, 6, 16, 12 - communityIndex, 0)).toISOString()
         : undefined
     }]))
   ])),
-  calls: seedCommunityCalls()
+  calls: Object.values(seededCommunityCallMap(researchCommunities)).flat()
 });
 
 const readState = async (): Promise<LocalCommunityState> => {
   try {
-    const parsed = JSON.parse(await readFile(storagePath, "utf8")) as Partial<LocalCommunityState> & { version?: number };
+    const parsed = JSON.parse(await readFile(storagePath, "utf8")) as Omit<Partial<LocalCommunityState>, "version"> & { version?: number };
     if (!Array.isArray(parsed.communities) || !parsed.memberships || !Array.isArray(parsed.calls)) return seedState();
     const seeded = seedState();
     const storedById = new Map(parsed.communities.map((community) => [community.id, community]));
     const seededIds = new Set(seeded.communities.map((community) => community.id));
-    const communities = seeded.communities.map((community) => {
+    const seededCommunities = seeded.communities.map((community) => {
       const stored = storedById.get(community.id);
       if (!stored) return community;
-      if (parsed.version === 2) return { ...community, ...stored };
+      if (parsed.version === 4) return { ...community, ...stored };
       return {
         ...stored,
         memberHandles: Array.from(new Set([...community.memberHandles, ...stored.memberHandles])),
@@ -122,16 +78,23 @@ const readState = async (): Promise<LocalCommunityState> => {
         announcements: community.announcements
       };
     });
-    const memberships = Object.fromEntries(communities.map((community) => [
-      community.id,
-      { ...(seeded.memberships[community.id] ?? {}), ...(parsed.memberships?.[community.id] ?? {}) }
-    ]));
+    const communities = [...seededCommunities, ...parsed.communities.filter((community) => !seededIds.has(community.id))];
+    const memberships = Object.fromEntries(communities.map((community) => {
+      const merged = { ...(seeded.memberships[community.id] ?? {}), ...(parsed.memberships?.[community.id] ?? {}) };
+      return [community.id, Object.fromEntries(Object.entries(merged).map(([handle, membership]) => [handle, {
+        ...membership,
+        role: parsed.version === 4 ? membership.role : seeded.memberships[community.id]?.[handle]?.role ?? membership.role,
+        joinedAt: parsed.version === 4
+          ? membership.joinedAt ?? membership.lastAccessedAt ?? new Date(0).toISOString()
+          : seeded.memberships[community.id]?.[handle]?.joinedAt ?? membership.joinedAt ?? membership.lastAccessedAt ?? new Date(0).toISOString()
+      }]))];
+    }));
     const seededCallById = new Map(seeded.calls.map((call) => [call.id, call]));
     for (const call of parsed.calls) seededCallById.set(call.id, call);
     return {
-      version: 2,
-      communities: [...communities, ...parsed.communities.filter((community) => !seededIds.has(community.id))],
-      memberships: { ...memberships, ...Object.fromEntries(Object.entries(parsed.memberships).filter(([id]) => !seededIds.has(id))) },
+      version: 4,
+      communities,
+      memberships,
       calls: [...seededCallById.values()]
     };
   } catch {
@@ -158,7 +121,7 @@ const projectCommunity = (state: LocalCommunityState, community: ResearchCommuni
   return {
     ...community,
     online: community.visibility === "private" && status !== "active" ? 0 : community.online,
-    memberHandles: community.visibility === "private" && status !== "active" ? [] : activeMembers,
+    memberHandles: community.visibility === "private" && status !== "active" ? [] : activeMembers.slice(0, 50),
     memberCount: community.visibility === "private" && status !== "active" ? 0 : activeMembers.length,
     monthlyActive: community.visibility === "private" && status !== "active" ? 0 : Math.max(community.online, Math.round(activeMembers.length * 0.72)),
     membershipStatus: status,
@@ -202,7 +165,7 @@ export const createLocalCommunity = (input: CreateCommunityInputContract, rawOwn
       announcements: []
     };
     state.communities.push(community);
-    state.memberships[id] = { [owner]: { status: "active", role: "owner", lastAccessedAt: now } };
+    state.memberships[id] = { [owner]: { status: "active", role: "owner", joinedAt: now, lastAccessedAt: now } };
     await writeState(state);
     return community;
   });
@@ -223,11 +186,12 @@ export const mutateLocalCommunityMembership = (
     if (community.visibility === "private" && current?.status !== "active") throw new Error("This private community requires membership.");
     if (current?.status === "active") current.lastAccessedAt = now;
   } else if (action === "leave") {
-    state.memberships[communityId]![handle] = { status: "removed", role: current?.role ?? "member", lastAccessedAt: current?.lastAccessedAt };
+    state.memberships[communityId]![handle] = { status: "removed", role: current?.role ?? "member", joinedAt: current?.joinedAt ?? now, lastAccessedAt: current?.lastAccessedAt };
   } else {
     state.memberships[communityId]![handle] = {
       status: community.visibility === "private" ? "requested" : "active",
       role: current?.role ?? "member",
+      joinedAt: current?.status === "active" ? current.joinedAt : now,
       lastAccessedAt: community.visibility === "public" ? now : current?.lastAccessedAt
     };
   }
@@ -249,6 +213,77 @@ export const listLocalCommunityCalls = async (communityId: string, rawActorHandl
     throw new Error("Private community calls require membership.");
   }
   return state.calls.filter((call) => call.communityId === communityId);
+};
+
+export const listAllLocalCommunityCalls = async (rawActorHandle?: string) => {
+  const state = await readState();
+  const handle = rawActorHandle ? cleanHandle(rawActorHandle) : "";
+  const visibleIds = new Set(state.communities
+    .filter((community) => community.visibility === "public" || state.memberships[community.id]?.[handle]?.status === "active")
+    .map((community) => community.id));
+  return Object.fromEntries(state.communities.map((community) => [
+    community.id,
+    visibleIds.has(community.id) ? state.calls.filter((call) => call.communityId === community.id) : []
+  ]));
+};
+
+const profileByHandle = new Map(
+  ([profile, ...Object.values(profilesByName)] as ResearchProfile[]).map((person) => [cleanHandle(person.handle), person])
+);
+
+const encodeMemberCursor = (joinedAt: string, handle: string) =>
+  Buffer.from(JSON.stringify({ joinedAt, handle })).toString("base64url");
+
+const decodeMemberCursor = (cursor?: string) => {
+  if (!cursor) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as { joinedAt?: unknown; handle?: unknown };
+    return typeof parsed.joinedAt === "string" && typeof parsed.handle === "string" ? parsed as { joinedAt: string; handle: string } : null;
+  } catch {
+    return null;
+  }
+};
+
+export const listLocalCommunityMembers = async (
+  communityId: string,
+  rawActorHandle: string | undefined,
+  query: CommunityMemberQueryContract
+): Promise<CommunityMemberPageContract> => {
+  const state = await readState();
+  const community = state.communities.find((candidate) => candidate.id === communityId);
+  if (!community) throw new Error("Community not found.");
+  const actorHandle = rawActorHandle ? cleanHandle(rawActorHandle) : "";
+  if (community.visibility === "private" && state.memberships[communityId]?.[actorHandle]?.status !== "active") {
+    throw new Error("Private community members require membership.");
+  }
+  const term = query.q.trim().toLowerCase();
+  const visible = Object.entries(state.memberships[communityId] ?? {})
+    .filter(([, membership]) => membership.status === "active")
+    .filter(([, membership]) => query.role === "all" || membership.role === "owner" || membership.role === "moderator")
+    .map(([handle, membership]) => {
+      const person = profileByHandle.get(cleanHandle(handle));
+      return {
+        handle: cleanHandle(handle),
+        name: person?.name ?? handle.replace(/^@/, "").replace(/[_-]+/g, " "),
+        avatarUrl: person?.avatarUrl,
+        role: membership.role,
+        joinedAt: membership.joinedAt
+      };
+    })
+    .filter((member) => !term || `${member.name} ${member.handle}`.toLowerCase().includes(term))
+    .sort((first, second) => second.joinedAt.localeCompare(first.joinedAt) || second.handle.localeCompare(first.handle));
+  const total = visible.length;
+  const cursor = decodeMemberCursor(query.cursor);
+  const afterCursor = cursor
+    ? visible.filter((member) => member.joinedAt < cursor.joinedAt || (member.joinedAt === cursor.joinedAt && member.handle < cursor.handle))
+    : visible;
+  const page = afterCursor.slice(0, query.limit);
+  const last = page.at(-1);
+  return {
+    members: page,
+    nextCursor: afterCursor.length > page.length && last ? encodeMemberCursor(last.joinedAt, last.handle) : null,
+    total
+  };
 };
 
 export const createLocalCommunityCall = (input: CreateCommunityCallInputContract, rawActorHandle: string) =>

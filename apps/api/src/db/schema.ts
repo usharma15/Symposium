@@ -145,6 +145,7 @@ export const communityMemberships = pgTable(
     primaryKey({ columns: [table.communityId, table.profileHandle] }),
     index("community_memberships_profile_idx").on(table.profileHandle),
     index("community_memberships_recent_idx").on(table.profileHandle, table.lastAccessedAt),
+    index("community_memberships_listing_idx").on(table.communityId, table.status, table.createdAt, table.profileHandle),
     check(
       "community_memberships_status_check",
       sql`${table.status} IN ('active', 'requested', 'invited', 'rejected', 'blocked', 'removed')`

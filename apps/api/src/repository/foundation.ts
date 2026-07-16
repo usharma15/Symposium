@@ -21,6 +21,7 @@ import {
   researchCommunities
 } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
+import { seededCommunityCallMap } from "@/lib/communityFixtures";
 import { postTypeForItem } from "@/lib/postSemantics";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
@@ -299,6 +300,7 @@ export const seedSnapshot = (): BootstrapResponseContract => {
     profiles,
     items,
     communities: researchCommunities,
+    communityCalls: seededCommunityCallMap(researchCommunities),
     defaultProfile
   };
 };
@@ -391,47 +393,11 @@ const insertCommentTree = async (
   }
 };
 
-const seedCallsForCommunity = (community: ResearchCommunityContract, index: number) => {
-  const hostHandle = community.moderatorHandles?.[0] ?? community.memberHandles[0];
-  if (!hostHandle) return [];
-  const calls = [
-    {
-      id: `00000000-0000-4000-8000-${String(100 + index * 2).padStart(12, "0")}`,
-      hostHandle,
-      title: index % 3 === 0 ? "Weekly work review" : index % 3 === 1 ? "Open methods clinic" : "Member artifact table",
-      kind: index % 2 === 0 ? "video" : "voice",
-      status: "scheduled",
-      startsAt: new Date(Date.now() + (index % 6 + 1) * 18 * 60 * 60 * 1000).toISOString(),
-      providerRoomId: `${community.id}-weekly-review`,
-      participantHandles: community.memberHandles.slice(0, 4 + (index % 5))
-    },
-    {
-      id: `00000000-0000-4000-8000-${String(101 + index * 2).padStart(12, "0")}`,
-      hostHandle: community.moderatorHandles?.[1] ?? hostHandle,
-      title: index % 2 === 0 ? "Paper and source packet salon" : "New member working session",
-      kind: index % 2 === 0 ? "voice" : "video",
-      status: "scheduled",
-      startsAt: new Date(Date.now() + (index % 8 + 4) * 24 * 60 * 60 * 1000).toISOString(),
-      providerRoomId: `${community.id}-salon`,
-      participantHandles: community.memberHandles.slice(3, 8 + (index % 4))
-    }
-  ];
-  if (community.callStatus !== "quiet") {
-    calls.unshift({
-      id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
-      hostHandle,
-      title: community.callStatus === "video live" ? "Open video workroom" : "Open voice workroom",
-      kind: community.callStatus === "video live" ? "video" : "voice",
-      status: "live",
-      startsAt: new Date(Date.now() - (index % 5 + 1) * 11 * 60_000).toISOString(),
-      providerRoomId: `${community.id}-live`,
-      participantHandles: community.memberHandles.slice(0, Math.min(community.online, 10))
-    });
-  }
-  return calls;
-};
+const communityActivityFixtureRevision = "communities-activity-v3";
 
 const syncCommunityActivityFixtures = async (client: PoolClient) => {
+  const alreadyApplied = await client.query("SELECT 1 FROM fixture_revisions WHERE id = $1", [communityActivityFixtureRevision]);
+  if (alreadyApplied.rowCount) return;
   const fixtureProfiles = seedProfiles();
   const existingProfiles = await client.query<{ handle: string }>(
     "SELECT handle FROM profiles WHERE handle = ANY($1::text[])",
@@ -441,58 +407,87 @@ const syncCommunityActivityFixtures = async (client: PoolClient) => {
   for (const person of fixtureProfiles) {
     if (!existingHandles.has(cleanHandle(person.handle))) await insertProfile(client, person);
   }
-  for (const [communityIndex, community] of researchCommunities.entries()) {
-    await client.query(
-      `UPDATE communities SET
-         online = $2,
-         member_handles = CASE WHEN jsonb_array_length(member_handles) < 10 THEN $3::jsonb ELSE member_handles END,
-         seed_counts = $4,
-         call_status = CASE WHEN call_status = 'quiet' THEN $5 ELSE call_status END,
-         moderator_handles = CASE WHEN jsonb_array_length(moderator_handles) < 3 THEN $6::jsonb ELSE moderator_handles END,
-         guidelines = CASE WHEN length(trim(guidelines)) < 160 THEN $7 ELSE guidelines END,
-         announcements = CASE WHEN jsonb_array_length(announcements) < 2 THEN $8::jsonb ELSE announcements END,
-         updated_at = now()
-       WHERE id = $1`,
-      [
-        community.id,
-        community.online,
-        JSON.stringify(community.memberHandles),
-        JSON.stringify(community.seedCounts),
-        community.callStatus,
-        JSON.stringify(community.moderatorHandles ?? []),
-        community.guidelines ?? "",
-        JSON.stringify(community.announcements ?? [])
-      ]
-    );
+  const communityFixtures = researchCommunities.map((community) => ({
+    id: community.id,
+    online: community.online,
+    member_handles: community.memberHandles,
+    seed_counts: community.seedCounts,
+    call_status: community.callStatus,
+    moderator_handles: community.moderatorHandles ?? [],
+    guidelines: community.guidelines ?? "",
+    announcements: community.announcements ?? []
+  }));
+  await client.query(
+    `WITH fixture AS (
+       SELECT * FROM jsonb_to_recordset($1::jsonb) AS row(
+         id text, online integer, member_handles jsonb, seed_counts jsonb, call_status text,
+         moderator_handles jsonb, guidelines text, announcements jsonb
+       )
+     )
+     UPDATE communities community SET
+       online = fixture.online,
+       member_handles = CASE WHEN jsonb_array_length(community.member_handles) < 10 THEN fixture.member_handles ELSE community.member_handles END,
+       seed_counts = fixture.seed_counts,
+       call_status = CASE WHEN community.call_status = 'quiet' THEN fixture.call_status ELSE community.call_status END,
+       moderator_handles = CASE WHEN jsonb_array_length(community.moderator_handles) < 3 THEN fixture.moderator_handles ELSE community.moderator_handles END,
+       guidelines = CASE WHEN length(trim(community.guidelines)) < 160 THEN fixture.guidelines ELSE community.guidelines END,
+       announcements = CASE WHEN jsonb_array_length(community.announcements) < 4 THEN fixture.announcements ELSE community.announcements END,
+       updated_at = now()
+     FROM fixture
+     WHERE community.id = fixture.id`,
+    [JSON.stringify(communityFixtures)]
+  );
+
+  const memberships = researchCommunities.flatMap((community) => {
     const moderators = new Set((community.moderatorHandles ?? []).map(cleanHandle));
-    for (const [memberIndex, rawHandle] of community.memberHandles.entries()) {
-      const handle = cleanHandle(rawHandle);
-      const role = memberIndex === 0 ? "owner" : moderators.has(handle) ? "moderator" : "member";
-      await client.query(
-        `INSERT INTO community_memberships (community_id, profile_handle, role, status)
-         VALUES ($1, $2, $3, 'active')
-         ON CONFLICT (community_id, profile_handle) DO UPDATE SET role = EXCLUDED.role`,
-        [community.id, handle, role]
-      );
-    }
-    for (const call of seedCallsForCommunity(community, communityIndex)) {
-      await client.query(
-        `INSERT INTO community_calls (
-           id, community_id, host_handle, title, kind, status, starts_at, provider, provider_room_id
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'symposium', $8)
-         ON CONFLICT (id) DO NOTHING`,
-        [call.id, community.id, call.hostHandle, call.title, call.kind, call.status, call.startsAt, call.providerRoomId]
-      );
-      for (const [participantIndex, participantHandle] of call.participantHandles.entries()) {
-        await client.query(
-          `INSERT INTO call_participants (call_id, profile_handle, role)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (call_id, profile_handle) DO NOTHING`,
-          [call.id, cleanHandle(participantHandle), participantIndex === 0 ? "host" : "participant"]
-        );
-      }
-    }
-  }
+    return community.memberHandles.map((rawHandle, memberIndex) => ({
+      community_id: community.id,
+      profile_handle: cleanHandle(rawHandle),
+      role: memberIndex === 0 ? "owner" : moderators.has(cleanHandle(rawHandle)) ? "moderator" : "member"
+    }));
+  });
+  await client.query(
+    `INSERT INTO community_memberships (community_id, profile_handle, role, status)
+     SELECT row.community_id, row.profile_handle, row.role, 'active'
+     FROM jsonb_to_recordset($1::jsonb) AS row(community_id text, profile_handle text, role text)
+     ON CONFLICT (community_id, profile_handle) DO UPDATE SET role = EXCLUDED.role`,
+    [JSON.stringify(memberships)]
+  );
+
+  const calls = Object.values(seededCommunityCallMap(researchCommunities)).flat();
+  await client.query(
+    `INSERT INTO community_calls (id, community_id, host_handle, title, kind, status, starts_at, provider, provider_room_id)
+     SELECT row.id::uuid, row.community_id, row.host_handle, row.title, row.kind, row.status, row.starts_at::timestamptz, row.provider, row.provider_room_id
+     FROM jsonb_to_recordset($1::jsonb) AS row(
+       id text, community_id text, host_handle text, title text, kind text, status text,
+       starts_at text, provider text, provider_room_id text
+     )
+     ON CONFLICT (id) DO NOTHING`,
+    [JSON.stringify(calls.map((call) => ({
+      id: call.id,
+      community_id: call.communityId,
+      host_handle: call.hostHandle,
+      title: call.title,
+      kind: call.kind,
+      status: call.status,
+      starts_at: call.startsAt,
+      provider: call.provider,
+      provider_room_id: call.providerRoomId
+    })))]
+  );
+  const participants = calls.flatMap((call) => call.participantHandles.map((profileHandle, index) => ({
+    call_id: call.id,
+    profile_handle: cleanHandle(profileHandle),
+    role: index === 0 ? "host" : "participant"
+  })));
+  await client.query(
+    `INSERT INTO call_participants (call_id, profile_handle, role)
+     SELECT row.call_id::uuid, row.profile_handle, row.role
+     FROM jsonb_to_recordset($1::jsonb) AS row(call_id text, profile_handle text, role text)
+     ON CONFLICT (call_id, profile_handle) DO NOTHING`,
+    [JSON.stringify(participants)]
+  );
+  await client.query("INSERT INTO fixture_revisions (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", [communityActivityFixtureRevision]);
 };
 
 const seedDatabase = async () => {
@@ -845,6 +840,15 @@ export const rowToItem = (
   };
 };
 
+const communityRowToContract = (community: ResearchCommunityContract): ResearchCommunityContract => ({
+  ...community,
+  memberHandles: json(community.memberHandles, []),
+  keywords: json(community.keywords, []),
+  seedCounts: json(community.seedCounts, { papers: 0, thoughts: 0, opportunities: 0 }),
+  moderatorHandles: json(community.moderatorHandles, []),
+  announcements: json(community.announcements, [])
+});
+
 export const getInitialState = async (): Promise<BootstrapResponseContract> => {
   if (!hasDatabase()) return seedSnapshot();
   await ensureLiveData();
@@ -859,6 +863,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
       commentResult,
       attachmentResult,
       communityResult,
+      communityCallResult,
       postActionResult,
       commentActionResult
     ] = await Promise.all([
@@ -968,7 +973,11 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           summary,
           visibility,
           online,
-          member_handles AS "memberHandles",
+          COALESCE((
+            SELECT jsonb_agg(member.value ORDER BY member.ordinality)
+            FROM jsonb_array_elements(community.member_handles) WITH ORDINALITY AS member(value, ordinality)
+            WHERE member.ordinality <= 50
+          ), '[]'::jsonb) AS "memberHandles",
           keywords,
           seed_counts AS "seedCounts",
           call_status AS "callStatus",
@@ -976,8 +985,33 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           guidelines,
           announcements,
           revision
-         FROM communities
+         FROM communities AS community
          ORDER BY name ASC`
+      ),
+      client.query(
+        `WITH ranked_calls AS (
+           SELECT call.*, ROW_NUMBER() OVER (PARTITION BY community_id ORDER BY created_at DESC) AS rank
+           FROM community_calls call
+           WHERE status IN ('live', 'scheduled')
+         )
+         SELECT
+           call.id,
+           call.community_id AS "communityId",
+           call.host_handle AS "hostHandle",
+           call.title,
+           call.kind,
+           call.status,
+           call.starts_at AS "startsAt",
+           call.ended_at AS "endedAt",
+           call.provider,
+           call.provider_room_id AS "providerRoomId",
+           COALESCE(json_agg(participant.profile_handle) FILTER (WHERE participant.profile_handle IS NOT NULL), '[]') AS "participantHandles"
+         FROM ranked_calls call
+         LEFT JOIN call_participants participant ON participant.call_id = call.id AND participant.left_at IS NULL
+         WHERE call.rank <= 25
+         GROUP BY call.id, call.community_id, call.host_handle, call.title, call.kind, call.status,
+           call.starts_at, call.ended_at, call.provider, call.provider_room_id, call.created_at
+         ORDER BY call.community_id, call.created_at DESC`
       ),
       client.query<ActionProjectionRow>(
         `SELECT
@@ -1011,6 +1045,11 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
     const attachmentsByComment = attachmentsByOwner(commentAttachmentRows);
     const commentsByPost = commentTreesFromRows(projectedComments, attachmentsByComment);
     const attachmentsByPost = attachmentsByOwner(postAttachmentRows);
+    const communityCalls = Object.fromEntries(communityResult.rows.map((community) => [community.id, [] as CommunityCallContract[]]));
+    for (const callRow of communityCallResult.rows) {
+      const call = callRowToContract(callRow);
+      (communityCalls[call.communityId] ??= []).push(call);
+    }
     const profiles = Object.fromEntries(
       profileResult.rows.map((person) => [
         person.handle,
@@ -1029,14 +1068,8 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
         const projectedRow = applyPostActionProjection(row, postActionHandles.get(row.id));
         return rowToItem(projectedRow, commentsByPost.get(row.id) ?? [], attachmentsByPost.get(row.id) ?? []);
       }),
-      communities: communityResult.rows.map((community) => ({
-        ...community,
-        memberHandles: json(community.memberHandles, []),
-        keywords: json(community.keywords, []),
-        seedCounts: json(community.seedCounts, { papers: 0, thoughts: 0, opportunities: 0 }),
-        moderatorHandles: json(community.moderatorHandles, []),
-        announcements: json(community.announcements, [])
-      })),
+      communities: communityResult.rows.map(communityRowToContract),
+      communityCalls,
       defaultProfile
     };
     await client.query("COMMIT");
@@ -1051,6 +1084,8 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
 
 export const listCommunities = async () => (await getInitialState()).communities ?? [];
 
+const communityMemberPreviewLimit = 50;
+
 export const publicProfile = (person: ResearchProfileContract): ResearchProfileContract => {
   const { email: _email, ...profile } = person;
   return profile;
@@ -1064,7 +1099,7 @@ export const publicCommunity = (
   return {
     ...community,
     online: privateHidden ? 0 : community.online,
-    memberHandles: privateHidden ? [] : community.memberHandles,
+    memberHandles: privateHidden ? [] : community.memberHandles.slice(0, communityMemberPreviewLimit),
     moderatorHandles: privateHidden ? [] : community.moderatorHandles ?? [],
     guidelines: privateHidden ? undefined : community.guidelines,
     announcements: privateHidden ? [] : community.announcements ?? [],
@@ -1212,10 +1247,11 @@ const communityViewerState = async (
      FROM communities community
      LEFT JOIN community_memberships membership ON membership.community_id = community.id
      LEFT JOIN community_memberships viewer
-       ON viewer.community_id = community.id
-      AND viewer.profile_handle = $1
+      ON viewer.community_id = community.id
+     AND viewer.profile_handle = $1
+     WHERE community.id = ANY($2::text[])
      GROUP BY community.id, viewer.status, viewer.last_accessed_at`,
-    [requesterHandle]
+    [requesterHandle, communities.map((community) => community.id)]
   );
   return new Map(result.rows.map((row) => {
     const status = row.membershipStatus === "active" || row.membershipStatus === "requested" || row.membershipStatus === "invited"
@@ -1282,6 +1318,12 @@ export const getPublicInitialState = async (rawRequesterHandle?: string | null) 
         lastAccessedAt: viewer.lastAccessedAt
       }, viewer.status);
     }),
+    communityCalls: Object.fromEntries(communities.map((community) => [
+      community.id,
+      community.visibility === "public" || viewerState.get(community.id)?.status === "active"
+        ? state.communityCalls?.[community.id] ?? []
+        : []
+    ])),
     defaultProfile: publicProfile(state.defaultProfile)
   };
 };
@@ -1290,13 +1332,41 @@ export const listPublicCommunities = async (requesterHandle?: string | null) =>
   (await getPublicInitialState(requesterHandle)).communities ?? [];
 
 export const getCommunity = async (communityId: string) => {
-  const community = (await listCommunities()).find((item) => item.id === communityId);
+  if (!hasDatabase()) {
+    const community = researchCommunities.find((item) => item.id === communityId);
+    if (!community) throw new TRPCError({ code: "NOT_FOUND", message: "Community not found." });
+    return community;
+  }
+  await ensureLiveData();
+  const result = await getPool().query<ResearchCommunityContract>(
+    `SELECT
+       id, name, field, summary, visibility, online,
+       member_handles AS "memberHandles",
+       keywords,
+       seed_counts AS "seedCounts",
+       call_status AS "callStatus",
+       moderator_handles AS "moderatorHandles",
+       guidelines,
+       announcements,
+       revision
+     FROM communities
+     WHERE id = $1
+     LIMIT 1`,
+    [communityId]
+  );
+  const community = result.rows[0] ? communityRowToContract(result.rows[0]) : undefined;
   if (!community) throw new TRPCError({ code: "NOT_FOUND", message: "Community not found." });
   return community;
 };
 
 export const getPublicCommunity = async (communityId: string, requesterHandle?: string | null) => {
-  const community = (await listPublicCommunities(requesterHandle)).find((item) => item.id === communityId);
-  if (!community) throw new TRPCError({ code: "NOT_FOUND", message: "Community not found." });
-  return community;
+  const community = await getCommunity(communityId);
+  const viewer = (await communityViewerState([community], requesterHandle ? cleanHandle(requesterHandle) : null)).get(community.id)
+    ?? { status: "none" as const, lastAccessedAt: undefined, memberCount: community.memberHandles.length, monthlyActive: community.online };
+  return publicCommunity({
+    ...community,
+    memberCount: viewer.memberCount,
+    monthlyActive: viewer.monthlyActive,
+    lastAccessedAt: viewer.lastAccessedAt
+  }, viewer.status);
 };

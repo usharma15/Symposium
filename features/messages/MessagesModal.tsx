@@ -3,17 +3,27 @@
 import { MessageCircle, X } from "lucide-react";
 import { profileInitials as initial } from "@/features/identity/profilePresentation";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
+import type { ResearchProfile } from "@/lib/mockData";
 
 export function MessagesModal({
   activeConversationId,
+  directRecipient,
   onClose,
   onOpenConversation
 }: {
   activeConversationId: string | null;
+  directRecipient?: ResearchProfile;
   onClose: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
   const threads = [
+    ...(directRecipient ? [{
+      id: `direct:${directRecipient.handle}`,
+      name: directRecipient.name,
+      type: "Direct",
+      preview: "Start a direct conversation with this community moderator.",
+      time: "Now"
+    }] : []),
     {
       id: "ai-metascience-lab",
       name: "AI Metascience Lab",

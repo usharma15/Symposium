@@ -3,7 +3,6 @@
 import {
   ArrowLeft,
   ArrowRight,
-  Bell,
   BookOpenText,
   CalendarDays,
   ChevronDown,
@@ -11,7 +10,6 @@ import {
   Contact,
   LockKeyhole,
   Megaphone,
-  MessageCircleMore,
   Plus,
   Radio,
   Search,
@@ -28,7 +26,7 @@ import type {
   CreateCommunityCallInputContract
 } from "@/packages/contracts/src";
 import type { InquiryItem, ResearchCommunity, ResearchProfile } from "@/lib/mockData";
-import { cleanHandle, normalizeSearchPhrase } from "@/lib/symposiumCore";
+import { normalizeSearchPhrase } from "@/lib/symposiumCore";
 import type { PostActionHandler } from "@/features/actions/actionTypes";
 import type { QuoteActionHandler } from "@/features/quotes/QuoteViews";
 import type { AttachmentPreviewHandler } from "@/features/attachments/AttachmentViews";
@@ -49,7 +47,7 @@ import {
   isActiveCommunityMember
 } from "@/features/communities/communityPolicy";
 import { CommunityFeedFilterModal } from "@/features/communities/CommunityFeedFilterModal";
-import { profileForHandle } from "@/features/identity/profilePresentation";
+import { CommunityPeopleModal } from "@/features/communities/CommunityPeopleModal";
 import { FeedPost } from "@/features/posts/PostViews";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 
@@ -80,7 +78,7 @@ export function CommunitiesStage({
     onCreateCall: (input: Omit<CreateCommunityCallInputContract, "communityId">) => Promise<{ ok: boolean; error?: string }>;
     onJoinCall: (callId: string) => Promise<void>;
     onInvite: () => void;
-    onContactModerators: () => void;
+    onMessageModerator: (handle: string) => void;
     onOpenCommunity: (communityId: string) => void;
     onCreateCommunity: (input: CreateCommunityInputContract) => Promise<{ ok: boolean; error?: string }>;
     onSelect: (id: string, commentId?: string | null) => void;
@@ -119,7 +117,7 @@ export function CommunitiesStage({
     onCreateCall={actions.onCreateCall}
     onJoinCall={actions.onJoinCall}
     onInvite={actions.onInvite}
-    onContactModerators={actions.onContactModerators}
+    onMessageModerator={actions.onMessageModerator}
     onSelect={actions.onSelect}
     onOpenProfile={actions.onOpenProfile}
     onAction={actions.onAction}
@@ -451,7 +449,7 @@ export function SelectedCommunityView({
   onCreateCall,
   onJoinCall,
   onInvite,
-  onContactModerators,
+  onMessageModerator,
   onSelect,
   onOpenProfile,
   onAction,
@@ -473,7 +471,7 @@ export function SelectedCommunityView({
   onCreateCall: (input: Omit<CreateCommunityCallInputContract, "communityId">) => Promise<{ ok: boolean; error?: string }>;
   onJoinCall: (callId: string) => Promise<void>;
   onInvite: () => void;
-  onContactModerators: () => void;
+  onMessageModerator: (handle: string) => void;
   onSelect: (id: string, commentId?: string | null) => void;
   onOpenProfile: (name: string) => void;
   onAction: PostActionHandler;
@@ -488,6 +486,9 @@ export function SelectedCommunityView({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [callComposerOpen, setCallComposerOpen] = useState(false);
+  const [peopleOpen, setPeopleOpen] = useState<"members" | "moderators" | null>(null);
+  const [announcementsExpanded, setAnnouncementsExpanded] = useState(false);
+  const [callsExpanded, setCallsExpanded] = useState(false);
   const isMember = isActiveCommunityMember(community, currentProfile);
   const mayView = canViewCommunity(community, currentProfile);
   const mayParticipate = canParticipateInCommunity(community, currentProfile);
@@ -501,16 +502,10 @@ export function SelectedCommunityView({
   }, [community, feedQuery, filter, items]);
   const liveCalls = calls.filter((call) => call.status === "live");
   const upcomingCalls = calls.filter((call) => call.status === "scheduled");
-  const communityPeople = useMemo(() => {
-    const moderatorHandles = new Set((community.moderatorHandles ?? []).map(cleanHandle));
-    const visible = community.memberHandles
-      .map((handle) => profileForHandle(profiles, handle))
-      .filter((person): person is ResearchProfile => Boolean(person));
-    return {
-      moderators: visible.filter((person) => moderatorHandles.has(cleanHandle(person.handle))).slice(0, 4),
-      members: visible.filter((person) => !moderatorHandles.has(cleanHandle(person.handle))).slice(0, 6)
-    };
-  }, [community.memberHandles, community.moderatorHandles, profiles]);
+  const announcements = [...(community.announcements ?? [])].sort((first, second) =>
+    (second.createdAt ?? "").localeCompare(first.createdAt ?? "")
+  );
+  const activeCalls = [...liveCalls, ...upcomingCalls];
 
   return (
     <section className="selected-community-layout" aria-label={community.name}>
@@ -537,7 +532,7 @@ export function SelectedCommunityView({
 
         {mayView ? <div className="community-secondary-actions">
           <button type="button" onClick={() => setRulesOpen(true)}><BookOpenText size={16} /> Guidelines & rules</button>
-          <button type="button" onClick={onContactModerators}><Contact size={16} /> Contact moderators</button>
+          <button type="button" onClick={() => setPeopleOpen("moderators")}><Contact size={16} /> Contact moderators</button>
           <button type="button" onClick={onInvite}><Send size={16} /> Invite</button>
         </div> : null}
       </aside>
@@ -581,42 +576,36 @@ export function SelectedCommunityView({
           <div className="community-activity-counts">
             <span><strong>{community.monthlyActive ?? community.online}</strong><small>monthly active</small></span>
             <span><strong>{community.online}</strong><small>online now</small></span>
-            <span><strong>{community.memberCount ?? community.memberHandles.length}</strong><small>members</small></span>
+            <button type="button" onClick={() => setPeopleOpen("members")} title="Browse and search community members"><strong>{community.memberCount ?? community.memberHandles.length}</strong><small>members</small></button>
           </div>
         </section>
 
-        <section className="community-announcements-panel">
-          <div className="community-section-heading"><span><Megaphone size={15} /> Announcements</span><small>{community.announcements?.length ?? 0}</small></div>
-          {mayView && community.announcements?.length ? community.announcements.slice(0, 2).map((announcement) => (
-            <article key={announcement.id}><strong>{announcement.title}</strong><p>{announcement.body}</p></article>
-          )) : <p>{mayView ? "No announcements right now." : "Available to members."}</p>}
+        <section className={`community-announcements-panel community-expandable-panel ${announcementsExpanded ? "expanded" : ""}`}>
+          <button className="community-section-heading community-section-toggle" type="button" aria-expanded={announcementsExpanded} onClick={() => setAnnouncementsExpanded((current) => !current)}>
+            <span><Megaphone size={15} /> Announcements</span><span className="community-heading-actions"><small>{announcements.length}</small><ChevronDown size={14} /></span>
+          </button>
+          <div className="community-section-list" onClick={() => setAnnouncementsExpanded((current) => !current)}>
+            {mayView && announcements.length ? announcements.slice(0, announcementsExpanded ? undefined : 3).map((announcement) => (
+              <article key={announcement.id}><strong>{announcement.title}</strong><p>{announcement.body}</p></article>
+            )) : <p>{mayView ? "No announcements right now." : "Available to members."}</p>}
+          </div>
         </section>
 
-        <section className="community-calls-panel">
-          <div className="community-section-heading"><span><CalendarDays size={15} /> Events & calls</span><small>{liveCalls.length + upcomingCalls.length}</small></div>
-          {mayView ? [...liveCalls, ...upcomingCalls].slice(0, 5).map((call) => (
-            <article key={call.id}>
-              <span className={call.status === "live" ? "live-pulse" : "scheduled-dot"} aria-hidden="true" />
-              <div><strong>{call.title}</strong><small>{call.status === "live" ? `${call.kind} live now` : formatCallTime(call.startsAt)}</small><small>{call.participantHandles.length} joined</small></div>
-              <button type="button" onClick={() => onJoinCall(call.id)}>{call.status === "live" ? "Join" : "RSVP"}</button>
-            </article>
-          )) : null}
-          {mayView && !liveCalls.length && !upcomingCalls.length ? <p>No calls or events scheduled.</p> : null}
-          {mayView ? <button type="button" disabled={!mayParticipate} onClick={() => setCallComposerOpen(true)}><Plus size={15} /> Create event or call</button> : null}
-        </section>
-
-        <section className="community-people-panel">
-          <div className="community-section-heading"><span><UsersRound size={15} /> People</span><small>{community.memberCount ?? community.memberHandles.length}</small></div>
-          {communityPeople.moderators.length ? <div className="community-people-group"><span>Moderators</span>{communityPeople.moderators.map((person) => (
-            <CanonicalLink key={person.handle} route={{ kind: "profile", handle: person.handle }} onNavigate={() => onOpenProfile(person.handle)}>
-              <i>{person.avatarUrl ? <img src={person.avatarUrl} alt="" /> : person.name.slice(0, 1)}</i><span><strong>{person.name}</strong><small>{person.handle}</small></span>
-            </CanonicalLink>
-          ))}</div> : null}
-          {communityPeople.members.length ? <div className="community-people-group"><span>Members</span>{communityPeople.members.map((person) => (
-            <CanonicalLink key={person.handle} route={{ kind: "profile", handle: person.handle }} onNavigate={() => onOpenProfile(person.handle)}>
-              <i>{person.avatarUrl ? <img src={person.avatarUrl} alt="" /> : person.name.slice(0, 1)}</i><span><strong>{person.name}</strong><small>{person.handle}</small></span>
-            </CanonicalLink>
-          ))}</div> : null}
+        <section className={`community-calls-panel community-expandable-panel ${callsExpanded ? "expanded" : ""}`}>
+          <div className="community-section-heading">
+            <button className="community-section-toggle" type="button" aria-expanded={callsExpanded} onClick={() => setCallsExpanded((current) => !current)}><span><CalendarDays size={15} /> Events & calls</span><span className="community-heading-actions"><small>{activeCalls.length}</small><ChevronDown size={14} /></span></button>
+            {mayView ? <button className="community-section-new" type="button" disabled={!mayParticipate} onClick={() => setCallComposerOpen(true)}><Plus size={13} /> New</button> : null}
+          </div>
+          <div className="community-section-list" onClick={() => setCallsExpanded((current) => !current)}>
+            {mayView ? activeCalls.slice(0, callsExpanded ? undefined : 3).map((call) => (
+              <article key={call.id}>
+                <span className={call.status === "live" ? "live-pulse" : "scheduled-dot"} aria-hidden="true" />
+                <div><strong>{call.title}</strong><small>{call.status === "live" ? `${call.kind} live now` : formatCallTime(call.startsAt)}</small><small>{call.participantHandles.length} joined</small></div>
+                <button type="button" onClick={(event) => { event.stopPropagation(); void onJoinCall(call.id); }}>{call.status === "live" ? "Join" : "RSVP"}</button>
+              </article>
+            )) : null}
+            {mayView && !activeCalls.length ? <p>No calls or events scheduled.</p> : null}
+          </div>
         </section>
       </aside> : null}
 
@@ -629,6 +618,15 @@ export function SelectedCommunityView({
         </div>
       ) : null}
       {filtersOpen ? <CommunityFeedFilterModal value={filter} onChange={setFilter} onClose={() => setFiltersOpen(false)} /> : null}
+      {peopleOpen ? <CommunityPeopleModal
+        community={community}
+        currentProfileHandle={currentProfile.handle}
+        profiles={profiles}
+        mode={peopleOpen}
+        onClose={() => setPeopleOpen(null)}
+        onOpenProfile={onOpenProfile}
+        onMessage={peopleOpen === "moderators" ? onMessageModerator : undefined}
+      /> : null}
       {callComposerOpen ? <CreateCallModal onCreate={onCreateCall} onClose={() => setCallComposerOpen(false)} /> : null}
     </section>
   );
@@ -674,5 +672,5 @@ const formatCallTime = (value?: string) => {
   if (!value) return "Scheduled";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Scheduled";
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC", timeZoneName: "short" }).format(date);
 };

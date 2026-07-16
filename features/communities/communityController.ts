@@ -26,7 +26,6 @@ export const createCommunityController = (input: {
   persist: () => void;
   openCommunity: (communityId: string) => void;
   setStatus: (status: string) => void;
-  contactModerators: (label: string) => void;
 }) => {
   const mergeCommunity = (community: ResearchCommunity) => {
     input.setCommunities((current) => {
@@ -146,10 +145,5 @@ export const createCommunityController = (input: {
     }
   };
 
-  const contactModerators = () => {
-    const label = input.selectedCommunity?.moderatorHandles?.join(", ") || "the community moderators";
-    input.contactModerators(label);
-  };
-
-  return { changeMembership, contactModerators, createCall, createCommunity, invite, joinCall };
+  return { changeMembership, createCall, createCommunity, invite, joinCall };
 };

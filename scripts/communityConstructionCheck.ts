@@ -16,6 +16,7 @@ import {
 import { getCommunityItems } from "../features/discovery/discoveryPolicy";
 import { projectCommunityItemsForViewer } from "../lib/communityContentProjection";
 import { researchCommunities } from "../lib/mockData";
+import { listLocalCommunityMembers } from "../lib/localCommunityStore";
 
 const profile = { handle: "@viewer" };
 const community = researchCommunitySchema.parse({
@@ -164,14 +165,23 @@ assert.equal(filterCommunityFeedItems(filterItems, { content: "all", sort: "popu
 for (const seededCommunity of researchCommunities) {
   assert.ok((seededCommunity.memberCount ?? 0) >= 30, `${seededCommunity.name} needs a substantial seeded roster.`);
   assert.ok((seededCommunity.moderatorHandles?.length ?? 0) >= 3, `${seededCommunity.name} needs visible moderators.`);
-  assert.ok((seededCommunity.announcements?.length ?? 0) >= 3, `${seededCommunity.name} needs active announcements.`);
+  assert.ok((seededCommunity.announcements?.length ?? 0) >= 6, `${seededCommunity.name} needs active announcements.`);
   assert.ok((seededCommunity.guidelines?.length ?? 0) >= 300, `${seededCommunity.name} needs useful guidelines.`);
 }
 
 const main = async () => {
+const firstCommunity = researchCommunities[0]!;
+const firstMemberPage = await listLocalCommunityMembers(firstCommunity.id, "@udayan", { q: "", limit: 8, role: "all" });
+assert.equal(firstMemberPage.members.length, 8, "Member directories must load bounded pages.");
+assert.ok(firstMemberPage.nextCursor, "Substantial communities must expose a continuation cursor.");
+assert.ok(firstMemberPage.members.every((member, index, members) => index === 0 || members[index - 1]!.joinedAt >= member.joinedAt), "Members must be ordered by newest join date.");
+const moderatorPage = await listLocalCommunityMembers(firstCommunity.id, "@udayan", { q: "", limit: 20, role: "moderators" });
+assert.ok(moderatorPage.members.every((member) => member.role === "owner" || member.role === "moderator"), "Moderator directories must not leak ordinary member rows.");
+
 const sources = await Promise.all([
   readFile(new URL("../features/communities/CommunityViews.tsx", import.meta.url), "utf8"),
   readFile(new URL("../features/communities/CommunityFeedFilterModal.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../features/communities/CommunityPeopleModal.tsx", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/communities.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/foundation.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/communities/[id]/membership/route.ts", import.meta.url), "utf8"),
@@ -180,21 +190,28 @@ const sources = await Promise.all([
   readFile(new URL("../styles/89-communities.css", import.meta.url), "utf8"),
   readFile(new URL("../lib/localCommunityStore.ts", import.meta.url), "utf8")
 ]);
-const [views, filterModal, repository, foundation, membershipRoute, shell, postViews, communityStyles, localStore] = sources;
+const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, communityStyles, localStore] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
-assert.match(views, /community-people-panel/, "Selected communities must expose active member and moderator accounts.");
+assert.doesNotMatch(views, /community-people-panel/, "Member and moderator lists must not consume the fixed right rail.");
+assert.match(views, /setPeopleOpen\("members"\)/, "The member count must open the searchable member directory.");
+assert.match(views, /setPeopleOpen\("moderators"\)/, "Contact moderators must open the moderator directory.");
+assert.match(peopleModal, /nextCursor/, "Community people must use cursor pagination instead of loading an unbounded roster.");
+assert.match(peopleModal, /Quick search members/, "The member directory must expose quick search.");
 assert.match(filterModal, /Hot right now/, "Community feed filtering must expose a real heat ranking.");
 assert.match(repository, /assertCommunityParticipation/, "Community writes must enforce active participation.");
 assert.match(repository, /last_accessed_at/, "Recent community access must persist server-side.");
 assert.match(foundation, /citationOnlyItemProjection/, "Bootstrap delivery must enforce citation-only private source projection.");
 assert.match(foundation, /syncCommunityActivityFixtures/, "Community activity fixtures must hydrate the durable live backend.");
+assert.match(foundation, /fixture_revisions/, "Community activity enrichment must not rerun on every backend cold start.");
+assert.match(foundation, /communityCalls/, "Canonical bootstrap refreshes must reconcile community calls.");
+assert.match(foundation, /community\.memberHandles\.slice\(0, communityMemberPreviewLimit\)/, "General bootstrap delivery must cap member previews; the directory endpoint owns full pagination.");
 assert.match(membershipRoute, /action === "leave"/, "The single membership control must support leave through the same client route.");
 assert.match(shell, /selectedCommunity && canParticipateInCommunity/, "The global composer must default to the selected community when participation is allowed.");
 assert.match(postViews, /Post destination/, "The global composer must allow switching between community and global publication.");
 assert.doesNotMatch(communityStyles, /data-room=\"communities\"[^}]+display:\s*none/, "Communities must never hide the global bottom launchers.");
-assert.match(localStore, /version: 2/, "Existing local community state must migrate to the enriched activity model.");
+assert.match(localStore, /version: 4/, "Existing local community state must migrate to recency-aware memberships.");
 
 console.log("community construction checks passed");
 };

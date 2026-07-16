@@ -429,9 +429,8 @@ function SymposiumExperience({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(initialRoute.kind === "messages");
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(
-    initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null
-  );
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
+  const [messageRecipientHandle, setMessageRecipientHandle] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(
     initialRoute.kind === "profile" ? initialRoute.handle : null
@@ -940,6 +939,7 @@ function SymposiumExperience({
       items: InquiryItem[];
       profiles: Record<string, ResearchProfile>;
       communities?: ResearchCommunity[];
+      communityCalls?: typeof communityCalls;
       defaultProfile: ResearchProfile;
     }>(`/api/bootstrap?actorHandle=${encodeURIComponent(preferredHandle)}`, { cache: "no-store" });
     let loadedProfiles = Object.keys(data.profiles).length
@@ -995,6 +995,7 @@ function SymposiumExperience({
     setProfiles(loadedProfiles);
     setCurrentProfile(nextProfile);
     setCommunities(loadedCommunities);
+    if (data.communityCalls) setCommunityCalls(data.communityCalls);
     persistLocalSnapshot(loadedItems, loadedProfiles, nextProfile);
     setSyncStatus(liveStatus.connected);
   };
@@ -2006,6 +2007,7 @@ function SymposiumExperience({
     setSettingsOpen(false);
     setSearchOpen(false);
     setMessagesOpen(false);
+    setMessageRecipientHandle(null);
     setTabletOpen(true);
   };
 
@@ -2071,12 +2073,7 @@ function SymposiumExperience({
     clearRetryMutationKey,
     persist: () => persistLocalSnapshot(itemsRef.current, profilesRef.current),
     openCommunity,
-    setStatus: setSyncStatus,
-    contactModerators: (label) => {
-      setSelectedConversationId(null);
-      setMessagesOpen(true);
-      setSyncStatus(`Message ${label}`);
-    }
+    setStatus: setSyncStatus
   });
 
   const savePostDraft = (draft: PostDraft) => savePostDraftToWorkspace({
@@ -3229,6 +3226,7 @@ function SymposiumExperience({
             title="Messages"
             route={{ kind: "messages" }}
             onNavigate={() => {
+              setMessageRecipientHandle(null);
               navigateView({ messagesOpen: true, selectedConversationId: null });
             }}
           >
@@ -3363,7 +3361,7 @@ function SymposiumExperience({
               onBack: closeCommunity, onMembership: communityController.changeMembership,
               onCreatePost: () => { if (selectedCommunity) { setComposerCommunityId(selectedCommunity.id); setComposerOpen(true); } },
               onCreateCall: communityController.createCall, onJoinCall: communityController.joinCall,
-              onInvite: communityController.invite, onContactModerators: communityController.contactModerators,
+              onInvite: communityController.invite, onMessageModerator: (handle) => { const normalized = cleanHandle(handle); setMessageRecipientHandle(normalized); navigateView({ messagesOpen: true, selectedConversationId: `direct:${normalized}` }, null); },
               onOpenCommunity: openCommunity, onCreateCommunity: communityController.createCommunity,
               onSelect: openPost, onOpenProfile: openProfile, onAction: applyAction, onQuote: beginQuote,
               onOpenQuote: openQuotedSource, onEditPost: setEditingPost, onDeletePost: deletePost,
@@ -3433,6 +3431,7 @@ function SymposiumExperience({
       {messagesOpen ? (
         <MessagesModal
           activeConversationId={selectedConversationId}
+          directRecipient={messageRecipientHandle ? findProfile(messageRecipientHandle) : undefined}
           onClose={goBack}
           onOpenConversation={(conversationId) =>
             navigateView({ messagesOpen: true, selectedConversationId: conversationId }, null)

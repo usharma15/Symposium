@@ -1410,6 +1410,24 @@ const communityAnnouncements = (community: ResearchCommunity, index: number) => 
     title: "New member orientation",
     body: "Start with the guidelines, introduce the work you are carrying, and join an existing thread before opening a new one.",
     createdAt: new Date(Date.UTC(2026, 6, 8 - (index % 3), 18, 15)).toISOString()
+  },
+  {
+    id: `${community.id}-open-questions`,
+    title: "Open questions ledger updated",
+    body: "The unresolved questions list now distinguishes missing evidence, blocked experiments, useful objections, and work ready for a new owner.",
+    createdAt: new Date(Date.UTC(2026, 6, 5 - (index % 3), 15, 45)).toISOString()
+  },
+  {
+    id: `${community.id}-review-notes`,
+    title: "Review notes need owners",
+    body: "Several recent call notes still need sources, decisions, and a named next action before they can become durable community artifacts.",
+    createdAt: new Date(Date.UTC(2026, 6, 2 - (index % 2), 12, 30)).toISOString()
+  },
+  {
+    id: `${community.id}-monthly-roundup`,
+    title: "Monthly work roundup",
+    body: "The monthly roundup is open for short updates on completed work, failed attempts, useful changes of mind, and calls for collaborators.",
+    createdAt: new Date(Date.UTC(2026, 5, 28 - (index % 3), 17, 0)).toISOString()
   }
 ];
 

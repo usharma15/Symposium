@@ -11,6 +11,7 @@ import {
   joinOrRequestCommunity,
   leaveCommunity,
   listCommunityCalls,
+  listCommunityMembers,
   recordCommunityAccess
 } from "../repository/communities";
 import { getPublicCommunity, listPublicCommunities } from "../repository/foundation";
@@ -85,6 +86,14 @@ export const registerCommunityRoutes = (app: FastifyInstance) => {
     try {
       const result = await listCommunityCalls(request.params.id, await getActorFromRequest(request));
       return reply.send(result);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: RouteParams; Querystring: Record<string, string | undefined> }>("/v1/communities/:id/members", async (request, reply) => {
+    try {
+      return reply.send(await listCommunityMembers(request.params.id, await getActorFromRequest(request), request.query));
     } catch (error) {
       return sendError(app, reply, error);
     }

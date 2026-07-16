@@ -3,12 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CommunityCallContract } from "@/packages/contracts/src";
 import { researchCommunities, type ResearchCommunity } from "@/lib/mockData";
+import { seededCommunityCallMap } from "@/lib/communityFixtures";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { symposiumApi } from "@/features/api/symposiumApiClient";
 
 export const useCommunityState = (currentProfileHandle: string, selectedCommunityId: string | null) => {
   const [communities, setCommunities] = useState<ResearchCommunity[]>(researchCommunities);
-  const [communityCalls, setCommunityCalls] = useState<Record<string, CommunityCallContract[]>>({});
+  const [communityCalls, setCommunityCalls] = useState<Record<string, CommunityCallContract[]>>(
+    () => seededCommunityCallMap(researchCommunities, Date.UTC(2026, 6, 16, 16))
+  );
   const [communityMembershipBusy, setCommunityMembershipBusy] = useState(false);
   const [composerCommunityId, setComposerCommunityId] = useState<string | null>(null);
   const communitiesRef = useRef(communities);
