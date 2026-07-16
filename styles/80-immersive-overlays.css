@@ -382,10 +382,26 @@
 .paper-detail > .paper-side {
   position: fixed;
   right: 24px;
-  top: 120px;
+  top: var(--symposium-detail-top);
   width: 276px;
-  max-height: calc(100vh - 120px - var(--symposium-side-rail-bottom-clearance));
+  max-height: calc(100vh - var(--symposium-detail-top) - var(--symposium-side-rail-bottom-clearance));
   overflow-y: auto;
+}
+
+@media (min-width: 1440px) {
+  .symposium-shell[data-view="detail"] .stage,
+  .symposium-shell[data-view="opportunity-applications"] .stage {
+    padding-top: var(--symposium-detail-top);
+  }
+
+  .detail-layout > .back-button,
+  .opportunity-review-back {
+    position: fixed;
+    z-index: 9;
+    top: var(--symposium-detail-top);
+    left: var(--symposium-shell-edge);
+    max-width: var(--symposium-left-rail-width);
+  }
 }
 
 .paper-side {

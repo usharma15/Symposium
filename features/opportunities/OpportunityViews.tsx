@@ -291,12 +291,12 @@ export function OpportunityApplicationsView({ item, actorHandle, selectedApplica
   const selectedContact = selected ? applicationContact(selected) : null;
   const showApplicantFeed = (nextShortlistedOnly = shortlistedOnly) => { setShortlistedOnly(nextShortlistedOnly); onSelectApplication(null); };
   return <div className="opportunity-review-layout" data-mode={selected ? "detail" : "feed"}>
-    {!selected ? <aside className="opportunity-review-filters"><section><button className="back-button" type="button" onClick={onBack}><ArrowLeft size={17} />Back to opportunity</button><p className="eyebrow">Applications</p><h1>{item.title}</h1><nav>
+    <button className="back-button opportunity-review-back" type="button" onClick={selected ? () => onSelectApplication(null) : onBack}><ArrowLeft size={17} />{selected ? "Back to applicant feed" : "Back to opportunity"}</button>
+    {!selected ? <aside className="opportunity-review-filters"><section><p className="eyebrow">Applications</p><h1>{item.title}</h1><nav>
       <button type="button" className={!shortlistedOnly ? "active" : ""} aria-pressed={!shortlistedOnly} onClick={() => showApplicantFeed(false)}>All <span>{applications.length}</span></button>
       <button type="button" className={shortlistedOnly ? "active" : ""} aria-pressed={shortlistedOnly} onClick={() => showApplicantFeed(true)}><Star size={14} fill={shortlistedOnly ? "currentColor" : "none"} />Shortlisted <span>{applications.filter((application) => application.shortlisted).length}</span></button>
     </nav><label><span>Sort</span><select value={sort} onChange={(event) => { setSort(event.target.value as typeof sort); onSelectApplication(null); }}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Applicant name</option></select></label></section></aside> : null}
     {selected ? <main className="opportunity-application-detail">
-      <button className="back-button" type="button" onClick={() => onSelectApplication(null)}><ArrowLeft size={17} />Back to applicant feed</button>
       <article>
         <header><div className="opportunity-applicant-avatar">{selected.applicantName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</div><div><span>Application</span><h1>{selected.applicantName}</h1><small>{selected.applicantHandle} · Submitted {applicationDateLabel(selected.createdAt)}</small></div></header>
         {status ? <p className="opportunity-review-status" aria-live="polite">{status}</p> : null}

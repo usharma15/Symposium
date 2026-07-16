@@ -20,7 +20,7 @@
   --radius: 8px;
   --symposium-feed-width: 840px;
   --symposium-shell-edge: 24px;
-  --symposium-side-rail-top: 104px;
+  --symposium-detail-top: 120px;
   --symposium-topbar-brand-slot: 112px;
   --symposium-view-nav-width: 156px;
   --symposium-left-rail-width: calc(var(--symposium-topbar-brand-slot) + 8px + var(--symposium-view-nav-width));

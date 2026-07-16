@@ -1,5 +1,14 @@
 /* Responsive rules for the established presentation layer. */
 
+@media (max-width: 1439px) {
+  .detail-side {
+    position: static;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
 @media (max-width: 1120px) {
   .detail-layout,
   .room-header {
@@ -20,13 +29,6 @@
 
   .folder-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .detail-side {
-    position: static;
-    width: auto;
-    max-height: none;
-    overflow: visible;
   }
 }
 

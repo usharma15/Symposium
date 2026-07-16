@@ -84,6 +84,9 @@ const main = async () => {
   const communityStyles = sources.get("60-immersive-communities-feed.css") ?? "";
   const workspaceStyles = sources.get("88-workspace.css") ?? "";
   const immersiveOverlayStyles = sources.get("80-immersive-overlays.css") ?? "";
+  const foundationStyles = sources.get("00-foundations-entry.css") ?? "";
+  const legacyDetailStyles = sources.get("30-legacy-discussion-profile.css") ?? "";
+  const legacyResponsiveStyles = sources.get("40-legacy-responsive.css") ?? "";
   assert.match(patronageStyles, /\.patronage-proposal-fields/);
   assert.match(patronageStyles, /\.patronage-feed-summary/);
   assert.match(patronageStyles, /\.patronage-side-inline > \.patronage-side/);
@@ -95,10 +98,18 @@ const main = async () => {
   assert.match(communityStyles, /\.selected-community-panel\s*\{[^}]*position:\s*fixed/);
   assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar\s*\{[^}]*position:\s*fixed/);
   assert.match(immersiveOverlayStyles, /\.paper-detail > \.paper-side\s*\{[^}]*position:\s*fixed/);
+  assert.match(foundationStyles, /--symposium-detail-top:\s*120px/);
+  assert.match(immersiveOverlayStyles, /\.symposium-shell\[data-view="detail"\] \.stage,[\s\S]*padding-top:\s*var\(--symposium-detail-top\)/);
+  assert.match(immersiveOverlayStyles, /\.detail-layout > \.back-button,[\s\S]*\.opportunity-review-back\s*\{[^}]*position:\s*fixed[^}]*top:\s*var\(--symposium-detail-top\)[^}]*left:\s*var\(--symposium-shell-edge\)/);
+  assert.match(immersiveOverlayStyles, /\.paper-detail > \.paper-side\s*\{[^}]*top:\s*var\(--symposium-detail-top\)/);
+  assert.match(patronageStyles, /\.patronage-side-inline\s*\{[^}]*top:\s*var\(--symposium-detail-top\)/);
+  assert.match(opportunityStyles, /\.opportunity-side-inline\s*\{[^}]*top:\s*var\(--symposium-detail-top\)/);
+  assert.match(opportunityStyles, /\.opportunity-candidate-side\s*\{[^}]*top:\s*var\(--symposium-detail-top\)/);
+  assert.match(legacyDetailStyles, /\.detail-side\s*\{[^}]*top:\s*var\(--symposium-detail-top\)/);
+  assert.match(legacyResponsiveStyles, /@media \(max-width:\s*1439px\)[\s\S]*\.detail-side\s*\{[^}]*position:\s*static/);
   assert.match(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*pointer-events:\s*none/);
   assert.doesNotMatch(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*opacity:/);
   const attachmentStyles = [sources.get("20-legacy-content.css") ?? "", sources.get("87-structured-attachments.css") ?? ""].join("\n");
-  const foundationStyles = sources.get("00-foundations-entry.css") ?? "";
   const shellStyles = sources.get("10-legacy-shell.css") ?? "";
   const feedStyles = [
     sources.get("60-immersive-communities-feed.css") ?? "",
@@ -155,7 +166,7 @@ const main = async () => {
           "bounded attachment composer layout",
           "shared quote card and composer layout",
           "one canonical feed and clicked-post width",
-          "viewport-fixed desktop left and right panel contract",
+          "one canonical desktop in-post top line for content, Back controls, and contextual rails",
           "day and night document ink with theme-safe selection contrast",
           "flush sticky editor and opaque themed attachment surfaces",
           "focus-scoped inline comment and compact reply toolbars",

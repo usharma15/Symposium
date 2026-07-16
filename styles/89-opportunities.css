@@ -16,7 +16,7 @@
 .opportunity-status-closed { color: var(--muted); }
 
 .detail-layout.simple-detail.opportunity-detail { grid-template-columns: minmax(0, var(--symposium-feed-width)); width: min(var(--symposium-feed-width), calc(100vw - 48px)); }
-.opportunity-side-inline { position: fixed; z-index: 9; top: 112px; right: var(--symposium-shell-edge); width: min(320px, calc((100vw - var(--symposium-feed-width)) / 2 - 40px)); max-height: calc(100vh - 112px - var(--symposium-side-rail-bottom-clearance)); }
+.opportunity-side-inline { position: fixed; z-index: 9; top: var(--symposium-detail-top); right: var(--symposium-shell-edge); width: min(320px, calc((100vw - var(--symposium-feed-width)) / 2 - 40px)); max-height: calc(100vh - var(--symposium-detail-top) - var(--symposium-side-rail-bottom-clearance)); }
 .opportunity-side { position: static; min-width: 0; }
 .opportunity-side > section { overflow-y: auto; max-height: inherit; padding: 18px; border: 1px solid rgba(120, 52, 61, .28); border-radius: 16px; background: color-mix(in srgb, var(--paper) 88%, #f1dedd); box-shadow: 0 16px 48px rgba(61, 29, 33, .1); }
 .opportunity-side-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
@@ -49,11 +49,9 @@
 .opportunity-apply-modal > footer button:last-child, .opportunity-private-notes > button { border-color: #78343d; background: #78343d; color: #fff; }
 
 .opportunity-review-layout { position: relative; width: min(var(--symposium-feed-width), calc(100vw - 48px)); min-height: calc(100vh - 222px); margin: 0 auto; }
-.opportunity-review-filters { position: fixed; z-index: 9; top: var(--symposium-side-rail-top); left: var(--symposium-shell-edge); width: var(--symposium-left-rail-width); }
+.opportunity-review-filters { --opportunity-review-filter-top: calc(var(--symposium-detail-top) + 56px); position: fixed; z-index: 9; top: var(--opportunity-review-filter-top); left: var(--symposium-shell-edge); width: var(--symposium-left-rail-width); }
 .opportunity-review-filters > section, .opportunity-candidate-side > section, .opportunity-applicant-feed, .opportunity-application-detail > article { min-width: 0; border: 1px solid rgba(120,52,61,.2); border-radius: 16px; background: color-mix(in srgb, var(--paper) 93%, #f2dedc); box-shadow: 0 16px 45px rgba(43,23,26,.08); }
-.opportunity-review-filters > section { display: grid; gap: 17px; max-height: calc(100vh - var(--symposium-side-rail-top) - var(--symposium-side-rail-bottom-clearance)); padding: 19px; overflow-y: auto; }
-.opportunity-review-filters .back-button { position: static; min-height: 34px; margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
-.opportunity-review-filters .back-button:hover { transform: none; background: transparent; }
+.opportunity-review-filters > section { display: grid; gap: 17px; max-height: calc(100vh - var(--opportunity-review-filter-top) - var(--symposium-side-rail-bottom-clearance)); padding: 19px; overflow-y: auto; }
 .opportunity-review-filters h1 { margin: -9px 0 0; font-family: inherit; font-size: 20px; font-weight: 800; line-height: 1.25; }
 .opportunity-review-filters nav { display: grid; gap: 5px; }
 .opportunity-review-filters nav button { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; border: 0; border-radius: 9px; background: transparent; color: inherit; padding: 8px 11px; text-align: left; }
@@ -90,7 +88,6 @@
 .opportunity-review-empty { display: grid; min-height: 220px; align-content: center; justify-items: center; gap: 8px; padding: 28px; color: var(--muted); text-align: center; }
 .opportunity-review-empty strong { color: var(--ink); }
 .opportunity-application-detail { display: grid; gap: 14px; }
-.opportunity-application-detail > .back-button { position: static; }
 .opportunity-application-detail > article { padding: 28px; }
 .opportunity-application-detail > article > header { display: grid; grid-template-columns: 46px minmax(0,1fr); align-items: center; gap: 12px; }
 .opportunity-application-detail > article > header .opportunity-applicant-avatar { width: 46px; height: 46px; font-size: 13px; }
@@ -112,8 +109,8 @@
 .opportunity-private-notes > div { padding: 10px 11px; border-radius: 9px; background: rgba(120,52,61,.055); }
 .opportunity-private-notes > div p { margin: 4px 0 0; white-space: pre-wrap; }
 .opportunity-private-notes > button { justify-self: end; }
-.opportunity-candidate-side { position: fixed; z-index: 9; top: var(--symposium-side-rail-top); right: var(--symposium-shell-edge); width: min(320px, calc((100vw - var(--symposium-feed-width)) / 2 - 40px)); }
-.opportunity-candidate-side > section { max-height: calc(100vh - var(--symposium-side-rail-top) - var(--symposium-side-rail-bottom-clearance)); overflow-y: auto; padding: 17px; }
+.opportunity-candidate-side { position: fixed; z-index: 9; top: var(--symposium-detail-top); right: var(--symposium-shell-edge); width: min(320px, calc((100vw - var(--symposium-feed-width)) / 2 - 40px)); }
+.opportunity-candidate-side > section { max-height: calc(100vh - var(--symposium-detail-top) - var(--symposium-side-rail-bottom-clearance)); overflow-y: auto; padding: 17px; }
 .opportunity-candidate-side dl { display: grid; margin: 10px 0 0; }
 .opportunity-candidate-side dl > div { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid rgba(120,52,61,.13); }
 .opportunity-candidate-side dt { color: var(--muted); font: 600 10px/1 var(--font-sans); letter-spacing: .07em; text-transform: uppercase; }
@@ -140,7 +137,7 @@
   }
 }
 
-@media (max-width: 1360px) {
+@media (max-width: 1439px) {
   .detail-layout.simple-detail.opportunity-detail { grid-template-columns: minmax(0, 1fr); width: min(var(--symposium-feed-width), calc(100vw - 32px)); }
   .opportunity-side-inline { position: static; inset: auto; width: 100%; max-height: none; margin-top: 16px; }
   .opportunity-side-inline .opportunity-side { position: static; display: block; }
@@ -149,12 +146,12 @@
   .opportunity-review-filters, .opportunity-candidate-side { position: static; inset: auto; width: 100%; }
   .opportunity-review-filters > section, .opportunity-candidate-side > section { max-height: none; overflow: visible; }
   .opportunity-review-filters > section { grid-template-columns: minmax(190px,1fr) minmax(230px,1fr); align-items: end; }
-  .opportunity-review-filters > section > .back-button, .opportunity-review-filters > section > .eyebrow, .opportunity-review-filters > section > h1 { grid-column: 1 / -1; }
+  .opportunity-review-filters > section > .eyebrow, .opportunity-review-filters > section > h1 { grid-column: 1 / -1; }
 }
 @media (max-width: 760px) {
   .opportunity-field-grid, .opportunity-review-filters > section { grid-template-columns: minmax(0, 1fr); }
   .opportunity-review-layout { width: calc(100vw - 24px); }
-  .opportunity-review-filters > section > .back-button, .opportunity-review-filters > section > .eyebrow, .opportunity-review-filters > section > h1 { grid-column: auto; }
+  .opportunity-review-filters > section > .eyebrow, .opportunity-review-filters > section > h1 { grid-column: auto; }
   .opportunity-applicant-feed > article { grid-template-columns: minmax(0, 1fr); }
   .opportunity-applicant-docs, .opportunity-applicant-doc-empty { min-height: 96px; }
   .opportunity-application-detail > article { padding: 20px; }

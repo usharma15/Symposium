@@ -141,7 +141,7 @@
 .patronage-side-inline {
   position: fixed;
   z-index: 9;
-  top: 112px;
+  top: var(--symposium-detail-top);
   right: var(--symposium-shell-edge);
   width: 276px;
 }
@@ -152,7 +152,7 @@
   position: static;
   overflow-y: auto;
   width: 100%;
-  max-height: calc(100vh - 112px - var(--symposium-side-rail-bottom-clearance));
+  max-height: calc(100vh - var(--symposium-detail-top) - var(--symposium-side-rail-bottom-clearance));
   scrollbar-width: thin;
 }
 

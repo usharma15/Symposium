@@ -127,6 +127,8 @@ assert.match(views, /target="_blank"/);
 assert.match(views, /fill=\{application\.shortlisted \? "currentColor" : "none"\}/);
 assert.match(views, /opportunity-candidate-side/);
 assert.match(views, /!selected \? <aside className="opportunity-review-filters"/);
+assert.match(views, /className="back-button opportunity-review-back"/);
+assert.doesNotMatch(views, /opportunity-review-filters"><section><button className="back-button"/);
 assert.match(views, /Degree[\s\S]{0,120}Not available yet/);
 assert.match(views, /<dt>Contact<\/dt>/);
 const candidateMarkup = views.slice(views.indexOf('{selected ? <aside className="opportunity-candidate-side"'));
@@ -144,6 +146,8 @@ assert.match(styles, /\.detail-layout\.simple-detail\.opportunity-detail \{[^}]*
 assert.match(styles, /\.opportunity-side-inline \{[^}]*position: fixed;[^}]*right: var\(--symposium-shell-edge\)/);
 assert.match(styles, /\.opportunity-review-filters \{[^}]*position: fixed;[^}]*left: var\(--symposium-shell-edge\);[^}]*width: var\(--symposium-left-rail-width\)/);
 assert.match(styles, /\.opportunity-candidate-side \{[^}]*position: fixed;[^}]*right: var\(--symposium-shell-edge\)/);
+assert.match(styles, /\.opportunity-side-inline \{[^}]*top: var\(--symposium-detail-top\)/);
+assert.match(styles, /\.opportunity-candidate-side \{[^}]*top: var\(--symposium-detail-top\)/);
 assert.doesNotMatch(styles, /data-view="opportunity-applications"[^}]*display: none/);
 assert.match(styles, /\.opportunity-applicant-feed > article \{[^}]*grid-template-columns: minmax\(0,1fr\) 218px/);
 assert.match(styles, /\.opportunity-attach \{ order: -1;/);
@@ -160,7 +164,7 @@ console.log(JSON.stringify({
     "owner-only application review and applicant privacy",
     "canonical review deep links and open-in-new-tab behavior",
     "controlled application selection and coalesced live synchronization",
-    "viewport-fixed Opportunity details and application-review side rails",
+    "shared desktop in-post top line and fixed Opportunity review rails",
     "compact applicant feed, document swiper, and candidate detail rail",
     "detail-only candidate actions and concise contact metadata",
     "persistent global Search, Scribble, New Post, and AI Tablet launchers",
