@@ -6,6 +6,8 @@ export type OfficeMode = "desk" | "saved" | "notes";
 export type ViewSnapshot = {
   activeRoom: RoomId;
   selectedItemId: string | null;
+  applicationReviewPostId: string | null;
+  selectedApplicationId: string | null;
   selectedCommentId: string | null;
   selectedProfileName: string | null;
   profileSocialView: ProfileSocialView | null;
@@ -25,6 +27,7 @@ export const roomForCanonicalRoute = (
 ): RoomId => {
   if (route.kind === "room") return route.roomId;
   if (route.kind === "post") return resolvePostRoom(route.postId) ?? "hall";
+  if (route.kind === "opportunityApplications") return "opportunities";
   if (route.kind === "workspace") return "office";
   if (route.kind === "funding") return "funding";
   if (route.kind === "opportunities") return "opportunities";
@@ -44,6 +47,9 @@ export const canonicalRouteForView = (
       kind: "messages",
       conversationId: snapshot.selectedConversationId ?? undefined
     };
+  }
+  if (snapshot.applicationReviewPostId) {
+    return { kind: "opportunityApplications", postId: snapshot.applicationReviewPostId, applicationId: snapshot.selectedApplicationId ?? undefined };
   }
   if (snapshot.selectedItemId) {
     return {
@@ -87,6 +93,8 @@ export const snapshotForCanonicalRoute = (
 ): ViewSnapshot => ({
   activeRoom: roomForCanonicalRoute(route, resolvePostRoom),
   selectedItemId: route.kind === "post" ? route.postId : null,
+  applicationReviewPostId: route.kind === "opportunityApplications" ? route.postId : null,
+  selectedApplicationId: route.kind === "opportunityApplications" ? route.applicationId ?? null : null,
   selectedCommentId: route.kind === "post" ? route.commentId ?? null : null,
   selectedProfileName: route.kind === "profile" ? route.handle : null,
   profileSocialView: route.kind === "profile" ? route.social ?? null : null,

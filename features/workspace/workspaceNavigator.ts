@@ -34,6 +34,7 @@ export const workspaceDocumentMetadataUpdate = (
   kind: document.kind,
   publicationTarget: document.publicationTarget,
   proposal: document.proposal,
+  opportunity: document.opportunity,
   notebookId: changes.notebookId === undefined ? document.notebookId : changes.notebookId,
   targetId: document.targetId,
   attachmentIds: document.attachments.map((attachment) => attachment.id),

@@ -29,6 +29,7 @@ import {
 import type { CommentAction, PostAction } from "@/lib/dataStore";
 import type {
   CanonicalActionActivityContract,
+  OpportunityPostInputContract,
   PatronageProposalInputContract,
   ProfileActivityResponseContract,
   ToggleActionContract,
@@ -164,6 +165,7 @@ import type { WorkspacePublicationResponse } from "@/lib/workspaceTypes";
 import { SearchModal } from "@/features/search/SearchModal";
 import { MessagesModal } from "@/features/messages/MessagesModal";
 import { RoomView } from "@/features/rooms/RoomView";
+import { opportunityApplicationsView, opportunityPostView, OpportunityApplicationsStage, useOpportunityApplicationComposer } from "@/features/opportunities/OpportunityExperience";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { useCanonicalBrowserHistory } from "@/features/navigation/useCanonicalBrowserHistory";
 import { useBrowserSessionEntrance } from "@/features/entrance/useBrowserSessionEntrance";
@@ -392,6 +394,8 @@ function SymposiumExperience({
   const [selectedItemId, setSelectedItemId] = useState<string | null>(
     initialRoute.kind === "post" ? initialRoute.postId : null
   );
+  const [applicationReviewPostId, setApplicationReviewPostId] = useState<string | null>(initialRoute.kind === "opportunityApplications" ? initialRoute.postId : null);
+  const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(initialRoute.kind === "opportunityApplications" ? initialRoute.applicationId ?? null : null);
   const [selectedCommentId, setSelectedCommentId] = useState<string | null>(
     initialRoute.kind === "post" ? initialRoute.commentId ?? null : null
   );
@@ -491,6 +495,8 @@ function SymposiumExperience({
         : themedRoomRenders[activeRoom];
   const themePreloadRenders = useMemo(() => getThemePreloadRenders(theme), [theme]);
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+  const applicationReviewItem = items.find((item) => item.id === applicationReviewPostId && item.opportunity) ?? null;
+  const { beginApplication: beginOpportunityApplication, applicationComposer: opportunityApplicationComposer } = useOpportunityApplicationComposer(currentProfile.handle, () => setSyncStatus("Application submitted"));
   const attachmentPreviewBaseItem = attachmentPreview
     ? items.find((item) => item.id === attachmentPreview.itemId) ?? null
     : null;
@@ -1236,6 +1242,7 @@ function SymposiumExperience({
       event.kind.startsWith("profile.") ||
       event.kind.startsWith("community.") ||
       event.kind.startsWith("note.")
+      || event.kind.startsWith("opportunity.application.")
       || event.kind.startsWith("scribble.")
     ) {
       if (event.kind.startsWith("note.")) {
@@ -1246,6 +1253,9 @@ function SymposiumExperience({
         window.dispatchEvent(new CustomEvent("symposium-scribble-change", {
           detail: { revision: typeof scribbleRevision === "number" ? scribbleRevision : undefined }
         }));
+      }
+      if (event.kind.startsWith("opportunity.application.")) {
+        window.dispatchEvent(new Event("symposium-opportunity-applications-change"));
       }
       scheduleLiveRefresh();
     }
@@ -1258,6 +1268,8 @@ function SymposiumExperience({
     );
     setActiveRoom(snapshot.activeRoom);
     setSelectedItemId(snapshot.selectedItemId);
+    setApplicationReviewPostId(snapshot.applicationReviewPostId);
+    setSelectedApplicationId(snapshot.selectedApplicationId);
     setSelectedCommentId(snapshot.selectedCommentId);
     setSelectedProfileName(snapshot.selectedProfileName);
     setProfileSocialView(snapshot.profileSocialView);
@@ -1774,6 +1786,8 @@ function SymposiumExperience({
     return {
       activeRoom,
       selectedItemId,
+      applicationReviewPostId,
+      selectedApplicationId,
       selectedCommentId,
       selectedProfileName,
       profileSocialView,
@@ -1817,6 +1831,8 @@ function SymposiumExperience({
     if (snapshot.selectedProfileName) flushPendingActivityRecency();
     setActiveRoom(snapshot.activeRoom);
     setSelectedItemId(snapshot.selectedItemId);
+    setApplicationReviewPostId(snapshot.applicationReviewPostId ?? null);
+    setSelectedApplicationId(snapshot.selectedApplicationId ?? null);
     setSelectedCommentId(snapshot.selectedCommentId);
     setSelectedProfileName(snapshot.selectedProfileName);
     setProfileSocialView(snapshot.profileSocialView ?? null);
@@ -1864,6 +1880,14 @@ function SymposiumExperience({
       ...currentSnapshot,
       ...next,
       selectedCommentId: next.selectedCommentId ?? (next.selectedItemId !== undefined ? null : currentSnapshot.selectedCommentId),
+      applicationReviewPostId: next.applicationReviewPostId !== undefined
+        ? next.applicationReviewPostId
+        : next.selectedItemId !== undefined || next.selectedProfileName || next.selectedCommunityId || next.messagesOpen || (next.activeRoom && next.activeRoom !== "opportunities")
+          ? null
+          : currentSnapshot.applicationReviewPostId,
+      selectedApplicationId: next.selectedApplicationId !== undefined
+        ? next.selectedApplicationId
+        : next.applicationReviewPostId !== undefined ? null : currentSnapshot.selectedApplicationId,
       profileSocialView:
         next.profileSocialView !== undefined
           ? next.profileSocialView
@@ -1883,6 +1907,8 @@ function SymposiumExperience({
     recordNavigation(currentSnapshot, nextSnapshot);
     if (next.activeRoom !== undefined) setActiveRoom(next.activeRoom);
     if (next.selectedItemId !== undefined) setSelectedItemId(next.selectedItemId);
+    setApplicationReviewPostId(nextSnapshot.applicationReviewPostId);
+    setSelectedApplicationId(nextSnapshot.selectedApplicationId);
     if (next.selectedCommentId !== undefined) setSelectedCommentId(next.selectedCommentId);
     if (next.selectedProfileName !== undefined) setSelectedProfileName(next.selectedProfileName);
     if (next.profileSocialView !== undefined) setProfileSocialView(next.profileSocialView);
@@ -1910,6 +1936,8 @@ function SymposiumExperience({
     navigateView({
       activeRoom: roomId,
       selectedItemId: null,
+      applicationReviewPostId: null,
+      selectedApplicationId: null,
       selectedCommentId: null,
       selectedProfileName: null,
       profileSocialView: null,
@@ -1986,7 +2014,7 @@ function SymposiumExperience({
   };
 
   const routePostRoom = (kind: PostDraft["kind"]): Exclude<RoomId, "hall" | "office"> =>
-    kind === "proposal" ? "funding" : kind === "paper" ? "library" : "amphitheater";
+    kind === "proposal" ? "funding" : kind === "opportunity" ? "opportunities" : kind === "paper" ? "library" : "amphitheater";
 
   const uploadPostAttachment = async (file: File): Promise<InquiryAttachment> => {
     const contentType = file.type || "application/octet-stream";
@@ -2027,9 +2055,9 @@ function SymposiumExperience({
     onStatus: setSyncStatus
   });
 
-  const createPost = async ({ title, body, document, kind, patronage, attachments, quoteSource }: PostDraft) => {
+  const createPost = async ({ title, body, document, kind, patronage, opportunity, attachments, quoteSource }: PostDraft) => {
     const routedRoom = routePostRoom(kind);
-    const contentKind = kind === "proposal" ? "paper" : kind;
+    const contentKind = kind === "proposal" ? "paper" : kind === "opportunity" ? "thought" : kind;
     const createdAt = new Date().toISOString();
     const postPayload = {
       title,
@@ -2038,6 +2066,7 @@ function SymposiumExperience({
       kind: contentKind,
       room: routedRoom,
       patronage,
+      opportunity,
       authorHandle: currentProfile.handle,
       attachmentIds: attachments.map((attachment) => attachment.id),
       quoteSource: quoteSource
@@ -2763,6 +2792,7 @@ function SymposiumExperience({
       attachments: InquiryAttachment[];
       quote: InquiryItem["quote"] | null;
       patronage?: PatronageProposalInputContract;
+      opportunity?: OpportunityPostInputContract;
     }
   ) => {
     const cleanTitle = draft.title.trim();
@@ -2788,6 +2818,9 @@ function SymposiumExperience({
             patronage: draft.patronage
               ? { ...draft.patronage, raisedMinorUnits: existing.patronage?.raisedMinorUnits ?? 0, supporterCount: existing.patronage?.supporterCount ?? 0, topSupporters: existing.patronage?.topSupporters ?? [] }
               : existing.patronage,
+            opportunity: draft.opportunity
+              ? { ...draft.opportunity, applicationCount: existing.opportunity?.applicationCount ?? 0 }
+              : existing.opportunity,
             editedAt
           }
         : item
@@ -2809,6 +2842,7 @@ function SymposiumExperience({
           expectedEditedAt: existing.editedAt ?? null,
           attachmentIds: draft.attachments.map((attachment) => attachment.id),
           patronage: draft.patronage,
+          opportunity: draft.opportunity,
           quoteSource: !draft.quote
             ? existing.quote ? null : undefined
             : !existing.quote ||
@@ -3104,7 +3138,7 @@ function SymposiumExperience({
       className={`symposium-shell ${theme}`}
       data-room={activeRoom}
       data-community-selected={selectedCommunity ? "true" : undefined}
-      data-view={selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
+      data-view={applicationReviewItem ? "opportunity-applications" : selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
       style={{ "--room-bg": `url(${activeRoomRender})` } as CSSProperties}
     >
       <div className="ambient-layer" aria-hidden="true" />
@@ -3123,7 +3157,7 @@ function SymposiumExperience({
           canGoBack={
             hasViewHistory ||
             activeRoom !== "hall" ||
-            Boolean(selectedItemId || selectedProfileName || selectedCommunityId || messagesOpen)
+            Boolean(selectedItemId || applicationReviewPostId || selectedProfileName || selectedCommunityId || messagesOpen)
           }
           canGoForward={hasViewFuture}
           onBack={goBack}
@@ -3172,7 +3206,14 @@ function SymposiumExperience({
       </button>
 
       <section className="stage">
-        {selectedProfile ? (
+        {applicationReviewItem ? (
+          <OpportunityApplicationsStage
+            item={applicationReviewItem}
+            actorHandle={currentProfile.handle}
+            initialApplicationId={selectedApplicationId ?? undefined}
+            onBack={(postId) => navigateView(opportunityPostView(postId))}
+          />
+        ) : selectedProfile ? (
           <ProfileView
             person={selectedProfile}
             items={items}
@@ -3241,6 +3282,8 @@ function SymposiumExperience({
             onCommentSegmentStackChange={updateCommentSegmentStack}
             onVisibleCommentSegmentStackChange={registerVisibleCommentSegmentStack}
             onOpenAttachmentPreview={openAttachmentPreview}
+            onApplyOpportunity={beginOpportunityApplication}
+            onReviewOpportunity={(item) => navigateView(opportunityApplicationsView(item.id))}
           />
         ) : activeRoom === "hall" ? (
           <HallView onEnter={enterRoom} />
@@ -3366,8 +3409,11 @@ function SymposiumExperience({
           onUploadAttachment={uploadPostAttachment}
           onResolveQuoteLink={resolveComposerQuoteLink}
           profiles={profiles}
+          initialKind={activeRoom === "opportunities" ? "opportunity" : activeRoom === "funding" ? "proposal" : undefined}
         />
       ) : null}
+
+      {opportunityApplicationComposer}
 
       {quoteSelection && quotePreview ? (
         <QuoteComposerModal

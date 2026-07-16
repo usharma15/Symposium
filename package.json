@@ -37,6 +37,7 @@
     "mutation:check": "tsx scripts/mutationEnvelopeCheck.ts",
     "note-revision:check": "tsx scripts/noteRevisionCheck.ts",
     "patronage:check": "tsx scripts/patronageConstructionCheck.ts",
+    "opportunity:check": "tsx scripts/opportunityConstructionCheck.ts",
     "post-tone:check": "tsx scripts/postToneConstructionCheck.ts",
     "workspace:check": "tsx scripts/workspaceConstructionCheck.ts",
     "workspace-collaboration:check": "tsx scripts/workspaceCollaborationCheck.ts",
@@ -54,7 +55,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "typecheck:all": "npm run typecheck && npm run api:typecheck",
     "deploy:api:check": "npm run api:preflight && npm run api:typecheck",
-    "verify": "npm run architecture:check && npm run platform:check && npm run styles:check && npm run post-tone:check && npm run security:check && npm run infrastructure:check && npm run routing:check && npm run entities:check && npm run entity-revision:check && npm run follow-reconciliation:check && npm run api-client:check && npm run live-transport:check && npm run core:check && npm run action:check && npm run action-state:check && npm run reconciliation:check && npm run identity:check && npm run item-mutation:check && npm run cross-tab:check && npm run attachment:check && npm run attachment-preview:check && npm run comment-attachment:check && npm run document-editor:check && npm run quote:check && npm run storage-deletion:check && npm run mutation:check && npm run note-revision:check && npm run workspace:check && npm run workspace-collaboration:check && npm run scribble:check && npm run patronage:check && npm run profile:check && npm run post-publishing:check && npm run entry-session:check && npm run typecheck:all && npm run build"
+    "verify": "npm run architecture:check && npm run platform:check && npm run styles:check && npm run post-tone:check && npm run security:check && npm run infrastructure:check && npm run routing:check && npm run entities:check && npm run entity-revision:check && npm run follow-reconciliation:check && npm run api-client:check && npm run live-transport:check && npm run core:check && npm run action:check && npm run action-state:check && npm run reconciliation:check && npm run identity:check && npm run item-mutation:check && npm run cross-tab:check && npm run attachment:check && npm run attachment-preview:check && npm run comment-attachment:check && npm run document-editor:check && npm run quote:check && npm run storage-deletion:check && npm run mutation:check && npm run note-revision:check && npm run workspace:check && npm run workspace-collaboration:check && npm run scribble:check && npm run patronage:check && npm run opportunity:check && npm run profile:check && npm run post-publishing:check && npm run entry-session:check && npm run typecheck:all && npm run build"
   },
   "overrides": {
     "postcss": "8.5.15"

@@ -196,6 +196,7 @@ export function WorkspaceView({
           notebookId: section === "notebooks" ? selectedNotebookId : null,
           targetId: null,
           proposal: null,
+          opportunity: null,
           attachmentIds: []
         });
         setSelectedDocumentId(document.id);

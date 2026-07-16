@@ -1,0 +1,128 @@
+/* Canonical Opportunity metadata, application submission, and private reviewer workspace. */
+
+.opportunity-fields { margin: 0; padding: 14px; border: 1px solid rgba(120, 52, 61, .24); border-radius: 14px; background: rgba(120, 52, 61, .04); }
+.opportunity-fields legend { padding: 0 7px; color: #78343d; font: 700 11px/1 var(--font-sans); letter-spacing: .1em; text-transform: uppercase; }
+.opportunity-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.opportunity-field-grid label { display: grid; gap: 6px; }
+.opportunity-field-grid label > span { color: var(--muted); font: 600 12px/1.2 var(--font-sans); }
+.opportunity-field-grid label small { font-weight: 400; }
+.opportunity-field-grid input, .opportunity-field-grid select { width: 100%; min-height: 39px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--ink); padding: 8px 10px; }
+
+.opportunity-feed-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 12px 0 2px; padding: 11px 13px; border: 1px solid rgba(120, 52, 61, .2); border-radius: 12px; background: rgba(255,255,255,.38); color: var(--muted); font: 600 12px/1.25 var(--font-sans); }
+.opportunity-feed-summary > span { display: inline-flex; align-items: center; gap: 5px; }
+.opportunity-feed-summary > strong { color: var(--ink); }
+.opportunity-status { text-transform: capitalize; }
+.opportunity-status-open { color: #78343d; }
+.opportunity-status-closed { color: var(--muted); }
+
+.detail-layout.simple-detail.opportunity-detail { grid-template-columns: minmax(0, var(--symposium-feed-width)) 304px; width: min(calc(var(--symposium-feed-width) + 320px), calc(100vw - 48px)); }
+.opportunity-side { position: sticky; top: 112px; align-self: start; min-width: 0; }
+.opportunity-side > section { overflow: hidden; padding: 18px; border: 1px solid rgba(120, 52, 61, .28); border-radius: 16px; background: color-mix(in srgb, var(--paper) 88%, #f1dedd); box-shadow: 0 16px 48px rgba(61, 29, 33, .1); }
+.opportunity-side-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.opportunity-side-heading > span { color: var(--muted); font: 700 11px/1 var(--font-sans); letter-spacing: .12em; text-transform: uppercase; }
+.opportunity-side dl { display: grid; gap: 0; margin: 0 0 16px; }
+.opportunity-side dl > div { display: grid; gap: 4px; padding: 11px 0; border-top: 1px solid rgba(120, 52, 61, .13); }
+.opportunity-side dt { color: var(--muted); font: 600 11px/1 var(--font-sans); text-transform: uppercase; letter-spacing: .07em; }
+.opportunity-side dd { margin: 0; font: 600 14px/1.35 var(--font-sans); overflow-wrap: anywhere; }
+.opportunity-primary-action, .opportunity-applied { display: flex; width: 100%; align-items: center; justify-content: center; gap: 8px; min-height: 43px; border: 1px solid #78343d; border-radius: 10px; background: #78343d; color: #fff8f5; padding: 9px 12px; font: 700 13px/1 var(--font-sans); text-decoration: none; cursor: pointer; }
+.opportunity-primary-action span { min-width: 22px; padding: 3px 6px; border-radius: 999px; background: rgba(255,255,255,.17); }
+.opportunity-primary-action:disabled { opacity: .55; cursor: default; }
+.opportunity-applied { border-color: rgba(120,52,61,.2); background: rgba(120,52,61,.07); color: #78343d; }
+.opportunity-side-inline { display: none; }
+
+.opportunity-apply-modal { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow: auto; display: grid; gap: 17px; padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); color: var(--ink); box-shadow: 0 28px 90px rgba(24,20,17,.24); }
+.opportunity-apply-modal > header, .opportunity-apply-modal > footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.opportunity-apply-modal > header div { display: grid; gap: 4px; }
+.opportunity-apply-modal > header span { color: var(--muted); font: 600 11px/1 var(--font-sans); text-transform: uppercase; letter-spacing: .09em; }
+.opportunity-apply-modal > header button { border: 0; background: transparent; color: inherit; }
+.opportunity-apply-modal > label { display: grid; gap: 7px; font: 600 12px/1 var(--font-sans); color: var(--muted); }
+.opportunity-apply-modal textarea, .opportunity-private-notes textarea { resize: vertical; width: 100%; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); color: var(--ink); padding: 12px; font: 400 14px/1.5 var(--font-sans); }
+.opportunity-application-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+.opportunity-application-attachments > span, .opportunity-attach { display: inline-flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; font: 600 12px/1 var(--font-sans); }
+.opportunity-application-attachments button { border: 0; background: transparent; color: inherit; padding: 0; }
+.opportunity-attach { cursor: pointer; color: #78343d; }
+.opportunity-attach input { display: none; }
+.opportunity-apply-modal > footer { justify-content: flex-end; }
+.opportunity-apply-modal > footer button, .opportunity-private-notes > button { min-height: 39px; padding: 8px 15px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: inherit; font-weight: 700; }
+.opportunity-apply-modal > footer button:last-child, .opportunity-private-notes > button { border-color: #78343d; background: #78343d; color: #fff; }
+
+.opportunity-review-layout { display: grid; grid-template-columns: 245px minmax(340px, 520px) minmax(340px, 1fr); gap: 14px; width: calc(100vw - 48px); min-height: calc(100vh - 180px); margin: 0 auto; }
+.opportunity-review-filters, .opportunity-applicant-feed, .opportunity-review-detail { min-width: 0; border: 1px solid rgba(120,52,61,.2); border-radius: 16px; background: color-mix(in srgb, var(--paper) 93%, #f2dedc); box-shadow: 0 16px 45px rgba(43,23,26,.08); }
+.opportunity-review-filters { position: sticky; top: 96px; align-self: start; display: grid; gap: 16px; padding: 17px; }
+.opportunity-review-filters .back-button { position: static; margin: 0; padding: 0; }
+.opportunity-review-filters h1 { margin: -9px 0 0; font: 600 19px/1.2 var(--font-serif); }
+.opportunity-review-filters nav { display: grid; gap: 5px; }
+.opportunity-review-filters nav button { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; border: 0; border-radius: 9px; background: transparent; color: inherit; padding: 8px 10px; text-align: left; }
+.opportunity-review-filters nav button.active { background: rgba(120,52,61,.1); color: #78343d; font-weight: 700; }
+.opportunity-review-filters nav button span { margin-left: auto; }
+.opportunity-review-filters label { display: grid; gap: 6px; color: var(--muted); font: 600 11px/1 var(--font-sans); text-transform: uppercase; letter-spacing: .08em; }
+.opportunity-review-filters select { width: 100%; min-height: 38px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--ink); padding: 7px 9px; }
+.opportunity-applicant-feed { overflow: hidden; align-self: start; }
+.opportunity-applicant-feed > header { display: flex; justify-content: space-between; padding: 16px 17px; border-bottom: 1px solid rgba(120,52,61,.15); }
+.opportunity-applicant-feed > header div { display: flex; gap: 8px; }
+.opportunity-applicant-feed > article { position: relative; display: grid; grid-template-columns: 40px minmax(0,1fr); gap: 11px; padding: 15px 16px; border-bottom: 1px solid rgba(120,52,61,.12); cursor: pointer; }
+.opportunity-applicant-feed > article:hover, .opportunity-applicant-feed > article.selected { background: rgba(120,52,61,.065); }
+.opportunity-applicant-feed > article.selected { box-shadow: inset 3px 0 #78343d; }
+.opportunity-applicant-avatar { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 50%; background: #78343d; color: #fff; font: 700 12px/1 var(--font-sans); }
+.opportunity-applicant-feed article > div:nth-child(2) { display: grid; gap: 4px; min-width: 0; }
+.opportunity-applicant-feed article p { display: -webkit-box; overflow: hidden; margin: 5px 0; color: var(--muted); font: 400 13px/1.45 var(--font-sans); -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.opportunity-applicant-feed article span, .opportunity-applicant-feed article small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.opportunity-applicant-metrics { grid-column: 2; display: flex; gap: 4px; margin-top: 5px; }
+.opportunity-applicant-metrics button, .opportunity-applicant-metrics a { display: inline-flex; align-items: center; gap: 4px; min-height: 29px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); padding: 5px 7px; text-decoration: none; }
+.opportunity-applicant-metrics .active { color: #78343d; background: rgba(120,52,61,.1); }
+.opportunity-review-detail { position: sticky; top: 96px; align-self: start; max-height: calc(100vh - 125px); overflow: auto; padding: 19px; }
+.opportunity-review-detail > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; }
+.opportunity-review-detail > header > div { display: grid; gap: 4px; }
+.opportunity-review-detail > header > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+.opportunity-review-detail > header button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; padding: 7px 9px; }
+.opportunity-review-detail > header button.active { color: #78343d; border-color: rgba(120,52,61,.35); background: rgba(120,52,61,.08); }
+.opportunity-application-statement { white-space: pre-wrap; margin: 20px 0; font: 400 15px/1.6 var(--font-serif); }
+.opportunity-document-shuffle { overflow: hidden; margin: 16px 0; border: 1px solid rgba(120,52,61,.2); border-radius: 14px; background: rgba(120,52,61,.045); }
+.opportunity-document-shuffle > div { display: grid; min-height: 220px; place-items: center; align-content: center; gap: 9px; padding: 25px; cursor: pointer; text-align: center; }
+.opportunity-document-shuffle > div svg { color: #78343d; }
+.opportunity-document-shuffle > div span { color: #78343d; font: 700 12px/1 var(--font-sans); }
+.opportunity-document-shuffle footer { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 9px; border-top: 1px solid rgba(120,52,61,.14); }
+.opportunity-document-shuffle footer button { border: 0; background: transparent; color: inherit; }
+.opportunity-no-documents, .opportunity-review-empty { display: grid; place-items: center; gap: 7px; min-height: 170px; color: var(--muted); text-align: center; }
+.opportunity-private-notes { display: grid; gap: 10px; margin-top: 20px; padding-top: 18px; border-top: 1px solid rgba(120,52,61,.16); }
+.opportunity-private-notes h2 { margin: 0; font-size: 16px; }
+.opportunity-private-notes > div { padding: 10px 11px; border-radius: 9px; background: rgba(120,52,61,.055); }
+.opportunity-private-notes > div p { margin: 4px 0 0; white-space: pre-wrap; }
+.opportunity-private-notes > button { justify-self: end; }
+
+/* Application review is a focused workspace: the global launchers otherwise obscure
+   reviewer controls and private notes at ordinary laptop viewport sizes. */
+.symposium-shell[data-view="opportunity-applications"] .search-launcher,
+.symposium-shell[data-view="opportunity-applications"] .scribble-launcher,
+.symposium-shell[data-view="opportunity-applications"] .new-post-launcher,
+.symposium-shell[data-view="opportunity-applications"] .bottom-action-tablet { display: none; }
+
+.symposium-shell.night .opportunity-fields, .symposium-shell.night .opportunity-feed-summary, .symposium-shell.night .opportunity-side > section, .symposium-shell.night .opportunity-review-filters, .symposium-shell.night .opportunity-applicant-feed, .symposium-shell.night .opportunity-review-detail { border-color: rgba(221,147,157,.22); background: rgba(28,20,22,.92); }
+.symposium-shell.night .opportunity-status-open, .symposium-shell.night .opportunity-fields legend, .symposium-shell.night .opportunity-attach, .symposium-shell.night .opportunity-document-shuffle > div svg, .symposium-shell.night .opportunity-document-shuffle > div span { color: #dc929d; }
+
+@media (min-width: 901px) and (max-width: 1439px) {
+  /* Reserve the fixed left control rail and right global actions instead of
+     allowing them to cover thought text in the centred feed. */
+  .symposium-shell[data-room="opportunities"][data-view="room"] .room-layout > .feed-stream {
+    width: min(var(--symposium-feed-width), calc(100vw - 560px));
+    margin-right: auto;
+    margin-left: 294px;
+  }
+}
+
+@media (max-width: 1120px) {
+  .opportunity-review-layout { grid-template-columns: 220px minmax(340px, 1fr); }
+  .opportunity-review-detail { position: static; grid-column: 1 / -1; max-height: none; }
+}
+@media (max-width: 920px) {
+  .detail-layout.simple-detail.opportunity-detail { grid-template-columns: minmax(0, 1fr); width: min(var(--symposium-feed-width), calc(100vw - 32px)); }
+  .opportunity-detail > .opportunity-side { display: none; }
+  .opportunity-side-inline { display: block; margin-top: 16px; }
+  .opportunity-side-inline .opportunity-side { position: static; display: block; }
+}
+@media (max-width: 760px) {
+  .opportunity-field-grid, .opportunity-review-layout { grid-template-columns: minmax(0, 1fr); }
+  .opportunity-review-layout { width: calc(100vw - 24px); }
+  .opportunity-review-filters, .opportunity-review-detail { position: static; max-height: none; }
+  .opportunity-review-detail { grid-column: auto; }
+}

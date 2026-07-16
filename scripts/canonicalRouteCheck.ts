@@ -26,6 +26,16 @@ assert.deepEqual(parseCanonicalRoute("/workspace", "?view=notes&note=note%20one&
 assert.equal(canonicalRouteHref({ kind: "funding" }), "/funding");
 assert.deepEqual(parseCanonicalRoute("/funding", "?view=private"), { kind: "funding" });
 assert.deepEqual(parseCanonicalRoute("/opportunities"), { kind: "opportunities" });
+assert.equal(
+  canonicalRouteHref({ kind: "opportunityApplications", postId: "post/one", applicationId: "application one" }),
+  "/posts/post%2Fone/applications?application=application%20one"
+);
+assert.deepEqual(parseCanonicalRoute("/posts/post%2Fone/applications", "?application=application%20one"), {
+  kind: "opportunityApplications",
+  postId: "post/one",
+  applicationId: "application one"
+});
+assert.equal(roomForCanonicalRoute({ kind: "opportunityApplications", postId: "post-one" }), "opportunities");
 assert.deepEqual(parseCanonicalRoute("/messages"), { kind: "messages" });
 assert.equal(
   canonicalRouteHref({ kind: "messages", conversationId: "ai-metascience-lab" }),

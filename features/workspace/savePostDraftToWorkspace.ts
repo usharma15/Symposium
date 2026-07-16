@@ -8,14 +8,15 @@ import {
 } from "@/features/api/symposiumApiClient";
 import { publishCrossTabMessage } from "@/features/live-sync/useCrossTabItemTransport";
 import type { ContentQuote, ContentQuoteSource, InquiryAttachment } from "@/lib/mockData";
-import type { PatronageProposalInputContract, VersionedDocumentContract } from "@/packages/contracts/src";
+import type { OpportunityPostInputContract, PatronageProposalInputContract, VersionedDocumentContract } from "@/packages/contracts/src";
 
 type ComposerDraft = {
   title: string;
   body: string;
   document: VersionedDocumentContract;
-  kind: "paper" | "thought" | "proposal";
+  kind: "paper" | "thought" | "proposal" | "opportunity";
   patronage?: PatronageProposalInputContract;
+  opportunity?: OpportunityPostInputContract;
   attachments: InquiryAttachment[];
   quoteSource?: ContentQuoteSource;
   quoteSnapshot?: ContentQuote;
@@ -77,12 +78,13 @@ export const savePostDraftToWorkspace = async ({
   onStatus: (message: string) => void;
 }) => {
   const proposal = draft.kind === "proposal" ? draft.patronage ?? null : null;
+  const opportunity = draft.kind === "opportunity" ? draft.opportunity ?? null : null;
   if (draft.kind === "proposal" && !proposal) {
     const error = "Add a valid funding goal before saving this proposal draft.";
     onStatus(error);
     return { ok: false as const, error };
   }
-  const workspaceKind = draft.kind === "proposal" ? "paper" : draft.kind;
+  const workspaceKind = draft.kind === "proposal" ? "paper" : draft.kind === "opportunity" ? "thought" : draft.kind;
   const payload = {
     title: draft.title.trim() || `Untitled ${draft.kind}`,
     body: draft.body,
@@ -92,6 +94,7 @@ export const savePostDraftToWorkspace = async ({
     notebookId: null,
     targetId: null,
     proposal,
+    opportunity,
     attachmentIds: draft.attachments.map((attachment) => attachment.id)
   };
   const mutation = acquireMutation(JSON.stringify(payload));

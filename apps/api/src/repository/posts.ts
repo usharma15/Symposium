@@ -38,6 +38,7 @@ import {
   queueAttachmentsForOwnerStorageDeletion,
   triggerStorageDeletion
 } from "../services/storageDeletion";
+import { assertCanonicalOpportunityUpdate, createOpportunityProjection, opportunityPostStatus, updateOpportunityProjection } from "../services/opportunityPosts";
 import { transitionPostAction } from "./actions";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import {
@@ -65,7 +66,7 @@ const lockedPostSelect = `SELECT
   affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt", deleted_at AS "deletedAt",
   status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
   claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-  signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage
+  signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity
  FROM posts
  WHERE id = $1
  FOR UPDATE`;
@@ -79,6 +80,8 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
   const isPaper = input.kind === "paper";
   const patronage = createPatronageProjection(input.patronage);
   const isProposal = Boolean(patronage);
+  const opportunity = createOpportunityProjection(input.opportunity);
+  const isOpportunity = Boolean(opportunity);
   const postStatus = patronagePostStatus(patronage, isPaper ? "Draft" : "New");
   const legacyRequestedAttachments = (input.attachments ?? []).map((attachment) => ({
     ...attachment,
@@ -103,13 +106,13 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     affiliation: author.location,
     date: "Just now",
     createdAt: new Date().toISOString(),
-    status: postStatus,
+    status: opportunityPostStatus(opportunity, postStatus),
     metrics: { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" },
-    gatheringReason: isProposal ? "A public Patronage proposal seeking practical support." : "A new working post added to the live beta.",
+    gatheringReason: isProposal ? "A public Patronage proposal seeking practical support." : isOpportunity ? "A public opportunity inviting applications." : "A new working post added to the live beta.",
     excerpt: input.body,
     body: input.body,
     document: input.document,
-    tags: [input.room, input.kind, ...(isProposal ? ["patronage", "proposal"] : []), ...author.fields.slice(0, 2).map((field) => field.toLowerCase())],
+    tags: [input.room, input.kind, ...(isProposal ? ["patronage", "proposal"] : []), ...(isOpportunity ? ["opportunity", opportunity!.kind] : []), ...author.fields.slice(0, 2).map((field) => field.toLowerCase())],
     signals: [
       { label: "Status", value: postStatus },
       { label: "Critiques", value: "0" },
@@ -124,6 +127,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     comments: [],
     attachments: hasDatabase() ? [] : legacyRequestedAttachments,
     patronage,
+    opportunity,
     saved: input.room === "office",
     savedBy: input.room === "office" ? [author.handle] : [],
     signaledBy: [],
@@ -149,12 +153,12 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       `INSERT INTO posts (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by, quote, search_text, patronage
+        tests, forks, saved, saved_by, signaled_by, forked_by, quote, search_text, patronage, opportunity
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
+        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
       )`,
       [
         item.id,
@@ -184,7 +188,8 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
         JSON.stringify(item.forkedBy ?? []),
         item.quote ? JSON.stringify(item.quote) : null,
         searchablePostText({ ...item, authorName: item.author }),
-        item.patronage ? JSON.stringify(item.patronage) : null
+        item.patronage ? JSON.stringify(item.patronage) : null,
+        item.opportunity ? JSON.stringify(item.opportunity) : null
       ]
     );
     await insertPatronageProposal(client, item.id, item.patronage);
@@ -483,7 +488,9 @@ export const updatePost = async (
     if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
+    assertCanonicalOpportunityUpdate(input.opportunity, existing);
     const patronage = updatePatronageProjection(input.patronage, existing.patronage);
+    const opportunity = updateOpportunityProjection(input.opportunity, existing.opportunity);
     return {
       ...existing,
       title: input.title,
@@ -491,8 +498,9 @@ export const updatePost = async (
       document: input.document ?? existing.document,
       excerpt: input.body,
       claims: [input.body],
-      status: patronagePostStatus(patronage, existing.status),
+      status: opportunityPostStatus(opportunity, patronagePostStatus(patronage, existing.status)),
       patronage,
+      opportunity,
       editedAt,
       revision: (existing.revision ?? 1) + 1
     };
@@ -526,6 +534,7 @@ export const updatePost = async (
     if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
+    assertCanonicalOpportunityUpdate(input.opportunity, row);
     if (row.kind !== "paper" && input.document && !documentFitsReducedEditor(input.document)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Thoughts use the reduced editor formatting set." });
     }
@@ -556,7 +565,8 @@ export const updatePost = async (
         ? undefined
         : await resolveContentQuote(client, input.quoteSource, { ownerId: postId, ownerType: "post" });
     const patronage = updatePatronageProjection(input.patronage, row.patronage);
-    const status = patronagePostStatus(patronage, row.status);
+    const opportunity = updateOpportunityProjection(input.opportunity, row.opportunity);
+    const status = opportunityPostStatus(opportunity, patronagePostStatus(patronage, row.status));
 
     const revisionResult = await client.query<{ revision: number }>(
       `UPDATE posts
@@ -570,6 +580,7 @@ export const updatePost = async (
            quote = $7,
            patronage = $9,
            status = $10,
+           opportunity = $11,
            revision = revision + 1,
            updated_at = now()
        WHERE id = $1
@@ -584,7 +595,8 @@ export const updatePost = async (
         quote ? JSON.stringify(quote) : null,
         input.document ? JSON.stringify(input.document) : row.document ? JSON.stringify(row.document) : null,
         patronage ? JSON.stringify(patronage) : null,
-        status
+        status,
+        opportunity ? JSON.stringify(opportunity) : null
       ]
     );
     await updatePatronageProposal(client, postId, input.patronage);
@@ -615,6 +627,7 @@ export const updatePost = async (
         claims: [input.body],
         quote,
         patronage,
+        opportunity,
         status,
         editedAt,
         revision: revisionResult.rows[0].revision
@@ -720,6 +733,10 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
       postAttachments.get(postId) ?? []
     );
     const commentIds = commentsResult.rows.map((comment) => comment.id);
+    const applicationRows = row.opportunity
+      ? await client.query<{ id: string }>(`SELECT id::text FROM opportunity_applications WHERE post_id = $1 FOR UPDATE`, [postId])
+      : { rows: [] };
+    const applicationIds = applicationRows.rows.map((application) => application.id);
 
     if (isDeletedPost(existing)) {
       deleted = existing;
@@ -738,6 +755,8 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
           "post_deleted"
         ))
       );
+      storageAttachmentIds.push(...await queueAttachmentsForOwnerStorageDeletion(client, "opportunity_application", applicationIds, "opportunity_post_deleted"));
+      if (applicationIds.length) await client.query(`DELETE FROM opportunity_applications WHERE post_id = $1`, [postId]);
       await completeMutation(client, handle, mutation, deleted);
       await client.query("COMMIT");
     } else {
@@ -774,6 +793,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
              forked_by = '[]'::jsonb,
              quote = NULL,
              patronage = NULL,
+             opportunity = NULL,
              search_text = $16,
              edited_at = NULL,
              deleted_at = $17,
@@ -834,6 +854,8 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
           "post_deleted"
         ))
       );
+      storageAttachmentIds.push(...await queueAttachmentsForOwnerStorageDeletion(client, "opportunity_application", applicationIds, "opportunity_post_deleted"));
+      if (applicationIds.length) await client.query(`DELETE FROM opportunity_applications WHERE post_id = $1`, [postId]);
       didDelete = true;
       await stageAuditLog(client, {
         actorHandle: handle,

@@ -19,6 +19,7 @@ import type {
   ContentQuoteContract,
   ContentKindContract,
   InquiryItemContract,
+  OpportunityPostInputContract,
   PatronageProposalInputContract,
   ResearchCommunityContract,
   ResearchProfileContract,
@@ -239,6 +240,7 @@ export const posts = pgTable(
     forkedBy: jsonb("forked_by").$type<string[]>().default(jsonArray).notNull(),
     quote: jsonb("quote").$type<ContentQuoteContract>(),
     patronage: jsonb("patronage").$type<InquiryItemContract["patronage"]>(),
+    opportunity: jsonb("opportunity").$type<OpportunityPostInputContract>(),
     visibility: text("visibility").default("public").notNull(),
     searchText: text("search_text").notNull(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
@@ -448,6 +450,40 @@ export const contentViews = pgTable(
   ]
 );
 
+export const opportunityApplications = pgTable(
+  "opportunity_applications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    postId: text("post_id").notNull().references(() => posts.id, { onDelete: "cascade" }),
+    applicantHandle: text("applicant_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    statement: text("statement").notNull(),
+    shortlisted: boolean("shortlisted").default(false).notNull(),
+    revision: integer("revision").default(1).notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("opportunity_applications_post_applicant_unique_idx").on(table.postId, table.applicantHandle),
+    index("opportunity_applications_post_shortlisted_idx").on(table.postId, table.shortlisted, table.createdAt),
+    index("opportunity_applications_applicant_idx").on(table.applicantHandle, table.createdAt),
+    check("opportunity_applications_revision_check", sql`${table.revision} >= 1`)
+  ]
+);
+
+export const opportunityApplicationComments = pgTable(
+  "opportunity_application_comments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    applicationId: uuid("application_id").notNull().references(() => opportunityApplications.id, { onDelete: "cascade" }),
+    authorHandle: text("author_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    createdAt: createdAtColumn()
+  },
+  (table) => [
+    index("opportunity_application_comments_application_idx").on(table.applicationId, table.createdAt)
+  ]
+);
+
 export const attachments = pgTable(
   "attachments",
   {
@@ -473,7 +509,7 @@ export const attachments = pgTable(
     index("attachments_owner_idx").on(table.ownerType, table.ownerId),
     index("attachments_uploader_status_idx").on(table.uploaderHandle, table.status, table.createdAt),
     index("attachments_status_updated_idx").on(table.status, table.updatedAt),
-    check("attachments_owner_type_check", sql`${table.ownerType} IN ('post', 'comment', 'message', 'note', 'note_comment', 'profile')`),
+    check("attachments_owner_type_check", sql`${table.ownerType} IN ('post', 'comment', 'message', 'note', 'note_comment', 'opportunity_application', 'profile')`),
     check("attachments_status_check", sql`${table.status} IN ('pending', 'verifying', 'uploaded', 'previewed', 'failed')`),
     check("attachments_byte_size_check", sql`${table.byteSize} > 0 AND ${table.byteSize} <= 52428800`)
   ]
@@ -688,6 +724,7 @@ export const notes = pgTable(
     kind: text("kind").default("note").notNull(),
     publicationTarget: text("publication_target").default("undecided").notNull(),
     proposal: jsonb("proposal").$type<PatronageProposalInputContract>(),
+    opportunity: jsonb("opportunity").$type<OpportunityPostInputContract>(),
     targetId: text("target_id"),
     lifecycle: text("lifecycle").default("draft").notNull(),
     visibility: text("visibility").default("private").notNull(),
@@ -704,7 +741,7 @@ export const notes = pgTable(
     index("notes_notebook_updated_idx").on(table.notebookId, table.updatedAt),
     check("notes_visibility_check", sql`${table.visibility} = 'private'`),
     check("notes_kind_check", sql`${table.kind} IN ('note', 'paper', 'thought', 'comment', 'reply', 'quick')`),
-    check("notes_publication_target_check", sql`${table.publicationTarget} IN ('undecided', 'paper', 'thought', 'proposal', 'comment', 'reply')`),
+    check("notes_publication_target_check", sql`${table.publicationTarget} IN ('undecided', 'paper', 'thought', 'proposal', 'opportunity', 'comment', 'reply')`),
     check("notes_lifecycle_check", sql`${table.lifecycle} IN ('draft', 'published', 'archived')`),
     check("notes_revision_check", sql`${table.revision} >= 1`)
   ]
@@ -761,6 +798,7 @@ export const workspaceNoteRevisions = pgTable(
     kind: text("kind").notNull(),
     publicationTarget: text("publication_target").notNull(),
     proposal: jsonb("proposal").$type<PatronageProposalInputContract>(),
+    opportunity: jsonb("opportunity").$type<OpportunityPostInputContract>(),
     targetId: text("target_id"),
     notebookId: uuid("notebook_id").references(() => workspaceNotebooks.id, { onDelete: "set null" }),
     attachmentIds: uuid("attachment_ids").array().default(sql`ARRAY[]::UUID[]`).notNull(),

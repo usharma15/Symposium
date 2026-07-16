@@ -18,7 +18,7 @@ export const workspaceKindLabel: Record<WorkspaceDocument["kind"], string> = {
 };
 
 export const workspaceDocumentLabel = (document: WorkspaceDocument) =>
-  document.publicationTarget === "proposal" ? "Patronage Proposal" : workspaceKindLabel[document.kind];
+  document.publicationTarget === "proposal" ? "Patronage Proposal" : document.publicationTarget === "opportunity" ? "Opportunity" : workspaceKindLabel[document.kind];
 
 export function WorkspaceDocumentCard({
   document,

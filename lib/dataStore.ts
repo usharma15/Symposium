@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import type {
   CanonicalActionActivityContract,
   ContentQuoteContract,
+  OpportunityPostInputContract,
   PatronageProposalInputContract,
   ToggleActionContract,
   VersionedDocumentContract
@@ -80,6 +81,7 @@ export type CreatePostInput = {
   attachments?: InquiryAttachment[];
   quote?: ContentQuoteContract;
   patronage?: PatronageProposalInputContract;
+  opportunity?: OpportunityPostInputContract;
 };
 
 export type CreateCommentInput = {
@@ -107,6 +109,7 @@ export type UpdatePostInput = {
   attachments?: InquiryAttachment[];
   quote?: ContentQuoteContract | null;
   patronage?: PatronageProposalInputContract;
+  opportunity?: OpportunityPostInputContract;
 };
 
 export type UpdateCommentInput = {
@@ -299,8 +302,9 @@ const normalizeItem = (item: InquiryItem): InquiryItem => {
   const seedItem = seedItemById.get(item.id);
   return {
     ...item,
-    kind: item.room === "funding" ? "paper" : item.kind,
+    kind: item.room === "funding" ? "paper" : item.room === "opportunities" ? "thought" : item.kind,
     patronage: item.patronage ?? (item.room === "funding" ? seedItem?.patronage : undefined),
+    opportunity: item.opportunity ?? (item.room === "opportunities" ? seedItem?.opportunity : undefined),
     createdAt: stableSeedCreatedAt(seedItem?.createdAt ?? item.createdAt, legacyLiveSeedCreatedAt(item.id)),
     savedBy: item.savedBy ?? (item.saved ? [defaultProfile.handle] : []),
     signaledBy: item.signaledBy ?? [],
@@ -503,6 +507,7 @@ const ensureSchema = async () => {
           forked_by JSONB DEFAULT '[]'::jsonb,
           quote JSONB,
           patronage JSONB,
+          opportunity JSONB,
           edited_at TIMESTAMPTZ,
           deleted_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ DEFAULT now()
@@ -571,6 +576,7 @@ const ensureSchema = async () => {
         ALTER TABLE items ADD COLUMN IF NOT EXISTS content_document JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS quote JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS patronage JSONB;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS opportunity JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{"signal":"0","forks":"0","saves":"0","reads":"0"}'::jsonb;
@@ -657,12 +663,12 @@ const seedPostgres = async () => {
       `INSERT INTO items (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by, quote, patronage, created_at
+        tests, forks, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity, created_at
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26, $27
+        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
       )
       ON CONFLICT (id) DO NOTHING`,
       [
@@ -692,6 +698,7 @@ const seedPostgres = async () => {
         JSON.stringify(item.forkedBy ?? []),
         item.quote ? JSON.stringify(item.quote) : null,
         item.patronage ? JSON.stringify(item.patronage) : null,
+        item.opportunity ? JSON.stringify(item.opportunity) : null,
         item.createdAt ?? null
       ]
     );
@@ -889,6 +896,7 @@ const loadPostgres = async (): Promise<AppData> => {
       forked_by: string[];
       quote: ContentQuoteContract | null;
       patronage: InquiryItem["patronage"] | null;
+      opportunity: InquiryItem["opportunity"] | null;
     }>("SELECT * FROM items ORDER BY created_at DESC"),
     db.query<CommentRow>("SELECT * FROM comments ORDER BY created_at ASC"),
     db.query<ActionLedgerRow>(
@@ -944,6 +952,7 @@ const loadPostgres = async (): Promise<AppData> => {
     attachments: item.attachments ?? [],
     quote: item.quote ?? undefined,
     patronage: item.patronage ?? undefined,
+    opportunity: item.opportunity ?? undefined,
     comments: commentsByItem.get(item.id) ?? [],
     saved: item.saved,
     savedBy: item.saved_by?.length ? item.saved_by : item.saved ? [defaultProfile.handle] : [],
@@ -1051,6 +1060,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
   const author = data.profiles[authorHandle] ?? defaultProfile;
   const isPaper = input.kind === "paper";
   const isProposal = Boolean(input.patronage);
+  const isOpportunity = Boolean(input.opportunity);
   const item: InquiryItem = {
     id: newId("post"),
     revision: 1,
@@ -1062,13 +1072,13 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     affiliation: author.location,
     date: "Just now",
     createdAt: new Date().toISOString(),
-    status: isProposal ? "Open" : isPaper ? "Draft" : "New",
+    status: isProposal || isOpportunity ? "Open" : isPaper ? "Draft" : "New",
     metrics: { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" },
-    gatheringReason: isProposal ? "A public Patronage proposal seeking practical support." : "A new working post added to the live v0.",
+    gatheringReason: isProposal ? "A public Patronage proposal seeking practical support." : isOpportunity ? "A public opportunity inviting applications." : "A new working post added to the live v0.",
     excerpt: input.body.trim(),
     body: input.body.trim(),
     document: input.document,
-    tags: [input.room, input.kind, ...(isProposal ? ["patronage", "proposal"] : []), ...author.fields.slice(0, 2).map((field) => field.toLowerCase())],
+    tags: [input.room, input.kind, ...(isProposal ? ["patronage", "proposal"] : []), ...(isOpportunity ? ["opportunity", input.opportunity!.kind] : []), ...author.fields.slice(0, 2).map((field) => field.toLowerCase())],
     signals: [
       { label: "Status", value: isProposal ? "Open" : isPaper ? "Draft" : "New" },
       { label: "Critiques", value: "0" },
@@ -1089,6 +1099,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
       supporterCount: 0,
       topSupporters: []
     } : undefined,
+    opportunity: input.opportunity ? { ...input.opportunity, applicationCount: 0 } : undefined,
     saved: input.room === "office",
     savedBy: input.room === "office" ? [author.handle] : [],
     signaledBy: [],
@@ -1101,12 +1112,12 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
       `INSERT INTO items (
         id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, attachments, saved, saved_by, signaled_by, forked_by, quote, patronage
+        tests, forks, attachments, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
+        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
       )`,
       [
         item.id,
@@ -1136,7 +1147,8 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
         JSON.stringify(item.signaledBy),
         JSON.stringify(item.forkedBy),
         item.quote ? JSON.stringify(item.quote) : null,
-        item.patronage ? JSON.stringify(item.patronage) : null
+        item.patronage ? JSON.stringify(item.patronage) : null,
+        item.opportunity ? JSON.stringify(item.opportunity) : null
       ]
     );
     if (item.document) {
@@ -1454,6 +1466,9 @@ const updatePostShape = (item: InquiryItem, input: UpdatePostInput, editedAt = n
         topSupporters: item.patronage?.topSupporters ?? []
       }
     : item.patronage;
+  const opportunity = input.opportunity
+    ? { ...input.opportunity, applicationCount: item.opportunity?.applicationCount ?? 0 }
+    : item.opportunity;
   return {
     ...item,
     revision: (item.revision ?? 1) + 1,
@@ -1465,7 +1480,10 @@ const updatePostShape = (item: InquiryItem, input: UpdatePostInput, editedAt = n
     attachments: input.attachments ?? item.attachments,
     quote: input.quote === undefined ? item.quote : input.quote ?? undefined,
     patronage,
-    status: patronage ? patronage.status[0].toUpperCase() + patronage.status.slice(1) : item.status,
+    opportunity,
+    status: patronage ? patronage.status[0].toUpperCase() + patronage.status.slice(1)
+      : opportunity ? opportunity.status[0].toUpperCase() + opportunity.status.slice(1)
+      : item.status,
     editedAt
   };
 };
@@ -1477,7 +1495,8 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
     document: input.document,
     attachments: input.attachments,
     quote: input.quote,
-    patronage: input.patronage
+    patronage: input.patronage,
+    opportunity: input.opportunity
   };
   if (!cleanInput.title || !cleanInput.body) return null;
 
@@ -1498,7 +1517,8 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
            edited_at = $5,
            quote = $6,
            patronage = $8,
-           status = $9
+           opportunity = $9,
+           status = $10
        WHERE id = $1`,
       [
         itemId,
@@ -1509,6 +1529,7 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
         updated.quote ? JSON.stringify(updated.quote) : null,
         updated.document ? JSON.stringify(updated.document) : null,
         updated.patronage ? JSON.stringify(updated.patronage) : null,
+        updated.opportunity ? JSON.stringify(updated.opportunity) : null,
         updated.status
       ]
     );
@@ -1554,6 +1575,7 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
            forks = $16,
            quote = NULL,
            patronage = NULL,
+           opportunity = NULL,
            edited_at = NULL,
            deleted_at = $17
        WHERE id = $1`,

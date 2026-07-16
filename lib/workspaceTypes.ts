@@ -1,6 +1,7 @@
 import type { InquiryAttachment, InquiryItem, ResearchProfile } from "@/lib/mockData";
 import type {
   VersionedDocumentContract,
+  OpportunityPostInputContract,
   PatronageProposalInputContract,
   WorkspaceAccessRoleContract,
   WorkspaceAccessResourceContract,
@@ -44,6 +45,7 @@ export type WorkspaceDocument = {
   kind: WorkspaceDocumentKindContract;
   publicationTarget: WorkspacePublicationTargetContract;
   proposal: PatronageProposalInputContract | null;
+  opportunity: OpportunityPostInputContract | null;
   targetId: string | null;
   title: string;
   body: string;

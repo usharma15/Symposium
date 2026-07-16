@@ -16,6 +16,7 @@ const layers = [
   "87-structured-attachments.css",
   "88-workspace.css",
   "89-patronage.css",
+  "89-opportunities.css",
   "89-workspace-sharing.css",
   "89-post-tones.css",
   "90-immersive-responsive.css",

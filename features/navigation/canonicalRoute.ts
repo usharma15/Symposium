@@ -4,6 +4,7 @@ export type CanonicalRoute =
   | { kind: "workspace"; view?: "saved" | "notes"; noteId?: string; commentId?: string }
   | { kind: "funding" }
   | { kind: "opportunities" }
+  | { kind: "opportunityApplications"; postId: string; applicationId?: string }
   | { kind: "messages"; conversationId?: string }
   | { kind: "post"; postId: string; commentId?: string }
   | { kind: "profile"; handle: string; social?: ProfileSocialView; tab?: ProfileTab }
@@ -51,6 +52,10 @@ export const canonicalRouteHref = (route: CanonicalRoute) => {
   }
   if (route.kind === "funding") return "/funding";
   if (route.kind === "opportunities") return "/opportunities";
+  if (route.kind === "opportunityApplications") {
+    const base = `/posts/${encoded(route.postId)}/applications`;
+    return route.applicationId ? `${base}?application=${encoded(route.applicationId)}` : base;
+  }
   if (route.kind === "messages") {
     return route.conversationId ? `/messages?conversation=${encoded(route.conversationId)}` : "/messages";
   }
@@ -94,6 +99,10 @@ export const parseCanonicalRoute = (pathname: string, search = ""): CanonicalRou
     return conversationId ? { kind: "messages", conversationId } : { kind: "messages" };
   }
   if (segments[0] === "posts" && segments[1]) {
+    if (segments[2] === "applications") {
+      const applicationId = new URLSearchParams(search).get("application")?.trim() || undefined;
+      return { kind: "opportunityApplications", postId: segments[1], applicationId };
+    }
     const commentId = new URLSearchParams(search).get("comment")?.trim() || undefined;
     return { kind: "post", postId: segments[1], commentId };
   }

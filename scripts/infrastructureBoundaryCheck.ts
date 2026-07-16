@@ -6,6 +6,8 @@ import {
   events,
   noteBlocks,
   notes,
+  opportunityApplicationComments,
+  opportunityApplications,
   patronageContributions,
   patronageProposals,
   posts,
@@ -23,7 +25,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0025_patronage_foundation");
+  assert.equal(latestMigrationId, "0026_opportunities_foundation");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -37,6 +39,10 @@ const main = async () => {
   assert.ok("revision" in profileFollows);
   assert.ok("revision" in notes);
   assert.ok("patronage" in posts);
+  assert.ok("opportunity" in posts);
+  assert.ok("shortlisted" in opportunityApplications);
+  assert.ok("revision" in opportunityApplications);
+  assert.ok("applicationId" in opportunityApplicationComments);
   assert.ok("goalMinorUnits" in patronageProposals);
   assert.ok("providerReference" in patronageContributions);
   assert.ok("revision" in noteBlocks);
@@ -104,6 +110,7 @@ const main = async () => {
           "event audience schema placement",
           "authoritative entity revision schema",
           "note and note-block revision schema",
+          "canonical Opportunity and private application schema",
           "durable storage-deletion queue schema",
           "durable storage-deletion worker readiness",
           "strict event cursor parsing",

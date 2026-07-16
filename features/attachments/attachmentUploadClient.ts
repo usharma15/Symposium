@@ -83,7 +83,7 @@ export const uploadConfirmedAttachment = async (input: {
   file: File;
   idempotencyKey: string;
   metadata: Record<string, unknown>;
-  ownerType: "post" | "comment" | "note" | "note_comment";
+  ownerType: "post" | "comment" | "note" | "note_comment" | "opportunity_application";
 }): Promise<InquiryAttachment> => {
   const contentType = inferAttachmentContentType(input.file.name, input.file.type);
   const validationError = validatePostAttachmentDetails(input.file.name, contentType, input.file.size);
@@ -102,7 +102,7 @@ export const uploadConfirmedAttachment = async (input: {
   if (!uploadResponse.ok) throw await responseError(uploadResponse, "Could not prepare this attachment upload.");
 
   const upload = (await uploadResponse.json()) as AttachmentUploadResponse;
-  const privateWorkspaceAttachment = input.ownerType === "note" || input.ownerType === "note_comment";
+  const privateWorkspaceAttachment = input.ownerType === "note" || input.ownerType === "note_comment" || input.ownerType === "opportunity_application";
   if (!upload.uploadUrl || !upload.attachmentId || (!privateWorkspaceAttachment && !upload.publicUrl)) {
     throw new Error("Could not prepare this attachment upload.");
   }
@@ -123,7 +123,9 @@ export const uploadConfirmedAttachment = async (input: {
 
   const confirmed = (await confirmResponse.json()) as AttachmentConfirmResponse;
   const publicUrl = privateWorkspaceAttachment
-    ? `/api/workspace/attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
+    ? input.ownerType === "opportunity_application"
+      ? `/api/opportunity-attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
+      : `/api/workspace/attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
     : confirmed.publicUrl ?? upload.publicUrl;
   if (!publicUrl) throw new Error("The confirmed attachment does not have a persistent delivery URL.");
   return {

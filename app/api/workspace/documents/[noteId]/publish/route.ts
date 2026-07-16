@@ -18,7 +18,7 @@ type Context = { params: Promise<{ noteId: string }> };
 type PublishBody = {
   actorHandle?: string;
   expectedRevision?: number;
-  publicationTarget?: "paper" | "thought" | "proposal";
+  publicationTarget?: "paper" | "thought" | "proposal" | "opportunity";
 };
 
 const publishLocalWorkspaceDiscussion = async (input: {
@@ -83,20 +83,26 @@ export async function POST(request: Request, context: Context) {
     if (!document.body.trim()) return jsonError("Add some content before publishing this draft.", 400);
     const target = document.kind === "paper" && document.publicationTarget === "proposal"
       ? "proposal"
+      : document.kind === "thought" && document.publicationTarget === "opportunity"
+        ? "opportunity"
       : document.kind === "note"
         ? body.publicationTarget ?? document.publicationTarget
         : document.kind;
-    if (target === "paper" || target === "thought" || target === "proposal") {
+    if (target === "paper" || target === "thought" || target === "proposal" || target === "opportunity") {
       if (target === "proposal" && !document.proposal) {
         return jsonError("Add funding details before publishing this Patronage Proposal.", 400);
+      }
+      if (target === "opportunity" && !document.opportunity) {
+        return jsonError("Add opportunity details before publishing this Opportunity.", 400);
       }
       const createdItem = await createPost({
         title: document.title,
         body: document.body,
         document: document.document,
-        kind: target === "proposal" ? "paper" : target,
-        room: target === "proposal" ? "funding" : target === "paper" ? "library" : "amphitheater",
+        kind: target === "proposal" ? "paper" : target === "opportunity" ? "thought" : target,
+        room: target === "proposal" ? "funding" : target === "opportunity" ? "opportunities" : target === "paper" ? "library" : "amphitheater",
         patronage: target === "proposal" ? document.proposal ?? undefined : undefined,
+        opportunity: target === "opportunity" ? document.opportunity ?? undefined : undefined,
         attachments: []
       }, actorHandle);
       const attachments = await promoteLocalWorkspaceDocumentAttachments(noteId, "post", createdItem.id, actorHandle);

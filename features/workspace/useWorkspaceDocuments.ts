@@ -241,7 +241,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
 
   const publishDocument = useCallback(async (
     document: WorkspaceDocument,
-    publicationTarget?: "paper" | "thought" | "proposal"
+    publicationTarget?: "paper" | "thought" | "proposal" | "opportunity"
   ) => {
     setStatus("Publishing exact saved revision…");
     const result = await symposiumApi.request<WorkspacePublicationResponse>(

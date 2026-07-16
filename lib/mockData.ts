@@ -1536,6 +1536,24 @@ export const inquiryItems: InquiryItem[] = [...coreInquiryItems, ...generatedInq
     patronage: seedPatronage(index),
     tags: item.tags.filter((tag) => tag !== "civic" && tag !== "private")
   } : {}),
+  ...(item.room === "opportunities" ? {
+    kind: "thought" as const,
+    status: "Open",
+    opportunity: {
+      kind: item.tags.includes("bounty") ? "bounty" as const
+        : item.tags.includes("internship") ? "internship" as const
+        : item.tags.includes("fellowship") ? "fellowship" as const
+        : item.tags.includes("residency") ? "residency" as const
+        : item.tags.includes("open problems") ? "open_problem" as const
+        : item.tags.includes("call") || item.tags.includes("review") ? "open_call" as const
+        : "collaboration" as const,
+      status: "open" as const,
+      location: null,
+      compensation: null,
+      deadline: null,
+      applicationCount: 0
+    }
+  } : {}),
   createdAt: item.createdAt ?? seedIsoDate(index),
   comments: stampSeedComments(item.comments, index)
 }));

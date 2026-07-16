@@ -61,7 +61,8 @@ const workspaceDocument = (input: Partial<WorkspaceDocument> & Pick<WorkspaceDoc
       canDelete: true
     },
     ...overrides,
-    proposal: overrides.proposal ?? null
+    proposal: overrides.proposal ?? null,
+    opportunity: overrides.opportunity ?? null
   };
 };
 
@@ -253,7 +254,7 @@ const main = async () => {
   assert.match(localPublicationRoute, /updateComment/);
   assert.doesNotMatch(localPublicationRoute, /Private draft attachments remain protected/);
   assert.match(localAttachmentStore, /ownerType: publicOwnerType/);
-  assert.match(attachmentRepository, /input\.ownerType === "note" \|\| input\.ownerType === "note_comment" \? null : publicObjectUrl/);
+  assert.match(attachmentRepository, /input\.ownerType === "note" \|\| input\.ownerType === "note_comment" \|\| input\.ownerType === "opportunity_application" \? null : publicObjectUrl/);
   assert.match(attachmentOwnership, /row\.ownerId === null && row\.uploaderHandle !== input\.uploaderHandle/);
   assert.match(workspaceHook, /symposium-workspace-sync-v1/);
   assert.match(workspaceHook, /cache: "no-store"/);

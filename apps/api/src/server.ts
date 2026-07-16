@@ -12,6 +12,7 @@ import { registerAttachmentRoutes } from "./routes/attachmentRoutes";
 import { registerCommunityRoutes } from "./routes/communityRoutes";
 import { registerEventRoutes } from "./routes/eventRoutes";
 import { registerPostRoutes } from "./routes/postRoutes";
+import { registerOpportunityApplicationRoutes } from "./routes/opportunityApplicationRoutes";
 import { registerProfileRoutes } from "./routes/profileRoutes";
 import { registerSystemRoutes } from "./routes/systemRoutes";
 import { registerWorkspaceRoutes } from "./routes/workspaceRoutes";
@@ -62,6 +63,7 @@ export const buildApp = async (options: { logger?: boolean } = {}) => {
 
   registerProfileRoutes(app);
   registerPostRoutes(app);
+  registerOpportunityApplicationRoutes(app);
   registerCommunityRoutes(app);
   registerAttachmentRoutes(app);
   registerWorkspaceRoutes(app);

@@ -1,6 +1,7 @@
 import { deletePost, getSnapshot, updatePost, type UpdatePostInput } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { deleteLocalOpportunityApplicationsForPost } from "@/lib/localOpportunityApplicationStore";
 import {
   deleteLocalOwnerAttachments,
   LocalAttachmentStoreError,
@@ -8,7 +9,7 @@ import {
 } from "@/lib/localAttachmentStore";
 import { cleanHandle, isDeletedPost } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
-import { contentQuoteSourceSchema, patronageProposalInputSchema, versionedDocumentSchema } from "@/packages/contracts/src";
+import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, versionedDocumentSchema } from "@/packages/contracts/src";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,7 @@ export async function PATCH(request: Request, context: Context) {
     expectedEditedAt?: string | null;
     quoteSource?: unknown;
     patronage?: unknown;
+    opportunity?: unknown;
   }>(request);
 
   if (!body) {
@@ -57,10 +59,12 @@ export async function PATCH(request: Request, context: Context) {
   const parsedQuoteSource = quoteSource && "success" in quoteSource ? quoteSource.data : quoteSource;
   const patronage = body.patronage === undefined ? undefined : patronageProposalInputSchema.safeParse(body.patronage);
   if (patronage && !patronage.success) return jsonError("Add a valid funding goal and proposal status.", 400);
+  const opportunity = body.opportunity === undefined ? undefined : opportunityPostInputSchema.safeParse(body.opportunity);
+  if (opportunity && !opportunity.success) return jsonError("Add valid opportunity details.", 400);
   const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const live = await proxyLiveBackend(`/v1/posts/${id}`, {
     method: "PATCH",
-    body: { ...input, actorHandle, attachmentIds, quoteSource: parsedQuoteSource, patronage: patronage?.data, expectedEditedAt: body.expectedEditedAt },
+    body: { ...input, actorHandle, attachmentIds, quoteSource: parsedQuoteSource, patronage: patronage?.data, opportunity: opportunity?.data, expectedEditedAt: body.expectedEditedAt },
     actorHandle,
     idempotencyKey
   });
@@ -79,7 +83,7 @@ export async function PATCH(request: Request, context: Context) {
     if (attachmentIds?.length && (existing.room === "office" || existing.kind === "draft")) {
       return jsonError("Private post attachments require protected delivery before they can be published.", 412);
     }
-    if ((attachmentIds || body.quoteSource !== undefined || body.document !== undefined || body.patronage !== undefined) && body.expectedEditedAt === undefined) {
+    if ((attachmentIds || body.quoteSource !== undefined || body.document !== undefined || body.patronage !== undefined || body.opportunity !== undefined) && body.expectedEditedAt === undefined) {
       return jsonError("The current post edit version is required when changing structured post content.", 400);
     }
     if (body.expectedEditedAt !== undefined && (existing.editedAt ?? null) !== body.expectedEditedAt) {
@@ -94,7 +98,8 @@ export async function PATCH(request: Request, context: Context) {
         ? null
         : resolveLocalContentQuote(snapshot.items, parsedQuoteSource, { ownerId: id, ownerType: "post" });
     if (patronage?.success && !existing.patronage) return jsonError("Only Patronage proposals can receive funding details.", 400);
-    const item = await updatePost(id, { ...input, attachments, quote, patronage: patronage?.data }, actorHandle ?? "");
+    if (opportunity?.success && !existing.opportunity) return jsonError("Only Opportunity posts can receive opportunity metadata.", 400);
+    const item = await updatePost(id, { ...input, attachments, quote, patronage: patronage?.data, opportunity: opportunity?.data }, actorHandle ?? "");
     if (!item) {
       return jsonError("Post not found or cannot be edited by this profile.", 404);
     }
@@ -121,7 +126,9 @@ export async function DELETE(request: Request, context: Context) {
   });
   if (live) return live;
 
-  const item = await deletePost(id, actorHandle ?? "");
+    const existing = (await getSnapshot()).items.find((item) => item.id === id);
+    if (existing?.opportunity) await deleteLocalOpportunityApplicationsForPost(id, actorHandle ?? "");
+    const item = await deletePost(id, actorHandle ?? "");
   if (!item) {
     return jsonError("Post not found or cannot be deleted by this profile.", 404);
   }

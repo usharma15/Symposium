@@ -26,6 +26,12 @@ import {
   patronageInputForDraft
 } from "@/features/patronage/patronageModel";
 import { postToneClassName, postToneForWorkspaceDocument } from "@/lib/postTone";
+import {
+  emptyOpportunityDraftFields,
+  OpportunityFields,
+  opportunityDraftFieldsForPost,
+  opportunityInputForDraft
+} from "@/features/opportunities/OpportunityViews";
 
 type SaveDraft = {
   title: string;
@@ -34,6 +40,7 @@ type SaveDraft = {
   kind: WorkspaceDocument["kind"];
   publicationTarget: WorkspaceDocument["publicationTarget"];
   proposal: WorkspaceDocument["proposal"];
+  opportunity: WorkspaceDocument["opportunity"];
   notebookId: string | null;
   targetId: string | null;
   attachmentIds: string[];
@@ -49,6 +56,7 @@ const draftFingerprint = (draft: {
   targetId: string | null;
   publicationTarget: WorkspaceDocument["publicationTarget"];
   proposal: WorkspaceDocument["proposal"];
+  opportunity: WorkspaceDocument["opportunity"];
   attachments: InquiryAttachment[];
 }) => JSON.stringify([
   draft.title,
@@ -58,6 +66,7 @@ const draftFingerprint = (draft: {
   draft.targetId,
   draft.publicationTarget,
   draft.proposal,
+  draft.opportunity,
   draft.attachments.map((attachment) => attachment.id)
 ]);
 
@@ -78,7 +87,7 @@ type WorkspaceDocumentDetailProps = {
   onShare: () => void;
   onSave: (draft: SaveDraft) => Promise<WorkspaceDocument>;
   onDelete: (document: WorkspaceDocument) => Promise<void>;
-  onPublish: (document: WorkspaceDocument, target?: "paper" | "thought" | "proposal") => Promise<WorkspacePublicationResponse>;
+  onPublish: (document: WorkspaceDocument, target?: "paper" | "thought" | "proposal" | "opportunity") => Promise<WorkspacePublicationResponse>;
   onPublished: (result: WorkspacePublicationResponse) => void;
   onUploadAttachment: AttachmentUploadHandler;
   onUploadCommentAttachment: AttachmentUploadHandler;
@@ -109,14 +118,15 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
   const [attachments, setAttachments] = useState<InquiryAttachment[]>(document.attachments);
   const [notebookId, setNotebookId] = useState<string | null>(document.notebookId);
   const [targetId, setTargetId] = useState(document.targetId ?? "");
-  const [publicationTarget, setPublicationTarget] = useState<"undecided" | "paper" | "thought">(
-    document.publicationTarget === "paper" || document.publicationTarget === "thought"
+  const [publicationTarget, setPublicationTarget] = useState<"undecided" | "paper" | "thought" | "opportunity">(
+    document.publicationTarget === "paper" || document.publicationTarget === "thought" || document.publicationTarget === "opportunity"
       ? document.publicationTarget
       : "undecided"
   );
   const [patronageFields, setPatronageFields] = useState(() =>
     document.proposal ? patronageDraftFieldsForProposal(document.proposal) : emptyPatronageDraftFields()
   );
+  const [opportunityFields, setOpportunityFields] = useState(() => document.opportunity ? opportunityDraftFieldsForPost(document.opportunity) : emptyOpportunityDraftFields());
   const [revision, setRevision] = useState(document.revision);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -137,6 +147,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
     targetId: document.targetId,
     publicationTarget: document.publicationTarget,
     proposal: document.proposal,
+    opportunity: document.opportunity,
     attachments: document.attachments
   }));
   const discussion = useWorkspaceComments(document.id, actorHandle);
@@ -149,9 +160,10 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
     notebookId,
     targetId: targetId.trim() || null,
     publicationTarget: document.kind === "note" ? publicationTarget : document.publicationTarget,
-    proposal: document.publicationTarget === "proposal" ? patronageInputForDraft(patronageFields) : null,
+    proposal: (document.kind === "note" ? publicationTarget : document.publicationTarget) === "proposal" ? patronageInputForDraft(patronageFields) : null,
+    opportunity: (document.kind === "note" ? publicationTarget : document.publicationTarget) === "opportunity" ? opportunityInputForDraft(opportunityFields) : null,
     attachments
-  }), [attachments, body, document.kind, document.publicationTarget, documentValue, notebookId, patronageFields, publicationTarget, targetId, title]);
+  }), [attachments, body, document.kind, document.publicationTarget, documentValue, notebookId, opportunityFields, patronageFields, publicationTarget, targetId, title]);
 
   const applySavedDocument = useCallback((saved: WorkspaceDocument) => {
     savedDocumentRef.current = saved;
@@ -163,8 +175,9 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
     setAttachments(saved.attachments);
     setNotebookId(saved.notebookId);
     setTargetId(saved.targetId ?? "");
-    setPublicationTarget(saved.publicationTarget === "paper" || saved.publicationTarget === "thought" ? saved.publicationTarget : "undecided");
+    setPublicationTarget(saved.publicationTarget === "paper" || saved.publicationTarget === "thought" || saved.publicationTarget === "opportunity" ? saved.publicationTarget : "undecided");
     setPatronageFields(saved.proposal ? patronageDraftFieldsForProposal(saved.proposal) : emptyPatronageDraftFields());
+    setOpportunityFields(saved.opportunity ? opportunityDraftFieldsForPost(saved.opportunity) : emptyOpportunityDraftFields());
     savedFingerprintRef.current = draftFingerprint({
       title: saved.title,
       body: saved.body,
@@ -173,6 +186,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
       targetId: saved.targetId,
       publicationTarget: saved.publicationTarget,
       proposal: saved.proposal,
+      opportunity: saved.opportunity,
       attachments: saved.attachments
     });
     setSaveState("Draft saved");
@@ -206,6 +220,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
           kind: document.kind,
           publicationTarget: draft.publicationTarget,
           proposal: draft.proposal,
+          opportunity: draft.opportunity,
           notebookId: draft.notebookId,
           targetId: draft.targetId,
           attachmentIds: draft.attachments.map((attachment) => attachment.id),
@@ -300,6 +315,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
   const targetLinked = document.kind !== "comment" && document.kind !== "reply" || Boolean(targetId.trim());
   const publicationChosen = document.kind !== "note" || publicationTarget !== "undecided";
   const proposalReady = document.publicationTarget !== "proposal" || Boolean(patronageInputForDraft(patronageFields));
+  const opportunityReady = (document.kind === "note" ? publicationTarget : document.publicationTarget) !== "opportunity" || Boolean(opportunityInputForDraft(opportunityFields));
   const editingComment = editingCommentId ? findCommentInTree(discussion.comments, editingCommentId) ?? null : null;
   const previewComment = commentPreview ? findCommentInTree(discussion.comments, commentPreview.commentId) ?? null : null;
 
@@ -372,7 +388,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
                   {notebookId !== document.notebookId ? <small>Moving a draft can change inherited collaborator access.</small> : null}
                 </label> : <label><span>Saved in</span><strong>{notebookId ? compatibleNotebooks.find((notebook) => notebook.id === notebookId)?.name ?? document.notebookName : "All · Unfiled"}</strong><small>Only the owner can change notebook placement because it controls inherited access.</small></label>}
                 {document.kind === "note" ? (
-                  <label><span>Post as</span><select value={publicationTarget} onChange={(event) => setPublicationTarget(event.target.value as "undecided" | "paper" | "thought")}><option value="undecided">Choose when ready</option><option value="paper">Paper</option><option value="thought">Thought</option></select></label>
+                  <label><span>Post as</span><select value={publicationTarget} onChange={(event) => setPublicationTarget(event.target.value as "undecided" | "paper" | "thought" | "opportunity")}><option value="undecided">Choose when ready</option><option value="paper">Paper</option><option value="thought">Thought</option><option value="opportunity">Opportunity</option></select></label>
                 ) : null}
                 {document.kind === "comment" || document.kind === "reply" ? (
                   <label className="workspace-target-field"><span>{document.kind === "reply" ? "Reply destination" : "Comment destination"}</span><input value={targetId} onChange={(event) => setTargetId(event.target.value)} placeholder={document.kind === "reply" ? "post-id:comment-id" : "post-id"} /><small>The linked destination is checked again when published.</small></label>
@@ -398,12 +414,13 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
                   allowStatus
                 />
               ) : null}
+              {(document.kind === "note" ? publicationTarget : document.publicationTarget) === "opportunity" ? <OpportunityFields value={opportunityFields} onChange={setOpportunityFields} disabled={busy || uploading} allowStatus /> : null}
               {error ? <div className="workspace-error" role="alert">{error}</div> : null}
               <footer className="workspace-editor-footer">
                 <div><Users size={15} /><span>{document.access.role === "owner" ? `Private workspace · Owner${document.collaboratorCount ? ` · ${document.collaboratorCount} collaborators` : ""}` : `${document.access.role} access`}</span></div>
                 <div>
                   <button type="button" disabled={busy || uploading} onClick={() => void saveDraft(true)}>Save Draft</button>
-                  {document.access.canPublish ? <button type="button" className="primary" disabled={busy || uploading || !body.trim() || !targetLinked || !publicationChosen || !proposalReady} onClick={() => void publish()}><Send size={15} />Post</button> : null}
+                  {document.access.canPublish ? <button type="button" className="primary" disabled={busy || uploading || !body.trim() || !targetLinked || !publicationChosen || !proposalReady || !opportunityReady} onClick={() => void publish()}><Send size={15} />Post</button> : null}
                 </div>
               </footer>
             </div>
@@ -417,7 +434,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
                 <span>Revision {document.revision}</span>
               </div>
               {error ? <div className="workspace-error" role="alert">{error}</div> : null}
-              {document.access.canPublish ? <div className="workspace-reader-post"><button type="button" className="primary" disabled={!document.body.trim() || !targetLinked || !publicationChosen || !proposalReady} onClick={() => void publish()}><Send size={15} />Post this saved draft</button></div> : null}
+              {document.access.canPublish ? <div className="workspace-reader-post"><button type="button" className="primary" disabled={!document.body.trim() || !targetLinked || !publicationChosen || !proposalReady || !opportunityReady} onClick={() => void publish()}><Send size={15} />Post this saved draft</button></div> : null}
             </>
           )}
 

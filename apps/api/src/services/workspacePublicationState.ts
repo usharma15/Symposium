@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import type {
   InquiryCommentContract,
   InquiryItemContract,
+  OpportunityPostInputContract,
   PatronageProposalInputContract,
   WorkspaceAccessRoleContract,
   WorkspaceDocumentKindContract
@@ -34,8 +35,9 @@ export type PublishableWorkspaceRevision = {
   body: string;
   document: unknown;
   kind: WorkspaceDocumentKindContract;
-  publicationTarget: "undecided" | "paper" | "thought" | "proposal" | "comment" | "reply";
+  publicationTarget: "undecided" | "paper" | "thought" | "proposal" | "opportunity" | "comment" | "reply";
   proposal: PatronageProposalInputContract | null;
+  opportunity: OpportunityPostInputContract | null;
   targetId: string | null;
   attachmentIds: string[];
 };
@@ -72,6 +74,7 @@ export const loadPublishableWorkspaceRevision = async (
        revision_row.kind,
        revision_row.publication_target AS "publicationTarget",
        revision_row.proposal,
+       revision_row.opportunity,
        revision_row.target_id AS "targetId",
        revision_row.attachment_ids::text[] AS "attachmentIds",
        CASE GREATEST(
@@ -184,7 +187,7 @@ export const assertWorkspaceRevisionNotPublished = async (
 export const persistWorkspacePublication = async <T extends { item: InquiryItemContract; comment?: InquiryCommentContract }>(
   revision: PublishableWorkspaceRevision,
   publisher: string,
-  target: "paper" | "thought" | "proposal" | "comment" | "reply",
+  target: "paper" | "thought" | "proposal" | "opportunity" | "comment" | "reply",
   result: T,
   discussion: PreparedWorkspaceDiscussion,
   mutation?: MutationContext
@@ -261,7 +264,7 @@ export const persistWorkspacePublication = async <T extends { item: InquiryItemC
       revision.noteId,
       revision.revision,
       revision.checkpointId,
-      target === "paper" || target === "thought" || target === "proposal" ? result.item.id : null,
+      target === "paper" || target === "thought" || target === "proposal" || target === "opportunity" ? result.item.id : null,
       result.comment?.id ?? null,
       publisher,
       JSON.stringify({ source: "workspace", target, commentId: result.comment?.id ?? null })

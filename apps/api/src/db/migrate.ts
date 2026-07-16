@@ -1568,6 +1568,67 @@ const migrations: Migration[] = [
       WHERE patronage IS NOT NULL
       ON CONFLICT (post_id) DO NOTHING;
     `
+  },
+  {
+    id: "0026_opportunities_foundation",
+    sql: `
+      ALTER TABLE posts ADD COLUMN IF NOT EXISTS opportunity JSONB;
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS opportunity JSONB;
+      ALTER TABLE workspace_note_revisions ADD COLUMN IF NOT EXISTS opportunity JSONB;
+
+      ALTER TABLE notes DROP CONSTRAINT IF EXISTS notes_publication_target_check;
+      ALTER TABLE notes ADD CONSTRAINT notes_publication_target_check
+        CHECK (publication_target IN ('undecided', 'paper', 'thought', 'proposal', 'opportunity', 'comment', 'reply'));
+
+      ALTER TABLE attachments DROP CONSTRAINT IF EXISTS attachments_owner_type_check;
+      ALTER TABLE attachments ADD CONSTRAINT attachments_owner_type_check
+        CHECK (owner_type IN ('post', 'comment', 'message', 'note', 'note_comment', 'opportunity_application', 'profile'));
+
+      CREATE TABLE IF NOT EXISTS opportunity_applications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+        applicant_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        statement TEXT NOT NULL,
+        shortlisted BOOLEAN NOT NULL DEFAULT false,
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (post_id, applicant_handle)
+      );
+      CREATE INDEX IF NOT EXISTS opportunity_applications_post_shortlisted_idx
+        ON opportunity_applications (post_id, shortlisted, created_at DESC);
+      CREATE INDEX IF NOT EXISTS opportunity_applications_applicant_idx
+        ON opportunity_applications (applicant_handle, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS opportunity_application_comments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        application_id UUID NOT NULL REFERENCES opportunity_applications(id) ON DELETE CASCADE,
+        author_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        body TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS opportunity_application_comments_application_idx
+        ON opportunity_application_comments (application_id, created_at ASC);
+
+      UPDATE posts
+      SET kind = 'thought',
+          status = CASE WHEN deleted_at IS NULL THEN 'Open' ELSE status END,
+          opportunity = CASE WHEN deleted_at IS NULL THEN jsonb_build_object(
+            'kind', CASE
+              WHEN tags ? 'grant' THEN 'grant'
+              WHEN tags ? 'internship' THEN 'internship'
+              WHEN tags ? 'fellowship' THEN 'fellowship'
+              WHEN tags ? 'event' THEN 'event'
+              WHEN tags ? 'problem' THEN 'open_problem'
+              ELSE 'collaboration'
+            END,
+            'status', 'open',
+            'location', NULL,
+            'compensation', NULL,
+            'deadline', NULL
+          ) ELSE opportunity END
+      WHERE room = 'opportunities' AND opportunity IS NULL;
+    `
   }
 ];
 

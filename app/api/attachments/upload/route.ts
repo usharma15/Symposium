@@ -15,7 +15,7 @@ type UploadBody = {
   fileName?: string;
   contentType?: string;
   byteSize?: number;
-  ownerType?: "post" | "comment" | "message" | "note" | "note_comment" | "profile";
+  ownerType?: "post" | "comment" | "message" | "note" | "note_comment" | "opportunity_application" | "profile";
   ownerId?: string;
 };
 
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   const contentType = inferAttachmentContentType(String(body.fileName ?? ""), String(body.contentType ?? ""));
   const byteSize = Number(body.byteSize ?? 0);
 
-  if (!["post", "comment", "note", "note_comment", "profile"].includes(ownerType)) {
+  if (!["post", "comment", "note", "note_comment", "opportunity_application", "profile"].includes(ownerType)) {
     return jsonError("Private attachment delivery is not enabled for message uploads yet.", 412);
   }
 

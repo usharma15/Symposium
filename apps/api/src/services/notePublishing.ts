@@ -25,13 +25,13 @@ const publicationTarget = (revision: PublishableWorkspaceRevision, input: Publis
   if (revision.kind === "paper") {
     return revision.publicationTarget === "proposal" ? "proposal" as const : "paper" as const;
   }
-  if (revision.kind === "thought") return "thought" as const;
+  if (revision.kind === "thought") return revision.publicationTarget === "opportunity" ? "opportunity" as const : "thought" as const;
   if (revision.kind === "comment") return "comment" as const;
   if (revision.kind === "reply") return "reply" as const;
   if (revision.kind === "note") {
     const target = input.publicationTarget ?? revision.publicationTarget;
-    if (target === "paper" || target === "thought") return target;
-    throw new TRPCError({ code: "BAD_REQUEST", message: "Choose whether this generic note becomes a Paper or a Thought." });
+    if (target === "paper" || target === "thought" || target === "opportunity") return target;
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Choose whether this generic note becomes a Paper, Thought, or Opportunity." });
   }
   throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Develop this Quick Note into a Note or Paper before publishing it." });
 };
@@ -51,10 +51,10 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
     if (!input.title || !input.body) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Publishing requires a draft or explicit title and body." });
     }
-    if (input.publicationTarget === "proposal") {
+    if (input.publicationTarget === "proposal" || input.publicationTarget === "opportunity") {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
-        message: "Publish a Patronage Proposal from its exact Workspace draft revision."
+        message: "Publish Patronage Proposals and Opportunities from their exact Workspace draft revision."
       });
     }
     const item = await createPost(
@@ -89,9 +89,12 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
       });
     }
 
-    if (target === "paper" || target === "thought" || target === "proposal") {
+    if (target === "paper" || target === "thought" || target === "proposal" || target === "opportunity") {
       if (target === "proposal" && !revision.proposal) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Add funding details before publishing this Patronage Proposal." });
+      }
+      if (target === "opportunity" && !revision.opportunity) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Add opportunity details before publishing this Opportunity." });
       }
       const publishedContent = await prepareWorkspacePublicationAttachments(client, {
         noteId: revision.noteId,
@@ -107,9 +110,10 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
           title: revision.title,
           body: revision.body,
           document: publishedContent.document,
-          kind: target === "proposal" ? "paper" : target,
-          room: target === "proposal" ? "funding" : target === "paper" ? "library" : "amphitheater",
+          kind: target === "proposal" ? "paper" : target === "opportunity" ? "thought" : target,
+          room: target === "proposal" ? "funding" : target === "opportunity" ? "opportunities" : target === "paper" ? "library" : "amphitheater",
           patronage: target === "proposal" ? revision.proposal ?? undefined : undefined,
+          opportunity: target === "opportunity" ? revision.opportunity ?? undefined : undefined,
           authorHandle: revision.ownerHandle,
           attachmentIds: publishedContent.attachmentIds
         },

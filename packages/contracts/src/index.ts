@@ -96,7 +96,29 @@ export const attachmentKindForFile = (contentType: string, fileName = ""): z.inf
 };
 export const followStatusSchema = z.enum(["active", "muted", "blocked"]);
 export const opportunityStatusSchema = z.enum(["open", "closed", "draft"]);
-export const opportunityKindSchema = z.enum(["job", "bounty", "collaboration", "grant", "internship"]);
+export const opportunityPostStatusSchema = z.enum(["open", "closed"]);
+export const opportunityKindSchema = z.enum([
+  "job",
+  "bounty",
+  "collaboration",
+  "grant",
+  "internship",
+  "fellowship",
+  "residency",
+  "open_call",
+  "open_problem",
+  "event"
+]);
+export const opportunityPostInputSchema = z.object({
+  kind: opportunityKindSchema.default("collaboration"),
+  status: opportunityPostStatusSchema.default("open"),
+  location: z.string().trim().min(1).max(160).nullable().default(null),
+  compensation: z.string().trim().min(1).max(160).nullable().default(null),
+  deadline: z.string().date().nullable().default(null)
+});
+export const opportunityPostSchema = opportunityPostInputSchema.extend({
+  applicationCount: z.number().int().nonnegative().default(0)
+});
 export const aiMessageRoleSchema = z.enum(["user", "assistant", "system"]);
 export const resourceTypeSchema = z.enum([
   "post",
@@ -287,6 +309,7 @@ export const workspacePublicationTargetSchema = z.enum([
   "paper",
   "thought",
   "proposal",
+  "opportunity",
   "comment",
   "reply"
 ]);
@@ -450,6 +473,48 @@ export const inquiryAttachmentSchema = z.object({
   createdAt: z.string().optional()
 });
 
+export const opportunityApplicationCommentSchema = z.object({
+  id: z.string().uuid(),
+  applicationId: z.string().uuid(),
+  authorHandle: z.string().trim().min(1).max(80),
+  authorName: z.string().trim().min(1).max(160),
+  body: z.string().trim().min(1).max(8000),
+  createdAt: z.string().datetime()
+});
+
+export const opportunityApplicationSchema = z.object({
+  id: z.string().uuid(),
+  revision: z.number().int().positive(),
+  postId: z.string().trim().min(1).max(240),
+  applicantHandle: z.string().trim().min(1).max(80),
+  applicantName: z.string().trim().min(1).max(160),
+  applicantAffiliation: z.string().max(240),
+  statement: z.string().trim().min(1).max(20000),
+  shortlisted: z.boolean(),
+  attachments: z.array(inquiryAttachmentSchema).max(20).default([]),
+  comments: z.array(opportunityApplicationCommentSchema).max(1000).default([]),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const createOpportunityApplicationInputSchema = z.object({
+  postId: z.string().trim().min(1).max(240),
+  statement: z.string().trim().min(1).max(20000),
+  attachmentIds: z.array(z.string().uuid()).max(20).default([]),
+  actorHandle: z.string().trim().min(1).max(80).optional()
+});
+
+export const updateOpportunityApplicationInputSchema = z.object({
+  shortlisted: z.boolean(),
+  expectedRevision: z.number().int().positive(),
+  actorHandle: z.string().trim().min(1).max(80).optional()
+});
+
+export const createOpportunityApplicationCommentInputSchema = z.object({
+  body: z.string().trim().min(1).max(8000),
+  actorHandle: z.string().trim().min(1).max(80).optional()
+});
+
 export const postAttachmentInputSchema = inquiryAttachmentSchema.pick({
   id: true,
   fileName: true,
@@ -559,6 +624,7 @@ export const inquiryItemSchema = z.object({
   attachments: z.array(inquiryAttachmentSchema).max(100).optional(),
   quote: contentQuoteSchema.optional(),
   patronage: patronageProposalSchema.optional(),
+  opportunity: opportunityPostSchema.optional(),
   saved: z.boolean().optional(),
   savedBy: z.array(z.string()).optional(),
   signaledBy: z.array(z.string()).optional(),
@@ -600,6 +666,7 @@ export const createPostInputSchema = z.object({
   attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.optional(),
   patronage: patronageProposalInputSchema.optional(),
+  opportunity: opportunityPostInputSchema.optional(),
   attachments: z.array(postAttachmentInputSchema).max(10).default([])
 }).superRefine((input, context) => {
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
@@ -611,6 +678,12 @@ export const createPostInputSchema = z.object({
   }
   if (input.room === "funding" && !input.patronage) {
     context.addIssue({ code: "custom", path: ["patronage"], message: "Patronage Hall posts require proposal funding details." });
+  }
+  if (input.opportunity && (input.kind !== "thought" || input.room !== "opportunities")) {
+    context.addIssue({ code: "custom", path: ["opportunity"], message: "Opportunities publish as thought-grade posts in Opportunities." });
+  }
+  if (input.room === "opportunities" && !input.opportunity) {
+    context.addIssue({ code: "custom", path: ["opportunity"], message: "Opportunity posts require application metadata." });
   }
   if (!input.attachmentIds?.length || !input.attachments.length) return;
   const legacyIds = input.attachments.map((attachment) => attachment.id);
@@ -634,10 +707,11 @@ export const updatePostInputSchema = z.object({
   attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.nullable().optional(),
   patronage: patronageProposalInputSchema.optional(),
+  opportunity: opportunityPostInputSchema.optional(),
   actorHandle: z.string().optional()
 }).superRefine((input, context) => {
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
-  if ((input.attachmentIds !== undefined || input.quoteSource !== undefined || input.document !== undefined || input.patronage !== undefined) && input.expectedEditedAt === undefined) {
+  if ((input.attachmentIds !== undefined || input.quoteSource !== undefined || input.document !== undefined || input.patronage !== undefined || input.opportunity !== undefined) && input.expectedEditedAt === undefined) {
     context.addIssue({
       code: "custom",
       path: ["expectedEditedAt"],
@@ -755,7 +829,7 @@ export const createAttachmentUploadInputSchema = z.object({
   fileName: z.string().min(1).max(255),
   contentType: z.string().min(1).max(160),
   byteSize: z.number().int().positive().max(50 * 1024 * 1024),
-  ownerType: z.enum(["post", "comment", "message", "note", "note_comment", "profile"]),
+  ownerType: z.enum(["post", "comment", "message", "note", "note_comment", "opportunity_application", "profile"]),
   ownerId: z.string().trim().min(1).max(200).optional()
 });
 
@@ -795,6 +869,7 @@ const workspaceDocumentFieldsSchema = z.object({
   notebookId: z.string().uuid().nullable().default(null),
   targetId: z.string().trim().min(1).max(240).nullable().default(null),
   proposal: patronageProposalInputSchema.nullable().default(null),
+  opportunity: opportunityPostInputSchema.nullable().default(null),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).default([])
 });
 
@@ -811,6 +886,12 @@ export const createWorkspaceDocumentInputSchema = workspaceDocumentFieldsSchema.
   }
   if (input.publicationTarget !== "proposal" && input.proposal) {
     context.addIssue({ code: "custom", path: ["proposal"], message: "Funding details belong only to Patronage Proposal drafts." });
+  }
+  if (input.publicationTarget === "opportunity" && (!input.opportunity || input.kind !== "thought")) {
+    context.addIssue({ code: "custom", path: ["opportunity"], message: "An Opportunity uses a thought-grade draft with application metadata." });
+  }
+  if (input.publicationTarget !== "opportunity" && input.opportunity) {
+    context.addIssue({ code: "custom", path: ["opportunity"], message: "Opportunity metadata belongs only to Opportunity drafts." });
   }
 });
 
@@ -830,6 +911,12 @@ export const updateWorkspaceDocumentInputSchema = workspaceDocumentFieldsSchema.
   }
   if (input.publicationTarget !== "proposal" && input.proposal) {
     context.addIssue({ code: "custom", path: ["proposal"], message: "Funding details belong only to Patronage Proposal drafts." });
+  }
+  if (input.publicationTarget === "opportunity" && (!input.opportunity || input.kind !== "thought")) {
+    context.addIssue({ code: "custom", path: ["opportunity"], message: "An Opportunity uses a thought-grade draft with application metadata." });
+  }
+  if (input.publicationTarget !== "opportunity" && input.opportunity) {
+    context.addIssue({ code: "custom", path: ["opportunity"], message: "Opportunity metadata belongs only to Opportunity drafts." });
   }
 });
 
@@ -944,7 +1031,7 @@ export const publishNoteInputSchema = z.object({
   title: z.string().trim().min(1).max(240).optional(),
   body: z.string().trim().min(1).max(20000).optional(),
   expectedRevision: z.number().int().positive().optional(),
-  publicationTarget: z.enum(["paper", "thought", "proposal"]).optional(),
+  publicationTarget: z.enum(["paper", "thought", "proposal", "opportunity"]).optional(),
   visibility: z.enum(["private", "community", "public"]).default("public")
 });
 
@@ -1031,6 +1118,14 @@ export type VersionedDocumentContract = z.infer<typeof versionedDocumentSchema>;
 export type ResearchProfileContract = z.infer<typeof researchProfileSchema>;
 export type CreateProfileInputContract = z.infer<typeof createProfileInputSchema>;
 export type InquiryItemContract = z.infer<typeof inquiryItemSchema>;
+export type OpportunityPostInputContract = z.infer<typeof opportunityPostInputSchema>;
+export type OpportunityPostContract = z.infer<typeof opportunityPostSchema>;
+export type OpportunityKindContract = z.infer<typeof opportunityKindSchema>;
+export type OpportunityApplicationContract = z.infer<typeof opportunityApplicationSchema>;
+export type OpportunityApplicationCommentContract = z.infer<typeof opportunityApplicationCommentSchema>;
+export type CreateOpportunityApplicationInputContract = z.infer<typeof createOpportunityApplicationInputSchema>;
+export type UpdateOpportunityApplicationInputContract = z.infer<typeof updateOpportunityApplicationInputSchema>;
+export type CreateOpportunityApplicationCommentInputContract = z.infer<typeof createOpportunityApplicationCommentInputSchema>;
 export type PatronageProposalInputContract = z.infer<typeof patronageProposalInputSchema>;
 export type PatronageProposalContract = z.infer<typeof patronageProposalSchema>;
 export type PatronageSupporterContract = z.infer<typeof patronageSupporterSchema>;

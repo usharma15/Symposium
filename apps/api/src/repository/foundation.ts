@@ -466,12 +466,12 @@ const seedDatabase = async () => {
         `INSERT INTO posts (
           id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
           metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-          tests, forks, saved, saved_by, signaled_by, forked_by, patronage, search_text
+          tests, forks, saved, saved_by, signaled_by, forked_by, patronage, opportunity, search_text
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9,
           $10, $11, $12, $13, $14, $15, $16, $17, $18,
-          $19, $20, $21, $22, $23, $24, $25, $26, $27
+          $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
         )
         ON CONFLICT (id) DO NOTHING`,
         [
@@ -501,6 +501,7 @@ const seedDatabase = async () => {
           JSON.stringify(item.signaledBy ?? []),
           JSON.stringify(item.forkedBy ?? []),
           item.patronage ? JSON.stringify(item.patronage) : null,
+          item.opportunity ? JSON.stringify(item.opportunity) : null,
           searchablePostText({ ...item, authorName: item.author })
         ]
       );
@@ -716,6 +717,7 @@ export const rowToItem = (
     attachments: postAttachments.length ? postAttachments : undefined,
     quote: row.quote ?? undefined,
     patronage: row.patronage ?? undefined,
+    opportunity: row.opportunity ?? undefined,
     saved: row.saved,
     savedBy: json(row.savedBy, []),
     signaledBy: json(row.signaledBy, []),
@@ -792,7 +794,8 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           signaled_by AS "signaledBy",
           forked_by AS "forkedBy",
           quote,
-          patronage
+          patronage,
+          opportunity
          FROM posts
          ORDER BY created_at DESC`
       ),
