@@ -14,6 +14,7 @@ import type {
 import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
 import type { AttachmentUploadHandler } from "@/features/attachments/AttachmentViews";
 import { createClientMutationId, symposiumApi } from "@/features/api/symposiumApiClient";
+import { useCoalescedRefresh } from "@/features/live-sync/useCoalescedRefresh";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 
 export type OpportunityDraftFields = {
@@ -96,6 +97,10 @@ const deadlineLabel = (deadline: string | null) => deadline
   ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${deadline}T12:00:00`))
   : "No deadline";
 
+const applicationDateLabel = (createdAt: string) => new Intl.DateTimeFormat(undefined, {
+  month: "short", day: "numeric", year: "numeric"
+}).format(new Date(createdAt));
+
 export function OpportunityFeedSummary({ item }: { item: InquiryItem }) {
   const opportunity = item.opportunity;
   if (!opportunity) return null;
@@ -160,12 +165,21 @@ export function OpportunityApplyModal({ item, actorHandle, onClose, onUploadAtta
   const [attachments, setAttachments] = useState<InquiryAttachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
-  const upload = async (file: File) => {
-    if (file.type.startsWith("image/") || file.type.startsWith("video/")) { setStatus("Applications accept document attachments only."); return; }
-    setBusy(true); setStatus("Uploading document…");
-    try { const attachment = await onUploadAttachment(file); setAttachments((current) => [...current, attachment]); setStatus("Document attached"); }
-    catch (error) { setStatus(error instanceof Error ? error.message : "Document could not be attached"); }
-    finally { setBusy(false); }
+  const uploadDocuments = async (files: File[]) => {
+    const documents = files.filter((file) => !file.type.startsWith("image/") && !file.type.startsWith("video/"));
+    const rejectedCount = files.length - documents.length;
+    if (!documents.length) { setStatus("Applications accept document attachments only."); return; }
+    setBusy(true);
+    const uploaded: InquiryAttachment[] = [];
+    const failures: string[] = [];
+    for (const [index, file] of documents.entries()) {
+      setStatus(`Uploading document ${index + 1} of ${documents.length}…`);
+      try { uploaded.push(await onUploadAttachment(file)); }
+      catch (error) { failures.push(error instanceof Error ? error.message : `${file.name} could not be attached`); }
+    }
+    if (uploaded.length) setAttachments((current) => [...current, ...uploaded]);
+    setStatus(failures[0] ?? `${uploaded.length} document${uploaded.length === 1 ? "" : "s"} attached${rejectedCount ? `; ${rejectedCount} media file${rejectedCount === 1 ? "" : "s"} skipped` : ""}`);
+    setBusy(false);
   };
   const submit = async (event: FormEvent) => {
     event.preventDefault(); if (!statement.trim() || busy) return;
@@ -183,18 +197,40 @@ export function OpportunityApplyModal({ item, actorHandle, onClose, onUploadAtta
     <header><div><span>Apply to</span><strong>{item.title}</strong></div><button type="button" title="Close" onClick={onClose}><X size={17} /></button></header>
     <label><span>Application note</span><textarea value={statement} onChange={(event) => setStatement(event.target.value)} placeholder="Why this work, what you would bring, and anything the poster should know." rows={9} /></label>
     <div className="opportunity-application-attachments">
-      {attachments.map((attachment) => <span key={attachment.id}><FileText size={14} />{attachment.fileName}<button type="button" title="Remove" onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== attachment.id))}><X size={13} /></button></span>)}
-      <label className="opportunity-attach"><Paperclip size={15} />Attach documents<input type="file" multiple accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.csv,.xls,.xlsx,.ppt,.pptx,.md,.tex" disabled={busy} onChange={(event) => { for (const file of Array.from(event.target.files ?? [])) void upload(file); event.currentTarget.value = ""; }} /></label>
+      <label className="opportunity-attach"><Paperclip size={15} />Attach documents<input type="file" multiple accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.csv,.xls,.xlsx,.ppt,.pptx,.md,.tex" disabled={busy} onChange={(event) => { void uploadDocuments(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} /></label>
+      <div className="opportunity-attachment-list">
+        {attachments.map((attachment) => <span key={attachment.id}><FileText size={14} /><span>{attachment.fileName}</span><button type="button" title="Remove" onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== attachment.id))}><X size={13} /></button></span>)}
+      </div>
     </div>
     {status ? <small>{status}</small> : null}<footer><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={busy || !statement.trim()}>{busy ? "Submitting…" : "Submit application"}</button></footer>
   </form></div>;
 }
 
-export function OpportunityApplicationsView({ item, actorHandle, initialApplicationId, onBack }: {
-  item: InquiryItem; actorHandle: string; initialApplicationId?: string; onBack: () => void;
+function ApplicationDocumentMiniViewer({ application }: { application: OpportunityApplicationContract }) {
+  const [index, setIndex] = useState(0);
+  const attachment = application.attachments[Math.min(index, Math.max(application.attachments.length - 1, 0))] ?? null;
+  if (!attachment) return <div className="opportunity-applicant-doc-empty"><Paperclip size={18} /><span>No documents</span></div>;
+  return <section className="opportunity-applicant-docs" aria-label={`${application.applicantName} documents`}>
+    <a href={attachment.url} target="_blank" rel="noreferrer" title={`Open ${attachment.fileName} in a new tab`}>
+      <FileText size={24} /><strong>{attachment.fileName}</strong><span>Open document</span>
+    </a>
+    {application.attachments.length > 1 ? <footer>
+      <button type="button" aria-label="Previous document" disabled={index === 0} onClick={(event) => { event.stopPropagation(); setIndex((current) => Math.max(0, current - 1)); }}><ChevronLeft size={14} /></button>
+      <span>{index + 1} / {application.attachments.length}</span>
+      <button type="button" aria-label="Next document" disabled={index === application.attachments.length - 1} onClick={(event) => { event.stopPropagation(); setIndex((current) => Math.min(application.attachments.length - 1, current + 1)); }}><ChevronRight size={14} /></button>
+    </footer> : null}
+  </section>;
+}
+
+export function OpportunityApplicationsView({ item, actorHandle, selectedApplicationId, onSelectApplication, onBack }: {
+  item: InquiryItem;
+  actorHandle: string;
+  selectedApplicationId?: string;
+  onSelectApplication: (applicationId: string | null) => void;
+  onBack: () => void;
 }) {
   const [applications, setApplications] = useState<OpportunityApplicationContract[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(initialApplicationId ?? null);
+  const [hasLoadedApplications, setHasLoadedApplications] = useState(false);
   const [shortlistedOnly, setShortlistedOnly] = useState(false);
   const [sort, setSort] = useState<"newest" | "oldest" | "name">("newest");
   const [status, setStatus] = useState("Loading applications…");
@@ -205,15 +241,18 @@ export function OpportunityApplicationsView({ item, actorHandle, initialApplicat
   const refresh = useCallback(async () => {
     try {
       const data = await symposiumApi.request<{ applications: OpportunityApplicationContract[] }>(`/api/posts/${encodeURIComponent(item.id)}/opportunity/applications?actorHandle=${encodeURIComponent(actorHandle)}`, { cache: "no-store" });
-      setApplications(data.applications); setStatus(data.applications.length ? "" : "No applications yet");
-      setSelectedId((current) => current && data.applications.some((application) => application.id === current) ? current : data.applications[0]?.id ?? null);
+      setApplications(data.applications); setHasLoadedApplications(true); setStatus(data.applications.length ? "" : "No applications yet");
     } catch (error) { setStatus(error instanceof Error ? error.message : "Applications could not be loaded"); }
   }, [actorHandle, item.id]);
   useEffect(() => { void refresh(); }, [refresh]);
-  useOpportunityChange(item.id, refresh);
+  const scheduleRefresh = useCoalescedRefresh(() => [refresh()], 120);
+  useOpportunityChange(item.id, scheduleRefresh);
   const filtered = useMemo(() => [...applications].filter((application) => !shortlistedOnly || application.shortlisted).sort((left, right) => sort === "name" ? left.applicantName.localeCompare(right.applicantName) : sort === "oldest" ? left.createdAt.localeCompare(right.createdAt) : right.createdAt.localeCompare(left.createdAt)), [applications, shortlistedOnly, sort]);
-  const selected = applications.find((application) => application.id === selectedId) ?? null;
-  useEffect(() => { setAttachmentIndex(0); setNote(""); }, [selectedId]);
+  const selected = applications.find((application) => application.id === selectedApplicationId) ?? null;
+  useEffect(() => {
+    if (selectedApplicationId && hasLoadedApplications && !selected) onSelectApplication(null);
+  }, [hasLoadedApplications, onSelectApplication, selected, selectedApplicationId]);
+  useEffect(() => { setAttachmentIndex(0); setNote(""); }, [selectedApplicationId]);
   const replace = (application: OpportunityApplicationContract) => setApplications((current) => current.map((entry) => entry.id === application.id ? application : entry));
   const toggleShortlist = async (application: OpportunityApplicationContract) => {
     if (busy) return;
@@ -231,7 +270,7 @@ export function OpportunityApplicationsView({ item, actorHandle, initialApplicat
     try {
       await symposiumApi.request(`/api/posts/${encodeURIComponent(item.id)}/opportunity/applications/${encodeURIComponent(application.id)}`, { method: "DELETE", idempotencyKey: createClientMutationId("opportunity-application-delete"), body: { actorHandle } });
       const remaining = applications.filter((entry) => entry.id !== application.id);
-      setApplications(remaining); setSelectedId(remaining[0]?.id ?? null); setStatus(remaining.length ? "" : "No applications yet"); announceOpportunityChange(item.id);
+      setApplications(remaining); if (selectedApplicationId === application.id) onSelectApplication(null); setStatus(remaining.length ? "" : "No applications yet"); announceOpportunityChange(item.id);
     } catch (error) { setStatus(error instanceof Error ? error.message : "Application could not be deleted"); }
     finally { setBusy(false); }
   };
@@ -245,23 +284,37 @@ export function OpportunityApplicationsView({ item, actorHandle, initialApplicat
     finally { setBusy(false); }
   };
   const activeAttachment = selected?.attachments[attachmentIndex] ?? null;
-  return <div className="opportunity-review-layout">
-    <aside className="opportunity-review-filters"><button className="back-button" type="button" onClick={onBack}><ArrowLeft size={17} />Back to opportunity</button><p className="eyebrow">Applications</p><h1>{item.title}</h1><nav>
-      <button type="button" className={!shortlistedOnly ? "active" : ""} aria-pressed={!shortlistedOnly} onClick={() => setShortlistedOnly(false)}>All <span>{applications.length}</span></button>
-      <button type="button" className={shortlistedOnly ? "active" : ""} aria-pressed={shortlistedOnly} onClick={() => setShortlistedOnly(true)}><Star size={14} />Shortlisted <span>{applications.filter((application) => application.shortlisted).length}</span></button>
-    </nav><label><span>Sort</span><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Applicant name</option></select></label></aside>
-    <main className="opportunity-applicant-feed"><header><div><strong>{shortlistedOnly ? "Shortlisted" : "All applicants"}</strong><span>{filtered.length}</span></div><small>{status}</small></header>
-      {filtered.map((application) => <article key={application.id} className={`${selectedId === application.id ? "selected" : ""}${application.shortlisted ? " shortlisted" : ""}`} onClick={() => setSelectedId(application.id)}>
-        <div className="opportunity-applicant-avatar">{application.applicantName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</div><div><strong>{application.applicantName}</strong><span>{application.applicantAffiliation}</span><p>{application.statement}</p><small>{application.attachments.length} file{application.attachments.length === 1 ? "" : "s"} · {application.comments.length} note{application.comments.length === 1 ? "" : "s"}</small></div>
-        <div className="opportunity-applicant-metrics"><button type="button" title="Shortlist" aria-pressed={application.shortlisted} className={application.shortlisted ? "active" : ""} disabled={busy} onClick={(event) => { event.stopPropagation(); void toggleShortlist(application); }}><Star size={15} /></button><button type="button" title="Delete" disabled={busy} onClick={(event) => { event.stopPropagation(); void remove(application); }}><Trash2 size={15} /></button><button type="button" title="Private notes" onClick={(event) => { event.stopPropagation(); setSelectedId(application.id); }}><MessageCircle size={15} /><span>{application.comments.length}</span></button><a title="Application link" href={`${canonicalRouteHref({ kind: "opportunityApplications", postId: item.id, applicationId: application.id })}`} onClick={(event) => event.stopPropagation()}><Link2 size={15} /></a></div>
-      </article>)}
-    </main>
-    <aside className="opportunity-review-detail">{selected ? <>
-      <header><div><span>Application</span><strong>{selected.applicantName}</strong><small>{selected.applicantHandle}</small></div><div><button type="button" className={selected.shortlisted ? "active" : ""} aria-pressed={selected.shortlisted} disabled={busy} onClick={() => void toggleShortlist(selected)}><Star size={16} />{selected.shortlisted ? "Shortlisted" : "Shortlist"}</button><button type="button" className="danger-action" disabled={busy} onClick={() => void remove(selected)}><Trash2 size={16} />Delete</button></div></header>
-      <p className="opportunity-application-statement">{selected.statement}</p>
-      {activeAttachment ? <section className="opportunity-document-shuffle"><div onClick={() => setPreview(activeAttachment.id)}><FileText size={38} /><strong>{activeAttachment.fileName}</strong><span>Open document</span></div>{selected.attachments.length > 1 ? <footer><button type="button" disabled={attachmentIndex === 0} onClick={() => setAttachmentIndex((index) => index - 1)}><ChevronLeft size={16} /></button><span>{attachmentIndex + 1} / {selected.attachments.length}</span><button type="button" disabled={attachmentIndex === selected.attachments.length - 1} onClick={() => setAttachmentIndex((index) => index + 1)}><ChevronRight size={16} /></button></footer> : null}</section> : <div className="opportunity-no-documents"><Paperclip size={20} />No documents attached</div>}
-      <section className="opportunity-private-notes"><h2>Private review notes</h2>{selected.comments.map((comment) => <div key={comment.id}><strong>{comment.authorName}</strong><p>{comment.body}</p></div>)}<textarea value={note} disabled={busy} onChange={(event) => setNote(event.target.value)} placeholder="Jot down what you noticed while reviewing…" rows={4} /><button type="button" disabled={busy || !note.trim()} onClick={() => void addNote()}>Add note</button></section>
+  const showApplicantFeed = (nextShortlistedOnly = shortlistedOnly) => { setShortlistedOnly(nextShortlistedOnly); onSelectApplication(null); };
+  return <div className="opportunity-review-layout" data-mode={selected ? "detail" : "feed"}>
+    <aside className="opportunity-review-filters"><section><button className="back-button" type="button" onClick={onBack}><ArrowLeft size={17} />Back to opportunity</button><p className="eyebrow">Applications</p><h1>{item.title}</h1><nav>
+      <button type="button" className={!shortlistedOnly ? "active" : ""} aria-pressed={!shortlistedOnly} onClick={() => showApplicantFeed(false)}>All <span>{applications.length}</span></button>
+      <button type="button" className={shortlistedOnly ? "active" : ""} aria-pressed={shortlistedOnly} onClick={() => showApplicantFeed(true)}><Star size={14} fill={shortlistedOnly ? "currentColor" : "none"} />Shortlisted <span>{applications.filter((application) => application.shortlisted).length}</span></button>
+    </nav><label><span>Sort</span><select value={sort} onChange={(event) => { setSort(event.target.value as typeof sort); onSelectApplication(null); }}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Applicant name</option></select></label></section></aside>
+    {selected ? <main className="opportunity-application-detail">
+      <button className="back-button" type="button" onClick={() => onSelectApplication(null)}><ArrowLeft size={17} />Back to applicant feed</button>
+      <article>
+        <header><div className="opportunity-applicant-avatar">{selected.applicantName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</div><div><span>Application</span><h1>{selected.applicantName}</h1><small>{selected.applicantHandle} · Submitted {applicationDateLabel(selected.createdAt)}</small></div></header>
+        {status ? <p className="opportunity-review-status" aria-live="polite">{status}</p> : null}
+        <p className="opportunity-application-statement">{selected.statement}</p>
+        {activeAttachment ? <section className="opportunity-document-shuffle"><div role="button" tabIndex={0} onClick={() => setPreview(activeAttachment.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setPreview(activeAttachment.id); }}><FileText size={38} /><strong>{activeAttachment.fileName}</strong><span>Open document viewer</span></div>{selected.attachments.length > 1 ? <footer><button type="button" disabled={attachmentIndex === 0} onClick={() => setAttachmentIndex((index) => index - 1)}><ChevronLeft size={16} /></button><span>{attachmentIndex + 1} / {selected.attachments.length}</span><button type="button" disabled={attachmentIndex === selected.attachments.length - 1} onClick={() => setAttachmentIndex((index) => index + 1)}><ChevronRight size={16} /></button></footer> : null}</section> : <div className="opportunity-no-documents"><Paperclip size={20} />No documents attached</div>}
+        <section className="opportunity-private-notes" id="application-review-notes"><h2>Private review notes</h2>{selected.comments.map((comment) => <div key={comment.id}><strong>{comment.authorName}</strong><p>{comment.body}</p></div>)}<textarea value={note} disabled={busy} onChange={(event) => setNote(event.target.value)} placeholder="Jot down what you noticed while reviewing…" rows={4} /><button type="button" disabled={busy || !note.trim()} onClick={() => void addNote()}>Add note</button></section>
+      </article>
       {preview ? <AttachmentPreviewModal attachments={selected.attachments} contextTitle={`${selected.applicantName} — application`} attachmentId={preview} onClose={() => setPreview(null)} /> : null}
-    </> : <div className="opportunity-review-empty"><BriefcaseBusiness size={28} /><strong>Select an applicant</strong><span>Their application and documents will open here.</span></div>}</aside>
+    </main> : <main className="opportunity-applicant-feed"><header><div><strong>{shortlistedOnly ? "Shortlisted" : "All applicants"}</strong><span>{filtered.length}</span></div><small aria-live="polite">{status}</small></header>
+      {filtered.map((application) => {
+        const href = canonicalRouteHref({ kind: "opportunityApplications", postId: item.id, applicationId: application.id });
+        return <article key={application.id} className={application.shortlisted ? "shortlisted" : ""}>
+          <a className="opportunity-applicant-open" href={href} aria-label={`Open ${application.applicantName}'s application`} onClick={(event) => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); onSelectApplication(application.id); }} />
+          <div className="opportunity-applicant-copy"><header><div className="opportunity-applicant-avatar">{application.applicantName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</div><div><strong>{application.applicantName}</strong><span>{application.applicantAffiliation || "Affiliation not provided"}</span></div></header><p>{application.statement}</p>
+            <div className="opportunity-applicant-metrics"><button type="button" title={application.shortlisted ? "Remove from shortlist" : "Shortlist"} aria-pressed={application.shortlisted} className={application.shortlisted ? "active" : ""} disabled={busy} onClick={() => void toggleShortlist(application)}><Star size={15} fill={application.shortlisted ? "currentColor" : "none"} /><span>{application.shortlisted ? "Shortlisted" : "Shortlist"}</span></button><button type="button" title="Permanently delete application" disabled={busy} onClick={() => void remove(application)}><Trash2 size={15} /><span>Delete</span></button><button type="button" title="Private review notes" onClick={() => onSelectApplication(application.id)}><MessageCircle size={15} /><span>{application.comments.length}</span></button><a title="Open application in a new tab" href={href} target="_blank" rel="noreferrer"><Link2 size={15} /></a></div>
+          </div>
+          <ApplicationDocumentMiniViewer application={application} />
+        </article>;
+      })}
+      {!filtered.length && !status ? <div className="opportunity-review-empty"><BriefcaseBusiness size={28} /><strong>No matching applicants</strong><span>Try the complete application feed.</span></div> : null}
+    </main>}
+    {selected ? <aside className="opportunity-candidate-side"><section><div className="opportunity-side-heading"><span>Candidate</span><strong className={selected.shortlisted ? "opportunity-candidate-status shortlisted" : "opportunity-candidate-status"}>{selected.shortlisted ? "Shortlisted" : "Reviewing"}</strong></div><dl>
+      <div><dt>Applicant</dt><dd>{selected.applicantName}</dd></div><div><dt>Profile</dt><dd>{selected.applicantHandle}</dd></div><div><dt>Current affiliation</dt><dd>{selected.applicantAffiliation || "Not provided"}</dd></div><div><dt>Degree</dt><dd className="pending">Not available yet</dd></div><div><dt>Experience</dt><dd className="pending">Not available yet</dd></div><div><dt>Submitted</dt><dd>{applicationDateLabel(selected.createdAt)}</dd></div><div><dt>Documents</dt><dd>{selected.attachments.length}</dd></div>
+    </dl><div className="opportunity-candidate-actions"><button type="button" className={selected.shortlisted ? "active" : ""} aria-pressed={selected.shortlisted} disabled={busy} onClick={() => void toggleShortlist(selected)}><Star size={16} fill={selected.shortlisted ? "currentColor" : "none"} />{selected.shortlisted ? "Shortlisted" : "Shortlist"}</button><button type="button" className="danger-action" disabled={busy} onClick={() => void remove(selected)}><Trash2 size={16} />Delete application</button></div></section></aside> : null}
   </div>;
 }

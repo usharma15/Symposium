@@ -29,18 +29,21 @@ export const opportunityApplicationsView = (postId: string): Partial<ViewSnapsho
 export const OpportunityApplicationsStage = ({
   item,
   actorHandle,
-  initialApplicationId,
+  selectedApplicationId,
+  onSelectApplication,
   onBack
 }: {
   item: InquiryItem;
   actorHandle: string;
-  initialApplicationId?: string;
+  selectedApplicationId?: string;
+  onSelectApplication: (applicationId: string | null) => void;
   onBack: (postId: string) => void;
 }) => (
   <OpportunityApplicationsView
     item={item}
     actorHandle={actorHandle}
-    initialApplicationId={initialApplicationId}
+    selectedApplicationId={selectedApplicationId}
+    onSelectApplication={onSelectApplication}
     onBack={() => onBack(item.id)}
   />
 );

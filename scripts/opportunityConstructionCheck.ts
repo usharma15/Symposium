@@ -118,12 +118,27 @@ assert.match(views, /Private review notes/);
 assert.match(views, /Permanently delete/);
 assert.match(views, /AttachmentPreviewModal/);
 assert.match(views, /BroadcastChannel/);
+assert.match(views, /useCoalescedRefresh/);
+assert.match(views, /hasLoadedApplications && !selected/);
+assert.match(views, /ApplicationDocumentMiniViewer/);
+assert.match(views, /target="_blank"/);
+assert.match(views, /fill=\{application\.shortlisted \? "currentColor" : "none"\}/);
+assert.match(views, /opportunity-candidate-side/);
+assert.match(views, /Degree[\s\S]{0,120}Not available yet/);
+assert.match(views, /opportunity-attach[\s\S]{0,500}opportunity-attachment-list/);
+assert.match(views, /const uploadDocuments = async \(files: File\[\]\)/);
+assert.doesNotMatch(views, /data\.applications\[0\]/);
 assert.match(composer, /OpportunityFeedSummary/);
 assert.match(composer, /OpportunityRail/);
 assert.match(workspacePublishing, /target === "opportunity"/);
 assert.match(experience, /ownerType: "opportunity_application"/);
 assert.match(shell, /useOpportunityApplicationComposer/);
 assert.match(styles, /\.opportunity-review-layout/);
+assert.match(styles, /\.detail-layout\.simple-detail\.opportunity-detail \{[^}]*grid-template-columns: minmax\(0, var\(--symposium-feed-width\)\);[^}]*width: min\(var\(--symposium-feed-width\), calc\(100vw - 48px\)\)/);
+assert.match(styles, /\.opportunity-side-inline \{[^}]*left: calc\(100% \+ 16px\);[^}]*width: calc\(\(100vw - var\(--symposium-feed-width\)\) \/ 2 - 40px\)/);
+assert.match(styles, /\.opportunity-review-filters \{[^}]*right: calc\(100% \+ 16px\)/);
+assert.match(styles, /\.opportunity-applicant-feed > article \{[^}]*grid-template-columns: minmax\(0,1fr\) 218px/);
+assert.match(styles, /\.opportunity-attach \{ order: -1;/);
 assert.match(styles, /\.symposium-shell\.night/);
 
 console.log(JSON.stringify({
@@ -136,8 +151,10 @@ console.log(JSON.stringify({
     "hard application deletion with physical storage cleanup",
     "owner-only application review and applicant privacy",
     "canonical review deep links and open-in-new-tab behavior",
-    "local and live synchronization paths",
-    "unified feed, detail rail, apply, and reviewer workspace",
+    "controlled application selection and coalesced live synchronization",
+    "centered Opportunity details with right-margin-aligned metadata rail",
+    "compact applicant feed, document swiper, and candidate detail rail",
+    "fixed-first document attachment selector",
     "day and night maroon semantic treatment",
     "legacy API compatibility without legacy storage writes"
   ]

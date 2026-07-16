@@ -3208,7 +3208,8 @@ function SymposiumExperience({
           <OpportunityApplicationsStage
             item={applicationReviewItem}
             actorHandle={currentProfile.handle}
-            initialApplicationId={selectedApplicationId ?? undefined}
+            selectedApplicationId={selectedApplicationId ?? undefined}
+            onSelectApplication={(applicationId) => navigateView({ selectedApplicationId: applicationId })}
             onBack={(postId) => navigateView(opportunityPostView(postId))}
           />
         ) : selectedProfile ? (
