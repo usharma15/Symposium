@@ -14,19 +14,19 @@ export const resolvePresentedEntryMode = ({
   clerkEnabled,
   authLoaded,
   isSignedIn,
-  profileSynced,
+  accountSynced,
   authError
 }: {
   entryMode: EntryMode;
   clerkEnabled: boolean;
   authLoaded: boolean;
   isSignedIn: boolean;
-  profileSynced: boolean;
+  accountSynced: boolean;
   authError: string;
 }): EntryMode => {
   if (!clerkEnabled || entryMode === "approach") return entryMode;
   if (authError) return "auth";
-  if (!authLoaded || (isSignedIn && !profileSynced)) return "loading";
+  if (!authLoaded || (isSignedIn && !accountSynced)) return "loading";
   if (entryMode === "complete" && !isSignedIn) return "auth";
   return entryMode;
 };

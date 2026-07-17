@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { PROFILE_ACTIVITY_SQL } from "@/apps/api/src/repository/actions";
 import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
 import {
@@ -122,6 +124,16 @@ assert.deepEqual(
   selectProfileActivitySlots("@ada:saved:2", "@ada:saved:2", savedSlots, allSlots),
   savedSlots
 );
+assert.deepEqual(
+  selectProfileActivitySlots("@ada:all:1:loading", "@ada:all:1:canonical", allSlots, savedSlots),
+  savedSlots
+);
+
+const profileViews = readFileSync(path.join(process.cwd(), "features/profiles/ProfileViews.tsx"), "utf8");
+assert.match(profileViews, /aria-busy={!canonicalActivityLoaded}/);
+assert.match(profileViews, /canonicalActivityLoaded \? tabCounts\[tab\.id\] : "—"/);
+assert.match(profileViews, /Counts and post order will appear together when they are authoritative\./);
+assert.match(profileViews, /canonicalActivityError \? \(/);
 
 for (const qualifiedReference of [
   "post_action.revision",
@@ -153,6 +165,8 @@ console.log(
         "self-authored profile actions",
         "activity deduplication",
         "live slot reconciliation",
+        "loading-to-canonical first-frame replacement",
+        "authoritative profile count and order loading boundary",
         "profile tab isolation",
         "public-community authored post visibility",
         "private-community paper discussion visibility",

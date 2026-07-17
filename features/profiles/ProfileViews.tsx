@@ -212,10 +212,12 @@ export function ProfileView({
   activityRevision,
   canonicalActivities,
   canonicalActivityLoaded,
+  canonicalActivityError,
   hiddenCommunityCounts,
   communities,
   onOpenCommunity,
   onActiveTabChange,
+  onRetryActivity,
   onSocialViewChange,
   onEditPost,
   onDeletePost,
@@ -251,10 +253,12 @@ export function ProfileView({
   activityRevision: number;
   canonicalActivities: CanonicalActionActivityContract[];
   canonicalActivityLoaded: boolean;
+  canonicalActivityError: boolean;
   hiddenCommunityCounts: ProfileActivityCountsContract;
   communities: ResearchCommunity[];
   onOpenCommunity: (communityId: string) => void;
   onActiveTabChange: (tab: ProfileTab) => void;
+  onRetryActivity: () => void;
   onSocialViewChange: (view: ProfileSocialView | null) => void;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
@@ -426,7 +430,7 @@ export function ProfileView({
   }, [activeTab, onActiveTabChange, tabs]);
 
   const nextVisibleSlots = tabEntries[activeTab].map(entryToSlot);
-  const visibleSlotContext = `${person.handle}:${activeTab}:${activityRevision}`;
+  const visibleSlotContext = `${person.handle}:${activeTab}:${activityRevision}:${canonicalActivityLoaded ? "canonical" : "loading"}`;
   const visibleSlotMembership = nextVisibleSlots.map((slot) => slot.id).join("|");
 
   useLayoutEffect(() => {
@@ -522,7 +526,7 @@ export function ProfileView({
                 className={activeTab === tab.id ? "active" : ""}
                 onNavigate={() => onActiveTabChange(tab.id)}
               >
-                <strong>{tabCounts[tab.id]}</strong>
+                <strong>{canonicalActivityLoaded ? tabCounts[tab.id] : "—"}</strong>
                 <span>{tab.label}</span>
               </CanonicalLink>
             ))}
@@ -530,8 +534,24 @@ export function ProfileView({
         </div>
       </section>
 
-      <section className="feed-stream profile-stream" aria-label={`${person.name} profile feed`}>
-        {visibleEntries.length ? (
+      <section
+        className="feed-stream profile-stream"
+        aria-busy={!canonicalActivityLoaded}
+        aria-label={`${person.name} profile feed`}
+      >
+        {!canonicalActivityLoaded ? (
+          <div className="empty-feed">
+            <strong>{canonicalActivityError ? "Profile activity could not load." : "Loading profile activity…"}</strong>
+            <span>
+              {canonicalActivityError
+                ? "The rest of Symposium remains available. Retry when you are ready."
+                : "Counts and post order will appear together when they are authoritative."}
+            </span>
+            {canonicalActivityError ? (
+              <button type="button" onClick={onRetryActivity}>Retry activity</button>
+            ) : null}
+          </div>
+        ) : visibleEntries.length ? (
           visibleEntries.map((entry) =>
             entry.type === "comment" ? (
               <ProfileCommentCard

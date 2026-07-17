@@ -28,11 +28,11 @@ const main = async () => {
     clerkEnabled: true,
     authLoaded: true,
     isSignedIn: true,
-    profileSynced: false,
+    accountSynced: false,
     authError: ""
   };
   assert.equal(resolvePresentedEntryMode(returningClerkSession), "loading");
-  assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, profileSynced: true }), "complete");
+  assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, accountSynced: true }), "complete");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, isSignedIn: false }), "auth");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, authError: "Sync failed" }), "auth");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, entryMode: "approach" }), "approach");
@@ -77,8 +77,12 @@ const main = async () => {
   assert.match(component, /if \(shouldCompleteEntryAfterAccountSync\(entryModeRef\.current\)\) \{/);
   assert.doesNotMatch(component, /\[authLoaded, clerkEnabled, entryMode, isSignedIn, syncedClerkUserId, userId\]/);
   assert.match(component, /if \(!clerkEnabled\) \{\s+refreshData\(storedProfileHandle \?\? undefined\)/);
-  assert.match(component, /await Promise\.all\(\[\s+refreshData\(data\.profile\.handle\),\s+refreshProfileActivity/);
+  assert.match(component, /setSignedIn\(true\);[\s\S]*void refreshData\(data\.profile\.handle\)/);
+  assert.doesNotMatch(component, /await refreshData\(data\.profile\.handle\)/);
   assert.match(component, /const presentedEntryMode = resolvePresentedEntryMode\(/);
+  assert.match(component, /profileActivityInFlightRef/);
+  assert.match(component, /window\.setTimeout\(\(\) => controller\.abort\(\), 15_000\)/);
+  assert.match(component, /canonicalActivityError=/);
   assert.match(entryViews, /className={`entry-image \$\{playApproach \? "approaching" : "stationary"\}`}/);
   assert.doesNotMatch(entryViews, /\{playApproach \? <Image/);
 
@@ -96,8 +100,9 @@ const main = async () => {
           "late authentication route preservation",
           "first-session authentication completion",
           "stationary authentication background",
-          "authenticated bootstrap visibility gate",
-          "coalesced initial profile activity",
+          "authenticated identity-only visibility gate",
+          "non-blocking bootstrap and profile activity",
+          "bounded inline profile activity loading",
           "single authenticated bootstrap request"
         ]
       },

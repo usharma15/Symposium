@@ -480,6 +480,7 @@ function SymposiumExperience({
   const [profileActivityByHandle, setProfileActivityByHandle] = useState<
     Record<string, ProfileActivitySnapshot>
   >({});
+  const [profileActivityErrors, setProfileActivityErrors] = useState<Record<string, boolean>>({});
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [editingComment, setEditingComment] = useState<EditingCommentTarget | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewTarget | null>(null);
@@ -510,6 +511,7 @@ function SymposiumExperience({
   const viewDedupeRef = useRef<Record<string, number>>({});
   const activityRecencyRef = useRef(activityRecency);
   const profileActivityByHandleRef = useRef(profileActivityByHandle);
+  const profileActivityInFlightRef = useRef<Record<string, Promise<void> | undefined>>({});
   const canonicalActionRevisionRef = useRef<Record<string, number>>({});
   const pendingCanonicalActionKeysRef = useRef(new Set<string>());
   const profileActivityRequestRef = useRef<Record<string, number>>({});
@@ -524,8 +526,8 @@ function SymposiumExperience({
   const entranceStartedAtRef = useRef<number | null>(null);
   const entryModeRef = useRef(entryMode);
   entryModeRef.current = entryMode;
-  const entryAuthStateRef = useRef({ browserSignedIn: Boolean(isSignedIn), profileSynced: signedIn });
-  entryAuthStateRef.current = { browserSignedIn: Boolean(isSignedIn), profileSynced: signedIn };
+  const entryAuthStateRef = useRef({ accountSynced: signedIn, browserSignedIn: Boolean(isSignedIn) });
+  entryAuthStateRef.current = { accountSynced: signedIn, browserSignedIn: Boolean(isSignedIn) };
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
 
   const reconcileCommittedItem = (
@@ -1497,7 +1499,7 @@ function SymposiumExperience({
     entranceStartedAtRef.current = startedAt;
     const timer = window.setTimeout(() => {
       const latestAuth = entryAuthStateRef.current;
-      if (latestAuth.profileSynced || latestAuth.browserSignedIn) {
+      if (latestAuth.accountSynced || latestAuth.browserSignedIn) {
         window.sessionStorage.setItem("symposium-entry-complete", "true");
         setEntryMode("complete");
         applyInitialRouteState();
@@ -1540,11 +1542,6 @@ function SymposiumExperience({
       profilesRef.current = nextProfiles;
       setProfiles(nextProfiles);
       setCurrentProfile(data.profile);
-      await Promise.all([
-        refreshData(data.profile.handle),
-        refreshProfileActivity(data.profile.handle, data.profile.handle).catch(() => undefined)
-      ]);
-      if (cancelled) return;
       setSignedIn(true);
       setSyncedClerkUserId(userId);
       if (shouldCompleteEntryAfterAccountSync(entryModeRef.current)) {
@@ -1554,6 +1551,9 @@ function SymposiumExperience({
       window.sessionStorage.setItem("symposium-entry-complete", "true");
       window.localStorage.setItem("symposium-profile-handle", data.profile.handle);
       setSyncStatus("Signed in");
+      void refreshData(data.profile.handle).catch(() => {
+        if (!cancelled) setSyncStatus("Using cached data");
+      });
     };
 
     syncAccount().catch((error) => {
@@ -1730,40 +1730,72 @@ function SymposiumExperience({
     });
   };
 
-  const refreshProfileActivity = async (handle: string, actorHandle = currentProfileRef.current.handle) => {
+  const refreshProfileActivity = (handle: string, actorHandle = currentProfileRef.current.handle) => {
     const clean = cleanHandle(handle);
-    if (!clean || clean === "@") return;
+    const cleanActor = cleanHandle(actorHandle);
+    if (!clean || clean === "@") return Promise.resolve();
+    const inFlightKey = `${clean}:${cleanActor}`;
+    const existingRequest = profileActivityInFlightRef.current[inFlightKey];
+    if (existingRequest) return existingRequest;
     const requestId = (profileActivityRequestRef.current[clean] ?? 0) + 1;
     profileActivityRequestRef.current[clean] = requestId;
-    const requestStartRevisions = { ...canonicalActionRevisionRef.current };
-    const entries: CanonicalActionActivityContract[] = [];
-    let hiddenCommunityCounts = emptyProfileActivityCounts();
-    const seenCursors = new Set<string>();
-    let cursor: string | null = null;
-    do {
-      const params = new URLSearchParams({ limit: "500", actorHandle });
-      if (cursor) params.set("cursor", cursor);
-      const data = await symposiumApi.request<Partial<ProfileActivityResponseContract>>(
-        `/api/profiles/${encodeURIComponent(clean)}/activity?${params.toString()}`,
-        { cache: "no-store" }
-      );
-      entries.push(...(data.entries ?? []).filter(isCanonicalActionActivity));
-      if (data.hiddenCommunityCounts) hiddenCommunityCounts = data.hiddenCommunityCounts;
-      const nextCursor = typeof data.nextCursor === "string" ? data.nextCursor : null;
-      if (!nextCursor || seenCursors.has(nextCursor)) {
-        cursor = null;
-      } else {
-        seenCursors.add(nextCursor);
-        cursor = nextCursor;
-      }
-    } while (cursor);
+    setProfileActivityErrors((current) => {
+      if (!current[clean]) return current;
+      const next = { ...current };
+      delete next[clean];
+      return next;
+    });
 
-    if (profileActivityRequestRef.current[clean] !== requestId) return;
-    replaceCanonicalProfileActivity(clean, {
-      entries,
-      nextCursor: null,
-      hiddenCommunityCounts
-    }, requestStartRevisions);
+    const request = (async () => {
+      const requestStartRevisions = { ...canonicalActionRevisionRef.current };
+      const entries: CanonicalActionActivityContract[] = [];
+      let hiddenCommunityCounts = emptyProfileActivityCounts();
+      const seenCursors = new Set<string>();
+      let cursor: string | null = null;
+      do {
+        const params = new URLSearchParams({ limit: "500", actorHandle: cleanActor });
+        if (cursor) params.set("cursor", cursor);
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 15_000);
+        try {
+          const data = await symposiumApi.request<Partial<ProfileActivityResponseContract>>(
+            `/api/profiles/${encodeURIComponent(clean)}/activity?${params.toString()}`,
+            { cache: "no-store", signal: controller.signal }
+          );
+          entries.push(...(data.entries ?? []).filter(isCanonicalActionActivity));
+          if (data.hiddenCommunityCounts) hiddenCommunityCounts = data.hiddenCommunityCounts;
+          const nextCursor = typeof data.nextCursor === "string" ? data.nextCursor : null;
+          if (!nextCursor || seenCursors.has(nextCursor)) {
+            cursor = null;
+          } else {
+            seenCursors.add(nextCursor);
+            cursor = nextCursor;
+          }
+        } finally {
+          window.clearTimeout(timeout);
+        }
+      } while (cursor);
+
+      if (profileActivityRequestRef.current[clean] !== requestId) return;
+      replaceCanonicalProfileActivity(clean, {
+        entries,
+        nextCursor: null,
+        hiddenCommunityCounts
+      }, requestStartRevisions);
+    })().catch((error) => {
+      if (profileActivityRequestRef.current[clean] === requestId) {
+        setProfileActivityErrors((current) => ({ ...current, [clean]: true }));
+      }
+      throw error;
+    });
+
+    const trackedRequest = request.finally(() => {
+      if (profileActivityInFlightRef.current[inFlightKey] === trackedRequest) {
+        delete profileActivityInFlightRef.current[inFlightKey];
+      }
+    });
+    profileActivityInFlightRef.current[inFlightKey] = trackedRequest;
+    return trackedRequest;
   };
 
   const stageOptimisticCanonicalActivity = (
@@ -1834,13 +1866,13 @@ function SymposiumExperience({
   useEffect(() => {
     if (!signedIn || !currentProfile.handle) return;
     if (profileActivityByHandleRef.current[currentProfile.handle]?.loaded) return;
-    void refreshProfileActivity(currentProfile.handle, currentProfile.handle);
+    void refreshProfileActivity(currentProfile.handle, currentProfile.handle).catch(() => undefined);
   }, [currentProfile.handle, signedIn]);
 
   useEffect(() => {
     if (!signedIn || !selectedProfile?.handle) return;
     if (profileActivityByHandleRef.current[selectedProfile.handle]?.loaded) return;
-    void refreshProfileActivity(selectedProfile.handle, currentProfile.handle);
+    void refreshProfileActivity(selectedProfile.handle, currentProfile.handle).catch(() => undefined);
   }, [currentProfile.handle, selectedProfile?.handle, signedIn]);
 
   const updateCommentSegmentStack = (key: string, stack: string[]) => {
@@ -3226,7 +3258,7 @@ function SymposiumExperience({
     clerkEnabled,
     authLoaded,
     isSignedIn: Boolean(isSignedIn),
-    profileSynced: signedIn,
+    accountSynced: signedIn,
     authError
   });
 
@@ -3362,10 +3394,14 @@ function SymposiumExperience({
             activityRevision={profileActivityRevision}
             canonicalActivities={profileActivityByHandle[selectedProfile.handle]?.entries ?? []}
             canonicalActivityLoaded={profileActivityByHandle[selectedProfile.handle]?.loaded ?? false}
+            canonicalActivityError={Boolean(profileActivityErrors[selectedProfile.handle])}
             hiddenCommunityCounts={profileActivityByHandle[selectedProfile.handle]?.hiddenCommunityCounts ?? emptyProfileActivityCounts()}
             communities={communities}
             onOpenCommunity={openCommunity}
             onActiveTabChange={changeProfileTab}
+            onRetryActivity={() => {
+              void refreshProfileActivity(selectedProfile.handle, currentProfile.handle).catch(() => undefined);
+            }}
             onSocialViewChange={changeProfileSocialView}
             onEditPost={setEditingPost}
             onDeletePost={deletePost}
