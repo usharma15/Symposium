@@ -73,6 +73,9 @@ button {
 .entry-image {
   object-fit: cover;
   transform-origin: 50% 82%;
+}
+
+.entry-image.approaching {
   animation: stairApproach 5s ease-in-out forwards;
 }
 

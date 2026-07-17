@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { entryModeForBrowserSession } from "@/features/entrance/browserSession";
+import {
+  entryModeForBrowserSession,
+  shouldCompleteEntryAfterAccountSync
+} from "@/features/entrance/browserSession";
 import {
   persistCachedBootstrap,
   readCachedBootstrapSnapshot,
@@ -15,6 +18,10 @@ const main = async () => {
   assert.equal(entryModeForBrowserSession(null), "loading");
   assert.equal(entryModeForBrowserSession(true), "approach");
   assert.equal(entryModeForBrowserSession(false), "complete");
+  assert.equal(shouldCompleteEntryAfterAccountSync("loading"), true);
+  assert.equal(shouldCompleteEntryAfterAccountSync("approach"), true);
+  assert.equal(shouldCompleteEntryAfterAccountSync("auth"), true);
+  assert.equal(shouldCompleteEntryAfterAccountSync("complete"), false);
   assert.equal(readCachedBootstrapSnapshot(storage("not-json")), null);
 
   const cachedProfile = { ...profile, handle: "@cached", name: "Cached researcher" };
@@ -45,6 +52,7 @@ const main = async () => {
 
   const component = await readFile(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
   const symposiumPage = await readFile(path.join(process.cwd(), "app/SymposiumPage.tsx"), "utf8");
+  const entryViews = await readFile(path.join(process.cwd(), "features/shell/SymposiumShellViews.tsx"), "utf8");
   assert.doesNotMatch(symposiumPage, /cookies\(\)/);
   assert.match(symposiumPage, /initialShouldPlayEntrance={null}/);
   assert.match(symposiumPage, /liveBackendUrl={liveBackendUrl}/);
@@ -52,7 +60,9 @@ const main = async () => {
   assert.match(component, /const sessionEntryMode = entryModeForBrowserSession\(shouldPlayEntrance\);/);
   assert.match(component, /if \(sessionEntryMode === "complete"\) \{\s+applyInitialRouteState\(\);/);
   assert.match(component, /startedAt \+ 5000 - Date\.now\(\)/);
-  assert.match(component, /if \(entryMode !== "complete" && shouldPlayEntrance === false\) \{/);
+  assert.match(component, /if \(shouldCompleteEntryAfterAccountSync\(entryMode\)\) \{/);
+  assert.match(entryViews, /className={`entry-image \$\{playApproach \? "approaching" : "stationary"\}`}/);
+  assert.doesNotMatch(entryViews, /\{playApproach \? <Image/);
 
   console.log(
     JSON.stringify(
@@ -65,7 +75,9 @@ const main = async () => {
           "cached bootstrap selection",
           "non-fatal cached-bootstrap quota pressure",
           "canonical route hydration",
-          "late authentication route preservation"
+          "late authentication route preservation",
+          "first-session authentication completion",
+          "stationary authentication background"
         ]
       },
       null,

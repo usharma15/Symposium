@@ -77,7 +77,7 @@ export function EntrySequence({
 
     <main className={`entry-sequence ${theme}`} aria-label={playApproach ? "Approaching Symposium" : "Loading Symposium"}>
 
-      {playApproach ? <Image
+      <Image
 
         src={entranceRender}
 
@@ -89,13 +89,13 @@ export function EntrySequence({
 
         sizes="100vw"
 
-        className="entry-image"
+        className={`entry-image ${playApproach ? "approaching" : "stationary"}`}
 
-      /> : null}
+      />
 
       <RenderPreloadDeck sources={preloadRenders} />
 
-      {playApproach ? <div className="entry-veil" /> : null}
+      <div className="entry-veil" />
 
       {playApproach ? <div className="entry-stair-lines" aria-hidden="true">
 

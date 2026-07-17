@@ -181,7 +181,10 @@ import { opportunityApplicationsView, opportunityPostView, OpportunityApplicatio
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { useCanonicalBrowserHistory } from "@/features/navigation/useCanonicalBrowserHistory";
 import { useBrowserSessionEntrance } from "@/features/entrance/useBrowserSessionEntrance";
-import { entryModeForBrowserSession } from "@/features/entrance/browserSession";
+import {
+  entryModeForBrowserSession,
+  shouldCompleteEntryAfterAccountSync
+} from "@/features/entrance/browserSession";
 import {
   normalizeClientSeedTimes,
   preservePublishedPosition
@@ -1537,7 +1540,7 @@ function SymposiumExperience({
       setCurrentProfile(data.profile);
       setSignedIn(true);
       setSyncedClerkUserId(userId);
-      if (entryMode !== "complete" && shouldPlayEntrance === false) {
+      if (shouldCompleteEntryAfterAccountSync(entryMode)) {
         setEntryMode("complete");
         applyInitialRouteState();
       }
