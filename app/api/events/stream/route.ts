@@ -1,4 +1,4 @@
-import { proxyLiveBackendStream } from "@/lib/liveBackendClient";
+import { liveBackendPath } from "@/lib/liveBackendClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,8 +64,16 @@ export async function GET(request: Request) {
     url.searchParams.set("cursor", lastEventId);
   }
   const query = url.searchParams.toString();
-  const live = await proxyLiveBackendStream(`/v1/events/stream${query ? `?${query}` : ""}`);
-  if (live) return live;
+  const directUrl = liveBackendPath(`/v1/events/stream${query ? `?${query}` : ""}`);
+  if (directUrl) {
+    return new Response(null, {
+      status: 307,
+      headers: {
+        "Cache-Control": "no-store",
+        Location: directUrl
+      }
+    });
+  }
 
   return new Response(heartbeatStream(url.searchParams.get("cursor"), request.signal), {
     headers: {

@@ -2,7 +2,6 @@ import { getPool, hasDatabase } from "../db/client";
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { publishLocalLiveEvent } from "./liveBus";
-import { getRedis } from "./redis";
 
 export type LiveEvent = {
   kind: string;
@@ -106,16 +105,7 @@ export const publishStoredEvent = async (stored: StoredLiveEvent) => {
   try {
     publishLocalLiveEvent(stored);
   } catch (error) {
-    console.warn("SYMPOSIUM local event publish failed; durable polling will recover it.", error);
-  }
-
-  const redis = getRedis();
-  if (redis) {
-    try {
-      await redis.publish("symposium:events", stored);
-    } catch (error) {
-      console.warn("SYMPOSIUM Redis event publish failed.", error);
-    }
+    console.warn("SYMPOSIUM local event publish failed; cursor-based replay will recover it on reconnect.", error);
   }
 
   return stored;

@@ -133,7 +133,7 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
     },
     requiredCheck(
       "redis",
-      "Upstash Redis",
+      "Upstash authenticated-write limiter",
       hasRedisConfig,
       strict,
       hasRedisConfig ? "configured" : "missing"

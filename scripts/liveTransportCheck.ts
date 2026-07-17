@@ -59,9 +59,10 @@ assert.equal(
 assert.equal(attempts, 2);
 
 const root = process.cwd();
-const [clientTransport, apiStreamRoute, maintenance, controller, postRepository, commentRepository] = await Promise.all([
+const [clientTransport, apiStreamRoute, nextStreamRoute, maintenance, controller, postRepository, commentRepository] = await Promise.all([
   readFile(path.join(root, "features/live-sync/useLiveEventStream.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/routes/eventRoutes.ts"), "utf8"),
+  readFile(path.join(root, "app/api/events/stream/route.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/maintenance.ts"), "utf8"),
   readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8"),
   readFile(path.join(root, "apps/api/src/repository/posts.ts"), "utf8"),
@@ -71,6 +72,9 @@ assert.match(clientTransport, /consumeLiveEventStream/);
 assert.match(clientTransport, /document\.hidden/);
 assert.match(clientTransport, /directBackendUrl \? `\$\{directBackendUrl\}\/v1\/events`/);
 assert.doesNotMatch(apiStreamRoute, /setInterval\(\(\) => \{\s+void flushMissedEvents/);
+assert.match(nextStreamRoute, /status: 307/);
+assert.match(nextStreamRoute, /Location: directUrl/);
+assert.doesNotMatch(nextStreamRoute, /proxyLiveBackendStream/);
 assert.doesNotMatch(maintenance, /storageDeletionIntervalMs/);
 assert.match(controller, /mergeLiveMetricPatch/);
 assert.doesNotMatch(controller, /if \(synced\) scheduleLiveRefresh\(\)/);
@@ -83,6 +87,7 @@ console.log(JSON.stringify({ ok: true, checked: [
   "encoded streaming cursor",
   "chunk-safe authenticated SSE parsing",
   "direct browser-to-backend live transport",
+  "legacy Vercel stream redirect without a long-lived function",
   "background-tab transport suspension",
   "connect-only durable event replay",
   "idle-safe database maintenance",

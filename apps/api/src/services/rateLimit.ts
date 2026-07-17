@@ -8,6 +8,10 @@ type MemoryBucket = {
   resetAt: number;
 };
 
+type RateLimitOptions = {
+  shared?: boolean;
+};
+
 const memoryBuckets = new Map<string, MemoryBucket>();
 let memoryOperations = 0;
 let lastRedisWarningAt = 0;
@@ -20,10 +24,11 @@ export const rateLimit = async (
   actor: Actor,
   scope: string,
   limit: number,
-  windowSeconds: number
+  windowSeconds: number,
+  options: RateLimitOptions = {}
 ) => {
   const key = `rate:${scope}:${actor.handle ?? actor.clerkUserId ?? clientIp(request)}`;
-  const redis = getRedis();
+  const redis = options.shared ? getRedis() : null;
 
   if (redis) {
     try {

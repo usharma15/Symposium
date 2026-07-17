@@ -20,9 +20,11 @@ const t = initTRPC.context<ApiContext>().create();
 export const router = t.router;
 export const publicProcedure = t.procedure;
 
-export const authedProcedure = t.procedure.use(async ({ ctx, next }) => {
+export const authedProcedure = t.procedure.use(async ({ ctx, next, type }) => {
   const actor = requireActor(ctx.actor);
-  await rateLimit(ctx.req, actor, "write", 120, 60);
+  if (type === "mutation") {
+    await rateLimit(ctx.req, actor, "write", 120, 60, { shared: true });
+  }
   return next({ ctx: { ...ctx, actor } });
 });
 

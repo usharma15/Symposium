@@ -76,33 +76,3 @@ export const proxyLiveBackend = async (path: string, options: LiveBackendOptions
     return liveBackendUnavailableResponse();
   }
 };
-
-export const proxyLiveBackendStream = async (path: string) => {
-  const url = liveBackendPath(path);
-  if (!url) {
-    if (localDataFallbackAllowed()) return null;
-
-    console.error("SYMPOSIUM_API_URL is required when running the Next application in production.");
-    return liveBackendUnavailableResponse();
-  }
-
-  try {
-    const token = clerkEnabled ? await (await auth()).getToken().catch(() => null) : null;
-    const response = await fetch(url, {
-      headers: {
-        Accept: "text/event-stream",
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
-      cache: "no-store"
-    });
-
-    const headers = liveBackendResponseHeaders(response, "text/event-stream; charset=utf-8");
-    headers.set("Cache-Control", "no-cache, no-transform");
-    headers.set("Connection", "keep-alive");
-    headers.set("X-Accel-Buffering", "no");
-    return new Response(response.body, { status: response.status, headers });
-  } catch (error) {
-    console.error("SYMPOSIUM live event stream unavailable.", error);
-    return liveBackendUnavailableResponse();
-  }
-};

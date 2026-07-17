@@ -131,7 +131,7 @@ With `SYMPOSIUM_STRICT_ENV=true`, the API refuses to start unless the live provi
 - non-local `SYMPOSIUM_WEB_ORIGINS`.
 - authenticated writes enabled.
 - dev actor fallback disabled.
-- Upstash Redis config.
+- Upstash Redis config for distributed authenticated-mutation limiting.
 - Cloudflare R2 config.
 - a public R2 delivery base URL for post and profile attachments.
 - owner Clerk user mapping for the reserved `@udayan` handle.
@@ -156,11 +156,13 @@ npm run api:smoke:writes
 
 This creates verification posts, comments, post actions, community calls, opportunities, note blocks, note publications, and assistant messages. Use it only against environments where test writes are acceptable.
 
-`/healthz` is a cheap process liveness check. `/readyz` is the safer deployment-readiness check: it verifies the database connection and migration position, reports the maintenance worker and release identifier, and checks the provider boundary without returning secret values. In strict live mode it expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash, R2, a public R2 delivery URL, and the reserved owner handle binding. The AI tablet provider is reported separately because the fallback response is valid until model execution policy is finalized.
+`/healthz` is a cheap process liveness check. `/readyz` is the safer deployment-readiness check: it verifies the database connection and migration position, reports the maintenance worker and release identifier, and checks the provider boundary without returning secret values. Neither endpoint spends an Upstash command. In strict live mode readiness expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash for shared mutation limits, R2, a public R2 delivery URL, and the reserved owner handle binding. The AI tablet provider is reported separately because the fallback response is valid until model execution policy is finalized.
 
 ## Integrity Architecture
 
 The durable API follows one mutation rule: domain changes, idempotency receipts, audit records, and durable live events are committed in the same Postgres transaction. Live publication happens only after commit. The active process bus delivers new events without polling Postgres; the initial stream connection and every reconnect replay durable events from the last cursor.
+
+The production browser opens the authenticated SSE stream directly against Render. The legacy Next stream route is a short `307` compatibility redirect, so stale clients cannot leave a Vercel function running until its runtime ceiling.
 
 Passive post and comment views return their canonical item directly to the initiating browser. Public action events carry revisioned metric patches, so read, save, signal, and fork convergence does not download the full bootstrap snapshot.
 
@@ -175,7 +177,7 @@ The current guarantees are:
 - Workspace, note, block, AI-conversation, message-conversation, notification, private-community, Office, and draft access is checked server-side against the authenticated actor. Unknown and foreign resources deliberately collapse to `404` where existence should not be disclosed.
 - Public bootstrap/search/profile/community projections remove email addresses, private save membership, privacy-disabled action membership, private-community member lists, and Office/draft content. Public live events contain only refresh-safe identifiers; personalized payloads use explicit event audiences.
 - Event cursors are strictly parsed, event delivery is audience-filtered in both durable polling and local streaming, slow SSE clients are dropped, and both SSE and Socket.IO connections have process/client/room/buffer bounds.
-- The API caps JSON bodies at 1 MiB, constrains route parameter length, sets request timeouts, redacts authorization/cookie headers from logs, returns generic `500` responses, applies no-store API caching, and uses a shared Redis rate limiter with a bounded process-local outage fallback.
+- The API caps JSON bodies at 1 MiB, constrains route parameter length, sets request timeouts, redacts authorization/cookie headers from logs, returns generic `500` responses, and applies no-store API caching. Every request receives a bounded process-local abuse limit; only authenticated mutations spend shared Redis commands. Public reads, health checks, readiness checks, event reads, and stream connections never touch Redis.
 - Migration `0012_operational_integrity` backfills event audiences, removes impossible self-follows and duplicate publication links, normalizes legacy enum values conservatively, adds database checks, and adds compound/GIN indexes for the live read paths.
 - Migration `0013_authoritative_entity_revisions` adds monotonic revisions to posts, comments, profiles, and follow relationships so clients can deterministically reject stale snapshots across tabs, browsers, devices, bootstrap refreshes, and delayed live events.
 - Migration `0014_note_revision_guards` adds authoritative note and note-block revisions. Existing-note writes must supply the revisions they loaded, so delayed autosaves fail with a conflict instead of overwriting newer work.
@@ -220,7 +222,7 @@ Implemented now:
 - Render-ready API service
 - Clerk-aware actor layer with server-bound profile ownership
 - Neon/Postgres schema and migrations
-- shared Upstash rate limiting with a bounded local outage fallback
+- process-local request limiting on every route plus shared Upstash limiting only for authenticated mutations, with a bounded local outage fallback
 - transactionally staged database events and audit records with after-commit live publication and durable SSE recovery
 - end-to-end idempotency keys for posts, comments, profiles, follows, canonical actions, calls, opportunities, messages, note blocks/publications, assistant messages, and upload preparation
 - explicit public/private/community live-event audiences and privacy-safe read projections
@@ -256,7 +258,7 @@ Current provider-plan boundaries:
 
 - The public site currently uses Clerk development keys. Readiness reports this as a warning until the Clerk application and Vercel/Render environment variables are migrated to production keys.
 - Neon Free provides a six-hour point-in-time restore window. One manual production snapshot is retained without expiry; scheduled snapshots require a paid plan.
-- Upstash Redis is an acceleration layer for shared rate limits and event publication, not a source of truth. Eviction is disabled, and cursor-based Postgres replay recovers live events when a client initially connects or reconnects.
+- Upstash Redis is used only for distributed authenticated-mutation rate limits, never for ordinary reads, health checks, streaming, or event publication. It is not a source of truth. Durable Postgres cursors plus the active-process event bus recover live events when a client initially connects or reconnects.
 - R2 currently delivers public attachment objects through Cloudflare's rate-limited `r2.dev` URL. Moving to a production custom domain requires choosing a domain on a Cloudflare-managed zone.
 
 ## First Live Provider Sequence

@@ -101,7 +101,7 @@ const backend = section([
   ),
   check(
     "UPSTASH_REDIS_REST_URL|UPSTASH_REDIS_REST_TOKEN",
-    "Upstash Redis",
+    "Upstash authenticated-write limiter",
     hasRedisConfig,
     hasRedisConfig,
     hasRedisConfig ? "configured" : "missing"

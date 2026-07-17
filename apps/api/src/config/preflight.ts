@@ -76,7 +76,7 @@ export const deploymentEnvIssues = () => {
   }
 
   if (!hasRedisConfig) {
-    issues.push("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required for shared live rate limits/events.");
+    issues.push("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required for shared authenticated-mutation rate limits.");
   }
 
   if (!hasR2Config) {
