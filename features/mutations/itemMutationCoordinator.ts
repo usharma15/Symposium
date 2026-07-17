@@ -21,7 +21,9 @@ import {
 
 const sameValue = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
-export const createItemMutationCoordinator = <T extends { id: string } & RevisionedEntity>() => {
+export const createItemMutationCoordinator = <T extends { id: string } & RevisionedEntity>(options?: {
+  equalRevisionProjectionChanged?: (incoming: T, current: T) => boolean;
+}) => {
   const guard = createItemMutationGuard();
   const crossTab = createCrossTabItemSync<T>();
 
@@ -72,7 +74,8 @@ export const createItemMutationCoordinator = <T extends { id: string } & Revisio
       const current = currentById.get(item.id);
       if (!current) return item;
       const comparison = compareEntityRevisions(item, current);
-      if (comparison === 0 || (comparison === null && sameValue(item, current))) return current;
+      if (comparison === 0 && !options?.equalRevisionProjectionChanged?.(item, current)) return current;
+      if (comparison === null && sameValue(item, current)) return current;
       return item;
     });
   };

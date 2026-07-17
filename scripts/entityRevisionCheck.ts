@@ -65,6 +65,16 @@ const stableRefresh = first.reconcileRefresh(
 );
 assert.equal(stableRefresh[0], equalRevisionCurrent);
 
+const projectionAware = createItemMutationCoordinator<Item>({
+  equalRevisionProjectionChanged: (incoming, current) => incoming.value !== current.value
+});
+const equalRevisionProjection = projectionAware.reconcileRefresh(
+  [{ id: "post-3", revision: 4, value: "new viewer projection" }],
+  [{ id: "post-3", revision: 4, value: "cached viewer projection" }],
+  projectionAware.capture()
+);
+assert.equal(equalRevisionProjection[0]?.value, "new viewer projection");
+
 console.log(
   JSON.stringify(
     {
@@ -77,7 +87,8 @@ console.log(
         "newer canonical immediate convergence",
         "newer canonical pending-mutation convergence",
         "late server-event rejection",
-        "equal-revision referential stability"
+        "equal-revision referential stability",
+        "equal-revision viewer projection convergence"
       ]
     },
     null,

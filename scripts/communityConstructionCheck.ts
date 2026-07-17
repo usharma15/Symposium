@@ -15,7 +15,7 @@ import {
   communityPostIsExternallyDiscoverable
 } from "../features/communities/communityPolicy";
 import { getCommunityItems } from "../features/discovery/discoveryPolicy";
-import { projectCommunityItemsForViewer } from "../lib/communityContentProjection";
+import { communityViewerProjectionChanged, projectCommunityItemsForViewer } from "../lib/communityContentProjection";
 import { communityActivityItems, researchCommunities } from "../lib/mockData";
 import { listLocalCommunityMembers } from "../lib/localCommunityStore";
 import { hiddenCommunityActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "../lib/profileActivity";
@@ -165,6 +165,11 @@ assert.equal(projected[1]?.comments.length, 2, "A private-community paper's comp
 assert.equal(projected[1]?.comments[0]?.replies?.length, 1, "A private-community paper's nested replies must remain public.");
 assert.equal(projected[1]?.comments[0]?.quote?.available, false, "Private non-paper material quoted inside a public paper comment must be unavailable externally.");
 assert.equal(projected[1]?.comments[1]?.quote?.available, true, "Comments in a public paper discussion must remain available as quote sources.");
+assert.equal(
+  communityViewerProjectionChanged({ ...projected[1]!, comments: [] }, projected[1]!),
+  true,
+  "Equal-revision cached items must not mask a newly public paper discussion projection."
+);
 
 const ownerProjected = projectCommunityItemsForViewer([privateThought, publicPaper], [community], "@researcher");
 assert.equal(ownerProjected.find((entry) => entry.id === privateThought.id)?.communityAccess, "activity-only", "Users must retain their own private-community profile activity.");

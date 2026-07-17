@@ -3,6 +3,25 @@ import type { InquiryComment, InquiryItem, ResearchCommunity } from "@/lib/mockD
 import { unavailableContentQuote } from "@/lib/contentQuotes";
 import { itemHasProfileActivity, profileActivityComments } from "@/lib/profileActivity";
 
+const commentProjection = (comment: InquiryComment): unknown => ({
+  id: comment.id,
+  revision: comment.revision,
+  deletedAt: comment.deletedAt,
+  quoteAvailable: comment.quote?.available,
+  replies: (comment.replies ?? []).map(commentProjection)
+});
+
+export const communityViewerProjectionChanged = (incoming: InquiryItem, current: InquiryItem) =>
+  JSON.stringify({
+    communityAccess: incoming.communityAccess,
+    quoteAvailable: incoming.quote?.available,
+    comments: incoming.comments.map(commentProjection)
+  }) !== JSON.stringify({
+    communityAccess: current.communityAccess,
+    quoteAvailable: current.quote?.available,
+    comments: current.comments.map(commentProjection)
+  });
+
 const findComment = (comments: InquiryComment[], commentId: string): InquiryComment | null => {
   for (const comment of comments) {
     if (comment.id === commentId) return { ...comment, replies: [] };

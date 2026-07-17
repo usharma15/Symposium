@@ -144,6 +144,7 @@ import {
 } from "@/features/quotes/QuoteViews";
 import { resolveQuoteLink, type QuoteLinkResolver } from "@/features/quotes/quoteLinks";
 import { invalidateQuotedSource, resolveLocalContentQuote } from "@/lib/contentQuotes";
+import { communityViewerProjectionChanged } from "@/lib/communityContentProjection";
 import { preservePostSemanticProjection } from "@/lib/postSemantics";
 import { selectVisibleFeedItems } from "@/features/feeds/feedVisibility";
 import {
@@ -476,7 +477,7 @@ function SymposiumExperience({
   const profileActivityRequestRef = useRef<Record<string, number>>({});
   const retryMutationRegistryRef = useRef(createRetryMutationRegistry());
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
-  const itemMutationCoordinatorRef = useRef(createItemMutationCoordinator<InquiryItem>());
+  const itemMutationCoordinatorRef = useRef(createItemMutationCoordinator<InquiryItem>({ equalRevisionProjectionChanged: communityViewerProjectionChanged }));
   const profileMutationCoordinatorRef = useRef(createItemMutationCoordinator<ProfileSyncEntity>());
   const followMutationCoordinatorRef = useRef(createFollowMutationCoordinator());
   const lastPersistedItemsRef = useRef<InquiryItem[]>(inquiryItems);
