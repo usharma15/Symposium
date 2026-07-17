@@ -183,6 +183,7 @@ import { useCanonicalBrowserHistory } from "@/features/navigation/useCanonicalBr
 import { useBrowserSessionEntrance } from "@/features/entrance/useBrowserSessionEntrance";
 import {
   entryModeForBrowserSession,
+  resolvePresentedEntryMode,
   shouldCompleteEntryAfterAccountSync
 } from "@/features/entrance/browserSession";
 import {
@@ -521,6 +522,8 @@ function SymposiumExperience({
   const lastPersistedProfilesRef = useRef<ProfileSyncEntity[]>([]);
   const authenticatedProfileHandleRef = useRef<string | null>(null);
   const entranceStartedAtRef = useRef<number | null>(null);
+  const entryModeRef = useRef(entryMode);
+  entryModeRef.current = entryMode;
   const entryAuthStateRef = useRef({ browserSignedIn: Boolean(isSignedIn), profileSynced: signedIn });
   entryAuthStateRef.current = { browserSignedIn: Boolean(isSignedIn), profileSynced: signedIn };
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
@@ -1455,9 +1458,11 @@ function SymposiumExperience({
       window.sessionStorage.setItem("symposium-entry-complete", "true");
     }
 
-    refreshData(storedProfileHandle ?? undefined).catch(() => {
-      setSyncStatus("Using seed data");
-    });
+    if (!clerkEnabled) {
+      refreshData(storedProfileHandle ?? undefined).catch(() => {
+        setSyncStatus("Using seed data");
+      });
+    }
   }, [shouldPlayEntrance]);
 
   useEffect(() => {
@@ -1514,10 +1519,6 @@ function SymposiumExperience({
       authenticatedProfileHandleRef.current = null;
       window.localStorage.removeItem("symposium-auth-handle");
       window.localStorage.removeItem("symposium-auth-records");
-      if (entryMode === "complete") {
-        window.sessionStorage.removeItem("symposium-entry-complete");
-        setEntryMode("auth");
-      }
       return;
     }
 
@@ -1535,18 +1536,23 @@ function SymposiumExperience({
 
       authenticatedProfileHandleRef.current = data.profile.handle;
       currentProfileRef.current = data.profile;
-      const nextProfiles = { ...profiles, [data.profile.handle]: data.profile };
+      const nextProfiles = { ...profilesRef.current, [data.profile.handle]: data.profile };
+      profilesRef.current = nextProfiles;
       setProfiles(nextProfiles);
       setCurrentProfile(data.profile);
+      await Promise.all([
+        refreshData(data.profile.handle),
+        refreshProfileActivity(data.profile.handle, data.profile.handle).catch(() => undefined)
+      ]);
+      if (cancelled) return;
       setSignedIn(true);
       setSyncedClerkUserId(userId);
-      if (shouldCompleteEntryAfterAccountSync(entryMode)) {
+      if (shouldCompleteEntryAfterAccountSync(entryModeRef.current)) {
         setEntryMode("complete");
         applyInitialRouteState();
       }
       window.sessionStorage.setItem("symposium-entry-complete", "true");
       window.localStorage.setItem("symposium-profile-handle", data.profile.handle);
-      await refreshData(data.profile.handle);
       setSyncStatus("Signed in");
     };
 
@@ -1559,7 +1565,13 @@ function SymposiumExperience({
     return () => {
       cancelled = true;
     };
-  }, [authLoaded, clerkEnabled, entryMode, isSignedIn, profiles, syncedClerkUserId, userId]);
+  }, [authLoaded, clerkEnabled, isSignedIn, syncedClerkUserId, userId]);
+
+  useEffect(() => {
+    if (!clerkEnabled || !authLoaded || isSignedIn || entryMode !== "complete") return;
+    window.sessionStorage.removeItem("symposium-entry-complete");
+    setEntryMode("auth");
+  }, [authLoaded, clerkEnabled, entryMode, isSignedIn]);
 
   useEffect(() => {
     window.localStorage.setItem("symposium-theme", theme);
@@ -1821,13 +1833,15 @@ function SymposiumExperience({
 
   useEffect(() => {
     if (!signedIn || !currentProfile.handle) return;
+    if (profileActivityByHandleRef.current[currentProfile.handle]?.loaded) return;
     void refreshProfileActivity(currentProfile.handle, currentProfile.handle);
   }, [currentProfile.handle, signedIn]);
 
   useEffect(() => {
-    if (!selectedProfile?.handle) return;
+    if (!signedIn || !selectedProfile?.handle) return;
+    if (profileActivityByHandleRef.current[selectedProfile.handle]?.loaded) return;
     void refreshProfileActivity(selectedProfile.handle, currentProfile.handle);
-  }, [currentProfile.handle, selectedProfile?.handle]);
+  }, [currentProfile.handle, selectedProfile?.handle, signedIn]);
 
   const updateCommentSegmentStack = (key: string, stack: string[]) => {
     setCommentSegmentStacks((current) => {
@@ -3207,12 +3221,21 @@ function SymposiumExperience({
     return { titleMatches, contentMatches, profileMatches };
   }, [activeItems, profileList, searchQuery]);
 
-  if (entryMode !== "complete") {
+  const presentedEntryMode = resolvePresentedEntryMode({
+    entryMode,
+    clerkEnabled,
+    authLoaded,
+    isSignedIn: Boolean(isSignedIn),
+    profileSynced: signedIn,
+    authError
+  });
+
+  if (presentedEntryMode !== "complete") {
     return (
       <EntrySequence
         theme={theme}
         entranceRender={entranceRenders[theme]}
-        mode={entryMode}
+        mode={presentedEntryMode}
         authError={authError}
         authLoaded={authLoaded}
         clerkEnabled={clerkEnabled}

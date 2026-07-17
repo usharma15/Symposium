@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   entryModeForBrowserSession,
+  resolvePresentedEntryMode,
   shouldCompleteEntryAfterAccountSync
 } from "@/features/entrance/browserSession";
 import {
@@ -19,9 +20,22 @@ const main = async () => {
   assert.equal(entryModeForBrowserSession(true), "approach");
   assert.equal(entryModeForBrowserSession(false), "complete");
   assert.equal(shouldCompleteEntryAfterAccountSync("loading"), true);
-  assert.equal(shouldCompleteEntryAfterAccountSync("approach"), true);
+  assert.equal(shouldCompleteEntryAfterAccountSync("approach"), false);
   assert.equal(shouldCompleteEntryAfterAccountSync("auth"), true);
   assert.equal(shouldCompleteEntryAfterAccountSync("complete"), false);
+  const returningClerkSession = {
+    entryMode: "complete" as const,
+    clerkEnabled: true,
+    authLoaded: true,
+    isSignedIn: true,
+    profileSynced: false,
+    authError: ""
+  };
+  assert.equal(resolvePresentedEntryMode(returningClerkSession), "loading");
+  assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, profileSynced: true }), "complete");
+  assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, isSignedIn: false }), "auth");
+  assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, authError: "Sync failed" }), "auth");
+  assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, entryMode: "approach" }), "approach");
   assert.equal(readCachedBootstrapSnapshot(storage("not-json")), null);
 
   const cachedProfile = { ...profile, handle: "@cached", name: "Cached researcher" };
@@ -60,7 +74,11 @@ const main = async () => {
   assert.match(component, /const sessionEntryMode = entryModeForBrowserSession\(shouldPlayEntrance\);/);
   assert.match(component, /if \(sessionEntryMode === "complete"\) \{\s+applyInitialRouteState\(\);/);
   assert.match(component, /startedAt \+ 5000 - Date\.now\(\)/);
-  assert.match(component, /if \(shouldCompleteEntryAfterAccountSync\(entryMode\)\) \{/);
+  assert.match(component, /if \(shouldCompleteEntryAfterAccountSync\(entryModeRef\.current\)\) \{/);
+  assert.doesNotMatch(component, /\[authLoaded, clerkEnabled, entryMode, isSignedIn, syncedClerkUserId, userId\]/);
+  assert.match(component, /if \(!clerkEnabled\) \{\s+refreshData\(storedProfileHandle \?\? undefined\)/);
+  assert.match(component, /await Promise\.all\(\[\s+refreshData\(data\.profile\.handle\),\s+refreshProfileActivity/);
+  assert.match(component, /const presentedEntryMode = resolvePresentedEntryMode\(/);
   assert.match(entryViews, /className={`entry-image \$\{playApproach \? "approaching" : "stationary"\}`}/);
   assert.doesNotMatch(entryViews, /\{playApproach \? <Image/);
 
@@ -77,7 +95,10 @@ const main = async () => {
           "canonical route hydration",
           "late authentication route preservation",
           "first-session authentication completion",
-          "stationary authentication background"
+          "stationary authentication background",
+          "authenticated bootstrap visibility gate",
+          "coalesced initial profile activity",
+          "single authenticated bootstrap request"
         ]
       },
       null,
