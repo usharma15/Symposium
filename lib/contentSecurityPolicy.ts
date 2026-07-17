@@ -12,14 +12,14 @@ export const clerkContentSecurityPolicyDirectives: Record<string, string[]> = {
   "worker-src": ["self", "blob:"]
 };
 
-export const createLocalContentSecurityPolicy = (nonce: string, development: boolean) =>
+export const createLocalContentSecurityPolicy = (development: boolean) =>
   [
     "default-src 'self'",
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'self'",
     "object-src 'none'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${development ? " 'unsafe-eval'" : ""}`,
+    `script-src 'self' 'unsafe-inline'${development ? " 'unsafe-eval'" : ""}`,
     "script-src-attr 'none'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' blob: data: https:",

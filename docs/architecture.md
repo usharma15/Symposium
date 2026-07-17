@@ -38,6 +38,8 @@ Dependencies may point down this graph, never back into the application shell. A
 
 Provider calls are also traffic-shaped. Public reads and process health checks remain local except for their authoritative Postgres read; they do not spend Redis commands. Redis is reserved for distributed authenticated-mutation limits. Live events commit durably to Postgres, publish through the active process bus, and replay from a cursor on connect or reconnect rather than polling or publishing into an unused provider channel.
 
+The cached public shell uses a static-compatible CSP. Per-request nonce policies are not applied to prerendered HTML because build-time script tags cannot carry a request-time nonce; the production build gate inspects every static shell artifact and its matching CSP mode so a security-header change cannot silently block hydration. Resource authorization remains enforced at the API and repository boundaries rather than depending on the browser policy.
+
 ## Target domains
 
 - Identity and profiles

@@ -16,7 +16,7 @@
     "api:smoke:writes": "tsx apps/api/src/smokeWrites.ts",
     "api:start": "tsx apps/api/src/server.ts",
     "api:typecheck": "tsc --noEmit -p tsconfig.api.json",
-    "build": "next build",
+    "build": "next build && tsx scripts/productionHydrationCheck.ts",
     "core:check": "tsx scripts/symposiumCoreCheck.ts",
     "cross-tab:check": "tsx scripts/crossTabItemSyncCheck.ts",
     "comment-attachment:check": "tsx scripts/commentAttachmentCheck.ts",

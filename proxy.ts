@@ -22,14 +22,9 @@ const crossSiteMutationResponse = (request: NextRequest) =>
     : null;
 
 const localSecurityMiddleware = (request: NextRequest) => {
-  const nonce = crypto.randomUUID().replaceAll("-", "");
-  const policy = createLocalContentSecurityPolicy(nonce, process.env.NODE_ENV !== "production");
-  const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("Content-Security-Policy", policy);
-  requestHeaders.set("x-nonce", nonce);
-  const response = crossSiteMutationResponse(request) ?? NextResponse.next({ request: { headers: requestHeaders } });
+  const policy = createLocalContentSecurityPolicy(process.env.NODE_ENV !== "production");
+  const response = crossSiteMutationResponse(request) ?? NextResponse.next();
   response.headers.set("Content-Security-Policy", policy);
-  response.headers.set("x-nonce", nonce);
   return response;
 };
 
@@ -38,7 +33,7 @@ export default clerkEnabled
       (_auth, request) => crossSiteMutationResponse(request) ?? undefined,
       {
         contentSecurityPolicy: {
-          strict: true,
+          strict: false,
           directives: clerkContentSecurityPolicyDirectives
         }
       }

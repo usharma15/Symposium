@@ -117,8 +117,9 @@ const main = async () => {
   assert.equal(headers.get("permissions-policy"), "camera=(), microphone=(), geolocation=()");
   assert.equal(headers.get("strict-transport-security"), "max-age=63072000; includeSubDomains; preload");
 
-  const localCsp = createLocalContentSecurityPolicy("testnonce", false);
-  assert.match(localCsp, /script-src 'self' 'nonce-testnonce' 'strict-dynamic'/);
+  const localCsp = createLocalContentSecurityPolicy(false);
+  assert.match(localCsp, /script-src 'self' 'unsafe-inline'/);
+  assert.doesNotMatch(localCsp, /nonce-|strict-dynamic/);
   assert.match(localCsp, /script-src-attr 'none'/);
   assert.match(localCsp, /object-src 'none'/);
   assert.match(localCsp, /frame-ancestors 'self'/);
@@ -221,7 +222,7 @@ const main = async () => {
           "profile ownership enforcement",
           "live bridge cache isolation",
           "browser security headers",
-          "nonce-based script policy",
+          "static-compatible script policy",
           "strict production origin validation",
           "cross-site mutation rejection"
         ]

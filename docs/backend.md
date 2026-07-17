@@ -164,6 +164,8 @@ The durable API follows one mutation rule: domain changes, idempotency receipts,
 
 The production browser opens the authenticated SSE stream directly against Render. The legacy Next stream route is a short `307` compatibility redirect, so stale clients cannot leave a Vercel function running until its runtime ceiling.
 
+The public entry routes remain prerendered for fast CDN delivery. Their CSP deliberately uses the App Router-compatible inline bootstrap mode instead of a per-request nonce: static HTML is built before a request nonce exists, and combining the two prevents React and Next from hydrating. `npm run build` verifies the emitted static artifacts and the matching middleware policy together.
+
 Passive post and comment views return their canonical item directly to the initiating browser. Public action events carry revisioned metric patches, so read, save, signal, and fork convergence does not download the full bootstrap snapshot.
 
 The current guarantees are:
