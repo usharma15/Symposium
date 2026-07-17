@@ -24,6 +24,7 @@ import {
 import { cleanHandle } from "@/lib/symposiumCore";
 import { seededCommunityCallMap } from "@/lib/communityFixtures";
 import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
+import { activeCommunityAnnouncements } from "@/lib/communityAnnouncements";
 import { postTypeForItem } from "@/lib/postSemantics";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
@@ -444,7 +445,6 @@ const syncCommunityActivityFixtures = async (client: PoolClient) => {
        call_status = CASE WHEN community.call_status = 'quiet' THEN fixture.call_status ELSE community.call_status END,
        moderator_handles = CASE WHEN jsonb_array_length(community.moderator_handles) < 3 THEN fixture.moderator_handles ELSE community.moderator_handles END,
        guidelines = CASE WHEN length(trim(community.guidelines)) < 160 THEN fixture.guidelines ELSE community.guidelines END,
-       announcements = CASE WHEN jsonb_array_length(community.announcements) < 4 THEN fixture.announcements ELSE community.announcements END,
        updated_at = now()
      FROM fixture
      WHERE community.id = fixture.id`,
@@ -1295,7 +1295,7 @@ export const publicCommunity = (
     ownerHandle: privateHidden ? undefined : community.ownerHandle ?? community.memberHandles[0],
     moderatorHandles: privateHidden ? [] : community.moderatorHandles ?? [],
     guidelines: privateHidden ? undefined : community.guidelines,
-    announcements: privateHidden ? [] : community.announcements ?? [],
+    announcements: privateHidden ? [] : activeCommunityAnnouncements(community.announcements),
     memberCount: privateHidden ? 0 : community.memberCount,
     monthlyActive: privateHidden ? 0 : community.monthlyActive,
     callStatus: privateHidden ? "quiet" : community.callStatus,

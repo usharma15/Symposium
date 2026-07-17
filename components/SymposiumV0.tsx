@@ -3333,6 +3333,8 @@ function SymposiumExperience({
               onUpdateMemberRole: communityController.updateMemberRole,
               onRemoveMember: communityController.removeMember,
               onCreateAnnouncement: communityController.createAnnouncement,
+              onUpdateAnnouncement: communityController.updateAnnouncement,
+              onDeleteAnnouncement: communityController.deleteAnnouncement,
               onCreatePost: () => { if (selectedCommunity) { setComposerCommunityId(selectedCommunity.id); setComposerOpen(true); } },
               onCreateCall: communityController.createCall, onJoinCall: communityController.joinCall,
               onInvite: communityController.invite, onMessageModerator: (handle) => { const normalized = cleanHandle(handle); setMessageRecipientHandle(normalized); navigateView({ messagesOpen: true, selectedConversationId: `direct:${normalized}` }, null); },

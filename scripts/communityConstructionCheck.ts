@@ -3,11 +3,13 @@ import { readFile } from "node:fs/promises";
 import {
   communitySummaryMaxLength,
   createCommunityAnnouncementInputSchema,
+  deleteCommunityAnnouncementInputSchema,
   createCommunityInputSchema,
   createPostInputSchema,
   removeCommunityMemberInputSchema,
   researchCommunitySchema,
   updateCommunityMemberInputSchema,
+  updateCommunityAnnouncementInputSchema,
   updateCommunitySettingsInputSchema,
   type InquiryItemContract,
 } from "../packages/contracts/src";
@@ -23,6 +25,7 @@ import { communityViewerProjectionChanged, projectCommunityItemsForViewer } from
 import { communityActivityItems, researchCommunities } from "../lib/mockData";
 import { listLocalCommunityMembers } from "../lib/localCommunityStore";
 import { hiddenCommunityActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "../lib/profileActivity";
+import { activeCommunityAnnouncements, communityAnnouncementRetentionMs } from "../lib/communityAnnouncements";
 
 const profile = { handle: "@viewer" };
 const community = researchCommunitySchema.parse({
@@ -226,6 +229,15 @@ assert.equal(updateCommunitySettingsInputSchema.safeParse({ communityId: communi
 assert.equal(updateCommunityMemberInputSchema.safeParse({ communityId: community.id, memberHandle: "@member", role: "moderator", expectedRevision: 1 }).success, true);
 assert.equal(removeCommunityMemberInputSchema.safeParse({ communityId: community.id, memberHandle: "@member", expectedRevision: 1 }).success, true);
 assert.equal(createCommunityAnnouncementInputSchema.safeParse({ communityId: community.id, title: "New review", body: "The next review has opened.", expectedRevision: 1 }).success, true);
+assert.equal(updateCommunityAnnouncementInputSchema.safeParse({ communityId: community.id, announcementId: "announcement-1", title: "Updated review", body: "The review time changed.", expectedRevision: 2 }).success, true);
+assert.equal(deleteCommunityAnnouncementInputSchema.safeParse({ communityId: community.id, announcementId: "announcement-1", expectedRevision: 3 }).success, true);
+const retentionNow = Date.parse("2026-07-16T12:00:00.000Z");
+const retainedAnnouncements = activeCommunityAnnouncements([
+  { id: "active", title: "Active", body: "Still here", createdAt: new Date(retentionNow - communityAnnouncementRetentionMs + 1).toISOString() },
+  { id: "expired", title: "Expired", body: "Gone", createdAt: new Date(retentionNow - communityAnnouncementRetentionMs).toISOString() },
+  { id: "undated", title: "Undated", body: "Invalid legacy record" }
+], retentionNow);
+assert.deepEqual(retainedAnnouncements.map((announcement) => announcement.id), ["active"], "Announcements must disappear exactly 30 days after original publication, and undated records must fail closed.");
 assert.equal(createCommunityInputSchema.safeParse({ name: "Too long", field: "Tests", summary: "x".repeat(communitySummaryMaxLength + 1), visibility: "public" }).success, false, "Community descriptions must obey the visible three-line character budget.");
 
 const basePost = {
@@ -311,9 +323,11 @@ const sources = await Promise.all([
   readFile(new URL("../apps/api/src/repository/posts.ts", import.meta.url), "utf8"),
   readFile(new URL("../features/navigation/viewState.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/communityMembers.ts", import.meta.url), "utf8"),
-  readFile(new URL("../apps/api/src/repository/communityAuthorization.ts", import.meta.url), "utf8")
+  readFile(new URL("../apps/api/src/repository/communityAuthorization.ts", import.meta.url), "utf8"),
+  readFile(new URL("../apps/api/src/repository/communityAnnouncements.ts", import.meta.url), "utf8"),
+  readFile(new URL("../app/api/communities/[id]/announcements/[announcementId]/route.ts", import.meta.url), "utf8")
 ]);
-const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization] = sources;
+const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization, announcementRepository, announcementRoute] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
@@ -345,14 +359,26 @@ assert.match(localStore, /version: 5/, "Existing local community state must migr
 assert.match(localStore, /updateLocalCommunitySettings/, "Local community settings must persist through the canonical store.");
 assert.match(localStore, /updateLocalCommunityMember/, "Local member roles must persist through the canonical store.");
 assert.match(localStore, /createLocalCommunityAnnouncement/, "Local announcements must persist through the canonical store.");
+assert.match(localStore, /updateLocalCommunityAnnouncement/, "Local announcement edits must persist through the canonical store.");
+assert.match(localStore, /deleteLocalCommunityAnnouncement/, "Local announcement deletions must persist through the canonical store.");
 assert.match(repository, /community\.settings\.update/, "Live community settings changes must be audited.");
 assert.match(repository, /community\.settings\.updated/, "Live community settings changes must invalidate every connected projection.");
 assert.match(repository, /community\.member\.role\.update/, "Live member promotions must be audited.");
-assert.match(repository, /community\.announcement\.create/, "Live announcements must be audited.");
+assert.match(announcementRepository, /community\.announcement\.create/, "Live announcement creation must be audited.");
+assert.match(announcementRepository, /community\.announcement\.update/, "Live announcement edits must be audited.");
+assert.match(announcementRepository, /community\.announcement\.delete/, "Live announcement deletions must be audited.");
+assert.doesNotMatch(foundation, /jsonb_array_length\(community\.announcements\) < 4/, "Backend seeding must never resurrect deleted announcements.");
+assert.match(foundation, /activeCommunityAnnouncements\(community\.announcements\)/, "Expired announcements must be filtered from backend projections.");
+assert.match(announcementRoute, /export async function PATCH/, "Announcement edits need a revision-guarded Next route.");
+assert.match(announcementRoute, /export async function DELETE/, "Announcement deletion needs a revision-guarded Next route.");
 assert.match(communityRoute, /export async function PATCH/, "Community settings need a revision-guarded Next route.");
 assert.match(views, /community-visibility-modal/, "Owners and moderators need explicit current-state visibility controls.");
 assert.match(views, /communitySummaryMaxLength/, "Community create and edit surfaces must expose the canonical description limit.");
 assert.match(views, /setAnnouncementComposerOpen\(true\)/, "Managers must have a fixed announcement composer entry point.");
+assert.match(views, /community-announcement-card/, "Announcements in the right rail must open a focused viewer.");
+assert.match(views, /community-announcement-viewer/, "Announcements need a dedicated viewing window.");
+assert.match(views, /onUpdateAnnouncement/, "Managers need an announcement edit control.");
+assert.match(views, /onDeleteAnnouncement/, "Managers need an announcement delete control.");
 assert.match(communityStyles, /-webkit-line-clamp:\s*3/, "Selected community descriptions must allow three compact lines.");
 assert.match(communityStyles, /\.selected-community-right \.community-activity-panel[\s\S]+border-top:\s*0/, "The first right-rail activity section must not waste space on a top divider.");
 assert.match(shell, /returnToDetailOrigin/, "Post details must expose a stable return to the source space.");

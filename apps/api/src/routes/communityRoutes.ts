@@ -5,7 +5,6 @@ import { mutationContextFromRequest } from "../services/mutations";
 import { getActorFromRequest } from "../services/auth";
 import {
   createCommunity,
-  createCommunityAnnouncement,
   createCommunityCall,
   endCommunityCall,
   joinCommunityCall,
@@ -16,6 +15,11 @@ import {
   updateCommunityMember,
   updateCommunitySettings
 } from "../repository/communities";
+import {
+  createCommunityAnnouncement,
+  deleteCommunityAnnouncement,
+  updateCommunityAnnouncement
+} from "../repository/communityAnnouncements";
 import { listCommunityMembers, recordCommunityAccess } from "../repository/communityMembers";
 import { getPublicCommunity, listPublicCommunities } from "../repository/foundation";
 import type { RouteParams } from "./types";
@@ -142,6 +146,26 @@ export const registerCommunityRoutes = (app: FastifyInstance) => {
       const actor = await withWriteActor(request);
       const payload = { ...(request.body ?? {}), communityId: request.params.id };
       return reply.send(await createCommunityAnnouncement(payload, actor, mutationContextFromRequest(request, "community.announcement.create", payload)));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: RouteParams & { announcementId: string } }>("/v1/communities/:id/announcements/:announcementId", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const payload = { ...(request.body ?? {}), communityId: request.params.id, announcementId: request.params.announcementId };
+      return reply.send(await updateCommunityAnnouncement(payload, actor, mutationContextFromRequest(request, "community.announcement.update", payload)));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: RouteParams & { announcementId: string } }>("/v1/communities/:id/announcements/:announcementId", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const payload = { ...(request.body ?? {}), communityId: request.params.id, announcementId: request.params.announcementId };
+      return reply.send(await deleteCommunityAnnouncement(payload, actor, mutationContextFromRequest(request, "community.announcement.delete", payload)));
     } catch (error) {
       return sendError(app, reply, error);
     }

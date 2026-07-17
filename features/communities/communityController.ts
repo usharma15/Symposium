@@ -4,6 +4,7 @@ import type {
   CreateCommunityAnnouncementInputContract,
   CreateCommunityCallInputContract,
   CreateCommunityInputContract,
+  UpdateCommunityAnnouncementInputContract,
   UpdateCommunitySettingsInputContract
 } from "@/packages/contracts/src";
 import type { ResearchCommunity } from "@/lib/mockData";
@@ -213,6 +214,57 @@ export const createCommunityController = (input: {
     }
   };
 
+  const updateAnnouncement = async (
+    announcementId: string,
+    announcement: Pick<UpdateCommunityAnnouncementInputContract, "title" | "body">
+  ) => {
+    const community = input.selectedCommunity;
+    if (!community) return { ok: false, error: "Community not found." };
+    const payload = { communityId: community.id, announcementId, ...announcement, expectedRevision: community.revision ?? 1 };
+    const mutation = input.retryMutationKey("community-announcement-update", JSON.stringify(payload));
+    input.setStatus("Saving announcement");
+    try {
+      const data = await symposiumApi.request<{ community: ResearchCommunity }>(`/api/communities/${encodeURIComponent(community.id)}/announcements/${encodeURIComponent(announcementId)}`, {
+        method: "PATCH", idempotencyKey: mutation.idempotencyKey, body: { ...payload, actorHandle: input.currentProfileHandle }
+      });
+      input.clearRetryMutationKey(mutation.fingerprintKey);
+      mergeCommunity(data.community);
+      window.setTimeout(input.persist, 0);
+      input.setStatus("Announcement updated");
+      return { ok: true };
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) input.clearRetryMutationKey(mutation.fingerprintKey);
+      const message = error instanceof Error ? error.message : "Announcement could not be updated";
+      input.setStatus(message);
+      if (message.includes("changed")) input.refresh();
+      return { ok: false, error: message };
+    }
+  };
+
+  const deleteAnnouncement = async (announcementId: string) => {
+    const community = input.selectedCommunity;
+    if (!community) return { ok: false, error: "Community not found." };
+    const payload = { communityId: community.id, announcementId, expectedRevision: community.revision ?? 1 };
+    const mutation = input.retryMutationKey("community-announcement-delete", JSON.stringify(payload));
+    input.setStatus("Deleting announcement");
+    try {
+      const data = await symposiumApi.request<{ community: ResearchCommunity }>(`/api/communities/${encodeURIComponent(community.id)}/announcements/${encodeURIComponent(announcementId)}`, {
+        method: "DELETE", idempotencyKey: mutation.idempotencyKey, body: { ...payload, actorHandle: input.currentProfileHandle }
+      });
+      input.clearRetryMutationKey(mutation.fingerprintKey);
+      mergeCommunity(data.community);
+      window.setTimeout(input.persist, 0);
+      input.setStatus("Announcement deleted");
+      return { ok: true };
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) input.clearRetryMutationKey(mutation.fingerprintKey);
+      const message = error instanceof Error ? error.message : "Announcement could not be deleted";
+      input.setStatus(message);
+      if (message.includes("changed")) input.refresh();
+      return { ok: false, error: message };
+    }
+  };
+
   const createCall = async (callInput: Omit<CreateCommunityCallInputContract, "communityId">) => {
     const community = input.selectedCommunity;
     if (!community) return { ok: false, error: "Community not found." };
@@ -271,5 +323,5 @@ export const createCommunityController = (input: {
     }
   };
 
-  return { changeMembership, changeVisibility, createCall, createCommunity, createAnnouncement, invite, joinCall, removeMember, updateMemberRole, updateSettings };
+  return { changeMembership, changeVisibility, createCall, createCommunity, createAnnouncement, deleteAnnouncement, invite, joinCall, removeMember, updateAnnouncement, updateMemberRole, updateSettings };
 };

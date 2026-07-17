@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type {
   CommunityCallContract,
   CreateCommunityAnnouncementInputContract,
+  DeleteCommunityAnnouncementInputContract,
   CommunityMemberPageContract,
   CommunityMemberQueryContract,
   CommunityMembershipStatusContract,
@@ -11,11 +12,13 @@ import type {
   CreateCommunityCallInputContract,
   RemoveCommunityMemberInputContract,
   UpdateCommunityMemberInputContract,
+  UpdateCommunityAnnouncementInputContract,
   UpdateCommunitySettingsInputContract
 } from "@/packages/contracts/src";
 import { profile, profilesByName, researchCommunities, type ResearchCommunity, type ResearchProfile } from "@/lib/mockData";
 import { seededCommunityCallMap } from "@/lib/communityFixtures";
 import { cleanHandle } from "@/lib/symposiumCore";
+import { activeCommunityAnnouncements } from "@/lib/communityAnnouncements";
 
 type StoredMembership = {
   status: Exclude<CommunityMembershipStatusContract, "none"> | "removed";
@@ -141,7 +144,7 @@ const projectCommunity = (state: LocalCommunityState, community: ResearchCommuni
     lastAccessedAt: membership?.lastAccessedAt,
     moderatorHandles: community.visibility === "private" && status !== "active" ? [] : community.moderatorHandles ?? activeMembers.slice(0, 2),
     guidelines: community.visibility === "private" && status !== "active" ? undefined : community.guidelines ?? "Keep criticism attached to the work. Preserve sources and leave a legible trail when a claim changes.",
-    announcements: community.visibility === "private" && status !== "active" ? [] : community.announcements ?? [],
+    announcements: community.visibility === "private" && status !== "active" ? [] : activeCommunityAnnouncements(community.announcements),
     callStatus: community.visibility === "private" && status !== "active" ? "quiet" : community.callStatus
   } satisfies ResearchCommunity;
 };
@@ -280,10 +283,44 @@ export const createLocalCommunityAnnouncement = (input: CreateCommunityAnnouncem
       authorHandle: handle,
       createdAt: new Date().toISOString()
     };
-    community.announcements = [announcement, ...(community.announcements ?? [])];
+    community.announcements = [announcement, ...activeCommunityAnnouncements(community.announcements)];
     community.revision = input.expectedRevision + 1;
     await writeState(state);
     return { community: projectCommunity(state, community, handle), announcement };
+  });
+
+export const updateLocalCommunityAnnouncement = (input: UpdateCommunityAnnouncementInputContract, rawActorHandle: string) =>
+  withLock(async () => {
+    const state = await readState();
+    const { community, handle } = requireLocalCommunityManager(state, input.communityId, rawActorHandle);
+    assertLocalCommunityRevision(community, input.expectedRevision);
+    const announcements = activeCommunityAnnouncements(community.announcements);
+    const current = announcements.find((announcement) => announcement.id === input.announcementId);
+    if (!current) throw new Error("Announcement not found.");
+    const announcement = {
+      ...current,
+      title: input.title,
+      body: input.body,
+      updatedAt: new Date().toISOString(),
+      updatedByHandle: handle
+    };
+    community.announcements = announcements.map((candidate) => candidate.id === announcement.id ? announcement : candidate);
+    community.revision = input.expectedRevision + 1;
+    await writeState(state);
+    return { community: projectCommunity(state, community, handle), announcement };
+  });
+
+export const deleteLocalCommunityAnnouncement = (input: DeleteCommunityAnnouncementInputContract, rawActorHandle: string) =>
+  withLock(async () => {
+    const state = await readState();
+    const { community, handle } = requireLocalCommunityManager(state, input.communityId, rawActorHandle);
+    assertLocalCommunityRevision(community, input.expectedRevision);
+    const announcements = activeCommunityAnnouncements(community.announcements);
+    if (!announcements.some((announcement) => announcement.id === input.announcementId)) throw new Error("Announcement not found.");
+    community.announcements = announcements.filter((announcement) => announcement.id !== input.announcementId);
+    community.revision = input.expectedRevision + 1;
+    await writeState(state);
+    return { community: projectCommunity(state, community, handle), deletedAnnouncementId: input.announcementId };
   });
 
 export const mutateLocalCommunityMembership = (

@@ -669,7 +669,9 @@ export const researchCommunitySchema = z.object({
     title: z.string(),
     body: z.string(),
     createdAt: z.string().optional(),
-    authorHandle: z.string().optional()
+    authorHandle: z.string().optional(),
+    updatedAt: z.string().optional(),
+    updatedByHandle: z.string().optional()
   })).optional()
 });
 
@@ -899,6 +901,16 @@ export const createCommunityAnnouncementInputSchema = z.object({
   communityId: z.string().trim().min(1).max(120),
   title: z.string().trim().min(1).max(140),
   body: z.string().trim().min(1).max(1600),
+  expectedRevision: z.number().int().positive()
+});
+
+export const updateCommunityAnnouncementInputSchema = createCommunityAnnouncementInputSchema.extend({
+  announcementId: z.string().trim().min(1).max(120)
+});
+
+export const deleteCommunityAnnouncementInputSchema = z.object({
+  communityId: z.string().trim().min(1).max(120),
+  announcementId: z.string().trim().min(1).max(120),
   expectedRevision: z.number().int().positive()
 });
 
@@ -1281,6 +1293,8 @@ export type UpdateCommunitySettingsInputContract = z.infer<typeof updateCommunit
 export type UpdateCommunityMemberInputContract = z.infer<typeof updateCommunityMemberInputSchema>;
 export type RemoveCommunityMemberInputContract = z.infer<typeof removeCommunityMemberInputSchema>;
 export type CreateCommunityAnnouncementInputContract = z.infer<typeof createCommunityAnnouncementInputSchema>;
+export type UpdateCommunityAnnouncementInputContract = z.infer<typeof updateCommunityAnnouncementInputSchema>;
+export type DeleteCommunityAnnouncementInputContract = z.infer<typeof deleteCommunityAnnouncementInputSchema>;
 export type CommunityMembershipActionInputContract = z.infer<typeof communityMembershipActionInputSchema>;
 export type CreatePostInputContract = z.infer<typeof createPostInputSchema>;
 export type CreateCommentInputContract = z.infer<typeof createCommentInputSchema>;

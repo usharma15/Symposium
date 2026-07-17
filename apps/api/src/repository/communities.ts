@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import {
   callIdInputSchema,
-  createCommunityAnnouncementInputSchema,
   createCommunityInputSchema,
   createCommunityCallInputSchema,
   joinCommunityInputSchema,
@@ -379,46 +378,6 @@ export const removeCommunityMember = async (rawInput: unknown, actor: Actor, mut
       ? [...new Set([...(await communityAudienceHandles(client, community.id)), memberHandle])]
       : undefined;
     const event = await stageEvent(client, { kind: "community.member.removed", actorHandle: handle, subjectType: "community", subjectId: community.id, visibility: community.visibility === "private" ? "community" : "public", audienceHandles, payload: { communityId: community.id, removedHandle: memberHandle, revision: value.revision } });
-    return { value: response, events: [event] };
-  });
-};
-
-export const createCommunityAnnouncement = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
-  const input = createCommunityAnnouncementInputSchema.parse(rawInput);
-  const handle = await ensureProfileHandle(actorHandle(actor));
-  const community = await getCommunity(input.communityId);
-  const announcement = { id: randomUUID(), title: input.title, body: input.body, authorHandle: handle, createdAt: new Date().toISOString() };
-  if (!hasDatabase()) {
-    const manager = await assertCommunityManager(community.id, handle);
-    if ((community.revision ?? 1) !== input.expectedRevision) throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before trying again." });
-    const value = publicCommunity({ ...community, announcements: [announcement, ...(community.announcements ?? [])], revision: input.expectedRevision + 1, viewerRole: manager.role }, "active");
-    return { community: value, announcement };
-  }
-  await ensureLiveData();
-  return runAtomic(async (client) => {
-    const claim = await claimMutation<{ community: ResearchCommunityContract; announcement: typeof announcement }>(client, handle, mutation);
-    if (claim.replayed) return { value: claim.response };
-    const manager = await client.query<{ role: string; revision: number }>(
-      `SELECT membership.role, community.revision
-       FROM community_memberships membership JOIN communities community ON community.id = membership.community_id
-       WHERE membership.community_id = $1 AND membership.profile_handle = $2 AND membership.status = 'active'
-       FOR UPDATE OF community`,
-      [community.id, handle]
-    );
-    const role = manager.rows[0]?.role;
-    if (role !== "owner" && role !== "moderator") throw new TRPCError({ code: "FORBIDDEN", message: "Only community owners and moderators can publish announcements." });
-    if (manager.rows[0]?.revision !== input.expectedRevision) throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before trying again." });
-    const updated = await client.query<{ announcements: typeof community.announcements; revision: number }>(
-      `UPDATE communities SET announcements = $2::jsonb || announcements, revision = revision + 1, updated_at = now()
-       WHERE id = $1 AND revision = $3 RETURNING announcements, revision`,
-      [community.id, JSON.stringify([announcement]), input.expectedRevision]
-    );
-    if (!updated.rows[0]) throw new TRPCError({ code: "CONFLICT", message: "This community changed before the announcement committed." });
-    const value = publicCommunity({ ...community, announcements: updated.rows[0].announcements ?? [], revision: updated.rows[0].revision, viewerRole: role }, "active");
-    const response = { community: value, announcement };
-    await stageAuditLog(client, { actorHandle: handle, action: "community.announcement.create", subjectType: "community", subjectId: community.id, metadata: mutationAuditMetadata(mutation, { announcementId: announcement.id }) });
-    await completeMutation(client, handle, mutation, response);
-    const event = await stageEvent(client, { kind: "community.announcement.created", actorHandle: handle, subjectType: "community", subjectId: community.id, visibility: community.visibility === "private" ? "community" : "public", audienceHandles: community.visibility === "private" ? await communityAudienceHandles(client, community.id) : undefined, payload: { communityId: community.id, announcementId: announcement.id, revision: value.revision } });
     return { value: response, events: [event] };
   });
 };

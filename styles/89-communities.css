@@ -339,6 +339,7 @@
 .community-call-modal,
 .community-rules-modal,
 .community-visibility-modal,
+.community-announcement-viewer,
 .community-filter-modal,
 .community-people-modal {
   display: grid;
@@ -358,6 +359,7 @@
 .community-call-modal,
 .community-rules-modal,
 .community-visibility-modal,
+.community-announcement-viewer,
 .community-filter-modal,
 .community-people-modal {
   width: min(540px, calc(100vw - 40px));
@@ -368,6 +370,7 @@
 .community-call-modal > header,
 .community-rules-modal > header,
 .community-visibility-modal > header,
+.community-announcement-viewer > header,
 .community-filter-modal > header,
 .community-people-modal > header {
   display: flex;
@@ -381,6 +384,7 @@
 .community-call-modal > header > button,
 .community-rules-modal > header > button,
 .community-visibility-modal > header > button,
+.community-announcement-viewer > header > button,
 .community-filter-modal > header > button,
 .community-people-modal > header > button {
   display: grid;
@@ -434,6 +438,7 @@
 .community-call-modal > header div,
 .community-rules-modal > header div,
 .community-visibility-modal > header div,
+.community-announcement-viewer > header div,
 .community-filter-modal > header div,
 .community-people-modal > header div {
   display: grid;
@@ -444,6 +449,7 @@
 .community-call-modal > header span,
 .community-rules-modal > header span,
 .community-visibility-modal > header span,
+.community-announcement-viewer > header span,
 .community-filter-modal > header span,
 .community-people-modal > header span {
   color: var(--muted);
@@ -457,6 +463,7 @@
 .community-call-modal > header strong,
 .community-rules-modal > header strong,
 .community-visibility-modal > header strong,
+.community-announcement-viewer > header strong,
 .community-filter-modal > header strong,
 .community-people-modal > header strong {
   font-size: 1.3rem;
@@ -834,25 +841,6 @@
 
 .community-section-new:disabled {
   opacity: 0.42;
-}
-
-.community-announcements-panel article {
-  display: grid;
-  gap: 3px;
-  border-left: 2px solid color-mix(in srgb, var(--aqua) 62%, transparent);
-  padding: 4px 0 4px 8px;
-  cursor: pointer;
-}
-
-.community-announcements-panel article strong {
-  font-size: 0.76rem;
-}
-
-.community-announcements-panel article p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.69rem;
-  line-height: 1.4;
 }
 
 .community-calls-panel article {

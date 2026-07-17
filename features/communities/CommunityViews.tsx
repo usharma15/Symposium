@@ -16,6 +16,7 @@ import {
   Search,
   Send,
   SlidersHorizontal,
+  Trash2,
   UserRoundPlus,
   UsersRound,
   X
@@ -30,6 +31,11 @@ import type {
 import { communitySummaryMaxLength } from "@/packages/contracts/src";
 import type { InquiryItem, ResearchCommunity, ResearchProfile } from "@/lib/mockData";
 import { normalizeSearchPhrase } from "@/lib/symposiumCore";
+import {
+  activeCommunityAnnouncements,
+  communityAnnouncementExpiresAt,
+  type CommunityAnnouncement
+} from "@/lib/communityAnnouncements";
 import type { PostActionHandler } from "@/features/actions/actionTypes";
 import type { QuoteActionHandler } from "@/features/quotes/QuoteViews";
 import type { AttachmentPreviewHandler } from "@/features/attachments/AttachmentViews";
@@ -53,6 +59,7 @@ import type { CommunityFeedViewState } from "@/features/communities/useCommunity
 import { CommunityPeopleModal } from "@/features/communities/CommunityPeopleModal";
 import { FeedPost } from "@/features/posts/PostViews";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
+import { profileForHandle } from "@/features/identity/profilePresentation";
 
 export function CommunitiesStage({
   state,
@@ -83,6 +90,8 @@ export function CommunitiesStage({
     onUpdateMemberRole: (memberHandle: string, role: "moderator" | "member") => Promise<{ ok: boolean; error?: string }>;
     onRemoveMember: (memberHandle: string) => Promise<{ ok: boolean; error?: string }>;
     onCreateAnnouncement: (announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
+    onUpdateAnnouncement: (announcementId: string, announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
+    onDeleteAnnouncement: (announcementId: string) => Promise<{ ok: boolean; error?: string }>;
     onCreatePost: () => void;
     onCreateCall: (input: Omit<CreateCommunityCallInputContract, "communityId">) => Promise<{ ok: boolean; error?: string }>;
     onJoinCall: (callId: string) => Promise<void>;
@@ -129,6 +138,8 @@ export function CommunitiesStage({
     onUpdateMemberRole={actions.onUpdateMemberRole}
     onRemoveMember={actions.onRemoveMember}
     onCreateAnnouncement={actions.onCreateAnnouncement}
+    onUpdateAnnouncement={actions.onUpdateAnnouncement}
+    onDeleteAnnouncement={actions.onDeleteAnnouncement}
     onCreatePost={actions.onCreatePost}
     onCreateCall={actions.onCreateCall}
     onJoinCall={actions.onJoinCall}
@@ -468,6 +479,8 @@ export function SelectedCommunityView({
   onUpdateMemberRole,
   onRemoveMember,
   onCreateAnnouncement,
+  onUpdateAnnouncement,
+  onDeleteAnnouncement,
   onCreatePost,
   onCreateCall,
   onJoinCall,
@@ -497,6 +510,8 @@ export function SelectedCommunityView({
   onUpdateMemberRole: (memberHandle: string, role: "moderator" | "member") => Promise<{ ok: boolean; error?: string }>;
   onRemoveMember: (memberHandle: string) => Promise<{ ok: boolean; error?: string }>;
   onCreateAnnouncement: (announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
+  onUpdateAnnouncement: (announcementId: string, announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
+  onDeleteAnnouncement: (announcementId: string) => Promise<{ ok: boolean; error?: string }>;
   onCreatePost: () => void;
   onCreateCall: (input: Omit<CreateCommunityCallInputContract, "communityId">) => Promise<{ ok: boolean; error?: string }>;
   onJoinCall: (callId: string) => Promise<void>;
@@ -522,6 +537,9 @@ export function SelectedCommunityView({
   const [visibilityError, setVisibilityError] = useState("");
   const [callComposerOpen, setCallComposerOpen] = useState(false);
   const [announcementComposerOpen, setAnnouncementComposerOpen] = useState(false);
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
+  const [selectedAnnouncementId, setSelectedAnnouncementId] = useState<string | null>(null);
+  const [announcementClock, setAnnouncementClock] = useState(() => Date.now());
   const [peopleOpen, setPeopleOpen] = useState<"members" | "moderators" | null>(null);
   const [announcementsExpanded, setAnnouncementsExpanded] = useState(false);
   const [callsExpanded, setCallsExpanded] = useState(false);
@@ -539,10 +557,38 @@ export function SelectedCommunityView({
   }, [community, feedQuery, filter, items]);
   const liveCalls = calls.filter((call) => call.status === "live");
   const upcomingCalls = calls.filter((call) => call.status === "scheduled");
-  const announcements = [...(community.announcements ?? [])].sort((first, second) =>
-    (second.createdAt ?? "").localeCompare(first.createdAt ?? "")
+  const announcements = useMemo(
+    () => activeCommunityAnnouncements(community.announcements, announcementClock),
+    [announcementClock, community.announcements]
   );
+  const selectedAnnouncement = announcements.find((announcement) => announcement.id === selectedAnnouncementId) ?? null;
+  const editingAnnouncement = announcements.find((announcement) => announcement.id === editingAnnouncementId) ?? null;
   const activeCalls = [...liveCalls, ...upcomingCalls];
+
+  useEffect(() => {
+    setSelectedAnnouncementId(null);
+    setEditingAnnouncementId(null);
+    setAnnouncementComposerOpen(false);
+    setAnnouncementClock(Date.now());
+  }, [community.id]);
+
+  useEffect(() => {
+    if (selectedAnnouncementId && !selectedAnnouncement) setSelectedAnnouncementId(null);
+    if (editingAnnouncementId && !editingAnnouncement) setEditingAnnouncementId(null);
+  }, [editingAnnouncement, editingAnnouncementId, selectedAnnouncement, selectedAnnouncementId]);
+
+  useEffect(() => {
+    const nextExpiry = announcements
+      .map(communityAnnouncementExpiresAt)
+      .filter((expiresAt): expiresAt is number => expiresAt !== null && expiresAt > Date.now())
+      .sort((first, second) => first - second)[0];
+    if (!nextExpiry) return;
+    const timeout = window.setTimeout(
+      () => setAnnouncementClock(Date.now()),
+      Math.min(Math.max(50, nextExpiry - Date.now() + 50), 2_147_000_000)
+    );
+    return () => window.clearTimeout(timeout);
+  }, [announcements, announcementClock]);
 
   return (
     <section className="selected-community-layout" aria-label={community.name}>
@@ -631,9 +677,16 @@ export function SelectedCommunityView({
             </button>
             {mayManage ? <button className="community-section-new" type="button" onClick={() => setAnnouncementComposerOpen(true)}><Plus size={13} /> New</button> : null}
           </div>
-          <div className="community-section-list" onClick={() => setAnnouncementsExpanded((current) => !current)}>
+          <div className="community-section-list">
             {mayView && announcements.length ? announcements.slice(0, announcementsExpanded ? undefined : 3).map((announcement) => (
-              <article key={announcement.id}><strong>{announcement.title}</strong><p>{announcement.body}</p></article>
+              <button
+                className="community-announcement-card"
+                type="button"
+                key={announcement.id}
+                onClick={() => setSelectedAnnouncementId(announcement.id)}
+              >
+                <strong>{announcement.title}</strong><p>{announcement.body}</p>
+              </button>
             )) : <p>{mayView ? "No announcements right now." : "Available to members."}</p>}
           </div>
         </section>
@@ -702,7 +755,26 @@ export function SelectedCommunityView({
         onUpdateRole={onUpdateMemberRole}
         onRemoveMember={onRemoveMember}
       /> : null}
-      {announcementComposerOpen ? <CreateAnnouncementModal onCreate={onCreateAnnouncement} onClose={() => setAnnouncementComposerOpen(false)} /> : null}
+      {selectedAnnouncement && !editingAnnouncement ? <AnnouncementViewerModal
+        announcement={selectedAnnouncement}
+        community={community}
+        profiles={profiles}
+        mayManage={mayManage}
+        onClose={() => setSelectedAnnouncementId(null)}
+        onEdit={() => setEditingAnnouncementId(selectedAnnouncement.id)}
+        onDelete={async () => {
+          const result = await onDeleteAnnouncement(selectedAnnouncement.id);
+          if (result.ok) setSelectedAnnouncementId(null);
+          return result;
+        }}
+      /> : null}
+      {announcementComposerOpen ? <AnnouncementComposerModal mode="create" onSubmit={onCreateAnnouncement} onClose={() => setAnnouncementComposerOpen(false)} /> : null}
+      {editingAnnouncement ? <AnnouncementComposerModal
+        mode="edit"
+        initialAnnouncement={editingAnnouncement}
+        onSubmit={(announcement) => onUpdateAnnouncement(editingAnnouncement.id, announcement)}
+        onClose={() => setEditingAnnouncementId(null)}
+      /> : null}
       {callComposerOpen ? <CreateCallModal onCreate={onCreateCall} onClose={() => setCallComposerOpen(false)} /> : null}
     </section>
   );
@@ -746,35 +818,114 @@ function EditCommunityModal({
   );
 }
 
-function CreateAnnouncementModal({
-  onCreate,
+function AnnouncementViewerModal({
+  announcement,
+  community,
+  profiles,
+  mayManage,
+  onClose,
+  onEdit,
+  onDelete
+}: {
+  announcement: CommunityAnnouncement;
+  community: ResearchCommunity;
+  profiles: Record<string, ResearchProfile>;
+  mayManage: boolean;
+  onClose: () => void;
+  onEdit: () => void;
+  onDelete: () => Promise<{ ok: boolean; error?: string }>;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [status, setStatus] = useState("");
+  const author = profileForHandle(profiles, announcement.authorHandle ?? "");
+  const authorHandle = announcement.authorHandle ?? author?.handle ?? "";
+  const ownerHandle = community.ownerHandle?.toLowerCase();
+  const moderatorHandles = new Set((community.moderatorHandles ?? []).map((handle) => handle.toLowerCase()));
+  const role = authorHandle.toLowerCase() === ownerHandle
+    ? "Owner"
+    : moderatorHandles.has(authorHandle.toLowerCase()) ? "Moderator" : "Community team";
+  const expiresAt = communityAnnouncementExpiresAt(announcement);
+  return (
+    <div className="community-modal-backdrop" role="presentation" onClick={() => !deleting && onClose()}>
+      <section className="community-announcement-viewer" role="dialog" aria-modal="true" aria-labelledby="community-announcement-title" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <div><span>Announcement · {community.name}</span><strong id="community-announcement-title">{announcement.title}</strong></div>
+          <button type="button" title="Close announcement" disabled={deleting} onClick={onClose}><X size={18} /></button>
+        </header>
+        <div className="community-announcement-author">
+          <div>
+            <strong>{author?.name ?? (authorHandle.replace(/^@/, "") || "Community team")}</strong>
+            <small>{authorHandle ? `${role} · ${authorHandle}` : "Owner or moderator"}</small>
+          </div>
+          <time dateTime={announcement.createdAt}>{formatAnnouncementTime(announcement.createdAt)}</time>
+        </div>
+        <p className="community-announcement-body">{announcement.body}</p>
+        <footer>
+          <div>
+            <small>{expiresAt ? `Available until ${formatAnnouncementTime(new Date(expiresAt).toISOString())}` : "Available for 30 days from publication"}</small>
+            {announcement.updatedAt ? <small>Edited {formatAnnouncementTime(announcement.updatedAt)}</small> : null}
+          </div>
+          {mayManage ? <div className="community-announcement-manager-actions">
+            {confirmingDelete ? (
+              <>
+                <button type="button" disabled={deleting} onClick={() => setConfirmingDelete(false)}>Keep</button>
+                <button className="danger" type="button" disabled={deleting} onClick={async () => {
+                  setDeleting(true);
+                  setStatus("Deleting announcement…");
+                  const result = await onDelete();
+                  setDeleting(false);
+                  if (!result.ok) setStatus(result.error ?? "Announcement could not be deleted.");
+                }}><Trash2 size={14} /> {deleting ? "Deleting…" : "Delete"}</button>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={onEdit}><Pencil size={14} /> Edit</button>
+                <button type="button" onClick={() => setConfirmingDelete(true)}><Trash2 size={14} /> Delete</button>
+              </>
+            )}
+          </div> : null}
+        </footer>
+        {status ? <p className="community-form-status" role="alert">{status}</p> : null}
+      </section>
+    </div>
+  );
+}
+
+function AnnouncementComposerModal({
+  mode,
+  initialAnnouncement,
+  onSubmit,
   onClose
 }: {
-  onCreate: (announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
+  mode: "create" | "edit";
+  initialAnnouncement?: CommunityAnnouncement;
+  onSubmit: (announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
   onClose: () => void;
 }) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const [title, setTitle] = useState(initialAnnouncement?.title ?? "");
+  const [body, setBody] = useState(initialAnnouncement?.body ?? "");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!title.trim() || !body.trim() || busy) return;
     setBusy(true);
-    setStatus("Publishing announcement…");
-    const result = await onCreate({ title: title.trim(), body: body.trim() });
+    setStatus(mode === "edit" ? "Saving announcement…" : "Publishing announcement…");
+    const result = await onSubmit({ title: title.trim(), body: body.trim() });
     setBusy(false);
     if (result.ok) onClose();
-    else setStatus(result.error ?? "Announcement could not be published.");
+    else setStatus(result.error ?? `Announcement could not be ${mode === "edit" ? "saved" : "published"}.`);
   };
   return (
     <div className="community-modal-backdrop" role="presentation" onClick={onClose}>
       <form className="community-call-modal community-announcement-modal" onSubmit={submit} onClick={(event) => event.stopPropagation()}>
-        <header><div><span>Announcement</span><strong>Tell the community</strong></div><button type="button" title="Close announcement form" disabled={busy} onClick={onClose}><X size={18} /></button></header>
+        <header><div><span>Announcement</span><strong>{mode === "edit" ? "Edit announcement" : "Tell the community"}</strong></div><button type="button" title="Close announcement form" disabled={busy} onClick={onClose}><X size={18} /></button></header>
         <label>Title<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={140} autoFocus /></label>
         <label>Message <small>{body.length.toLocaleString()} / 1,600</small><textarea value={body} onChange={(event) => setBody(event.target.value)} maxLength={1600} rows={7} /></label>
+        <small className="community-announcement-retention-note">Announcements automatically leave the community 30 days after their original publication. Editing does not restart that clock.</small>
         <p className="community-form-status" aria-live="polite">{status}</p>
-        <button className="community-primary-action" type="submit" disabled={busy || !title.trim() || !body.trim()}><Megaphone size={16} /> {busy ? "Publishing…" : "Publish announcement"}</button>
+        <button className="community-primary-action" type="submit" disabled={busy || !title.trim() || !body.trim()}><Megaphone size={16} /> {busy ? (mode === "edit" ? "Saving…" : "Publishing…") : (mode === "edit" ? "Save announcement" : "Publish announcement")}</button>
       </form>
     </div>
   );
@@ -821,4 +972,19 @@ const formatCallTime = (value?: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Scheduled";
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC", timeZoneName: "short" }).format(date);
+};
+
+const formatAnnouncementTime = (value?: string) => {
+  if (!value) return "Publication time unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Publication time unavailable";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "UTC",
+    timeZoneName: "short"
+  }).format(date);
 };
