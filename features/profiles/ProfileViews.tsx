@@ -682,6 +682,7 @@ function ProfileCommentCard({
               onOpenCommunity={onOpenCommunity}
               onClick={(event) => event.stopPropagation()}
               compact
+              className="profile-community-provenance"
             />
           ) : null}
           <span>

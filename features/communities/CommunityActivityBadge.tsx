@@ -9,17 +9,19 @@ export function CommunityActivityBadge({
   community,
   onOpenCommunity,
   onClick,
-  compact = false
+  compact = false,
+  className
 }: {
   community: ResearchCommunity;
   onOpenCommunity: (communityId: string) => void;
   onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   compact?: boolean;
+  className?: string;
 }) {
   const Icon = community.visibility === "private" ? LockKeyhole : UsersRound;
   return (
     <CanonicalLink
-      className={`community-activity-badge${compact ? " compact" : ""}`}
+      className={`community-activity-badge${compact ? " compact" : ""}${className ? ` ${className}` : ""}`}
       route={{ kind: "community", communityId: community.id }}
       onNavigate={() => onOpenCommunity(community.id)}
       onClick={onClick}

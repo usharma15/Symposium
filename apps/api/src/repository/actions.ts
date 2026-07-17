@@ -224,7 +224,7 @@ const hiddenCommunityActivityCounts = async (
      hidden_comments AS (
        SELECT comment.id, comment.author_handle, comment.quote
        FROM comments comment
-       INNER JOIN private_community_posts post ON post.id = comment.post_id
+       INNER JOIN hidden_posts post ON post.id = comment.post_id
        WHERE comment.deleted_at IS NULL
      ),
      authored_comments AS (
@@ -354,7 +354,7 @@ export const PROFILE_ACTIVITY_SQL = `WITH profile_activity AS (
          AND ($8::boolean OR comment_action.active = true)
          AND post.deleted_at IS NULL
          AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
-         AND ($8::boolean OR post.community_id IS NULL OR community.visibility = 'public')
+         AND ($8::boolean OR post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public')
      )
      SELECT *
      FROM profile_activity

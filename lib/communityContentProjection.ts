@@ -67,8 +67,8 @@ const projectQuoteForViewer = (
   if (!quote?.available) return quote;
   const source = itemById.get(quote.sourcePostId);
   if (!source) return unavailableContentQuote(quote);
-  const sourceIsPaper = quote.sourceType === "post" && source.postType === "paper";
-  if (!source.communityId || sourceIsPaper || ownerIsPaper) return quote;
+  const sourceIsPublicPaperMaterial = source.postType === "paper";
+  if (!source.communityId || sourceIsPublicPaperMaterial || ownerIsPaper) return quote;
   const community = communityById.get(source.communityId);
   return community?.visibility === "public" || community?.membershipStatus === "active"
     ? quote
@@ -125,7 +125,7 @@ export const projectCommunityItemsForViewer = (
     }
     const activityComments = viewerHandle ? profileActivityComments(item.comments, viewerHandle) : [];
     if (item.postType === "paper") {
-      return [projectFullItem(item, activityComments, "full", itemById, communityById)];
+      return [projectFullItem(item, item.comments, "full", itemById, communityById)];
     }
     if (viewerHandle && itemHasProfileActivity(item, viewerHandle)) {
       return [projectFullItem(item, activityComments, "activity-only", itemById, communityById)];

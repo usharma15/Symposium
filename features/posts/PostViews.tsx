@@ -671,7 +671,7 @@ export function FeedPost({
         <div className="profile-post-card-header">
           <PostAuthor item={item} profiles={profiles} onOpenProfile={onOpenProfile} onClickStop={(event) => event.stopPropagation()} />
           <div className="profile-post-header-actions">
-            {showCommunityContext && community && onOpenCommunity ? <CommunityActivityBadge community={community} onOpenCommunity={onOpenCommunity} onClick={(event) => event.stopPropagation()} compact /> : null}
+            {showCommunityContext && community && onOpenCommunity ? <CommunityActivityBadge community={community} onOpenCommunity={onOpenCommunity} onClick={(event) => event.stopPropagation()} compact className="profile-community-provenance" /> : null}
             {!interactionLocked ? <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} inline /> : null}
           </div>
         </div>

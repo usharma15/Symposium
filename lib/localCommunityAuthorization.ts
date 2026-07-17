@@ -34,7 +34,7 @@ export const assertLocalQuoteDestination = async (
   if (!sourceItem?.communityId) return;
   const community = (await listLocalCommunities(actorHandle)).find((candidate) => candidate.id === sourceItem.communityId);
   if (community?.visibility !== "private") return;
-  if (source.sourceType === "post" && sourceItem.postType === "paper") return;
+  if (sourceItem.postType === "paper") return;
   if (target.communityId === sourceItem.communityId) return;
   if (target.ownerType === "post" && target.postType === "paper") return;
   throw new ContentQuoteError(

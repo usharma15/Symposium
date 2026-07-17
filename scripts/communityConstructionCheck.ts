@@ -77,7 +77,42 @@ const publicPaper = item({
     sourcePostId: privateThought.id,
     available: true,
     attachmentCount: 0
-  }
+  },
+  comments: [{
+    id: "public-paper-comment",
+    author: "Paper Commenter",
+    authorHandle: "@paper-commenter",
+    body: "This comment belongs to the paper's canonical public discussion.",
+    stance: "comment",
+    quote: {
+      sourceType: "post",
+      sourceId: privateThought.id,
+      sourcePostId: privateThought.id,
+      available: true,
+      attachmentCount: 0
+    },
+    replies: [{
+      id: "public-paper-reply",
+      author: "Paper Replier",
+      authorHandle: "@paper-replier",
+      body: "The complete reply tree remains public with the paper.",
+      stance: "reply"
+    }]
+  }, {
+    id: "quoted-paper-comment",
+    author: "Paper Quoter",
+    authorHandle: "@paper-quoter",
+    body: "Comments from a paper discussion are themselves public quote sources.",
+    stance: "comment",
+    quote: {
+      sourceType: "comment",
+      sourceId: "public-paper-comment",
+      sourcePostId: "public-paper",
+      available: true,
+      attachmentCount: 0
+    },
+    replies: []
+  }]
 });
 const privateCommentSource = item({
   id: "private-comment-source",
@@ -126,7 +161,10 @@ const projected = projectCommunityItemsForViewer([privateThought, publicPaper], 
 assert.deepEqual(projected.map((entry) => entry.id), [privateThought.id, publicPaper.id], "A paper-cited private source must remain directly available.");
 assert.equal(projected[0]?.communityAccess, "citation-only", "Private cited sources must be non-interactive projections.");
 assert.equal(projected[1]?.communityAccess, "full", "Papers must retain full public access.");
-assert.equal(projected[1]?.comments.length, 0, "Private-community paper discussion must stay private even though the paper is public.");
+assert.equal(projected[1]?.comments.length, 2, "A private-community paper's complete discussion must remain public.");
+assert.equal(projected[1]?.comments[0]?.replies?.length, 1, "A private-community paper's nested replies must remain public.");
+assert.equal(projected[1]?.comments[0]?.quote?.available, false, "Private non-paper material quoted inside a public paper comment must be unavailable externally.");
+assert.equal(projected[1]?.comments[1]?.quote?.available, true, "Comments in a public paper discussion must remain available as quote sources.");
 
 const ownerProjected = projectCommunityItemsForViewer([privateThought, publicPaper], [community], "@researcher");
 assert.equal(ownerProjected.find((entry) => entry.id === privateThought.id)?.communityAccess, "activity-only", "Users must retain their own private-community profile activity.");
@@ -220,15 +258,16 @@ const seededPrivateThought = privateActivity.find((entry) => entry.postType === 
 const seededPrivatePaper = privateActivity.find((entry) => entry.postType === "paper")!;
 assert.equal(profileItemIsPubliclyListable(seededPrivateThought, researchCommunities), false, "Private community activity must never enter public profile lists.");
 assert.equal(profileItemIsPubliclyListable(seededPrivatePaper, researchCommunities), true, "Private-community papers must remain profile-visible.");
-assert.equal(profileCommentsArePubliclyListable(seededPrivatePaper, researchCommunities), false, "Private-community paper discussions must remain absent from public profiles.");
+assert.equal(profileCommentsArePubliclyListable(seededPrivatePaper, researchCommunities), true, "Private-community paper discussions must remain visible on public profiles.");
 assert.equal(profileItemIsPubliclyListable({ ...seededPrivateThought, communityId: "missing-community" }, researchCommunities), false, "Unknown community state must fail closed on public profiles.");
 const privateActor = seededPrivateThought.authorHandle!;
 const hiddenCounts = hiddenCommunityActivityCounts(communityActivityItems, researchCommunities, privateActor);
 assert.ok(hiddenCounts.all > 0 && hiddenCounts.thoughts > 0, "Hidden private activity must still advance public profile totals.");
 const privatePaperCommentActor = seededPrivatePaper.comments[0]!.authorHandle!;
-assert.ok(
-  hiddenCommunityActivityCounts(communityActivityItems, researchCommunities, privatePaperCommentActor).comments > 0,
-  "Comments around private-community papers must advance totals without entering profile lists."
+assert.equal(
+  hiddenCommunityActivityCounts([seededPrivatePaper], researchCommunities, privatePaperCommentActor).comments,
+  0,
+  "Comments around private-community papers must enter public profile lists instead of hidden-count compensation."
 );
 
 const main = async () => {
@@ -249,12 +288,15 @@ const sources = await Promise.all([
   readFile(new URL("../app/api/communities/[id]/membership/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../components/SymposiumV0.tsx", import.meta.url), "utf8"),
   readFile(new URL("../features/posts/PostViews.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../features/profiles/ProfileViews.tsx", import.meta.url), "utf8"),
   readFile(new URL("../styles/89-communities.css", import.meta.url), "utf8"),
+  readFile(new URL("../styles/89-community-activity.css", import.meta.url), "utf8"),
   readFile(new URL("../lib/localCommunityStore.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/services/contentQuotes.ts", import.meta.url), "utf8"),
-  readFile(new URL("../app/api/communities/[id]/route.ts", import.meta.url), "utf8")
+  readFile(new URL("../app/api/communities/[id]/route.ts", import.meta.url), "utf8"),
+  readFile(new URL("../apps/api/src/repository/comments.ts", import.meta.url), "utf8")
 ]);
-const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, communityStyles, localStore, quoteService, communityRoute] = sources;
+const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
@@ -274,7 +316,11 @@ assert.match(foundation, /communities-content-v1/, "Rich community content must 
 assert.match(foundation, /community\.memberHandles\.slice\(0, communityMemberPreviewLimit\)/, "General bootstrap delivery must cap member previews; the directory endpoint owns full pagination.");
 assert.match(membershipRoute, /action === "leave"/, "The single membership control must support leave through the same client route.");
 assert.match(shell, /selectedCommunity && canParticipateInCommunity/, "The global composer must default to the selected community when participation is allowed.");
+assert.match(shell, /<ProfileView[\s\S]+items=\{items\}/, "Profiles must receive the complete viewer-projected item collection rather than a global-feed subset.");
 assert.match(postViews, /Post destination/, "The global composer must allow switching between community and global publication.");
+assert.match(postViews, /className="profile-community-provenance"/, "Profile post provenance must render in the post header actions.");
+assert.match(profileViews, /className="profile-community-provenance"/, "Profile comment provenance must render in the comment header actions.");
+assert.match(communityActivityStyles, /\.profile-community-provenance[\s\S]+margin:\s*0 0 0 auto/, "Profile community provenance must stay aligned at the top right.");
 assert.doesNotMatch(communityStyles, /data-room=\"communities\"[^}]+display:\s*none/, "Communities must never hide the global bottom launchers.");
 assert.match(localStore, /version: 4/, "Existing local community state must migrate to recency-aware memberships.");
 assert.match(localStore, /updateLocalCommunityVisibility/, "Local community visibility must persist through the canonical store.");
@@ -283,6 +329,12 @@ assert.match(repository, /community\.visibility\.updated/, "Live community visib
 assert.match(communityRoute, /export async function PATCH/, "Community visibility needs a revision-guarded Next route.");
 assert.match(views, /community-visibility-modal/, "Owners and moderators need explicit current-state visibility controls.");
 assert.match(quoteService, /Private community content can only be quoted inside that community or cited by a public paper/, "Private quote sources need one canonical destination boundary.");
+assert.match(quoteService, /source\.postType === "paper"/, "Paper posts and their comments must remain public quote sources.");
+assert.equal(
+  (commentsRepository.match(/communityEventScope\(client, [^)]+postType === "paper" \? null/g) ?? []).length,
+  4,
+  "Paper comment creation, editing, deletion, and actions must all publish through the public live-event scope."
+);
 
 console.log("community construction checks passed");
 };

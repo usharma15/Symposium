@@ -274,7 +274,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
       })
     });
     await completeMutation(client, handle, mutation, { comment, item: updatedItem });
-    const eventScope = await communityEventScope(client, existing.communityId);
+    const eventScope = await communityEventScope(client, existing.postType === "paper" ? null : existing.communityId);
     stagedEvents.push(await stageEvent(client, {
       kind: "comment.created",
       actorHandle: comment.authorHandle,
@@ -470,7 +470,7 @@ export const updateComment = async (
       }
     });
     await completeMutation(client, handle, mutation, updatedItem);
-    const eventScope = await communityEventScope(client, updatedItem.communityId);
+    const eventScope = await communityEventScope(client, updatedItem.postType === "paper" ? null : updatedItem.communityId);
     stagedEvents.push(await stageEvent(client, {
       kind: "comment.updated",
       actorHandle: handle,
@@ -676,7 +676,7 @@ export const deleteComment = async (
         subjectId: commentId,
         metadata: { deletedAt, postId, storageAttachmentCount: storageAttachmentIds.length }
       });
-      const eventScope = await communityEventScope(client, updatedItem.communityId);
+      const eventScope = await communityEventScope(client, updatedItem.postType === "paper" ? null : updatedItem.communityId);
       stagedEvents.push(await stageEvent(client, {
         kind: "comment.deleted",
         actorHandle: handle,
@@ -880,7 +880,7 @@ export const applyCommentAction = async (
     }
     await completeMutation(client, handle, mutation, { item: updatedItem, activity });
     const privatePost = updatedItem.room === "office" || updatedItem.kind === "draft";
-    const eventScope = await communityEventScope(client, updatedItem.communityId);
+    const eventScope = await communityEventScope(client, updatedItem.postType === "paper" ? null : updatedItem.communityId);
     if (input.action !== "read") {
       await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
     }

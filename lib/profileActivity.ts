@@ -26,7 +26,9 @@ export const profileItemIsPubliclyListable = (
 export const profileCommentsArePubliclyListable = (
   item: InquiryItem,
   communities: ResearchCommunity[]
-) => !item.communityId || communities.find((community) => community.id === item.communityId)?.visibility === "public";
+) => !item.communityId
+  || itemHasPostType(item, "paper")
+  || communities.find((community) => community.id === item.communityId)?.visibility === "public";
 
 export const commentHasProfileActivity = (comment: InquiryComment, rawActorHandle: string): boolean => {
   const actorHandle = cleanHandle(rawActorHandle);

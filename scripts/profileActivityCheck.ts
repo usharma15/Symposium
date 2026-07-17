@@ -3,6 +3,8 @@ import { PROFILE_ACTIVITY_SQL } from "@/apps/api/src/repository/actions";
 import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
 import {
   itemMatchesProfilePostAction,
+  profileCommentsArePubliclyListable,
+  profileItemIsPubliclyListable,
   reconcileProfileActivitySlots,
   selectProfileActivitySlots,
   uniqueProfileActivityEntries
@@ -20,6 +22,7 @@ const person: ResearchProfile = {
 const item: InquiryItem = {
   id: "self-authored",
   kind: "thought",
+  postType: "thought",
   room: "symposium",
   title: "Self-authored work",
   author: person.name,
@@ -44,6 +47,33 @@ const item: InquiryItem = {
   signaledBy: [person.handle],
   forkedBy: [person.handle]
 };
+
+const publicCommunity = {
+  id: "public-community",
+  name: "Public Community",
+  field: "Profile verification",
+  summary: "Public community profile activity verification.",
+  visibility: "public" as const,
+  online: 1,
+  memberHandles: [person.handle],
+  keywords: ["profile"],
+  seedCounts: { papers: 0, thoughts: 1, opportunities: 0 },
+  callStatus: "quiet" as const
+};
+const publicCommunityThought = { ...item, id: "public-community-thought", communityId: publicCommunity.id };
+assert.equal(profileItemIsPubliclyListable(publicCommunityThought, [publicCommunity]), true);
+assert.equal(profileCommentsArePubliclyListable(publicCommunityThought, [publicCommunity]), true);
+assert.equal(profileItemIsPubliclyListable(publicCommunityThought, [{ ...publicCommunity, visibility: "private" }]), false);
+const privateCommunityPaper = {
+  ...item,
+  id: "private-community-paper",
+  kind: "paper" as const,
+  postType: "paper" as const,
+  room: "library" as const,
+  communityId: publicCommunity.id
+};
+assert.equal(profileItemIsPubliclyListable(privateCommunityPaper, [{ ...publicCommunity, visibility: "private" }]), true);
+assert.equal(profileCommentsArePubliclyListable(privateCommunityPaper, [{ ...publicCommunity, visibility: "private" }]), true);
 
 assert.equal(itemMatchesProfilePostAction(item, person, "save", person.handle), true);
 assert.equal(itemMatchesProfilePostAction(item, person, "signal"), true);
@@ -124,6 +154,8 @@ console.log(
         "activity deduplication",
         "live slot reconciliation",
         "profile tab isolation",
+        "public-community authored post visibility",
+        "private-community paper discussion visibility",
         "unambiguous live activity query",
         "private-community profile visibility boundary"
       ]
