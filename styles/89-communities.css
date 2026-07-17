@@ -518,7 +518,7 @@
 }
 
 .selected-community-left {
-  gap: 10px;
+  gap: 8px;
 }
 
 .selected-community-header h1 {
@@ -545,10 +545,10 @@
 
 .community-feed-controls {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  padding: 10px 0;
+  padding: 6px 0;
 }
 
 .community-feed-controls > label {
@@ -644,7 +644,28 @@
 
 .community-secondary-actions {
   display: grid;
-  gap: 6px;
+  gap: 5px;
+}
+
+.selected-community-left .community-secondary-actions > button,
+.community-invite-row > button {
+  min-height: 36px;
+}
+
+.community-invite-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+}
+
+.community-invite-row.has-requests {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.community-invite-row > button {
+  justify-content: center;
+  min-width: 0;
+  padding-inline: 7px;
 }
 
 .selected-community-work {

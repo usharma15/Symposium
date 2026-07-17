@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   communitySummaryMaxLength,
+  communityMemberQuerySchema,
   createCommunityAnnouncementInputSchema,
   deleteCommunityAnnouncementInputSchema,
   createCommunityInputSchema,
   createPostInputSchema,
   removeCommunityMemberInputSchema,
+  resolveCommunityRequestInputSchema,
   researchCommunitySchema,
   updateCommunityMemberInputSchema,
   updateCommunityAnnouncementInputSchema,
@@ -297,12 +299,14 @@ assert.equal(
 
 const main = async () => {
 const firstCommunity = researchCommunities[0]!;
-const firstMemberPage = await listLocalCommunityMembers(firstCommunity.id, "@udayan", { q: "", limit: 8, role: "all" });
+const firstMemberPage = await listLocalCommunityMembers(firstCommunity.id, "@udayan", { q: "", limit: 8, role: "all", status: "active" });
 assert.equal(firstMemberPage.members.length, 8, "Member directories must load bounded pages.");
 assert.ok(firstMemberPage.nextCursor, "Substantial communities must expose a continuation cursor.");
 assert.ok(firstMemberPage.members.every((member, index, members) => index === 0 || members[index - 1]!.joinedAt >= member.joinedAt), "Members must be ordered by newest join date.");
-const moderatorPage = await listLocalCommunityMembers(firstCommunity.id, "@udayan", { q: "", limit: 20, role: "moderators" });
+const moderatorPage = await listLocalCommunityMembers(firstCommunity.id, "@udayan", { q: "", limit: 20, role: "moderators", status: "active" });
 assert.ok(moderatorPage.members.every((member) => member.role === "owner" || member.role === "moderator"), "Moderator directories must not leak ordinary member rows.");
+assert.equal(communityMemberQuerySchema.parse({ status: "requested" }).status, "requested", "Join-request pagination must have an explicit request status.");
+assert.equal(resolveCommunityRequestInputSchema.parse({ communityId: firstCommunity.id, memberHandle: "@requester", decision: "approve", expectedRevision: 1 }).decision, "approve", "Join-request decisions must be revision guarded.");
 
 const sources = await Promise.all([
   readFile(new URL("../features/communities/CommunityViews.tsx", import.meta.url), "utf8"),
@@ -326,9 +330,11 @@ const sources = await Promise.all([
   readFile(new URL("../apps/api/src/repository/communityAuthorization.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/communityAnnouncements.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/communities/[id]/announcements/[announcementId]/route.ts", import.meta.url), "utf8"),
-  readFile(new URL("../styles/89-community-announcements.css", import.meta.url), "utf8")
+  readFile(new URL("../styles/89-community-announcements.css", import.meta.url), "utf8"),
+  readFile(new URL("../app/api/communities/[id]/requests/[handle]/route.ts", import.meta.url), "utf8"),
+  readFile(new URL("../apps/api/src/repository/communityRequests.ts", import.meta.url), "utf8")
 ]);
-const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization, announcementRepository, announcementRoute, announcementStyles] = sources;
+const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization, announcementRepository, announcementRoute, announcementStyles, requestRoute, communityRequestsRepository] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
@@ -339,6 +345,14 @@ assert.match(peopleModal, /nextCursor/, "Community people must use cursor pagina
 assert.match(peopleModal, /Quick search members/, "The member directory must expose quick search.");
 assert.match(peopleModal, /Make moderator/, "Managers must be able to promote ordinary members from the member directory.");
 assert.match(peopleModal, /Remove member/, "Managers must be able to remove ordinary members from the member directory.");
+assert.match(views, /setPeopleOpen\("requests"\)/, "Private-community managers need a dedicated join-request entry point.");
+assert.match(peopleModal, /Newest requests first/, "Join requests must use the paginated people directory in newest-first order.");
+assert.match(peopleModal, /Approve join request/, "Managers must be able to approve join requests.");
+assert.match(peopleModal, /Decline join request/, "Managers must be able to decline join requests.");
+assert.match(requestRoute, /export async function PATCH/, "Join-request decisions need a revision-guarded Next route.");
+assert.match(communityRequestsRepository, /resolveCommunityRequest/, "Join-request decisions must persist through the live repository.");
+assert.match(localStore, /resolveLocalCommunityRequest/, "Join-request decisions must persist through the local canonical store.");
+assert.match(communityStyles, /community-invite-row\.has-requests[\s\S]+repeat\(2/, "Invite and Requests must share the final left-rail row.");
 assert.match(filterModal, /Hot right now/, "Community feed filtering must expose a real heat ranking.");
 assert.match(repository, /assertCommunityParticipation/, "Community writes must enforce active participation.");
 assert.match(communityMembersRepository, /last_accessed_at/, "Recent community access must persist server-side.");

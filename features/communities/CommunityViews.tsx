@@ -90,6 +90,7 @@ export function CommunitiesStage({
     onUpdateSettings: (settings: Pick<UpdateCommunitySettingsInputContract, "name" | "summary" | "guidelines" | "visibility">) => Promise<{ ok: boolean; error?: string }>;
     onUpdateMemberRole: (memberHandle: string, role: "moderator" | "member") => Promise<{ ok: boolean; error?: string }>;
     onRemoveMember: (memberHandle: string) => Promise<{ ok: boolean; error?: string }>;
+    onResolveRequest: (memberHandle: string, decision: "approve" | "decline") => Promise<{ ok: boolean; error?: string }>;
     onCreateAnnouncement: (announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
     onUpdateAnnouncement: (announcementId: string, announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
     onDeleteAnnouncement: (announcementId: string) => Promise<{ ok: boolean; error?: string }>;
@@ -138,6 +139,7 @@ export function CommunitiesStage({
     onUpdateSettings={actions.onUpdateSettings}
     onUpdateMemberRole={actions.onUpdateMemberRole}
     onRemoveMember={actions.onRemoveMember}
+    onResolveRequest={actions.onResolveRequest}
     onCreateAnnouncement={actions.onCreateAnnouncement}
     onUpdateAnnouncement={actions.onUpdateAnnouncement}
     onDeleteAnnouncement={actions.onDeleteAnnouncement}
@@ -479,6 +481,7 @@ export function SelectedCommunityView({
   onUpdateSettings,
   onUpdateMemberRole,
   onRemoveMember,
+  onResolveRequest,
   onCreateAnnouncement,
   onUpdateAnnouncement,
   onDeleteAnnouncement,
@@ -510,6 +513,7 @@ export function SelectedCommunityView({
   onUpdateSettings: (settings: Pick<UpdateCommunitySettingsInputContract, "name" | "summary" | "guidelines" | "visibility">) => Promise<{ ok: boolean; error?: string }>;
   onUpdateMemberRole: (memberHandle: string, role: "moderator" | "member") => Promise<{ ok: boolean; error?: string }>;
   onRemoveMember: (memberHandle: string) => Promise<{ ok: boolean; error?: string }>;
+  onResolveRequest: (memberHandle: string, decision: "approve" | "decline") => Promise<{ ok: boolean; error?: string }>;
   onCreateAnnouncement: (announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
   onUpdateAnnouncement: (announcementId: string, announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
   onDeleteAnnouncement: (announcementId: string) => Promise<{ ok: boolean; error?: string }>;
@@ -542,7 +546,7 @@ export function SelectedCommunityView({
   const [selectedAnnouncementId, setSelectedAnnouncementId] = useState<string | null>(null);
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [announcementClock, setAnnouncementClock] = useState(() => Date.now());
-  const [peopleOpen, setPeopleOpen] = useState<"members" | "moderators" | null>(null);
+  const [peopleOpen, setPeopleOpen] = useState<"members" | "moderators" | "requests" | null>(null);
   const [announcementsExpanded, setAnnouncementsExpanded] = useState(false);
   const [callsExpanded, setCallsExpanded] = useState(false);
   const isMember = isActiveCommunityMember(community, currentProfile);
@@ -630,7 +634,12 @@ export function SelectedCommunityView({
           <button type="button" onClick={() => setRulesOpen(true)}><BookOpenText size={16} /> Guidelines & rules</button>
           {mayManage ? <button type="button" onClick={() => setSettingsOpen(true)}><Pencil size={16} /> Edit community</button> : null}
           <button type="button" onClick={() => setPeopleOpen("moderators")}><Contact size={16} /> Contact moderators</button>
-          <button type="button" onClick={onInvite}><Send size={16} /> Invite</button>
+          <div className={`community-invite-row ${mayManage && community.visibility === "private" ? "has-requests" : ""}`}>
+            <button type="button" onClick={onInvite}><Send size={16} /> Invite</button>
+            {mayManage && community.visibility === "private" ? (
+              <button type="button" onClick={() => setPeopleOpen("requests")}><UserRoundPlus size={16} /> Requests</button>
+            ) : null}
+          </div>
         </div> : null}
       </aside>
 
@@ -774,6 +783,7 @@ export function SelectedCommunityView({
         canManage={mayManage}
         onUpdateRole={onUpdateMemberRole}
         onRemoveMember={onRemoveMember}
+        onResolveRequest={onResolveRequest}
       /> : null}
       {selectedAnnouncement && !editingAnnouncement ? <AnnouncementViewerModal
         announcement={selectedAnnouncement}

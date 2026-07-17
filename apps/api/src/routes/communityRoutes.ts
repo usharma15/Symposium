@@ -20,6 +20,7 @@ import {
   deleteCommunityAnnouncement,
   updateCommunityAnnouncement
 } from "../repository/communityAnnouncements";
+import { resolveCommunityRequest } from "../repository/communityRequests";
 import { listCommunityMembers, recordCommunityAccess } from "../repository/communityMembers";
 import { getPublicCommunity, listPublicCommunities } from "../repository/foundation";
 import type { RouteParams } from "./types";
@@ -136,6 +137,16 @@ export const registerCommunityRoutes = (app: FastifyInstance) => {
       const actor = await withWriteActor(request);
       const payload = { ...(request.body ?? {}), communityId: request.params.id, memberHandle: request.params.handle };
       return reply.send(await removeCommunityMember(payload, actor, mutationContextFromRequest(request, "community.member.remove", payload)));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: RouteParams & { handle: string } }>("/v1/communities/:id/requests/:handle", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const payload = { ...(request.body ?? {}), communityId: request.params.id, memberHandle: request.params.handle };
+      return reply.send(await resolveCommunityRequest(payload, actor, mutationContextFromRequest(request, "community.request.resolve", payload)));
     } catch (error) {
       return sendError(app, reply, error);
     }

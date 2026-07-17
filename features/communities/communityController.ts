@@ -192,6 +192,30 @@ export const createCommunityController = (input: {
     }
   };
 
+  const resolveRequest = async (memberHandle: string, decision: "approve" | "decline") => {
+    const community = input.selectedCommunity;
+    if (!community) return { ok: false, error: "Community not found." };
+    const payload = { communityId: community.id, memberHandle, decision, expectedRevision: community.revision ?? 1 };
+    const mutation = input.retryMutationKey("community-request", JSON.stringify(payload));
+    input.setStatus(decision === "approve" ? "Approving community request" : "Declining community request");
+    try {
+      const data = await symposiumApi.request<{ community: ResearchCommunity }>(`/api/communities/${encodeURIComponent(community.id)}/requests/${encodeURIComponent(memberHandle)}`, {
+        method: "PATCH", idempotencyKey: mutation.idempotencyKey, body: { ...payload, actorHandle: input.currentProfileHandle }
+      });
+      input.clearRetryMutationKey(mutation.fingerprintKey);
+      mergeCommunity(data.community);
+      window.setTimeout(input.persist, 0);
+      input.setStatus(decision === "approve" ? "Join request approved" : "Join request declined");
+      return { ok: true };
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) input.clearRetryMutationKey(mutation.fingerprintKey);
+      const message = error instanceof Error ? error.message : "Join request could not be updated";
+      input.setStatus(message);
+      if (message.includes("changed")) input.refresh();
+      return { ok: false, error: message };
+    }
+  };
+
   const createAnnouncement = async (announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => {
     const community = input.selectedCommunity;
     if (!community) return { ok: false, error: "Community not found." };
@@ -325,5 +349,5 @@ export const createCommunityController = (input: {
     }
   };
 
-  return { changeMembership, changeVisibility, createCall, createCommunity, createAnnouncement, deleteAnnouncement, invite, joinCall, removeMember, updateAnnouncement, updateMemberRole, updateSettings };
+  return { changeMembership, changeVisibility, createCall, createCommunity, createAnnouncement, deleteAnnouncement, invite, joinCall, removeMember, resolveRequest, updateAnnouncement, updateMemberRole, updateSettings };
 };

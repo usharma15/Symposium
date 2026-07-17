@@ -132,13 +132,15 @@
   font-weight: 900;
 }
 
-.community-person-controls {
+.community-person-controls,
+.community-request-controls {
   display: inline-flex;
   align-items: center;
   gap: 5px;
 }
 
-.community-person-controls button {
+.community-person-controls button,
+.community-request-controls button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -160,7 +162,13 @@
   color: #8d302a;
 }
 
-.community-person-controls button:disabled {
+.community-request-controls .danger-action {
+  border-color: color-mix(in srgb, #a53e35 42%, var(--line));
+  color: #8d302a;
+}
+
+.community-person-controls button:disabled,
+.community-request-controls button:disabled {
   cursor: wait;
   opacity: 0.5;
 }
@@ -182,4 +190,6 @@
   .community-person-row em { display: none; }
   .community-person-controls { justify-self: stretch; }
   .community-person-controls button:first-child { flex: 1; }
+  .community-request-controls { justify-self: stretch; }
+  .community-request-controls button { flex: 1; }
 }

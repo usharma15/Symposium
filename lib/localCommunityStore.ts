@@ -11,6 +11,7 @@ import type {
   CreateCommunityInputContract,
   CreateCommunityCallInputContract,
   RemoveCommunityMemberInputContract,
+  ResolveCommunityRequestInputContract,
   UpdateCommunityMemberInputContract,
   UpdateCommunityAnnouncementInputContract,
   UpdateCommunitySettingsInputContract
@@ -21,7 +22,7 @@ import { cleanHandle } from "@/lib/symposiumCore";
 import { activeCommunityAnnouncements } from "@/lib/communityAnnouncements";
 
 type StoredMembership = {
-  status: Exclude<CommunityMembershipStatusContract, "none"> | "removed";
+  status: Exclude<CommunityMembershipStatusContract, "none"> | "rejected" | "removed";
   role: "owner" | "moderator" | "member";
   joinedAt: string;
   lastAccessedAt?: string;
@@ -271,6 +272,29 @@ export const removeLocalCommunityMember = (input: RemoveCommunityMemberInputCont
     return { community: projectCommunity(state, community, handle), removedHandle: memberHandle };
   });
 
+export const resolveLocalCommunityRequest = (input: ResolveCommunityRequestInputContract, rawActorHandle: string) =>
+  withLock(async () => {
+    const state = await readState();
+    const { community, handle } = requireLocalCommunityManager(state, input.communityId, rawActorHandle);
+    assertLocalCommunityRevision(community, input.expectedRevision);
+    const memberHandle = cleanHandle(input.memberHandle);
+    const target = state.memberships[community.id]?.[memberHandle];
+    if (!target || target.status !== "requested") throw new Error("Join request not found.");
+    target.status = input.decision === "approve" ? "active" : "rejected";
+    target.role = "member";
+    if (input.decision === "approve") {
+      target.joinedAt = new Date().toISOString();
+      target.lastAccessedAt = target.joinedAt;
+    }
+    community.revision = input.expectedRevision + 1;
+    syncLocalCommunityHandles(state, community);
+    await writeState(state);
+    return {
+      community: projectCommunity(state, community, handle),
+      request: { handle: memberHandle, decision: input.decision }
+    };
+  });
+
 export const createLocalCommunityAnnouncement = (input: CreateCommunityAnnouncementInputContract, rawActorHandle: string) =>
   withLock(async () => {
     const state = await readState();
@@ -409,13 +433,17 @@ export const listLocalCommunityMembers = async (
   const community = state.communities.find((candidate) => candidate.id === communityId);
   if (!community) throw new Error("Community not found.");
   const actorHandle = rawActorHandle ? cleanHandle(rawActorHandle) : "";
-  if (community.visibility === "private" && state.memberships[communityId]?.[actorHandle]?.status !== "active") {
+  const actorMembership = state.memberships[communityId]?.[actorHandle];
+  if (query.status === "requested" && (actorMembership?.status !== "active" || (actorMembership.role !== "owner" && actorMembership.role !== "moderator"))) {
+    throw new Error("Only community owners and moderators can review join requests.");
+  }
+  if (query.status === "active" && community.visibility === "private" && actorMembership?.status !== "active") {
     throw new Error("Private community members require membership.");
   }
   const term = query.q.trim().toLowerCase();
   const visible = Object.entries(state.memberships[communityId] ?? {})
-    .filter(([, membership]) => membership.status === "active")
-    .filter(([, membership]) => query.role === "all" || membership.role === "owner" || membership.role === "moderator")
+    .filter(([, membership]) => membership.status === query.status)
+    .filter(([, membership]) => query.status === "requested" || query.role === "all" || membership.role === "owner" || membership.role === "moderator")
     .map(([handle, membership]) => {
       const person = profileByHandle.get(cleanHandle(handle));
       return {

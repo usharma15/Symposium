@@ -15,11 +15,12 @@ export async function GET(request: Request, context: Context) {
     q: url.searchParams.get("q") ?? "",
     cursor: url.searchParams.get("cursor") ?? undefined,
     limit: url.searchParams.get("limit") ?? undefined,
-    role: url.searchParams.get("role") ?? "all"
+    role: url.searchParams.get("role") ?? "all",
+    status: url.searchParams.get("status") ?? "active"
   });
   if (!parsed.success) return jsonError("Choose a valid member search.", 400);
   const actorHandle = url.searchParams.get("actorHandle") ?? undefined;
-  const search = new URLSearchParams({ q: parsed.data.q, limit: String(parsed.data.limit), role: parsed.data.role });
+  const search = new URLSearchParams({ q: parsed.data.q, limit: String(parsed.data.limit), role: parsed.data.role, status: parsed.data.status });
   if (parsed.data.cursor) search.set("cursor", parsed.data.cursor);
   const live = await proxyLiveBackend(`/v1/communities/${encodeURIComponent(id)}/members?${search}`, { actorHandle });
   if (live) return live;

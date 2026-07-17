@@ -3332,6 +3332,7 @@ function SymposiumExperience({
               onUpdateSettings: communityController.updateSettings,
               onUpdateMemberRole: communityController.updateMemberRole,
               onRemoveMember: communityController.removeMember,
+              onResolveRequest: communityController.resolveRequest,
               onCreateAnnouncement: communityController.createAnnouncement,
               onUpdateAnnouncement: communityController.updateAnnouncement,
               onDeleteAnnouncement: communityController.deleteAnnouncement,

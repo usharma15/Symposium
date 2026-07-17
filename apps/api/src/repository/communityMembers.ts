@@ -8,6 +8,7 @@ import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { assertCommunityReadAccess } from "./communities";
+import { assertCommunityManager } from "./communityAuthorization";
 import { actorHandle, ensureLiveData, ensureProfileHandle, seedSnapshot } from "./foundation";
 
 export const recordCommunityAccess = async (rawInput: unknown, actor: Actor) => {
@@ -42,10 +43,14 @@ const decodeMemberCursor = (cursor?: string) => {
 
 export const listCommunityMembers = async (communityId: string, actor: Actor, rawQuery: unknown): Promise<CommunityMemberPageContract> => {
   const query = communityMemberQuerySchema.parse(rawQuery);
-  const community = await assertCommunityReadAccess(communityId, actor.handle);
+  const viewerHandle = actorHandle(actor);
+  const community = query.status === "requested"
+    ? (await assertCommunityManager(communityId, viewerHandle)).community
+    : await assertCommunityReadAccess(communityId, viewerHandle);
   const cursor = decodeMemberCursor(query.cursor);
   const roleMatches = (role: string) => query.role === "all" || role === "owner" || role === "moderator";
   if (!hasDatabase()) {
+    if (query.status === "requested") return { members: [], nextCursor: null, total: 0 };
     const profiles = seedSnapshot().profiles;
     const owner = cleanHandle(community.ownerHandle ?? community.memberHandles[0] ?? "");
     const moderators = new Set((community.moderatorHandles ?? []).map(cleanHandle));
@@ -74,7 +79,7 @@ export const listCommunityMembers = async (communityId: string, actor: Actor, ra
   }
 
   await ensureLiveData();
-  const values = [community.id, query.q, query.role, cursor?.joinedAt ?? null, cursor?.handle ?? null, query.limit + 1];
+  const values = [community.id, query.q, query.role, query.status, cursor?.joinedAt ?? null, cursor?.handle ?? null, query.limit + 1];
   const [members, count] = await Promise.all([
     getPool().query<CommunityMemberContract & { avatarUrl: string | null }>(
       `SELECT
@@ -82,16 +87,16 @@ export const listCommunityMembers = async (communityId: string, actor: Actor, ra
          profile.name,
          profile.avatar_url AS "avatarUrl",
          membership.role,
-         membership.created_at AS "joinedAt"
+         CASE WHEN membership.status = 'requested' THEN membership.updated_at ELSE membership.created_at END AS "joinedAt"
        FROM community_memberships membership
        JOIN profiles profile ON profile.handle = membership.profile_handle
        WHERE membership.community_id = $1
-         AND membership.status = 'active'
-         AND ($3 = 'all' OR membership.role IN ('owner', 'moderator'))
+         AND membership.status = $4
+         AND ($4 = 'requested' OR $3 = 'all' OR membership.role IN ('owner', 'moderator'))
          AND ($2 = '' OR profile.name ILIKE '%' || $2 || '%' OR profile.handle ILIKE '%' || $2 || '%')
-         AND ($4::timestamptz IS NULL OR (membership.created_at, membership.profile_handle) < ($4::timestamptz, $5::text))
-       ORDER BY membership.created_at DESC, membership.profile_handle DESC
-       LIMIT $6`,
+         AND ($5::timestamptz IS NULL OR (CASE WHEN membership.status = 'requested' THEN membership.updated_at ELSE membership.created_at END, membership.profile_handle) < ($5::timestamptz, $6::text))
+       ORDER BY CASE WHEN membership.status = 'requested' THEN membership.updated_at ELSE membership.created_at END DESC, membership.profile_handle DESC
+       LIMIT $7`,
       values
     ),
     getPool().query<{ total: string }>(
@@ -99,10 +104,10 @@ export const listCommunityMembers = async (communityId: string, actor: Actor, ra
        FROM community_memberships membership
        JOIN profiles profile ON profile.handle = membership.profile_handle
        WHERE membership.community_id = $1
-         AND membership.status = 'active'
-         AND ($3 = 'all' OR membership.role IN ('owner', 'moderator'))
+         AND membership.status = $4
+         AND ($4 = 'requested' OR $3 = 'all' OR membership.role IN ('owner', 'moderator'))
          AND ($2 = '' OR profile.name ILIKE '%' || $2 || '%' OR profile.handle ILIKE '%' || $2 || '%')`,
-      values.slice(0, 3)
+      values.slice(0, 4)
     )
   ]);
   const page = members.rows.slice(0, query.limit).map((member) => ({

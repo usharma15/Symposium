@@ -897,6 +897,13 @@ export const removeCommunityMemberInputSchema = z.object({
   expectedRevision: z.number().int().positive()
 });
 
+export const resolveCommunityRequestInputSchema = z.object({
+  communityId: z.string().trim().min(1).max(120),
+  memberHandle: z.string().trim().min(1).max(80),
+  decision: z.enum(["approve", "decline"]),
+  expectedRevision: z.number().int().positive()
+});
+
 export const createCommunityAnnouncementInputSchema = z.object({
   communityId: z.string().trim().min(1).max(120),
   title: z.string().trim().min(1).max(140),
@@ -1211,7 +1218,8 @@ export const communityMemberQuerySchema = z.object({
   q: z.string().trim().max(120).default(""),
   cursor: z.string().trim().max(500).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  role: z.enum(["all", "moderators"]).default("all")
+  role: z.enum(["all", "moderators"]).default("all"),
+  status: z.enum(["active", "requested"]).default("active")
 });
 
 export const communityMemberPageSchema = z.object({
@@ -1292,6 +1300,7 @@ export type UpdateCommunityVisibilityInputContract = z.infer<typeof updateCommun
 export type UpdateCommunitySettingsInputContract = z.infer<typeof updateCommunitySettingsInputSchema>;
 export type UpdateCommunityMemberInputContract = z.infer<typeof updateCommunityMemberInputSchema>;
 export type RemoveCommunityMemberInputContract = z.infer<typeof removeCommunityMemberInputSchema>;
+export type ResolveCommunityRequestInputContract = z.infer<typeof resolveCommunityRequestInputSchema>;
 export type CreateCommunityAnnouncementInputContract = z.infer<typeof createCommunityAnnouncementInputSchema>;
 export type UpdateCommunityAnnouncementInputContract = z.infer<typeof updateCommunityAnnouncementInputSchema>;
 export type DeleteCommunityAnnouncementInputContract = z.infer<typeof deleteCommunityAnnouncementInputSchema>;
