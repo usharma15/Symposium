@@ -3,16 +3,16 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import {
   callIdInputSchema,
-  communityMemberQuerySchema,
+  createCommunityAnnouncementInputSchema,
   createCommunityInputSchema,
   createCommunityCallInputSchema,
   joinCommunityInputSchema,
-  updateCommunityVisibilityInputSchema,
+  removeCommunityMemberInputSchema,
+  updateCommunityMemberInputSchema,
+  updateCommunitySettingsInputSchema,
   type CommunityCallContract,
-  type CommunityMemberContract,
-  type CommunityMemberPageContract,
   type ResearchCommunityContract,
-  type UpdateCommunityVisibilityInputContract
+  type UpdateCommunitySettingsInputContract
 } from "../../../../packages/contracts/src";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
@@ -21,6 +21,7 @@ import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { runAtomic } from "../services/transactions";
+import { assertCommunityManager } from "./communityAuthorization";
 import {
   actorHandle,
   callRowToContract,
@@ -94,6 +95,7 @@ export const createCommunity = async (rawInput: unknown, actor: Actor, mutation?
     monthlyActive: 1,
     membershipStatus: "active",
     viewerRole: "owner",
+    ownerHandle: owner,
     lastAccessedAt: new Date().toISOString(),
     moderatorHandles,
     guidelines: input.guidelines || "Keep criticism attached to the work, preserve sources, and leave a legible trail when claims change.",
@@ -163,31 +165,35 @@ export const createCommunity = async (rawInput: unknown, actor: Actor, mutation?
   });
 };
 
-export const updateCommunityVisibility = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
-  const input: UpdateCommunityVisibilityInputContract = updateCommunityVisibilityInputSchema.parse(rawInput);
+export const updateCommunitySettings = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
+  const input: UpdateCommunitySettingsInputContract = updateCommunitySettingsInputSchema.parse(rawInput);
   const handle = await ensureProfileHandle(actorHandle(actor));
   const community = await getCommunity(input.communityId);
   if (!hasDatabase()) {
-    const managers = new Set((community.moderatorHandles ?? []).map(cleanHandle));
-    if (cleanHandle(community.memberHandles[0] ?? "") !== handle && !managers.has(handle)) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "Only community owners and moderators can change visibility." });
-    }
+    const manager = await assertCommunityManager(community.id, handle);
     if ((community.revision ?? 1) !== input.expectedRevision) {
-      throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before changing its visibility." });
+      throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before trying again." });
     }
+    const changed = (input.name !== undefined && input.name !== community.name)
+      || (input.summary !== undefined && input.summary !== community.summary)
+      || (input.guidelines !== undefined && input.guidelines !== (community.guidelines ?? ""))
+      || (input.visibility !== undefined && input.visibility !== community.visibility);
     return publicCommunity({
       ...community,
-      visibility: input.visibility,
-      revision: community.visibility === input.visibility ? input.expectedRevision : input.expectedRevision + 1,
-      viewerRole: "owner"
+      name: input.name ?? community.name,
+      summary: input.summary ?? community.summary,
+      guidelines: input.guidelines ?? community.guidelines,
+      visibility: input.visibility ?? community.visibility,
+      revision: changed ? input.expectedRevision + 1 : input.expectedRevision,
+      viewerRole: manager.role
     }, "active");
   }
   await ensureLiveData();
   return runAtomic(async (client) => {
     const claim = await claimMutation<ResearchCommunityContract>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
-    const membership = await client.query<{ role: string; revision: number; visibility: ResearchCommunityContract["visibility"] }>(
-      `SELECT membership.role, community.revision, community.visibility
+    const membership = await client.query<{ role: string; revision: number; name: string; summary: string; guidelines: string; visibility: ResearchCommunityContract["visibility"] }>(
+      `SELECT membership.role, community.revision, community.name, community.summary, community.guidelines, community.visibility
        FROM community_memberships membership
        JOIN communities community ON community.id = membership.community_id
        WHERE membership.community_id = $1 AND membership.profile_handle = $2 AND membership.status = 'active'
@@ -196,50 +202,224 @@ export const updateCommunityVisibility = async (rawInput: unknown, actor: Actor,
     );
     const role = membership.rows[0]?.role;
     if (role !== "owner" && role !== "moderator") {
-      throw new TRPCError({ code: "FORBIDDEN", message: "Only community owners and moderators can change visibility." });
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only community owners and moderators can manage this community." });
     }
     const currentRevision = membership.rows[0]?.revision ?? community.revision ?? 1;
+    const currentName = membership.rows[0]?.name ?? community.name;
+    const currentSummary = membership.rows[0]?.summary ?? community.summary;
+    const currentGuidelines = membership.rows[0]?.guidelines ?? community.guidelines ?? "";
     const currentVisibility = membership.rows[0]?.visibility ?? community.visibility;
     if (currentRevision !== input.expectedRevision) {
-      throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before changing its visibility." });
+      throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before trying again." });
     }
     let revision = currentRevision;
-    if (currentVisibility !== input.visibility) {
+    const name = input.name ?? currentName;
+    const summary = input.summary ?? currentSummary;
+    const guidelines = input.guidelines ?? currentGuidelines;
+    const visibility = input.visibility ?? currentVisibility;
+    const changed = name !== currentName || summary !== currentSummary || guidelines !== currentGuidelines || visibility !== currentVisibility;
+    if (changed) {
       const updated = await client.query<{ revision: number }>(
         `UPDATE communities
-         SET visibility = $2, revision = revision + 1, updated_at = now()
-         WHERE id = $1 AND revision = $3
+         SET name = $2, summary = $3, guidelines = $4, visibility = $5,
+             revision = revision + 1, updated_at = now()
+         WHERE id = $1 AND revision = $6
          RETURNING revision`,
-        [community.id, input.visibility, input.expectedRevision]
+        [community.id, name, summary, guidelines, visibility, input.expectedRevision]
       );
       if (!updated.rows[0]) {
-        throw new TRPCError({ code: "CONFLICT", message: "This community changed before the visibility update committed." });
+        throw new TRPCError({ code: "CONFLICT", message: "This community changed before the update committed." });
       }
       revision = updated.rows[0].revision;
     }
     const value = publicCommunity({
       ...community,
-      visibility: input.visibility,
+      name,
+      summary,
+      guidelines,
+      visibility,
       revision,
       viewerRole: role
     }, "active");
     await stageAuditLog(client, {
       actorHandle: handle,
-      action: "community.visibility.update",
+      action: "community.settings.update",
       subjectType: "community",
       subjectId: community.id,
-      metadata: mutationAuditMetadata(mutation, { previousVisibility: currentVisibility, visibility: input.visibility, revision })
+      metadata: mutationAuditMetadata(mutation, { previousVisibility: currentVisibility, visibility, revision, nameChanged: name !== currentName, summaryChanged: summary !== currentSummary, guidelinesChanged: guidelines !== currentGuidelines })
     });
     await completeMutation(client, handle, mutation, value);
     const event = await stageEvent(client, {
-      kind: "community.visibility.updated",
+      kind: "community.settings.updated",
       actorHandle: handle,
       subjectType: "community",
       subjectId: community.id,
       visibility: "public",
-      payload: { communityId: community.id, visibility: input.visibility, revision }
+      payload: { communityId: community.id, visibility, revision }
     });
     return { value, events: [event] };
+  });
+};
+
+export const updateCommunityMember = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
+  const input = updateCommunityMemberInputSchema.parse(rawInput);
+  const handle = await ensureProfileHandle(actorHandle(actor));
+  const memberHandle = cleanHandle(input.memberHandle);
+  const community = await getCommunity(input.communityId);
+  if (!hasDatabase()) {
+    const manager = await assertCommunityManager(community.id, handle);
+    const owner = cleanHandle(community.ownerHandle ?? community.memberHandles[0] ?? "");
+    if (!community.memberHandles.some((member) => cleanHandle(member) === memberHandle)) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Community member not found." });
+    }
+    if (memberHandle === owner) throw new TRPCError({ code: "FORBIDDEN", message: "The community owner cannot be reassigned." });
+    if ((community.revision ?? 1) !== input.expectedRevision) throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before trying again." });
+    const moderators = new Set((community.moderatorHandles ?? []).map(cleanHandle));
+    if (input.role === "moderator") moderators.add(memberHandle);
+    else moderators.delete(memberHandle);
+    moderators.add(owner);
+    const value = publicCommunity({ ...community, moderatorHandles: [...moderators], revision: input.expectedRevision + 1, viewerRole: manager.role }, "active");
+    return { community: value, member: { handle: memberHandle, role: input.role } };
+  }
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<{ community: ResearchCommunityContract; member: { handle: string; role: "moderator" | "member" } }>(client, handle, mutation);
+    if (claim.replayed) return { value: claim.response };
+    const locked = await client.query<{ actorRole: string; targetRole: string; revision: number }>(
+      `SELECT actor.role AS "actorRole", target.role AS "targetRole", community.revision
+       FROM communities community
+       JOIN community_memberships actor ON actor.community_id = community.id AND actor.profile_handle = $2 AND actor.status = 'active'
+       JOIN community_memberships target ON target.community_id = community.id AND target.profile_handle = $3 AND target.status = 'active'
+       WHERE community.id = $1
+       FOR UPDATE OF community, target`,
+      [community.id, handle, memberHandle]
+    );
+    const row = locked.rows[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Community member not found." });
+    if (row.actorRole !== "owner" && row.actorRole !== "moderator") throw new TRPCError({ code: "FORBIDDEN", message: "Only community owners and moderators can manage members." });
+    if (row.targetRole === "owner") throw new TRPCError({ code: "FORBIDDEN", message: "The community owner cannot be reassigned." });
+    if (row.revision !== input.expectedRevision) throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before trying again." });
+    await client.query(
+      `UPDATE community_memberships SET role = $3, updated_at = now()
+       WHERE community_id = $1 AND profile_handle = $2 AND status = 'active'`,
+      [community.id, memberHandle, input.role]
+    );
+    const updated = await client.query<{ moderatorHandles: string[]; revision: number }>(
+      `UPDATE communities SET
+         moderator_handles = (
+           SELECT COALESCE(jsonb_agg(membership.profile_handle ORDER BY membership.created_at, membership.profile_handle), '[]'::jsonb)
+           FROM community_memberships membership
+           WHERE membership.community_id = communities.id AND membership.status = 'active' AND membership.role IN ('owner', 'moderator')
+         ),
+         revision = revision + 1,
+         updated_at = now()
+       WHERE id = $1 AND revision = $2
+       RETURNING moderator_handles AS "moderatorHandles", revision`,
+      [community.id, input.expectedRevision]
+    );
+    if (!updated.rows[0]) throw new TRPCError({ code: "CONFLICT", message: "This community changed before the member update committed." });
+    const value = publicCommunity({ ...community, moderatorHandles: updated.rows[0].moderatorHandles, revision: updated.rows[0].revision, viewerRole: row.actorRole as "owner" | "moderator" }, "active");
+    const response = { community: value, member: { handle: memberHandle, role: input.role } };
+    await stageAuditLog(client, { actorHandle: handle, action: "community.member.role.update", subjectType: "community_membership", subjectId: `${community.id}:${memberHandle}`, metadata: mutationAuditMetadata(mutation, { previousRole: row.targetRole, role: input.role, communityId: community.id }) });
+    await completeMutation(client, handle, mutation, response);
+    const event = await stageEvent(client, { kind: "community.member.role.updated", actorHandle: handle, subjectType: "community", subjectId: community.id, visibility: community.visibility === "private" ? "community" : "public", audienceHandles: community.visibility === "private" ? await communityAudienceHandles(client, community.id) : undefined, payload: { communityId: community.id, member: response.member, revision: value.revision } });
+    return { value: response, events: [event] };
+  });
+};
+
+export const removeCommunityMember = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
+  const input = removeCommunityMemberInputSchema.parse(rawInput);
+  const handle = await ensureProfileHandle(actorHandle(actor));
+  const memberHandle = cleanHandle(input.memberHandle);
+  const community = await getCommunity(input.communityId);
+  if (!hasDatabase()) {
+    const manager = await assertCommunityManager(community.id, handle);
+    const owner = cleanHandle(community.ownerHandle ?? community.memberHandles[0] ?? "");
+    if (memberHandle === owner) throw new TRPCError({ code: "FORBIDDEN", message: "The community owner cannot be removed." });
+    if ((community.revision ?? 1) !== input.expectedRevision) throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before trying again." });
+    const members = community.memberHandles.filter((member) => cleanHandle(member) !== memberHandle);
+    const moderators = (community.moderatorHandles ?? []).filter((member) => cleanHandle(member) !== memberHandle);
+    return { community: publicCommunity({ ...community, memberHandles: members, memberCount: Math.max(0, (community.memberCount ?? community.memberHandles.length) - 1), moderatorHandles: moderators, revision: input.expectedRevision + 1, viewerRole: manager.role }, "active"), removedHandle: memberHandle };
+  }
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<{ community: ResearchCommunityContract; removedHandle: string }>(client, handle, mutation);
+    if (claim.replayed) return { value: claim.response };
+    const locked = await client.query<{ actorRole: string; targetRole: string; revision: number }>(
+      `SELECT actor.role AS "actorRole", target.role AS "targetRole", community.revision
+       FROM communities community
+       JOIN community_memberships actor ON actor.community_id = community.id AND actor.profile_handle = $2 AND actor.status = 'active'
+       JOIN community_memberships target ON target.community_id = community.id AND target.profile_handle = $3 AND target.status = 'active'
+       WHERE community.id = $1
+       FOR UPDATE OF community, target`,
+      [community.id, handle, memberHandle]
+    );
+    const row = locked.rows[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Community member not found." });
+    if (row.actorRole !== "owner" && row.actorRole !== "moderator") throw new TRPCError({ code: "FORBIDDEN", message: "Only community owners and moderators can remove members." });
+    if (row.targetRole === "owner") throw new TRPCError({ code: "FORBIDDEN", message: "The community owner cannot be removed." });
+    if (row.revision !== input.expectedRevision) throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before trying again." });
+    await client.query(`UPDATE community_memberships SET status = 'removed', updated_at = now() WHERE community_id = $1 AND profile_handle = $2`, [community.id, memberHandle]);
+    const updated = await client.query<{ moderatorHandles: string[]; memberHandles: string[]; revision: number }>(
+      `UPDATE communities SET
+         member_handles = member_handles - $2,
+         moderator_handles = moderator_handles - $2,
+         revision = revision + 1,
+         updated_at = now()
+       WHERE id = $1 AND revision = $3
+       RETURNING member_handles AS "memberHandles", moderator_handles AS "moderatorHandles", revision`,
+      [community.id, memberHandle, input.expectedRevision]
+    );
+    if (!updated.rows[0]) throw new TRPCError({ code: "CONFLICT", message: "This community changed before the removal committed." });
+    const value = publicCommunity({ ...community, memberHandles: updated.rows[0].memberHandles, memberCount: Math.max(0, (community.memberCount ?? community.memberHandles.length) - 1), moderatorHandles: updated.rows[0].moderatorHandles, revision: updated.rows[0].revision, viewerRole: row.actorRole as "owner" | "moderator" }, "active");
+    const response = { community: value, removedHandle: memberHandle };
+    await stageAuditLog(client, { actorHandle: handle, action: "community.member.remove", subjectType: "community_membership", subjectId: `${community.id}:${memberHandle}`, metadata: mutationAuditMetadata(mutation, { previousRole: row.targetRole, communityId: community.id }) });
+    await completeMutation(client, handle, mutation, response);
+    const audienceHandles = community.visibility === "private"
+      ? [...new Set([...(await communityAudienceHandles(client, community.id)), memberHandle])]
+      : undefined;
+    const event = await stageEvent(client, { kind: "community.member.removed", actorHandle: handle, subjectType: "community", subjectId: community.id, visibility: community.visibility === "private" ? "community" : "public", audienceHandles, payload: { communityId: community.id, removedHandle: memberHandle, revision: value.revision } });
+    return { value: response, events: [event] };
+  });
+};
+
+export const createCommunityAnnouncement = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
+  const input = createCommunityAnnouncementInputSchema.parse(rawInput);
+  const handle = await ensureProfileHandle(actorHandle(actor));
+  const community = await getCommunity(input.communityId);
+  const announcement = { id: randomUUID(), title: input.title, body: input.body, authorHandle: handle, createdAt: new Date().toISOString() };
+  if (!hasDatabase()) {
+    const manager = await assertCommunityManager(community.id, handle);
+    if ((community.revision ?? 1) !== input.expectedRevision) throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before trying again." });
+    const value = publicCommunity({ ...community, announcements: [announcement, ...(community.announcements ?? [])], revision: input.expectedRevision + 1, viewerRole: manager.role }, "active");
+    return { community: value, announcement };
+  }
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<{ community: ResearchCommunityContract; announcement: typeof announcement }>(client, handle, mutation);
+    if (claim.replayed) return { value: claim.response };
+    const manager = await client.query<{ role: string; revision: number }>(
+      `SELECT membership.role, community.revision
+       FROM community_memberships membership JOIN communities community ON community.id = membership.community_id
+       WHERE membership.community_id = $1 AND membership.profile_handle = $2 AND membership.status = 'active'
+       FOR UPDATE OF community`,
+      [community.id, handle]
+    );
+    const role = manager.rows[0]?.role;
+    if (role !== "owner" && role !== "moderator") throw new TRPCError({ code: "FORBIDDEN", message: "Only community owners and moderators can publish announcements." });
+    if (manager.rows[0]?.revision !== input.expectedRevision) throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before trying again." });
+    const updated = await client.query<{ announcements: typeof community.announcements; revision: number }>(
+      `UPDATE communities SET announcements = $2::jsonb || announcements, revision = revision + 1, updated_at = now()
+       WHERE id = $1 AND revision = $3 RETURNING announcements, revision`,
+      [community.id, JSON.stringify([announcement]), input.expectedRevision]
+    );
+    if (!updated.rows[0]) throw new TRPCError({ code: "CONFLICT", message: "This community changed before the announcement committed." });
+    const value = publicCommunity({ ...community, announcements: updated.rows[0].announcements ?? [], revision: updated.rows[0].revision, viewerRole: role }, "active");
+    const response = { community: value, announcement };
+    await stageAuditLog(client, { actorHandle: handle, action: "community.announcement.create", subjectType: "community", subjectId: community.id, metadata: mutationAuditMetadata(mutation, { announcementId: announcement.id }) });
+    await completeMutation(client, handle, mutation, response);
+    const event = await stageEvent(client, { kind: "community.announcement.created", actorHandle: handle, subjectType: "community", subjectId: community.id, visibility: community.visibility === "private" ? "community" : "public", audienceHandles: community.visibility === "private" ? await communityAudienceHandles(client, community.id) : undefined, payload: { communityId: community.id, announcementId: announcement.id, revision: value.revision } });
+    return { value: response, events: [event] };
   });
 };
 
@@ -339,6 +519,9 @@ export const leaveCommunity = async (rawInput: unknown, actor: Actor) => {
   const handle = await ensureProfileHandle(actorHandle(actor));
   const community = await getCommunity(input.communityId);
   if (!hasDatabase()) {
+    if (cleanHandle(community.ownerHandle ?? community.memberHandles[0] ?? "") === handle) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The community owner cannot leave without transferring ownership." });
+    }
     return {
       community: publicCommunity({
         ...community,
@@ -350,11 +533,17 @@ export const leaveCommunity = async (rawInput: unknown, actor: Actor) => {
   }
   await ensureLiveData();
   return runAtomic(async (client) => {
+    const existing = await client.query<{ role: string; status: string }>(
+      `SELECT role, status FROM community_memberships
+       WHERE community_id = $1 AND profile_handle = $2 FOR UPDATE`,
+      [community.id, handle]
+    );
+    if (existing.rows[0]?.role === "owner" && existing.rows[0]?.status === "active") {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The community owner cannot leave without transferring ownership." });
+    }
     const membership = await client.query<{ status: string }>(
-      `UPDATE community_memberships
-       SET status = 'removed', updated_at = now()
-       WHERE community_id = $1 AND profile_handle = $2
-         AND status IN ('active', 'requested', 'invited')
+      `UPDATE community_memberships SET status = 'removed', updated_at = now()
+       WHERE community_id = $1 AND profile_handle = $2 AND status IN ('active', 'requested', 'invited')
        RETURNING status`,
       [community.id, handle]
     );
@@ -389,114 +578,6 @@ export const leaveCommunity = async (rawInput: unknown, actor: Actor) => {
     });
     return { value: { community: updatedCommunity, status: "left" as const }, events: [event] };
   });
-};
-
-export const recordCommunityAccess = async (rawInput: unknown, actor: Actor) => {
-  const input = joinCommunityInputSchema.parse(rawInput);
-  const handle = await ensureProfileHandle(actorHandle(actor));
-  await assertCommunityReadAccess(input.communityId, handle);
-  const accessedAt = new Date().toISOString();
-  if (!hasDatabase()) return { communityId: input.communityId, accessedAt };
-  await ensureLiveData();
-  await getPool().query(
-    `UPDATE community_memberships
-     SET last_accessed_at = $3, updated_at = now()
-     WHERE community_id = $1 AND profile_handle = $2 AND status = 'active'`,
-    [input.communityId, handle, accessedAt]
-  );
-  return { communityId: input.communityId, accessedAt };
-};
-
-const encodeMemberCursor = (joinedAt: string, handle: string) =>
-  Buffer.from(JSON.stringify({ joinedAt, handle })).toString("base64url");
-
-const decodeMemberCursor = (cursor?: string) => {
-  if (!cursor) return null;
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as { joinedAt?: unknown; handle?: unknown };
-    if (typeof parsed.joinedAt !== "string" || typeof parsed.handle !== "string" || Number.isNaN(Date.parse(parsed.joinedAt))) return null;
-    return { joinedAt: parsed.joinedAt, handle: cleanHandle(parsed.handle) };
-  } catch {
-    return null;
-  }
-};
-
-export const listCommunityMembers = async (communityId: string, actor: Actor, rawQuery: unknown): Promise<CommunityMemberPageContract> => {
-  const query = communityMemberQuerySchema.parse(rawQuery);
-  const community = await assertCommunityReadAccess(communityId, actor.handle);
-  const cursor = decodeMemberCursor(query.cursor);
-  const roleMatches = (role: string) => query.role === "all" || role === "owner" || role === "moderator";
-  if (!hasDatabase()) {
-    const profiles = seedSnapshot().profiles;
-    const moderators = new Set((community.moderatorHandles ?? []).map(cleanHandle));
-    const term = query.q.toLowerCase();
-    const visible = community.memberHandles.map((rawHandle, index) => {
-      const handle = cleanHandle(rawHandle);
-      const person = profiles[handle];
-      const role = index === 0 ? "owner" as const : moderators.has(handle) ? "moderator" as const : "member" as const;
-      return {
-        handle,
-        name: person?.name ?? handle.replace(/^@/, "").replace(/[_-]+/g, " "),
-        avatarUrl: person?.avatarUrl,
-        role,
-        joinedAt: new Date(Date.UTC(2026, 6, 15 - Math.floor(index / 18), 18, index % 60)).toISOString()
-      };
-    }).filter((member) => roleMatches(member.role))
-      .filter((member) => !term || `${member.name} ${member.handle}`.toLowerCase().includes(term))
-      .sort((first, second) => second.joinedAt.localeCompare(first.joinedAt) || second.handle.localeCompare(first.handle));
-    const total = visible.length;
-    const afterCursor = cursor
-      ? visible.filter((member) => member.joinedAt < cursor.joinedAt || (member.joinedAt === cursor.joinedAt && member.handle < cursor.handle))
-      : visible;
-    const page = afterCursor.slice(0, query.limit);
-    const last = page.at(-1);
-    return { members: page, nextCursor: afterCursor.length > page.length && last ? encodeMemberCursor(last.joinedAt, last.handle) : null, total };
-  }
-
-  await ensureLiveData();
-  const values = [community.id, query.q, query.role, cursor?.joinedAt ?? null, cursor?.handle ?? null, query.limit + 1];
-  const [members, count] = await Promise.all([
-    getPool().query<CommunityMemberContract & { avatarUrl: string | null }>(
-      `SELECT
-         membership.profile_handle AS handle,
-         profile.name,
-         profile.avatar_url AS "avatarUrl",
-         membership.role,
-         membership.created_at AS "joinedAt"
-       FROM community_memberships membership
-       JOIN profiles profile ON profile.handle = membership.profile_handle
-       WHERE membership.community_id = $1
-         AND membership.status = 'active'
-         AND ($3 = 'all' OR membership.role IN ('owner', 'moderator'))
-         AND ($2 = '' OR profile.name ILIKE '%' || $2 || '%' OR profile.handle ILIKE '%' || $2 || '%')
-         AND ($4::timestamptz IS NULL OR (membership.created_at, membership.profile_handle) < ($4::timestamptz, $5::text))
-       ORDER BY membership.created_at DESC, membership.profile_handle DESC
-       LIMIT $6`,
-      values
-    ),
-    getPool().query<{ total: string }>(
-      `SELECT COUNT(*)::text AS total
-       FROM community_memberships membership
-       JOIN profiles profile ON profile.handle = membership.profile_handle
-       WHERE membership.community_id = $1
-         AND membership.status = 'active'
-         AND ($3 = 'all' OR membership.role IN ('owner', 'moderator'))
-         AND ($2 = '' OR profile.name ILIKE '%' || $2 || '%' OR profile.handle ILIKE '%' || $2 || '%')`,
-      values.slice(0, 3)
-    )
-  ]);
-  const page = members.rows.slice(0, query.limit).map((member) => ({
-    ...member,
-    avatarUrl: member.avatarUrl ?? undefined,
-    role: member.role === "owner" || member.role === "moderator" ? member.role : "member" as const,
-    joinedAt: new Date(member.joinedAt).toISOString()
-  }));
-  const last = page.at(-1);
-  return {
-    members: page,
-    nextCursor: members.rows.length > query.limit && last ? encodeMemberCursor(last.joinedAt, last.handle) : null,
-    total: Number(count.rows[0]?.total ?? 0)
-  };
 };
 
 export const listCommunityCalls = async (communityId: string, actor?: Actor) => {

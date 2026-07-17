@@ -41,9 +41,9 @@ import {
   joinCommunityCall,
   joinOrRequestCommunity,
   leaveCommunity,
-  recordCommunityAccess,
   listCommunityCalls
 } from "./repository/communities";
+import { recordCommunityAccess } from "./repository/communityMembers";
 import { listConversations, sendMessage } from "./repository/conversations";
 import {
   getInitialState,

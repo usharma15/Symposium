@@ -1167,6 +1167,12 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           keywords,
           seed_counts AS "seedCounts",
           call_status AS "callStatus",
+          (
+            SELECT membership.profile_handle
+            FROM community_memberships membership
+            WHERE membership.community_id = community.id AND membership.status = 'active' AND membership.role = 'owner'
+            ORDER BY membership.created_at ASC LIMIT 1
+          ) AS "ownerHandle",
           moderator_handles AS "moderatorHandles",
           guidelines,
           announcements,
@@ -1286,6 +1292,7 @@ export const publicCommunity = (
     ...community,
     online: privateHidden ? 0 : community.online,
     memberHandles: privateHidden ? [] : community.memberHandles.slice(0, communityMemberPreviewLimit),
+    ownerHandle: privateHidden ? undefined : community.ownerHandle ?? community.memberHandles[0],
     moderatorHandles: privateHidden ? [] : community.moderatorHandles ?? [],
     guidelines: privateHidden ? undefined : community.guidelines,
     announcements: privateHidden ? [] : community.announcements ?? [],
@@ -1464,6 +1471,12 @@ export const getCommunity = async (communityId: string) => {
        keywords,
        seed_counts AS "seedCounts",
        call_status AS "callStatus",
+       (
+         SELECT membership.profile_handle
+         FROM community_memberships membership
+         WHERE membership.community_id = communities.id AND membership.status = 'active' AND membership.role = 'owner'
+         ORDER BY membership.created_at ASC LIMIT 1
+       ) AS "ownerHandle",
        moderator_handles AS "moderatorHandles",
        guidelines,
        announcements,

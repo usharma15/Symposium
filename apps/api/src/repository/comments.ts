@@ -34,6 +34,7 @@ import { markQuotedCommentUnavailable, resolveContentQuote, resolveUpdatedConten
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
 import { transitionCommentAction } from "./actions";
 import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
+import { assertCommunityCommentDeletion } from "./communityAuthorization";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import { actorHandle, commentTreesFromRows, ensureLiveData, getInitialState, getPostConversationAttachments, newId, rowToAttachment, rowToItem, type CommentRow, type SnapshotRow } from "./foundation";
 type ActionMutationResult = {
@@ -524,7 +525,7 @@ export const deleteComment = async (
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) return existing;
     if (!canManageComment(original, handle)) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this comment." });
+      await assertCommunityCommentDeletion(existing, handle);
     }
     const deletion = tombstoneCommentInItem(existing, commentId, deletedAt);
     if (!deletion.deletedComment) return existing;
@@ -600,7 +601,7 @@ export const deleteComment = async (
       await client.query("COMMIT");
     } else {
       if (!canManageComment(original, handle)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this comment." });
+        await assertCommunityCommentDeletion(row, handle, client);
       }
       const deletion = tombstoneCommentInItem(rowToItem(row, existingComments), commentId, deletedAt);
       if (!deletion.deletedComment) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });

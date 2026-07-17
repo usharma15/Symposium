@@ -38,6 +38,7 @@ import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from 
 import { assertCanonicalOpportunityUpdate, createOpportunityProjection, opportunityPostStatus, updateOpportunityProjection } from "../services/opportunityPosts";
 import { transitionPostAction } from "./actions";
 import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
+import { assertCommunityPostDeletion } from "./communityAuthorization";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import {
   actorHandle,
@@ -698,7 +699,6 @@ export const updatePost = async (
 
 export const deletePost = async (postId: string, actor: Actor, mutation?: MutationContext) => {
   const handle = actorHandle(actor);
-
   if (!hasDatabase()) {
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
@@ -706,7 +706,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
     if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
     if (isDeletedPost(existing)) return existing;
     if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this post." });
+      await assertCommunityPostDeletion(existing, handle);
     }
     return { ...tombstonePost(existing), revision: (existing.revision ?? 1) + 1 };
   }
@@ -785,7 +785,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
       await client.query("COMMIT");
     } else {
       if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this post." });
+        await assertCommunityPostDeletion(row, handle, client);
       }
       const deletedPost = {
         ...tombstonePost(existing),

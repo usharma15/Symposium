@@ -132,6 +132,39 @@
   font-weight: 900;
 }
 
+.community-person-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.community-person-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 32px;
+  border: 1px solid color-mix(in srgb, var(--aqua) 35%, var(--line));
+  border-radius: 7px;
+  padding: 0 9px;
+  background: color-mix(in srgb, var(--aqua) 12%, var(--panel));
+  color: var(--ink);
+  font-size: 0.63rem;
+  font-weight: 900;
+}
+
+.community-person-controls .danger-action {
+  width: 32px;
+  padding: 0;
+  border-color: color-mix(in srgb, #a53e35 42%, var(--line));
+  color: #8d302a;
+}
+
+.community-person-controls button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
 .community-people-loading,
 .community-people-status,
 .community-people-empty {
@@ -147,4 +180,6 @@
   .community-person-row { grid-template-columns: minmax(0, 1fr); }
   .community-person-row > button { justify-self: stretch; justify-content: center; }
   .community-person-row em { display: none; }
+  .community-person-controls { justify-self: stretch; }
+  .community-person-controls button:first-child { flex: 1; }
 }

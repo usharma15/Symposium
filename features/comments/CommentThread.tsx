@@ -59,6 +59,7 @@ import {
   ScribbleCitable,
   useScribble
 } from "@/features/scribble/ScribbleContext";
+import { useCommunityGovernance } from "@/features/communities/CommunityGovernanceContext";
 
 export type CommentSegmentStacks = Record<string, string[]>;
 export type CommentThreadOptions = {
@@ -119,17 +120,20 @@ export function CommentOwnerControls({
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
 }) {
+  const governance = useCommunityGovernance();
+  const isAuthor = cleanHandle(comment.authorHandle ?? comment.author) === actorHandle;
+  const mayDelete = isAuthor || governance.canModerateComment(itemId);
   if (
     !comment.id ||
     isDeletedComment(comment) ||
-    cleanHandle(comment.authorHandle ?? comment.author) !== actorHandle
+    (!isAuthor && !mayDelete)
   ) {
     return null;
   }
 
   return (
     <div className="comment-owner-actions" aria-label="Comment owner actions">
-      <button
+      {isAuthor ? <button
         type="button"
         title="Edit comment"
         onClick={(event) => {
@@ -138,17 +142,17 @@ export function CommentOwnerControls({
         }}
       >
         <Pencil size={14} />
-      </button>
-      <button
+      </button> : null}
+      {mayDelete ? <button
         type="button"
-        title="Delete comment"
+        title={isAuthor ? "Delete comment" : "Remove comment from community"}
         onClick={(event) => {
           event.stopPropagation();
           onDeleteComment(itemId, comment.id as string);
         }}
       >
         <Trash2 size={14} />
-      </button>
+      </button> : null}
     </div>
   );
 }
@@ -530,6 +534,7 @@ function CommentNode({
   tone: PostTone | null;
   leadingAction?: ReactNode;
 }) {
+  const governance = useCommunityGovernance();
   const [replyOpen, setReplyOpen] = useState(false);
   const scribble = useScribble();
   const scribbleSource = commentScribbleSource(comment, itemId, tone);
@@ -538,6 +543,9 @@ function CommentNode({
   const commentDeleted = isDeletedComment(comment);
   const authorProfile = profileForHandle(profiles, comment.authorHandle ?? comment.author);
   const authorName = authorProfile?.name ?? comment.author;
+  const communityRole = governance.containsPost(itemId)
+    ? governance.roleForHandle(comment.authorHandle ?? comment.author)
+    : null;
   const highlighted = Boolean(selectedCommentId && comment.id === selectedCommentId);
   const canShowReplies = segmentDepth < maxVisibleCommentPathLength;
   const shouldHideReplies = replies.length > 0 && !canShowReplies;
@@ -581,7 +589,7 @@ function CommentNode({
               {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
             </span>
             <span>
-              <strong>{authorName}</strong>
+              <strong>{authorName}{communityRole ? <em className="community-role-badge">{communityRole}</em> : null}</strong>
               {comment.createdAt ? <small>{relativeTimeLabel(comment.createdAt)}</small> : null}
             </span>
           </button>

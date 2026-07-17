@@ -80,6 +80,7 @@ import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import type { OpportunityPostInputContract, PatronageProposalInputContract } from "@/packages/contracts/src";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { CommunityActivityBadge } from "@/features/communities/CommunityActivityBadge";
+import { useCommunityGovernance } from "@/features/communities/CommunityGovernanceContext";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
@@ -575,11 +576,14 @@ function PostOwnerControls({
   onDeletePost: (itemId: string) => void;
   inline?: boolean;
 }) {
-  if (isDeletedPost(item) || cleanHandle(item.authorHandle ?? item.author) !== actorHandle) return null;
+  const governance = useCommunityGovernance();
+  const isAuthor = cleanHandle(item.authorHandle ?? item.author) === actorHandle;
+  const mayDelete = isAuthor || governance.canModeratePost(item);
+  if (isDeletedPost(item) || (!isAuthor && !mayDelete)) return null;
 
   return (
-    <div className={`post-owner-actions${inline ? " inline" : ""}`} aria-label="Post owner actions">
-      <button
+    <div className={`post-owner-actions${inline ? " inline" : ""}`} aria-label="Post actions">
+      {isAuthor ? <button
         type="button"
         title="Edit post"
         onClick={(event) => {
@@ -588,17 +592,17 @@ function PostOwnerControls({
         }}
       >
         <Pencil size={16} />
-      </button>
-      <button
+      </button> : null}
+      {mayDelete ? <button
         type="button"
-        title="Delete post"
+        title={isAuthor ? "Delete post" : "Remove post from community"}
         onClick={(event) => {
           event.stopPropagation();
           onDeletePost(item.id);
         }}
       >
         <Trash2 size={16} />
-      </button>
+      </button> : null}
     </div>
   );
 }
@@ -750,6 +754,7 @@ function PostAuthor({
   onOpenProfile: (name: string) => void;
   onClickStop?: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
+  const governance = useCommunityGovernance();
   if (isDeletedPost(item)) {
     return (
       <div className="post-author deleted-post-author" aria-label="Deleted post">
@@ -763,6 +768,9 @@ function PostAuthor({
 
   const authorProfile = profileForHandle(profiles, item.authorHandle ?? item.author);
   const authorName = authorProfile?.name ?? item.author;
+  const communityRole = !itemHasPostType(item, "paper") && governance.containsPost(item.id)
+    ? governance.roleForHandle(item.authorHandle ?? item.author)
+    : null;
 
   return (
     <CanonicalLink
@@ -777,7 +785,7 @@ function PostAuthor({
         {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
       </span>
       <span>
-        <strong>{authorName}</strong>
+        <strong>{authorName}{communityRole ? <em className="community-role-badge">{communityRole}</em> : null}</strong>
         <small>{relativeTimeLabel(item.createdAt, item.date)}</small>
       </span>
     </CanonicalLink>
@@ -924,6 +932,7 @@ export function DetailView({
   onApplyOpportunity: (item: InquiryItem) => void;
   onReviewOpportunity: (item: InquiryItem) => void;
 }) {
+  const governance = useCommunityGovernance();
   const isPaper = item.kind === "paper";
   const isProposal = itemHasPostType(item, "proposal");
   const isOpportunity = itemHasPostType(item, "opportunity");
@@ -935,6 +944,9 @@ export function DetailView({
   const codeSlug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 44);
   const authorProfile = profileForHandle(profiles, item.authorHandle ?? item.author);
   const authorName = authorProfile?.name ?? item.author;
+  const communityRole = !isPaper && governance.containsPost(item.id)
+    ? governance.roleForHandle(item.authorHandle ?? item.author)
+    : null;
   const commentsSectionId = `comments-${item.id}`;
   const scrollToComments = () => {
     document.getElementById(commentsSectionId)?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -1006,7 +1018,7 @@ export function DetailView({
               {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
             </span>
             <span>
-              <strong>{authorName}</strong>
+              <strong>{authorName}{communityRole ? <em className="community-role-badge">{communityRole}</em> : null}</strong>
               <small>{relativeTimeLabel(item.createdAt, item.date)}</small>
             </span>
           </CanonicalLink>

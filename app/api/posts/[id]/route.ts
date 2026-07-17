@@ -10,7 +10,7 @@ import {
 import { cleanHandle, isDeletedPost } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, versionedDocumentSchema } from "@/packages/contracts/src";
-import { assertLocalQuoteDestination, localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
+import { assertLocalQuoteDestination, localCommunityManagerAllowed, localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -133,10 +133,10 @@ export async function DELETE(request: Request, context: Context) {
   });
   if (live) return live;
 
-    const existing = (await getSnapshot()).items.find((item) => item.id === id);
-    if (existing && !(await localCommunityReadAllowed(existing, actorHandle ?? ""))) return jsonError("Post not found.", 404);
-    if (existing?.opportunity) await deleteLocalOpportunityApplicationsForPost(id, actorHandle ?? "");
-    const item = await deletePost(id, actorHandle ?? "");
+  const existing = (await getSnapshot()).items.find((item) => item.id === id);
+  if (existing && !(await localCommunityReadAllowed(existing, actorHandle ?? ""))) return jsonError("Post not found.", 404);
+  if (existing?.opportunity) await deleteLocalOpportunityApplicationsForPost(id, actorHandle ?? "");
+  const item = await deletePost(id, actorHandle ?? "", existing ? await localCommunityManagerAllowed(existing, actorHandle ?? "") : false);
   if (!item) {
     return jsonError("Post not found or cannot be deleted by this profile.", 404);
   }

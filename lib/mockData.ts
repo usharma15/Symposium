@@ -1443,6 +1443,7 @@ export const researchCommunities: ResearchCommunity[] = baseResearchCommunities.
     memberHandles,
     memberCount: memberHandles.length,
     monthlyActive: Math.min(memberHandles.length, Math.max(online, Math.round(memberHandles.length * 0.78))),
+    ownerHandle: memberHandles[0],
     moderatorHandles,
     guidelines: [
       `Keep ${community.field.toLowerCase()} discussion attached to inspectable work, evidence, or an explicit question.`,

@@ -1,8 +1,10 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type {
   CommunityCallContract,
+  CreateCommunityAnnouncementInputContract,
   CreateCommunityCallInputContract,
-  CreateCommunityInputContract
+  CreateCommunityInputContract,
+  UpdateCommunitySettingsInputContract
 } from "@/packages/contracts/src";
 import type { ResearchCommunity } from "@/lib/mockData";
 import {
@@ -115,6 +117,102 @@ export const createCommunityController = (input: {
     }
   };
 
+  const updateSettings = async (settings: Pick<UpdateCommunitySettingsInputContract, "name" | "summary" | "guidelines">) => {
+    const community = input.selectedCommunity;
+    if (!community) return { ok: false, error: "Community not found." };
+    const payload = { communityId: community.id, ...settings, expectedRevision: community.revision ?? 1 };
+    const mutation = input.retryMutationKey("community-settings", JSON.stringify(payload));
+    input.setStatus("Saving community settings");
+    try {
+      const data = await symposiumApi.request<{ community: ResearchCommunity }>(`/api/communities/${encodeURIComponent(community.id)}`, {
+        method: "PATCH", idempotencyKey: mutation.idempotencyKey, body: { ...payload, actorHandle: input.currentProfileHandle }
+      });
+      input.clearRetryMutationKey(mutation.fingerprintKey);
+      mergeCommunity(data.community);
+      window.setTimeout(input.persist, 0);
+      input.setStatus("Community updated");
+      return { ok: true };
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) input.clearRetryMutationKey(mutation.fingerprintKey);
+      const message = error instanceof Error ? error.message : "Community settings could not be saved";
+      input.setStatus(message);
+      if (message.includes("changed")) input.refresh();
+      return { ok: false, error: message };
+    }
+  };
+
+  const updateMemberRole = async (memberHandle: string, role: "moderator" | "member") => {
+    const community = input.selectedCommunity;
+    if (!community) return { ok: false, error: "Community not found." };
+    const payload = { communityId: community.id, memberHandle, role, expectedRevision: community.revision ?? 1 };
+    const mutation = input.retryMutationKey("community-member-role", JSON.stringify(payload));
+    input.setStatus(role === "moderator" ? "Promoting community moderator" : "Updating community role");
+    try {
+      const data = await symposiumApi.request<{ community: ResearchCommunity }>(`/api/communities/${encodeURIComponent(community.id)}/members/${encodeURIComponent(memberHandle)}`, {
+        method: "PATCH", idempotencyKey: mutation.idempotencyKey, body: { ...payload, actorHandle: input.currentProfileHandle }
+      });
+      input.clearRetryMutationKey(mutation.fingerprintKey);
+      mergeCommunity(data.community);
+      window.setTimeout(input.persist, 0);
+      input.setStatus(role === "moderator" ? "Moderator promoted" : "Moderator returned to member");
+      return { ok: true };
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) input.clearRetryMutationKey(mutation.fingerprintKey);
+      const message = error instanceof Error ? error.message : "Member role could not be changed";
+      input.setStatus(message);
+      if (message.includes("changed")) input.refresh();
+      return { ok: false, error: message };
+    }
+  };
+
+  const removeMember = async (memberHandle: string) => {
+    const community = input.selectedCommunity;
+    if (!community) return { ok: false, error: "Community not found." };
+    const payload = { communityId: community.id, memberHandle, expectedRevision: community.revision ?? 1 };
+    const mutation = input.retryMutationKey("community-member-remove", JSON.stringify(payload));
+    input.setStatus("Removing community member");
+    try {
+      const data = await symposiumApi.request<{ community: ResearchCommunity }>(`/api/communities/${encodeURIComponent(community.id)}/members/${encodeURIComponent(memberHandle)}`, {
+        method: "DELETE", idempotencyKey: mutation.idempotencyKey, body: { ...payload, actorHandle: input.currentProfileHandle }
+      });
+      input.clearRetryMutationKey(mutation.fingerprintKey);
+      mergeCommunity(data.community);
+      window.setTimeout(input.persist, 0);
+      input.setStatus("Community member removed");
+      return { ok: true };
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) input.clearRetryMutationKey(mutation.fingerprintKey);
+      const message = error instanceof Error ? error.message : "Member could not be removed";
+      input.setStatus(message);
+      if (message.includes("changed")) input.refresh();
+      return { ok: false, error: message };
+    }
+  };
+
+  const createAnnouncement = async (announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => {
+    const community = input.selectedCommunity;
+    if (!community) return { ok: false, error: "Community not found." };
+    const payload = { communityId: community.id, ...announcement, expectedRevision: community.revision ?? 1 };
+    const mutation = input.retryMutationKey("community-announcement", JSON.stringify(payload));
+    input.setStatus("Publishing announcement");
+    try {
+      const data = await symposiumApi.request<{ community: ResearchCommunity }>(`/api/communities/${encodeURIComponent(community.id)}/announcements`, {
+        method: "POST", idempotencyKey: mutation.idempotencyKey, body: { ...payload, actorHandle: input.currentProfileHandle }
+      });
+      input.clearRetryMutationKey(mutation.fingerprintKey);
+      mergeCommunity(data.community);
+      window.setTimeout(input.persist, 0);
+      input.setStatus("Announcement published");
+      return { ok: true };
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) input.clearRetryMutationKey(mutation.fingerprintKey);
+      const message = error instanceof Error ? error.message : "Announcement could not be published";
+      input.setStatus(message);
+      if (message.includes("changed")) input.refresh();
+      return { ok: false, error: message };
+    }
+  };
+
   const createCall = async (callInput: Omit<CreateCommunityCallInputContract, "communityId">) => {
     const community = input.selectedCommunity;
     if (!community) return { ok: false, error: "Community not found." };
@@ -173,5 +271,5 @@ export const createCommunityController = (input: {
     }
   };
 
-  return { changeMembership, changeVisibility, createCall, createCommunity, invite, joinCall };
+  return { changeMembership, changeVisibility, createCall, createCommunity, createAnnouncement, invite, joinCall, removeMember, updateMemberRole, updateSettings };
 };

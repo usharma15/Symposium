@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  communitySummaryMaxLength,
+  createCommunityAnnouncementInputSchema,
   createCommunityInputSchema,
   createPostInputSchema,
+  removeCommunityMemberInputSchema,
   researchCommunitySchema,
-  updateCommunityVisibilityInputSchema,
+  updateCommunityMemberInputSchema,
+  updateCommunitySettingsInputSchema,
   type InquiryItemContract,
 } from "../packages/contracts/src";
 import {
@@ -218,7 +222,11 @@ assert.equal(createCommunityInputSchema.safeParse({
   summary: "A place to test instruments together.",
   visibility: "public"
 }).success, true);
-assert.equal(updateCommunityVisibilityInputSchema.safeParse({ communityId: community.id, visibility: "public", expectedRevision: 1 }).success, true);
+assert.equal(updateCommunitySettingsInputSchema.safeParse({ communityId: community.id, visibility: "public", expectedRevision: 1 }).success, true);
+assert.equal(updateCommunityMemberInputSchema.safeParse({ communityId: community.id, memberHandle: "@member", role: "moderator", expectedRevision: 1 }).success, true);
+assert.equal(removeCommunityMemberInputSchema.safeParse({ communityId: community.id, memberHandle: "@member", expectedRevision: 1 }).success, true);
+assert.equal(createCommunityAnnouncementInputSchema.safeParse({ communityId: community.id, title: "New review", body: "The next review has opened.", expectedRevision: 1 }).success, true);
+assert.equal(createCommunityInputSchema.safeParse({ name: "Too long", field: "Tests", summary: "x".repeat(communitySummaryMaxLength + 1), visibility: "public" }).success, false, "Community descriptions must obey the visible three-line character budget.");
 
 const basePost = {
   title: "Community paper",
@@ -299,9 +307,13 @@ const sources = await Promise.all([
   readFile(new URL("../lib/localCommunityStore.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/services/contentQuotes.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/communities/[id]/route.ts", import.meta.url), "utf8"),
-  readFile(new URL("../apps/api/src/repository/comments.ts", import.meta.url), "utf8")
+  readFile(new URL("../apps/api/src/repository/comments.ts", import.meta.url), "utf8"),
+  readFile(new URL("../apps/api/src/repository/posts.ts", import.meta.url), "utf8"),
+  readFile(new URL("../features/navigation/viewState.ts", import.meta.url), "utf8"),
+  readFile(new URL("../apps/api/src/repository/communityMembers.ts", import.meta.url), "utf8"),
+  readFile(new URL("../apps/api/src/repository/communityAuthorization.ts", import.meta.url), "utf8")
 ]);
-const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository] = sources;
+const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
@@ -310,9 +322,11 @@ assert.match(views, /setPeopleOpen\("members"\)/, "The member count must open th
 assert.match(views, /setPeopleOpen\("moderators"\)/, "Contact moderators must open the moderator directory.");
 assert.match(peopleModal, /nextCursor/, "Community people must use cursor pagination instead of loading an unbounded roster.");
 assert.match(peopleModal, /Quick search members/, "The member directory must expose quick search.");
+assert.match(peopleModal, /Make moderator/, "Managers must be able to promote ordinary members from the member directory.");
+assert.match(peopleModal, /Remove member/, "Managers must be able to remove ordinary members from the member directory.");
 assert.match(filterModal, /Hot right now/, "Community feed filtering must expose a real heat ranking.");
 assert.match(repository, /assertCommunityParticipation/, "Community writes must enforce active participation.");
-assert.match(repository, /last_accessed_at/, "Recent community access must persist server-side.");
+assert.match(communityMembersRepository, /last_accessed_at/, "Recent community access must persist server-side.");
 assert.match(foundation, /projectCommunityItemsForViewer/, "Bootstrap delivery must use the canonical current-state community projection.");
 assert.match(foundation, /syncCommunityActivityFixtures/, "Community activity fixtures must hydrate the durable live backend.");
 assert.match(foundation, /fixture_revisions/, "Community activity enrichment must not rerun on every backend cold start.");
@@ -327,12 +341,26 @@ assert.match(postViews, /className="profile-community-provenance"/, "Profile pos
 assert.match(profileViews, /className="profile-community-provenance"/, "Profile comment provenance must render in the comment header actions.");
 assert.match(communityActivityStyles, /\.profile-community-provenance[\s\S]+margin:\s*0 0 0 auto/, "Profile community provenance must stay aligned at the top right.");
 assert.doesNotMatch(communityStyles, /data-room=\"communities\"[^}]+display:\s*none/, "Communities must never hide the global bottom launchers.");
-assert.match(localStore, /version: 4/, "Existing local community state must migrate to recency-aware memberships.");
-assert.match(localStore, /updateLocalCommunityVisibility/, "Local community visibility must persist through the canonical store.");
-assert.match(repository, /community\.visibility\.update/, "Live community visibility changes must be audited.");
-assert.match(repository, /community\.visibility\.updated/, "Live community visibility changes must invalidate every connected projection.");
-assert.match(communityRoute, /export async function PATCH/, "Community visibility needs a revision-guarded Next route.");
+assert.match(localStore, /version: 5/, "Existing local community state must migrate to governance-aware communities.");
+assert.match(localStore, /updateLocalCommunitySettings/, "Local community settings must persist through the canonical store.");
+assert.match(localStore, /updateLocalCommunityMember/, "Local member roles must persist through the canonical store.");
+assert.match(localStore, /createLocalCommunityAnnouncement/, "Local announcements must persist through the canonical store.");
+assert.match(repository, /community\.settings\.update/, "Live community settings changes must be audited.");
+assert.match(repository, /community\.settings\.updated/, "Live community settings changes must invalidate every connected projection.");
+assert.match(repository, /community\.member\.role\.update/, "Live member promotions must be audited.");
+assert.match(repository, /community\.announcement\.create/, "Live announcements must be audited.");
+assert.match(communityRoute, /export async function PATCH/, "Community settings need a revision-guarded Next route.");
 assert.match(views, /community-visibility-modal/, "Owners and moderators need explicit current-state visibility controls.");
+assert.match(views, /communitySummaryMaxLength/, "Community create and edit surfaces must expose the canonical description limit.");
+assert.match(views, /setAnnouncementComposerOpen\(true\)/, "Managers must have a fixed announcement composer entry point.");
+assert.match(communityStyles, /-webkit-line-clamp:\s*3/, "Selected community descriptions must allow three compact lines.");
+assert.match(communityStyles, /\.selected-community-right \.community-activity-panel[\s\S]+border-top:\s*0/, "The first right-rail activity section must not waste space on a top divider.");
+assert.match(shell, /returnToDetailOrigin/, "Post details must expose a stable return to the source space.");
+assert.match(shell, /detailOriginFromSnapshot/, "The first detail hop must capture the complete source view.");
+assert.match(viewState, /DetailOriginSnapshot/, "Canonical view state must preserve a stable detail-journey origin.");
+assert.match(postsRepository, /assertCommunityPostDeletion/, "Community post deletion must use the canonical manager authorization boundary.");
+assert.match(commentsRepository, /assertCommunityCommentDeletion/, "Community comment deletion must use the canonical manager authorization boundary.");
+assert.match(communityAuthorization, /item\.postType === "paper"/, "Community managers must never acquire delete authority over core paper posts.");
 assert.match(quoteService, /Private community content can only be quoted inside that community or cited by a public paper/, "Private quote sources need one canonical destination boundary.");
 assert.match(quoteService, /source\.postType === "paper"/, "Paper posts and their comments must remain public quote sources.");
 assert.equal(

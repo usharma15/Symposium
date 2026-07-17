@@ -5,16 +5,18 @@ import { mutationContextFromRequest } from "../services/mutations";
 import { getActorFromRequest } from "../services/auth";
 import {
   createCommunity,
+  createCommunityAnnouncement,
   createCommunityCall,
   endCommunityCall,
   joinCommunityCall,
   joinOrRequestCommunity,
   leaveCommunity,
   listCommunityCalls,
-  listCommunityMembers,
-  recordCommunityAccess,
-  updateCommunityVisibility
+  removeCommunityMember,
+  updateCommunityMember,
+  updateCommunitySettings
 } from "../repository/communities";
+import { listCommunityMembers, recordCommunityAccess } from "../repository/communityMembers";
 import { getPublicCommunity, listPublicCommunities } from "../repository/foundation";
 import type { RouteParams } from "./types";
 
@@ -57,10 +59,10 @@ export const registerCommunityRoutes = (app: FastifyInstance) => {
     try {
       const actor = await withWriteActor(request);
       const payload = { ...(request.body ?? {}), communityId: request.params.id };
-      const community = await updateCommunityVisibility(
+      const community = await updateCommunitySettings(
         payload,
         actor,
-        mutationContextFromRequest(request, "community.visibility.update", payload)
+        mutationContextFromRequest(request, "community.settings.update", payload)
       );
       return reply.send({ community });
     } catch (error) {
@@ -110,6 +112,36 @@ export const registerCommunityRoutes = (app: FastifyInstance) => {
   app.get<{ Params: RouteParams; Querystring: Record<string, string | undefined> }>("/v1/communities/:id/members", async (request, reply) => {
     try {
       return reply.send(await listCommunityMembers(request.params.id, await getActorFromRequest(request), request.query));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: RouteParams & { handle: string } }>("/v1/communities/:id/members/:handle", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const payload = { ...(request.body ?? {}), communityId: request.params.id, memberHandle: request.params.handle };
+      return reply.send(await updateCommunityMember(payload, actor, mutationContextFromRequest(request, "community.member.role.update", payload)));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: RouteParams & { handle: string } }>("/v1/communities/:id/members/:handle", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const payload = { ...(request.body ?? {}), communityId: request.params.id, memberHandle: request.params.handle };
+      return reply.send(await removeCommunityMember(payload, actor, mutationContextFromRequest(request, "community.member.remove", payload)));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post<{ Params: RouteParams }>("/v1/communities/:id/announcements", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const payload = { ...(request.body ?? {}), communityId: request.params.id };
+      return reply.send(await createCommunityAnnouncement(payload, actor, mutationContextFromRequest(request, "community.announcement.create", payload)));
     } catch (error) {
       return sendError(app, reply, error);
     }

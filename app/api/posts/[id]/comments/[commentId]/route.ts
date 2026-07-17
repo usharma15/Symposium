@@ -9,7 +9,7 @@ import {
 import { canManageComment, findCommentInTree, isDeletedComment } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, versionedDocumentSchema } from "@/packages/contracts/src";
-import { assertLocalQuoteDestination, localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
+import { assertLocalQuoteDestination, localCommunityManagerAllowed, localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -133,7 +133,7 @@ export async function DELETE(request: Request, context: Context) {
   const existing = (await getSnapshot()).items.find((item) => item.id === id);
   if (!existing || !(await localCommunityReadAllowed(existing, actorHandle ?? ""))) return jsonError("Comment not found.", 404);
 
-  const item = await deleteComment(id, commentId, actorHandle ?? "");
+  const item = await deleteComment(id, commentId, actorHandle ?? "", await localCommunityManagerAllowed(existing, actorHandle ?? ""));
   if (!item) {
     return jsonError("Comment not found or cannot be deleted by this profile.", 404);
   }

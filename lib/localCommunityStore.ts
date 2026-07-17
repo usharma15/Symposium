@@ -3,12 +3,15 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
   CommunityCallContract,
+  CreateCommunityAnnouncementInputContract,
   CommunityMemberPageContract,
   CommunityMemberQueryContract,
   CommunityMembershipStatusContract,
   CreateCommunityInputContract,
   CreateCommunityCallInputContract,
-  UpdateCommunityVisibilityInputContract
+  RemoveCommunityMemberInputContract,
+  UpdateCommunityMemberInputContract,
+  UpdateCommunitySettingsInputContract
 } from "@/packages/contracts/src";
 import { profile, profilesByName, researchCommunities, type ResearchCommunity, type ResearchProfile } from "@/lib/mockData";
 import { seededCommunityCallMap } from "@/lib/communityFixtures";
@@ -22,7 +25,7 @@ type StoredMembership = {
 };
 
 type LocalCommunityState = {
-  version: 4;
+  version: 5;
   communities: ResearchCommunity[];
   memberships: Record<string, Record<string, StoredMembership>>;
   calls: CommunityCallContract[];
@@ -40,7 +43,7 @@ const withLock = <T>(operation: () => Promise<T>) => {
 };
 
 const seedState = (): LocalCommunityState => ({
-  version: 4,
+  version: 5,
   communities: researchCommunities,
   memberships: Object.fromEntries(researchCommunities.map((community, communityIndex) => [
     community.id,
@@ -70,7 +73,7 @@ const readState = async (): Promise<LocalCommunityState> => {
     const seededCommunities = seeded.communities.map((community) => {
       const stored = storedById.get(community.id);
       if (!stored) return community;
-      if (parsed.version === 4) return { ...community, ...stored };
+      if (parsed.version === 4 || parsed.version === 5) return { ...community, ...stored };
       return {
         ...stored,
         memberHandles: Array.from(new Set([...community.memberHandles, ...stored.memberHandles])),
@@ -86,8 +89,8 @@ const readState = async (): Promise<LocalCommunityState> => {
       const merged = { ...(seeded.memberships[community.id] ?? {}), ...(parsed.memberships?.[community.id] ?? {}) };
       return [community.id, Object.fromEntries(Object.entries(merged).map(([handle, membership]) => [handle, {
         ...membership,
-        role: parsed.version === 4 ? membership.role : seeded.memberships[community.id]?.[handle]?.role ?? membership.role,
-        joinedAt: parsed.version === 4
+        role: parsed.version === 4 || parsed.version === 5 ? membership.role : seeded.memberships[community.id]?.[handle]?.role ?? membership.role,
+        joinedAt: parsed.version === 4 || parsed.version === 5
           ? membership.joinedAt ?? membership.lastAccessedAt ?? new Date(0).toISOString()
           : seeded.memberships[community.id]?.[handle]?.joinedAt ?? membership.joinedAt ?? membership.lastAccessedAt ?? new Date(0).toISOString()
       }]))];
@@ -95,7 +98,7 @@ const readState = async (): Promise<LocalCommunityState> => {
     const seededCallById = new Map(seeded.calls.map((call) => [call.id, call]));
     for (const call of parsed.calls) seededCallById.set(call.id, call);
     return {
-      version: 4,
+      version: 5,
       communities,
       memberships,
       calls: [...seededCallById.values()]
@@ -130,6 +133,11 @@ const projectCommunity = (state: LocalCommunityState, community: ResearchCommuni
     monthlyActive: community.visibility === "private" && status !== "active" ? 0 : Math.max(community.online, Math.round(activeMembers.length * 0.72)),
     membershipStatus: status,
     viewerRole: status === "active" ? membership?.role : undefined,
+    ownerHandle: community.visibility === "private" && status !== "active"
+      ? undefined
+      : Object.entries(state.memberships[community.id] ?? {}).find(([, value]) => value.status === "active" && value.role === "owner")?.[0]
+        ?? community.ownerHandle
+        ?? activeMembers[0],
     lastAccessedAt: membership?.lastAccessedAt,
     moderatorHandles: community.visibility === "private" && status !== "active" ? [] : community.moderatorHandles ?? activeMembers.slice(0, 2),
     guidelines: community.visibility === "private" && status !== "active" ? undefined : community.guidelines ?? "Keep criticism attached to the work. Preserve sources and leave a legible trail when a claim changes.",
@@ -166,6 +174,7 @@ export const createLocalCommunity = (input: CreateCommunityInputContract, rawOwn
       monthlyActive: 1,
       membershipStatus: "active",
       viewerRole: "owner",
+      ownerHandle: owner,
       lastAccessedAt: now,
       moderatorHandles: Array.from(new Set([owner, ...input.moderatorHandles.map(cleanHandle)])),
       guidelines: input.guidelines || "Keep criticism attached to the work. Preserve sources and leave a legible trail when a claim changes.",
@@ -177,29 +186,105 @@ export const createLocalCommunity = (input: CreateCommunityInputContract, rawOwn
     return community;
   });
 
-export const updateLocalCommunityVisibility = (
-  input: UpdateCommunityVisibilityInputContract,
+const requireLocalCommunityManager = (
+  state: LocalCommunityState,
+  communityId: string,
   rawActorHandle: string
-) => withLock(async () => {
-  const state = await readState();
+) => {
   const handle = cleanHandle(rawActorHandle);
-  const community = state.communities.find((candidate) => candidate.id === input.communityId);
+  const community = state.communities.find((candidate) => candidate.id === communityId);
   if (!community) throw new Error("Community not found.");
-  const membership = state.memberships[community.id]?.[handle];
+  const membership = state.memberships[communityId]?.[handle];
   if (membership?.status !== "active" || (membership.role !== "owner" && membership.role !== "moderator")) {
-    throw new Error("Only community owners and moderators can change visibility.");
+    throw new Error("Only community owners and moderators can manage this community.");
   }
-  const revision = community.revision ?? 1;
-  if (revision !== input.expectedRevision) {
-    throw new Error("This community changed after it was loaded. Refresh before changing its visibility.");
+  return { community, handle, membership };
+};
+
+const assertLocalCommunityRevision = (community: ResearchCommunity, expectedRevision: number) => {
+  if ((community.revision ?? 1) !== expectedRevision) {
+    throw new Error("This community changed after it was loaded. Refresh before trying again.");
   }
-  if (community.visibility !== input.visibility) {
-    community.visibility = input.visibility;
-    community.revision = revision + 1;
+};
+
+const syncLocalCommunityHandles = (state: LocalCommunityState, community: ResearchCommunity) => {
+  const active = Object.entries(state.memberships[community.id] ?? {}).filter(([, membership]) => membership.status === "active");
+  community.memberHandles = active.map(([handle]) => handle);
+  community.moderatorHandles = active
+    .filter(([, membership]) => membership.role === "owner" || membership.role === "moderator")
+    .map(([handle]) => handle);
+  community.memberCount = active.length;
+};
+
+export const updateLocalCommunitySettings = (input: UpdateCommunitySettingsInputContract, rawActorHandle: string) =>
+  withLock(async () => {
+    const state = await readState();
+    const { community, handle } = requireLocalCommunityManager(state, input.communityId, rawActorHandle);
+    assertLocalCommunityRevision(community, input.expectedRevision);
+    const next = {
+      name: input.name ?? community.name,
+      summary: input.summary ?? community.summary,
+      guidelines: input.guidelines ?? community.guidelines,
+      visibility: input.visibility ?? community.visibility
+    };
+    if (next.name !== community.name || next.summary !== community.summary || next.guidelines !== community.guidelines || next.visibility !== community.visibility) {
+      Object.assign(community, next, { revision: input.expectedRevision + 1 });
+      await writeState(state);
+    }
+    return projectCommunity(state, community, handle);
+  });
+
+export const updateLocalCommunityMember = (input: UpdateCommunityMemberInputContract, rawActorHandle: string) =>
+  withLock(async () => {
+    const state = await readState();
+    const { community, handle } = requireLocalCommunityManager(state, input.communityId, rawActorHandle);
+    assertLocalCommunityRevision(community, input.expectedRevision);
+    const memberHandle = cleanHandle(input.memberHandle);
+    const target = state.memberships[community.id]?.[memberHandle];
+    if (!target || target.status !== "active") throw new Error("Community member not found.");
+    if (target.role === "owner") throw new Error("The community owner cannot be reassigned.");
+    if (target.role !== input.role) {
+      target.role = input.role;
+      community.revision = input.expectedRevision + 1;
+      syncLocalCommunityHandles(state, community);
+      await writeState(state);
+    }
+    return { community: projectCommunity(state, community, handle), member: { handle: memberHandle, role: target.role } };
+  });
+
+export const removeLocalCommunityMember = (input: RemoveCommunityMemberInputContract, rawActorHandle: string) =>
+  withLock(async () => {
+    const state = await readState();
+    const { community, handle } = requireLocalCommunityManager(state, input.communityId, rawActorHandle);
+    assertLocalCommunityRevision(community, input.expectedRevision);
+    const memberHandle = cleanHandle(input.memberHandle);
+    const target = state.memberships[community.id]?.[memberHandle];
+    if (!target || target.status !== "active") throw new Error("Community member not found.");
+    if (target.role === "owner") throw new Error("The community owner cannot be removed.");
+    target.status = "removed";
+    community.revision = input.expectedRevision + 1;
+    syncLocalCommunityHandles(state, community);
     await writeState(state);
-  }
-  return projectCommunity(state, community, handle);
-});
+    return { community: projectCommunity(state, community, handle), removedHandle: memberHandle };
+  });
+
+export const createLocalCommunityAnnouncement = (input: CreateCommunityAnnouncementInputContract, rawActorHandle: string) =>
+  withLock(async () => {
+    const state = await readState();
+    const { community, handle } = requireLocalCommunityManager(state, input.communityId, rawActorHandle);
+    assertLocalCommunityRevision(community, input.expectedRevision);
+    const announcement = {
+      id: randomUUID(),
+      title: input.title,
+      body: input.body,
+      authorHandle: handle,
+      createdAt: new Date().toISOString()
+    };
+    community.announcements = [announcement, ...(community.announcements ?? [])];
+    community.revision = input.expectedRevision + 1;
+    await writeState(state);
+    return { community: projectCommunity(state, community, handle), announcement };
+  });
 
 export const mutateLocalCommunityMembership = (
   communityId: string,
@@ -217,6 +302,9 @@ export const mutateLocalCommunityMembership = (
     if (community.visibility === "private" && current?.status !== "active") throw new Error("This private community requires membership.");
     if (current?.status === "active") current.lastAccessedAt = now;
   } else if (action === "leave") {
+    if (current?.role === "owner" && current.status === "active") {
+      throw new Error("The community owner cannot leave without transferring ownership.");
+    }
     state.memberships[communityId]![handle] = { status: "removed", role: current?.role ?? "member", joinedAt: current?.joinedAt ?? now, lastAccessedAt: current?.lastAccessedAt };
   } else {
     state.memberships[communityId]![handle] = {

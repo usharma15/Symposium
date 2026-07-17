@@ -1589,11 +1589,11 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
   return updated;
 };
 
-export const deletePost = async (itemId: string, actorHandle = defaultProfile.handle) => {
+export const deletePost = async (itemId: string, actorHandle = defaultProfile.handle, allowCommunityModerator = false) => {
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
-    if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
+    if (!existing || isDeletedPost(existing) || (!canManagePost(existing, actorHandle) && !(allowCommunityModerator && existing.communityId && existing.postType !== "paper"))) return null;
 
     const deleted = { ...tombstonePost(existing), revision: (existing.revision ?? 1) + 1 };
     await getPool().query(
@@ -1654,7 +1654,7 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
 
   const local = await readLocal();
   const existing = local.items.find((item) => item.id === itemId);
-  if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
+  if (!existing || isDeletedPost(existing) || (!canManagePost(existing, actorHandle) && !(allowCommunityModerator && existing.communityId && existing.postType !== "paper"))) return null;
   const deleted = { ...tombstonePost(existing), revision: (existing.revision ?? 1) + 1 };
   local.items = local.items.map((item) => (item.id === itemId ? deleted : item));
   local.items = invalidateQuotedSource(local.items, {
@@ -1746,14 +1746,15 @@ export const updateComment = async (
 export const deleteComment = async (
   itemId: string,
   commentId: string,
-  actorHandle = defaultProfile.handle
+  actorHandle = defaultProfile.handle,
+  allowCommunityModerator = false
 ) => {
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing) return null;
     const original = findCommentInTree(existing.comments, commentId);
-    if (!original || isDeletedComment(original) || !canManageComment(original, actorHandle)) return null;
+    if (!original || isDeletedComment(original) || (!canManageComment(original, actorHandle) && !(allowCommunityModerator && existing.communityId))) return null;
     const deletion = tombstoneCommentInItem(existing, commentId);
     if (!deletion.deletedComment) return null;
 
@@ -1814,7 +1815,7 @@ export const deleteComment = async (
   local.items = local.items.map((item) => {
     if (item.id !== itemId) return item;
     const original = findCommentInTree(item.comments, commentId);
-    if (!original || isDeletedComment(original) || !canManageComment(original, actorHandle)) return item;
+    if (!original || isDeletedComment(original) || (!canManageComment(original, actorHandle) && !(allowCommunityModerator && item.communityId))) return item;
     const deletion = tombstoneCommentInItem(item, commentId);
     if (!deletion.deletedComment) return item;
     deleted = { ...deletion.item, revision: (item.revision ?? 1) + 1 };

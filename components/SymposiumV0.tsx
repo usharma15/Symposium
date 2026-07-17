@@ -52,8 +52,6 @@ import {
   mutateCommentForActor,
   mutateItemForActor,
   normalizeSearchPhrase,
-  tombstoneCommentInItem,
-  tombstonePost,
   updateSignalValue
 } from "@/lib/symposiumCore";
 import {
@@ -93,9 +91,12 @@ import {
 import type { CanonicalRoute, ProfileSocialView } from "@/features/navigation/canonicalRoute";
 import {
   canonicalRouteForView as routeForViewSnapshot,
+  detailOriginFromSnapshot,
   officeModeForCanonicalRoute,
   roomForCanonicalRoute,
   snapshotForCanonicalRoute,
+  type DetailOriginSnapshot,
+  type WorkspaceViewSnapshot,
   type OfficeMode,
   type ViewSnapshot
 } from "@/features/navigation/viewState";
@@ -167,6 +168,8 @@ import { searchableContentText } from "@/features/discovery/discoveryPolicy";
 import { canParticipateInCommunity, communityPostIsExternallyDiscoverable } from "@/features/communities/communityPolicy";
 import { useCommunityState } from "@/features/communities/useCommunityState";
 import { createCommunityController } from "@/features/communities/communityController";
+import { CommunityGovernanceProvider } from "@/features/communities/CommunityGovernanceContext";
+import { createContentDeletionController } from "@/features/moderation/contentDeletionController";
 import { TabletPanel } from "@/features/workspace/WorkspacePanels";
 import { WorkspaceView } from "@/features/workspace/WorkspaceView";
 import { savePostDraftToWorkspace } from "@/features/workspace/savePostDraftToWorkspace";
@@ -404,6 +407,15 @@ function SymposiumExperience({
   const [selectedCommentId, setSelectedCommentId] = useState<string | null>(
     initialRoute.kind === "post" ? initialRoute.commentId ?? null : null
   );
+  const [detailOrigin, setDetailOrigin] = useState<DetailOriginSnapshot | null>(null);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceViewSnapshot>(() => ({
+    section: "all",
+    selectedNotebookId: null,
+    selectedDocumentId: initialRoute.kind === "workspace" ? initialRoute.noteId ?? null : null,
+    editSelected: false,
+    expandedNotebookIds: [],
+    query: ""
+  }));
   const [commentSegmentStacks, setCommentSegmentStacks] = useState<CommentSegmentStacks>({});
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(
     initialRoute.kind === "community" ? initialRoute.communityId : null
@@ -420,7 +432,9 @@ function SymposiumExperience({
     setCommunityMembershipBusy,
     composerCommunityId,
     setComposerCommunityId,
-    selectedCommunity
+    selectedCommunity,
+    selectedCommunityFeedView,
+    setSelectedCommunityFeedView
   } = useCommunityState(currentProfile.handle, selectedCommunityId);
   const [tabletOpen, setTabletOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -1289,10 +1303,12 @@ function SymposiumExperience({
     setApplicationReviewPostId(snapshot.applicationReviewPostId);
     setSelectedApplicationId(snapshot.selectedApplicationId);
     setSelectedCommentId(snapshot.selectedCommentId);
+    setDetailOrigin(snapshot.detailOrigin);
     setSelectedProfileName(snapshot.selectedProfileName);
     setProfileSocialView(snapshot.profileSocialView);
     setProfileActiveTab(snapshot.profileTab);
     setOfficeMode(snapshot.officeMode);
+    setWorkspaceView(snapshot.workspaceView);
     setSelectedCommunityId(snapshot.selectedCommunityId);
     setMessagesOpen(snapshot.messagesOpen);
     setSelectedConversationId(snapshot.selectedConversationId);
@@ -1803,6 +1819,7 @@ function SymposiumExperience({
       profileSocialView,
       profileTab: selectedProfileName ? profileActiveTab : "all",
       officeMode,
+      workspaceView,
       selectedCommunityId,
       messagesOpen,
       selectedConversationId,
@@ -1812,7 +1829,8 @@ function SymposiumExperience({
         ...domSegmentStacks
       }),
       scrollAnchor,
-      scrollY: window.scrollY
+      scrollY: window.scrollY,
+      detailOrigin
     };
   };
 
@@ -1844,10 +1862,19 @@ function SymposiumExperience({
     setApplicationReviewPostId(snapshot.applicationReviewPostId ?? null);
     setSelectedApplicationId(snapshot.selectedApplicationId ?? null);
     setSelectedCommentId(snapshot.selectedCommentId);
+    setDetailOrigin(snapshot.detailOrigin ?? null);
     setSelectedProfileName(snapshot.selectedProfileName);
     setProfileSocialView(snapshot.profileSocialView ?? null);
     setProfileActiveTab(snapshot.profileTab);
     setOfficeMode(snapshot.officeMode);
+    setWorkspaceView(snapshot.workspaceView ?? {
+      section: "all",
+      selectedNotebookId: null,
+      selectedDocumentId: null,
+      editSelected: false,
+      expandedNotebookIds: [],
+      query: ""
+    });
     setSelectedCommunityId(snapshot.selectedCommunityId);
     const restoredSegmentStacks = cloneCommentSegmentStacks(snapshot.commentSegmentStacks ?? {});
     commentSegmentStacksRef.current = restoredSegmentStacks;
@@ -1913,7 +1940,8 @@ function SymposiumExperience({
             ? currentSnapshot.selectedConversationId
             : null,
       scrollAnchor: null,
-      scrollY: scrollY ?? currentSnapshot.scrollY
+      scrollY: scrollY ?? currentSnapshot.scrollY,
+      detailOrigin: next.detailOrigin !== undefined ? next.detailOrigin : currentSnapshot.detailOrigin
     };
     recordNavigation(currentSnapshot, nextSnapshot);
     if (next.activeRoom !== undefined) setActiveRoom(next.activeRoom);
@@ -1921,6 +1949,7 @@ function SymposiumExperience({
     setApplicationReviewPostId(nextSnapshot.applicationReviewPostId);
     setSelectedApplicationId(nextSnapshot.selectedApplicationId);
     if (next.selectedCommentId !== undefined) setSelectedCommentId(next.selectedCommentId);
+    if (next.detailOrigin !== undefined) setDetailOrigin(next.detailOrigin);
     if (next.selectedProfileName !== undefined) setSelectedProfileName(next.selectedProfileName);
     if (next.profileSocialView !== undefined) setProfileSocialView(next.profileSocialView);
     if (next.profileTab !== undefined) setProfileActiveTab(next.profileTab);
@@ -1953,7 +1982,8 @@ function SymposiumExperience({
       selectedProfileName: null,
       profileSocialView: null,
       officeMode: roomId === "office" ? mode : "desk",
-      selectedCommunityId: null
+      selectedCommunityId: null,
+      detailOrigin: null
     });
   };
 
@@ -1969,7 +1999,8 @@ function SymposiumExperience({
       selectedProfileName: null,
       profileSocialView: null,
       officeMode: "desk",
-      selectedCommunityId: communityId
+      selectedCommunityId: communityId,
+      detailOrigin: null
     });
   };
 
@@ -1981,7 +2012,8 @@ function SymposiumExperience({
       selectedProfileName: null,
       profileSocialView: null,
       officeMode: "desk",
-      selectedCommunityId: null
+      selectedCommunityId: null,
+      detailOrigin: null
     });
   };
 
@@ -2912,48 +2944,21 @@ function SymposiumExperience({
     }
   };
 
-  const deletePost = async (itemId: string) => {
-    const item = itemsRef.current.find((current) => current.id === itemId);
-    if (!item || isDeletedPost(item) || cleanHandle(item.authorHandle ?? item.author) !== currentProfile.handle) return;
-    if (!window.confirm(`Delete "${item.title}"?`)) return;
-
-    itemMutationCoordinatorRef.current.begin(itemId);
-    const previousItems = itemsRef.current;
-    const deleted = tombstonePost(item);
-    const nextItems = invalidateQuotedSource(
-      previousItems.map((current) => (current.id === itemId ? deleted : current)),
-      { sourceType: "post", sourceId: itemId, sourcePostId: itemId }
-    );
-    replaceItems(nextItems);
-    persistLocalSnapshot(nextItems, profilesRef.current);
-    setEditingPost(null);
-    setSyncStatus("Deleting post");
-
-    try {
-      const data = await symposiumApi.request<{ item?: InquiryItem }>(`/api/posts/${itemId}`, {
-        method: "DELETE",
-        idempotencyKey: createClientMutationId("post-delete"),
-        body: { actorHandle: currentProfile.handle }
-      });
-      if (data.item) {
-        const committedItems = invalidateQuotedSource(
-          itemsRef.current.map((current) =>
-            current.id === itemId ? reconcileCommittedItem(data.item!, current) : current
-          ),
-          { sourceType: "post", sourceId: itemId, sourcePostId: itemId }
-        );
-        replaceItems(committedItems);
-        persistLocalSnapshot(committedItems, profilesRef.current);
-      }
-      setSyncStatus("Post deleted");
-    } catch {
-      replaceItems(previousItems);
-      persistLocalSnapshot(previousItems, profilesRef.current);
-      setSyncStatus("Post delete could not sync");
-    } finally {
-      itemMutationCoordinatorRef.current.complete(itemId);
-    }
-  };
+  const { deletePost, deleteComment } = createContentDeletionController({
+    itemsRef,
+    communitiesRef,
+    actorHandle: currentProfile.handle,
+    beginMutation: itemMutationCoordinatorRef.current.begin,
+    completeMutation: itemMutationCoordinatorRef.current.complete,
+    replaceItems,
+    persistItems: (nextItems) => persistLocalSnapshot(nextItems, profilesRef.current),
+    reconcileItem: reconcileCommittedItem,
+    clearPostEditor: () => setEditingPost(null),
+    clearCommentEditor: (itemId, commentId) => setEditingComment((current) =>
+      current?.itemId === itemId && current.commentId === commentId ? null : current
+    ),
+    setStatus: setSyncStatus
+  });
 
   const saveCommentEdit = async (
     itemId: string,
@@ -3035,68 +3040,16 @@ function SymposiumExperience({
     }
   };
 
-  const deleteComment = async (itemId: string, commentId: string) => {
-    const item = itemsRef.current.find((current) => current.id === itemId);
-    const comment = item ? findCommentById(item.comments, commentId) : undefined;
-    if (
-      !item ||
-      !comment ||
-      isDeletedComment(comment) ||
-      cleanHandle(comment.authorHandle ?? comment.author) !== currentProfile.handle
-    ) {
-      return;
-    }
-    if (!window.confirm("Delete this comment?")) return;
-
-    itemMutationCoordinatorRef.current.begin(itemId);
-    const previousItems = itemsRef.current;
-    const nextItems = invalidateQuotedSource(previousItems.map((current) => {
-      if (current.id !== itemId) return current;
-      return tombstoneCommentInItem(current, commentId).item;
-    }), { sourceType: "comment", sourceId: commentId, sourcePostId: itemId });
-    replaceItems(nextItems);
-    persistLocalSnapshot(nextItems, profilesRef.current);
-    setEditingComment((current) =>
-      current?.itemId === itemId && current.commentId === commentId ? null : current
-    );
-    setSyncStatus("Deleting comment");
-
-    try {
-      const data = await symposiumApi.request<{ item?: InquiryItem }>(
-        `/api/posts/${itemId}/comments/${commentId}`,
-        {
-        method: "DELETE",
-        idempotencyKey: createClientMutationId("comment-delete"),
-        body: { actorHandle: currentProfile.handle }
-        }
-      );
-      if (data.item) {
-        const committedItems = invalidateQuotedSource(
-          itemsRef.current.map((current) =>
-            current.id === itemId ? reconcileCommittedItem(data.item!, current) : current
-          ),
-          { sourceType: "comment", sourceId: commentId, sourcePostId: itemId }
-        );
-        replaceItems(committedItems);
-        persistLocalSnapshot(committedItems, profilesRef.current);
-      }
-      setSyncStatus("Comment deleted");
-    } catch {
-      replaceItems(previousItems);
-      persistLocalSnapshot(previousItems, profilesRef.current);
-      setSyncStatus("Comment delete could not sync");
-    } finally {
-      itemMutationCoordinatorRef.current.complete(itemId);
-    }
-  };
-
   const openPost = (id: string, commentId?: string | null, sourceSurface?: ViewSurface) => {
+    const currentSnapshot = snapshotView();
+    const journeyOrigin = currentSnapshot.detailOrigin ?? detailOriginFromSnapshot(currentSnapshot);
     navigateView(
       {
         selectedItemId: id,
         selectedCommentId: commentId ?? null,
         selectedProfileName: null,
-        profileSocialView: null
+        profileSocialView: null,
+        detailOrigin: journeyOrigin
       },
       commentId ? null : 0
     );
@@ -3107,6 +3060,18 @@ function SymposiumExperience({
         surface: sourceSurface ?? (selectedProfileNameRef.current ? "profile" : "feed")
       });
     }
+  };
+
+  const returnToDetailOrigin = () => {
+    const currentSnapshot = snapshotView();
+    const origin = currentSnapshot.detailOrigin;
+    if (!origin) {
+      goBack();
+      return;
+    }
+    const target: ViewSnapshot = { ...origin, detailOrigin: null };
+    recordNavigation(currentSnapshot, target);
+    restoreView(target);
   };
 
   const acceptWorkspacePublication = (result: WorkspacePublicationResponse) => {
@@ -3253,6 +3218,7 @@ function SymposiumExperience({
       </button>
 
       <section className="stage">
+        <CommunityGovernanceProvider community={selectedCommunity} items={items}>
         {applicationReviewItem ? (
           <OpportunityApplicationsStage
             item={applicationReviewItem}
@@ -3307,7 +3273,7 @@ function SymposiumExperience({
           <DetailView
             item={selectedItem}
             room={activeRoomData}
-            onBack={goBack}
+            onBack={returnToDetailOrigin}
             onOpenProfile={openProfile}
             onAddComment={addComment}
             onUploadCommentAttachment={uploadCommentAttachment}
@@ -3352,22 +3318,29 @@ function SymposiumExperience({
             onOpenSaved={() => toggleOfficeMode("saved")}
             onPublished={acceptWorkspacePublication}
             onOpenProfile={openProfile}
-            initialDocumentId={initialRoute.kind === "workspace" ? initialRoute.noteId : undefined}
+            initialDocumentId={workspaceView.selectedDocumentId ?? (initialRoute.kind === "workspace" ? initialRoute.noteId : undefined)}
             initialCommentId={initialRoute.kind === "workspace" ? initialRoute.commentId : undefined}
+            initialViewState={workspaceView}
+            onViewStateChange={setWorkspaceView}
           />
         ) : activeRoom === "communities" ? (
           <CommunitiesStage
-            state={{ selectedCommunity, communities, items, calls: selectedCommunity ? communityCalls[selectedCommunity.id] ?? [] : [], currentProfile, profiles, membershipBusy: communityMembershipBusy }}
+            state={{ selectedCommunity, communities, items, calls: selectedCommunity ? communityCalls[selectedCommunity.id] ?? [] : [], currentProfile, profiles, membershipBusy: communityMembershipBusy, feedView: selectedCommunityFeedView }}
             directory={{ query: communityQuery, onQuery: setCommunityQuery, expanded: communitiesExpanded, onExpanded: setCommunitiesExpanded }}
             actions={{
               onBack: closeCommunity, onMembership: communityController.changeMembership, onVisibility: communityController.changeVisibility,
+              onUpdateSettings: communityController.updateSettings,
+              onUpdateMemberRole: communityController.updateMemberRole,
+              onRemoveMember: communityController.removeMember,
+              onCreateAnnouncement: communityController.createAnnouncement,
               onCreatePost: () => { if (selectedCommunity) { setComposerCommunityId(selectedCommunity.id); setComposerOpen(true); } },
               onCreateCall: communityController.createCall, onJoinCall: communityController.joinCall,
               onInvite: communityController.invite, onMessageModerator: (handle) => { const normalized = cleanHandle(handle); setMessageRecipientHandle(normalized); navigateView({ messagesOpen: true, selectedConversationId: `direct:${normalized}` }, null); },
               onOpenCommunity: openCommunity, onCreateCommunity: communityController.createCommunity,
               onSelect: openPost, onOpenProfile: openProfile, onAction: applyAction, onQuote: beginQuote,
               onOpenQuote: openQuotedSource, onEditPost: setEditingPost, onDeletePost: deletePost,
-              onOpenAttachmentPreview: openAttachmentPreview
+              onOpenAttachmentPreview: openAttachmentPreview,
+              onFeedView: setSelectedCommunityFeedView
             }}
           />
         ) : (
@@ -3391,6 +3364,7 @@ function SymposiumExperience({
             onOpenAttachmentPreview={openAttachmentPreview}
           />
         )}
+        </CommunityGovernanceProvider>
       </section>
 
       <button

@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageCircleMore, Search, ShieldCheck, UsersRound, X } from "lucide-react";
+import { MessageCircleMore, Search, ShieldCheck, Trash2, UserRoundCog, UsersRound, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CommunityMemberContract, CommunityMemberPageContract } from "@/packages/contracts/src";
 import type { ResearchCommunity, ResearchProfile } from "@/lib/mockData";
@@ -24,7 +24,10 @@ export function CommunityPeopleModal({
   mode,
   onClose,
   onOpenProfile,
-  onMessage
+  onMessage,
+  canManage = false,
+  onUpdateRole,
+  onRemoveMember
 }: {
   community: ResearchCommunity;
   currentProfileHandle: string;
@@ -33,6 +36,9 @@ export function CommunityPeopleModal({
   onClose: () => void;
   onOpenProfile: (handle: string) => void;
   onMessage?: (handle: string) => void;
+  canManage?: boolean;
+  onUpdateRole?: (memberHandle: string, role: "moderator" | "member") => Promise<{ ok: boolean; error?: string }>;
+  onRemoveMember?: (memberHandle: string) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const [query, setQuery] = useState("");
   const [members, setMembers] = useState<CommunityMemberContract[]>([]);
@@ -41,15 +47,17 @@ export function CommunityPeopleModal({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [status, setStatus] = useState("");
+  const [managingHandle, setManagingHandle] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const requestVersion = useRef(0);
   const moderatorHandles = useMemo(() => new Set((community.moderatorHandles ?? []).map(cleanHandle)), [community.moderatorHandles]);
+  const ownerHandle = cleanHandle(community.ownerHandle ?? community.memberHandles[0] ?? "");
   const fallbackMembers = useMemo(() => community.memberHandles
     .map((handle, index) => {
       const clean = cleanHandle(handle);
       const person = profileForHandle(profiles, clean);
-      const role = index === 0 ? "owner" as const : moderatorHandles.has(clean) ? "moderator" as const : "member" as const;
+      const role = clean === ownerHandle ? "owner" as const : moderatorHandles.has(clean) ? "moderator" as const : "member" as const;
       return {
         handle: clean,
         name: person?.name ?? clean,
@@ -60,7 +68,7 @@ export function CommunityPeopleModal({
     })
     .filter((member) => mode === "members" || member.role === "owner" || member.role === "moderator")
     .filter((member) => !query.trim() || `${member.name} ${member.handle}`.toLowerCase().includes(query.trim().toLowerCase()))
-    .slice(0, 50), [community.memberHandles, mode, moderatorHandles, profiles, query]);
+    .slice(0, 50), [community.memberHandles, mode, moderatorHandles, ownerHandle, profiles, query]);
 
   const endpoint = (cursor?: string | null) => {
     const params = new URLSearchParams({
@@ -138,6 +146,27 @@ export function CommunityPeopleModal({
   }, [loading, loadingMore, nextCursor]);
 
   const title = mode === "moderators" ? "Community moderators" : "Community members";
+  const changeRole = async (member: CommunityMemberContract) => {
+    if (!onUpdateRole || managingHandle) return;
+    const role = member.role === "moderator" ? "member" : "moderator";
+    setManagingHandle(member.handle);
+    setStatus("");
+    const result = await onUpdateRole(member.handle, role);
+    setManagingHandle(null);
+    if (result.ok) setMembers((current) => current.map((candidate) => candidate.handle === member.handle ? { ...candidate, role } : candidate));
+    else setStatus(result.error ?? "Member role could not be changed.");
+  };
+  const removeMember = async (member: CommunityMemberContract) => {
+    if (!onRemoveMember || managingHandle || !window.confirm(`Remove ${member.name} from ${community.name}?`)) return;
+    setManagingHandle(member.handle);
+    setStatus("");
+    const result = await onRemoveMember(member.handle);
+    setManagingHandle(null);
+    if (result.ok) {
+      setMembers((current) => current.filter((candidate) => candidate.handle !== member.handle));
+      setTotal((current) => Math.max(0, current - 1));
+    } else setStatus(result.error ?? "Member could not be removed.");
+  };
   return (
     <div className="community-modal-backdrop" role="presentation" onClick={onClose}>
       <section className="community-people-modal" role="dialog" aria-modal="true" aria-label={title} onClick={(event) => event.stopPropagation()}>
@@ -159,6 +188,14 @@ export function CommunityPeopleModal({
                 <em>{member.role === "owner" || member.role === "moderator" ? <ShieldCheck size={13} /> : <UsersRound size={13} />}{member.role}</em>
               </CanonicalLink>
               {mode === "moderators" && onMessage ? <button type="button" onClick={() => { onClose(); onMessage(member.handle); }}><MessageCircleMore size={15} /> Message</button> : null}
+              {mode === "members" && canManage && member.role !== "owner" && cleanHandle(member.handle) !== cleanHandle(currentProfileHandle) ? (
+                <div className="community-person-controls">
+                  <button type="button" disabled={managingHandle !== null} onClick={() => void changeRole(member)} title={member.role === "moderator" ? "Return to member" : "Promote to moderator"}>
+                    <UserRoundCog size={15} /> {managingHandle === member.handle ? "Updating…" : member.role === "moderator" ? "Make member" : "Make moderator"}
+                  </button>
+                  <button className="danger-action" type="button" disabled={managingHandle !== null} onClick={() => void removeMember(member)} title="Remove member"><Trash2 size={15} /></button>
+                </div>
+              ) : null}
             </article>
           ))}
           {!members.length && !loading ? <p className="community-people-empty">No one matches this search.</p> : null}

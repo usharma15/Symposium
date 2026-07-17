@@ -3,7 +3,25 @@ import type { CanonicalRoute, ProfileSocialView, ProfileTab } from "@/features/n
 
 export type OfficeMode = "desk" | "saved" | "notes";
 
-export type ViewSnapshot = {
+export type WorkspaceViewSnapshot = {
+  section: "all" | "notebooks" | "quick";
+  selectedNotebookId: string | null;
+  selectedDocumentId: string | null;
+  editSelected: boolean;
+  expandedNotebookIds: string[];
+  query: string;
+};
+
+const workspaceViewForRoute = (route: CanonicalRoute): WorkspaceViewSnapshot => ({
+  section: "all",
+  selectedNotebookId: null,
+  selectedDocumentId: route.kind === "workspace" ? route.noteId ?? null : null,
+  editSelected: false,
+  expandedNotebookIds: [],
+  query: ""
+});
+
+export type DetailOriginSnapshot = {
   activeRoom: RoomId;
   selectedItemId: string | null;
   applicationReviewPostId: string | null;
@@ -13,6 +31,7 @@ export type ViewSnapshot = {
   profileSocialView: ProfileSocialView | null;
   profileTab: ProfileTab;
   officeMode: OfficeMode;
+  workspaceView: WorkspaceViewSnapshot;
   selectedCommunityId: string | null;
   messagesOpen: boolean;
   selectedConversationId: string | null;
@@ -20,6 +39,12 @@ export type ViewSnapshot = {
   scrollAnchor: { id: string; top: number; commentSegmentKey?: string; commentSegmentStack?: string[] } | null;
   scrollY: number;
 };
+
+export type ViewSnapshot = DetailOriginSnapshot & {
+  detailOrigin: DetailOriginSnapshot | null;
+};
+
+export const detailOriginFromSnapshot = ({ detailOrigin: _detailOrigin, ...snapshot }: ViewSnapshot): DetailOriginSnapshot => snapshot;
 
 export const roomForCanonicalRoute = (
   route: CanonicalRoute,
@@ -71,7 +96,11 @@ export const canonicalRouteForView = (
   }
   if (snapshot.activeRoom === "communities") return { kind: "communities" };
   if (snapshot.activeRoom === "office") {
-    return { kind: "workspace", view: snapshot.officeMode === "desk" ? undefined : snapshot.officeMode };
+    return {
+      kind: "workspace",
+      view: snapshot.officeMode === "desk" ? undefined : snapshot.officeMode,
+      noteId: snapshot.officeMode === "notes" ? snapshot.workspaceView.selectedDocumentId ?? undefined : undefined
+    };
   }
   if (snapshot.activeRoom === "funding") {
     return { kind: "funding" };
@@ -100,10 +129,12 @@ export const snapshotForCanonicalRoute = (
   profileSocialView: route.kind === "profile" ? route.social ?? null : null,
   profileTab: route.kind === "profile" ? route.tab ?? "all" : "all",
   officeMode: officeModeForCanonicalRoute(route),
+  workspaceView: workspaceViewForRoute(route),
   selectedCommunityId: route.kind === "community" ? route.communityId : null,
   messagesOpen: route.kind === "messages",
   selectedConversationId: route.kind === "messages" ? route.conversationId ?? null : null,
   commentSegmentStacks: {},
   scrollAnchor: null,
-  scrollY: 0
+  scrollY: 0,
+  detailOrigin: null
 });

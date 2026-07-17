@@ -17,6 +17,12 @@ export const localCommunityParticipationAllowed = async (item: InquiryItem, acto
   return community?.membershipStatus === "active";
 };
 
+export const localCommunityManagerAllowed = async (item: InquiryItem, actorHandle: string) => {
+  if (!item.communityId) return false;
+  const community = (await listLocalCommunities(actorHandle)).find((candidate) => candidate.id === item.communityId);
+  return community?.viewerRole === "owner" || community?.viewerRole === "moderator";
+};
+
 export const localQuoteSourceItems = async (items: InquiryItem[], actorHandle: string) =>
   projectCommunityItemsForViewer(items, await listLocalCommunities(actorHandle), actorHandle)
     .filter((item) => item.communityAccess === "full");

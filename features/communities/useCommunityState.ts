@@ -6,6 +6,20 @@ import { researchCommunities, type ResearchCommunity } from "@/lib/mockData";
 import { seededCommunityCallMap } from "@/lib/communityFixtures";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { symposiumApi } from "@/features/api/symposiumApiClient";
+import {
+  defaultCommunityFeedFilter,
+  type CommunityFeedFilter
+} from "@/features/communities/communityPolicy";
+
+export type CommunityFeedViewState = {
+  filter: CommunityFeedFilter;
+  query: string;
+};
+
+const defaultCommunityFeedView: CommunityFeedViewState = {
+  filter: defaultCommunityFeedFilter,
+  query: ""
+};
 
 export const useCommunityState = (currentProfileHandle: string, selectedCommunityId: string | null) => {
   const [communities, setCommunities] = useState<ResearchCommunity[]>(researchCommunities);
@@ -14,11 +28,19 @@ export const useCommunityState = (currentProfileHandle: string, selectedCommunit
   );
   const [communityMembershipBusy, setCommunityMembershipBusy] = useState(false);
   const [composerCommunityId, setComposerCommunityId] = useState<string | null>(null);
+  const [communityFeedViews, setCommunityFeedViews] = useState<Record<string, CommunityFeedViewState>>({});
   const communitiesRef = useRef(communities);
   const selectedCommunity = useMemo(
     () => selectedCommunityId ? communities.find((community) => community.id === selectedCommunityId) ?? null : null,
     [communities, selectedCommunityId]
   );
+  const selectedCommunityFeedView = selectedCommunityId
+    ? communityFeedViews[selectedCommunityId] ?? defaultCommunityFeedView
+    : defaultCommunityFeedView;
+  const setSelectedCommunityFeedView = (view: CommunityFeedViewState) => {
+    if (!selectedCommunityId) return;
+    setCommunityFeedViews((current) => ({ ...current, [selectedCommunityId]: view }));
+  };
 
   useEffect(() => {
     communitiesRef.current = communities;
@@ -64,6 +86,8 @@ export const useCommunityState = (currentProfileHandle: string, selectedCommunit
     setCommunityMembershipBusy,
     composerCommunityId,
     setComposerCommunityId,
-    selectedCommunity
+    selectedCommunity,
+    selectedCommunityFeedView,
+    setSelectedCommunityFeedView
   };
 };

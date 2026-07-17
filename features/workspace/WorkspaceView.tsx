@@ -40,6 +40,7 @@ import type {
   WorkspacePublicationResponse,
   WorkspaceSearchResponse
 } from "@/lib/workspaceTypes";
+import type { WorkspaceViewSnapshot } from "@/features/navigation/viewState";
 
 type WorkspaceSection = "all" | "notebooks" | "quick";
 const creationKinds: WorkspaceDocument["kind"][] = ["note", "thought", "paper"];
@@ -60,7 +61,9 @@ export function WorkspaceView({
   onPublished,
   onOpenProfile,
   initialDocumentId,
-  initialCommentId
+  initialCommentId,
+  initialViewState,
+  onViewStateChange
 }: {
   room: Room;
   actorHandle: string;
@@ -70,25 +73,37 @@ export function WorkspaceView({
   onOpenProfile: (handle: string) => void;
   initialDocumentId?: string;
   initialCommentId?: string;
+  initialViewState?: WorkspaceViewSnapshot;
+  onViewStateChange?: (state: WorkspaceViewSnapshot) => void;
 }) {
   const workspace = useWorkspaceDocuments(actorHandle);
-  const [section, setSection] = useState<WorkspaceSection>("all");
-  const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(null);
-  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(initialDocumentId ?? null);
-  const [editSelected, setEditSelected] = useState(false);
+  const [section, setSection] = useState<WorkspaceSection>(initialViewState?.section ?? "all");
+  const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(initialViewState?.selectedNotebookId ?? null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(initialViewState?.selectedDocumentId ?? initialDocumentId ?? null);
+  const [editSelected, setEditSelected] = useState(initialViewState?.editSelected ?? false);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [notebookName, setNotebookName] = useState("");
   const [creatingNotebook, setCreatingNotebook] = useState(false);
-  const [expandedNotebookIds, setExpandedNotebookIds] = useState<Set<string>>(() => new Set());
+  const [expandedNotebookIds, setExpandedNotebookIds] = useState<Set<string>>(() => new Set(initialViewState?.expandedNotebookIds ?? []));
   const [navigationPending, setNavigationPending] = useState(false);
   const [sharingTarget, setSharingTarget] = useState<WorkspaceAccessTarget | null>(null);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialViewState?.query ?? "");
   const [searchResults, setSearchResults] = useState<WorkspaceSearchResponse | null>(null);
   const [searching, setSearching] = useState(false);
   const detailRef = useRef<WorkspaceDocumentDetailHandle>(null);
   const navigationInFlightRef = useRef(false);
 
   const selectedDocument = workspace.snapshot.documents.find((document) => document.id === selectedDocumentId) ?? null;
+  useEffect(() => {
+    onViewStateChange?.({
+      section,
+      selectedNotebookId,
+      selectedDocumentId,
+      editSelected,
+      expandedNotebookIds: [...expandedNotebookIds],
+      query
+    });
+  }, [editSelected, expandedNotebookIds, onViewStateChange, query, section, selectedDocumentId, selectedNotebookId]);
   useEffect(() => {
     if (selectedDocumentId && !selectedDocument && !workspace.loading) setSelectedDocumentId(null);
   }, [selectedDocument, selectedDocumentId, workspace.loading]);
