@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth, useUser } from "@clerk/nextjs";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowLeft,
   BrainCircuit,
@@ -335,11 +335,13 @@ const localPreviewAuth: SymposiumAuthState = {
 
 export function SymposiumV0({
   clerkEnabled = false,
+  initialIsSignedIn = null,
   initialRoute = { kind: "hall" },
   initialShouldPlayEntrance = null,
   liveBackendUrl = null
 }: {
   clerkEnabled?: boolean;
+  initialIsSignedIn?: boolean | null;
   initialRoute?: CanonicalRoute;
   initialShouldPlayEntrance?: boolean | null;
   liveBackendUrl?: string | null;
@@ -347,6 +349,7 @@ export function SymposiumV0({
   if (clerkEnabled) {
     return (
       <ClerkSymposiumV0
+        initialIsSignedIn={initialIsSignedIn}
         initialRoute={initialRoute}
         initialShouldPlayEntrance={initialShouldPlayEntrance}
         liveBackendUrl={liveBackendUrl}
@@ -356,6 +359,7 @@ export function SymposiumV0({
   return (
     <SymposiumExperience
       auth={localPreviewAuth}
+      initialIsSignedIn={initialIsSignedIn}
       initialRoute={initialRoute}
       initialShouldPlayEntrance={initialShouldPlayEntrance}
       liveBackendUrl={liveBackendUrl}
@@ -364,10 +368,12 @@ export function SymposiumV0({
 }
 
 function ClerkSymposiumV0({
+  initialIsSignedIn,
   initialRoute,
   initialShouldPlayEntrance,
   liveBackendUrl
 }: {
+  initialIsSignedIn: boolean | null;
   initialRoute: CanonicalRoute;
   initialShouldPlayEntrance: boolean | null;
   liveBackendUrl: string | null;
@@ -377,6 +383,7 @@ function ClerkSymposiumV0({
 
   return (
     <SymposiumExperience
+      initialIsSignedIn={initialIsSignedIn}
       initialRoute={initialRoute}
       initialShouldPlayEntrance={initialShouldPlayEntrance}
       liveBackendUrl={liveBackendUrl}
@@ -396,11 +403,13 @@ function ClerkSymposiumV0({
 
 function SymposiumExperience({
   auth,
+  initialIsSignedIn,
   initialRoute,
   initialShouldPlayEntrance,
   liveBackendUrl
 }: {
   auth: SymposiumAuthState;
+  initialIsSignedIn: boolean | null;
   initialRoute: CanonicalRoute;
   initialShouldPlayEntrance: boolean | null;
   liveBackendUrl: string | null;
@@ -409,7 +418,7 @@ function SymposiumExperience({
   const [theme, setTheme] = useState<Theme>("day");
   const [entryMode, setEntryMode] = useState<EntryMode>(() => entryModeForBrowserSession(initialShouldPlayEntrance));
   const [signedIn, setSignedIn] = useState(false);
-  const shouldPlayEntrance = useBrowserSessionEntrance(initialShouldPlayEntrance);
+  const { replayEntrance, shouldPlayEntrance } = useBrowserSessionEntrance(initialShouldPlayEntrance);
   const [activeRoom, setActiveRoom] = useState<RoomId>(() =>
     roomForCanonicalRoute(
       initialRoute,
@@ -1431,7 +1440,7 @@ function SymposiumExperience({
     onReconnecting: markLiveUpdatesReconnecting
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (shouldPlayEntrance === null) return;
     const storedTheme = window.localStorage.getItem("symposium-theme") as Theme | null;
     const storedProfileHandle = window.localStorage.getItem("symposium-profile-handle");
@@ -2690,7 +2699,9 @@ function SymposiumExperience({
     setSyncedClerkUserId(null);
     setSettingsOpen(false);
     setAuthError("");
-    setEntryMode("auth");
+    entranceStartedAtRef.current = Date.now();
+    replayEntrance();
+    setEntryMode("approach");
   };
 
   const applyAction = async (itemId: string, action: PostAction, options: ViewActionOptions = {}) => {
@@ -3257,6 +3268,7 @@ function SymposiumExperience({
     entryMode,
     clerkEnabled,
     authLoaded,
+    initialIsSignedIn,
     isSignedIn: Boolean(isSignedIn),
     accountSynced: signedIn,
     authError

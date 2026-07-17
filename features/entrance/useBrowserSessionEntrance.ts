@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { entranceSessionCookieName } from "@/features/entrance/browserSession";
 
 const entranceSeenStorageKey = "symposium-entrance-seen-v2";
@@ -23,6 +23,13 @@ type PresenceMessage = { kind: "probe" | "present"; senderId: string; targetId?:
 
 export const useBrowserSessionEntrance = (initialDecision: boolean | null = null) => {
   const [shouldPlayEntrance, setShouldPlayEntrance] = useState<boolean | null>(initialDecision);
+
+  const replayEntrance = useCallback(() => {
+    window.sessionStorage.removeItem("symposium-entry-complete");
+    window.sessionStorage.setItem(entranceSeenStorageKey, "true");
+    markBrowserSession();
+    setShouldPlayEntrance(true);
+  }, []);
 
   useEffect(() => {
     if (initialDecision === false) {
@@ -74,5 +81,5 @@ export const useBrowserSessionEntrance = (initialDecision: boolean | null = null
     };
   }, [initialDecision]);
 
-  return shouldPlayEntrance;
+  return { replayEntrance, shouldPlayEntrance };
 };

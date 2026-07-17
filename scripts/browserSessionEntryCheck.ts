@@ -27,15 +27,21 @@ const main = async () => {
     entryMode: "complete" as const,
     clerkEnabled: true,
     authLoaded: true,
+    initialIsSignedIn: true,
     isSignedIn: true,
     accountSynced: false,
     authError: ""
   };
-  assert.equal(resolvePresentedEntryMode(returningClerkSession), "loading");
+  assert.equal(resolvePresentedEntryMode(returningClerkSession), "complete");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, accountSynced: true }), "complete");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, isSignedIn: false }), "auth");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, authError: "Sync failed" }), "auth");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, entryMode: "approach" }), "approach");
+  assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, authLoaded: false }), "complete");
+  assert.equal(
+    resolvePresentedEntryMode({ ...returningClerkSession, authLoaded: false, initialIsSignedIn: false }),
+    "auth"
+  );
   assert.equal(readCachedBootstrapSnapshot(storage("not-json")), null);
 
   const cachedProfile = { ...profile, handle: "@cached", name: "Cached researcher" };
@@ -67,11 +73,13 @@ const main = async () => {
   const component = await readFile(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
   const symposiumPage = await readFile(path.join(process.cwd(), "app/SymposiumPage.tsx"), "utf8");
   const entryViews = await readFile(path.join(process.cwd(), "features/shell/SymposiumShellViews.tsx"), "utf8");
-  assert.doesNotMatch(symposiumPage, /cookies\(\)/);
-  assert.match(symposiumPage, /initialShouldPlayEntrance={null}/);
+  assert.match(symposiumPage, /cookies\(\)/);
+  assert.match(symposiumPage, /Boolean\(\(await auth\(\)\)\.userId\)/);
+  assert.match(symposiumPage, /initialShouldPlayEntrance={browserSessionSeen \? false : null}/);
   assert.match(symposiumPage, /liveBackendUrl={liveBackendUrl}/);
   assert.match(component, /hydrateCachedBootstrap\(storedProfileHandle\);/);
   assert.match(component, /const sessionEntryMode = entryModeForBrowserSession\(shouldPlayEntrance\);/);
+  assert.match(component, /useLayoutEffect\(\(\) => \{\s+if \(shouldPlayEntrance === null\) return;/);
   assert.match(component, /if \(sessionEntryMode === "complete"\) \{\s+applyInitialRouteState\(\);/);
   assert.match(component, /startedAt \+ 5000 - Date\.now\(\)/);
   assert.match(component, /if \(shouldCompleteEntryAfterAccountSync\(entryModeRef\.current\)\) \{/);
@@ -79,6 +87,7 @@ const main = async () => {
   assert.match(component, /if \(!clerkEnabled\) \{\s+refreshData\(storedProfileHandle \?\? undefined\)/);
   assert.match(component, /setSignedIn\(true\);[\s\S]*void refreshData\(data\.profile\.handle\)/);
   assert.doesNotMatch(component, /await refreshData\(data\.profile\.handle\)/);
+  assert.match(component, /entranceStartedAtRef\.current = Date\.now\(\);\s+replayEntrance\(\);\s+setEntryMode\("approach"\);/);
   assert.match(component, /const presentedEntryMode = resolvePresentedEntryMode\(/);
   assert.match(component, /profileActivityInFlightRef/);
   assert.match(component, /window\.setTimeout\(\(\) => controller\.abort\(\), 15_000\)/);
@@ -92,13 +101,14 @@ const main = async () => {
         ok: true,
         checked: [
           "first browser-session entrance",
-          "instant subsequent-tab entry",
-          "static server shell with client-side session detection",
+          "zero-frame repeat-session entry",
+          "server-side browser-session decision",
           "cached bootstrap selection",
           "non-fatal cached-bootstrap quota pressure",
           "canonical route hydration",
           "late authentication route preservation",
           "first-session authentication completion",
+          "logout entrance replay",
           "stationary authentication background",
           "authenticated identity-only visibility gate",
           "non-blocking bootstrap and profile activity",
