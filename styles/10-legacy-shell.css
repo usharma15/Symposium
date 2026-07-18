@@ -419,17 +419,6 @@
   display: none;
 }
 
-.render-preload {
-  position: fixed;
-  left: -20px;
-  top: -20px;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
-}
-
 .sync-status {
   position: fixed;
   z-index: 29;

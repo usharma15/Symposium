@@ -9,6 +9,7 @@ import {
   updateComment,
 } from "../repository/comments";
 import { getPostDetail, listPostPage } from "../repository/inquiryReads";
+import { recordCommentView, recordPostView } from "../repository/inquiryViews";
 import { applyPostAction, createPost, deletePost, updatePost } from "../repository/posts";
 import { getActorFromRequest } from "../services/auth";
 import type { RouteParams } from "./types";
@@ -160,6 +161,15 @@ export const registerPostRoutes = (app: FastifyInstance) => {
     }
   });
 
+  app.post<{ Params: RouteParams }>("/v1/posts/:id/views", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request, { scope: "passive-view", limit: 240 });
+      return reply.send(await recordPostView(request.params.id, request.body, actor));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
   app.post<{ Params: RouteParams & { commentId: string } }>("/v1/posts/:id/comments/:commentId/actions", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
@@ -176,6 +186,20 @@ export const registerPostRoutes = (app: FastifyInstance) => {
         mutation
       );
       return reply.send(result);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post<{ Params: RouteParams & { commentId: string } }>("/v1/posts/:id/comments/:commentId/views", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request, { scope: "passive-view", limit: 240 });
+      return reply.send(await recordCommentView(
+        request.params.id,
+        request.params.commentId,
+        request.body,
+        actor
+      ));
     } catch (error) {
       return sendError(app, reply, error);
     }

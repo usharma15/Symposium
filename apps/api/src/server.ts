@@ -1,13 +1,10 @@
 import cors from "@fastify/cors";
-import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 import Fastify from "fastify";
 import { fileURLToPath } from "node:url";
 import { env, webOrigins } from "./config/env";
 import { assertDeploymentEnv } from "./config/preflight";
 import { ensureDatabase } from "./db/migrate";
 import { sendError } from "./http/errors";
-import { attachRealtime } from "./realtime";
-import { appRouter } from "./router";
 import { registerAttachmentRoutes } from "./routes/attachmentRoutes";
 import { registerCommunityRoutes } from "./routes/communityRoutes";
 import { registerEventRoutes } from "./routes/eventRoutes";
@@ -16,7 +13,6 @@ import { registerOpportunityApplicationRoutes } from "./routes/opportunityApplic
 import { registerProfileRoutes } from "./routes/profileRoutes";
 import { registerSystemRoutes } from "./routes/systemRoutes";
 import { registerWorkspaceRoutes } from "./routes/workspaceRoutes";
-import { createContext } from "./trpc";
 import { startDatabaseMaintenance, stopDatabaseMaintenance } from "./services/maintenance";
 import { rateLimit } from "./services/rateLimit";
 
@@ -37,7 +33,7 @@ export const buildApp = async (options: { logger?: boolean } = {}) => {
   app.addHook("onRequest", async (request, reply) => {
     reply.header("X-Request-Id", request.id);
     reply.header("X-Content-Type-Options", "nosniff");
-    if (request.url.startsWith("/v1/") || request.url.startsWith("/trpc/")) {
+    if (request.url.startsWith("/v1/")) {
       reply.header("Cache-Control", "no-store");
     }
     if (request.method === "OPTIONS") return;
@@ -53,14 +49,6 @@ export const buildApp = async (options: { logger?: boolean } = {}) => {
 
   registerSystemRoutes(app);
 
-  await app.register(fastifyTRPCPlugin, {
-    prefix: "/trpc",
-    trpcOptions: {
-      router: appRouter,
-      createContext
-    }
-  });
-
   registerProfileRoutes(app);
   registerPostRoutes(app);
   registerOpportunityApplicationRoutes(app);
@@ -69,7 +57,6 @@ export const buildApp = async (options: { logger?: boolean } = {}) => {
   registerWorkspaceRoutes(app);
   registerEventRoutes(app);
 
-  attachRealtime(app);
   return app;
 };
 

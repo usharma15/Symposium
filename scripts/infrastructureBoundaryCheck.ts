@@ -6,6 +6,7 @@ import {
   communities,
   communityMemberships,
   events,
+  maintenanceLeases,
   noteBlocks,
   notes,
   opportunityApplicationComments,
@@ -27,13 +28,14 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0031_prefix_search");
+  assert.equal(latestMigrationId, "0032_maintenance_cost_boundaries");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
   assert.equal(migrationIds.at(-1), latestMigrationId);
   assert.ok(migrationIds.length >= 18);
   assert.ok("audienceHandles" in events);
+  assert.ok("leaseExpiresAt" in maintenanceLeases);
   assert.equal("audienceHandles" in posts, false);
   assert.ok("revision" in posts);
   assert.ok("revision" in comments);

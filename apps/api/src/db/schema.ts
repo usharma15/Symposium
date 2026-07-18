@@ -1002,7 +1002,8 @@ export const notifications = pgTable(
   },
   (table) => [
     index("notifications_read_idx").on(table.readAt),
-    index("notifications_profile_created_idx").on(table.profileHandle, table.createdAt)
+    index("notifications_profile_created_idx").on(table.profileHandle, table.createdAt),
+    index("notifications_retention_idx").on(table.createdAt).where(sql`${table.readAt} IS NOT NULL`)
   ]
 );
 
@@ -1072,8 +1073,19 @@ export const auditLogs = pgTable(
   },
   (table) => [
     index("audit_logs_subject_idx").on(table.subjectType, table.subjectId),
-    index("audit_logs_actor_idx").on(table.actorHandle, table.createdAt)
+    index("audit_logs_actor_idx").on(table.actorHandle, table.createdAt),
+    index("audit_logs_created_idx").on(table.createdAt)
   ]
+);
+
+export const maintenanceLeases = pgTable(
+  "maintenance_leases",
+  {
+    key: text("key").primaryKey(),
+    lastCompletedAt: timestamp("last_completed_at", { withTimezone: true }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }).notNull(),
+    updatedAt: updatedAtColumn()
+  }
 );
 
 export const moderationReports = pgTable(

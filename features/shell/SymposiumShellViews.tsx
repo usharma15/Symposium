@@ -11,26 +11,6 @@ const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? 
 type Theme = "day" | "night";
 type EntryMode = "loading" | "approach" | "auth" | "complete";
 
-export function RenderPreloadDeck({ sources }: { sources: string[] }) {
-
-  return (
-
-    <div className="render-preload" aria-hidden="true">
-
-      {sources.map((render) => (
-
-        <Image key={render} src={render} alt="" width={1} height={1} loading="eager" unoptimized />
-
-      ))}
-
-    </div>
-
-  );
-
-}
-
-
-
 export function EntrySequence({
 
   theme,
@@ -46,8 +26,6 @@ export function EntrySequence({
   clerkEnabled,
 
   onLocalPreview,
-
-  preloadRenders,
 
   playApproach
 
@@ -66,8 +44,6 @@ export function EntrySequence({
   clerkEnabled: boolean;
 
   onLocalPreview: () => void;
-
-  preloadRenders: string[];
 
   playApproach: boolean;
 
@@ -91,9 +67,9 @@ export function EntrySequence({
 
         className={`entry-image ${playApproach ? "approaching" : "stationary"}`}
 
-      />
+        unoptimized
 
-      <RenderPreloadDeck sources={preloadRenders} />
+      />
 
       <div className="entry-veil" />
 

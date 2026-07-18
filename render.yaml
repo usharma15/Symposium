@@ -27,6 +27,12 @@ services:
         value: "@udayan"
       - key: DATABASE_URL
         sync: false
+      - key: DATABASE_POOL_MAX
+        value: "4"
+      - key: DATABASE_IDLE_TIMEOUT_MS
+        value: "30000"
+      - key: SYMPOSIUM_SEED_ON_BOOT
+        value: "false"
       - key: CLERK_SECRET_KEY
         sync: false
       - key: CLERK_JWT_AUDIENCE

@@ -124,7 +124,6 @@ import {
   EntrySequence,
   HallView,
   OfficeDeskView,
-  RenderPreloadDeck,
   ViewNav
 } from "@/features/shell/SymposiumShellViews";
 import type {
@@ -433,6 +432,7 @@ function SymposiumExperience({
   liveBackendUrl: string | null;
 }) {
   const { authLoaded, clerkEnabled, isSignedIn, userId } = auth;
+  symposiumApi.configure({ backendUrl: liveBackendUrl, getAccessToken: auth.getAccessToken });
   const [theme, setTheme] = useState<Theme>("day");
   const [entryMode, setEntryMode] = useState<EntryMode>(() => entryModeForBrowserSession(initialShouldPlayEntrance));
   const [signedIn, setSignedIn] = useState(false);
@@ -588,7 +588,7 @@ function SymposiumExperience({
     activeRoom === "communities" && selectedCommunityId
         ? themedCommunityRenders.selected
         : themedRoomRenders[activeRoom];
-  const themePreloadRenders = useMemo(() => getThemePreloadRenders(theme), [theme]);
+  const themePreloadRenders = useMemo(() => getThemePreloadRenders(theme, activeRoom), [activeRoom, theme]);
   const selectedItemCandidate = items.find((item) => item.id === selectedItemId) ?? null;
   if (selectedItemCandidate) selectedItemFallbackRef.current = selectedItemCandidate;
   if (!selectedItemId) selectedItemFallbackRef.current = null;
@@ -3045,8 +3045,9 @@ function SymposiumExperience({
 
     const actorHandle = currentProfile.handle;
     if (isViewAction) {
-      const synced = await recordPassiveView<{ item?: InquiryItem }>("post", itemId, null, actorHandle, options);
+      const synced = await recordPassiveView("post", itemId, null, actorHandle, options);
       if (synced?.item) mergeLiveItem(synced.item);
+      else if (synced?.itemId && synced.metrics) mergeLiveMetricPatch(synced);
       else releaseClientViewClaim("post", itemId);
       return;
     }
@@ -3195,8 +3196,9 @@ function SymposiumExperience({
 
     const actorHandle = currentProfile.handle;
     if (isViewAction) {
-      const synced = await recordPassiveView<{ item?: InquiryItem }>("comment", itemId, commentId, actorHandle, options);
+      const synced = await recordPassiveView("comment", itemId, commentId, actorHandle, options);
       if (synced?.item) mergeLiveItem(synced.item);
+      else if (synced?.itemId && synced.metrics) mergeLiveMetricPatch(synced);
       else releaseClientViewClaim("comment", commentId);
       return;
     }
@@ -3620,7 +3622,6 @@ function SymposiumExperience({
         authLoaded={authLoaded}
         clerkEnabled={clerkEnabled}
         onLocalPreview={enterLocalPreview}
-        preloadRenders={themePreloadRenders}
         playApproach={shouldPlayEntrance === true}
       />
     );
@@ -3636,7 +3637,6 @@ function SymposiumExperience({
       style={{ "--room-bg": `url(${activeRoomRender})` } as CSSProperties}
     >
       <div className="ambient-layer" aria-hidden="true" />
-      <RenderPreloadDeck sources={themePreloadRenders} />
 
       <header className="topbar">
         <CanonicalLink className="brand" route={{ kind: "hall" }} onNavigate={() => enterRoom("hall")}>

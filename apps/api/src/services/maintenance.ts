@@ -1,4 +1,5 @@
 import { env } from "../config/env";
+import type { PoolClient } from "pg";
 import { getPool, hasDatabase } from "../db/client";
 import {
   drainStorageDeletionQueue,
@@ -9,12 +10,14 @@ import {
 } from "./storageDeletion";
 
 const maintenanceIntervalMs = 6 * 60 * 60 * 1000;
+const maintenanceLeaseKey = "database-housekeeping-v1";
 let maintenanceTimer: NodeJS.Timeout | null = null;
 let lastCompletedAt: string | null = null;
 let lastErrorAt: string | null = null;
 let lastStartedAt: string | null = null;
 let lastStorageDeletionAt: string | null = null;
 let lastStorageDeletionResult: { claimed: number; deleted: number; failed: number } | null = null;
+let lastSkippedAt: string | null = null;
 
 export const getMaintenanceStatus = () => ({
   active: Boolean(maintenanceTimer),
@@ -22,8 +25,36 @@ export const getMaintenanceStatus = () => ({
   lastErrorAt,
   lastStartedAt,
   lastStorageDeletionAt,
-  lastStorageDeletionResult
+  lastStorageDeletionResult,
+  lastSkippedAt
 });
+
+const acquireMaintenanceLease = async (client: PoolClient) => {
+  const lease = await client.query<{ lastCompletedAt: Date | string | null }>(
+    `INSERT INTO maintenance_leases (key, lease_expires_at, updated_at)
+     VALUES ($1, now() + interval '15 minutes', now())
+     ON CONFLICT (key) DO UPDATE SET
+       lease_expires_at = now() + interval '15 minutes',
+       updated_at = now()
+     WHERE maintenance_leases.lease_expires_at <= now()
+       AND (
+         maintenance_leases.last_completed_at IS NULL
+         OR maintenance_leases.last_completed_at <= now() - interval '6 hours'
+       )
+     RETURNING last_completed_at AS "lastCompletedAt"`,
+    [maintenanceLeaseKey]
+  );
+  if (lease.rowCount) return true;
+  const current = await client.query<{ lastCompletedAt: Date | string | null }>(
+    `SELECT last_completed_at AS "lastCompletedAt" FROM maintenance_leases WHERE key = $1`,
+    [maintenanceLeaseKey]
+  );
+  if (current.rows[0]?.lastCompletedAt) {
+    lastCompletedAt = new Date(current.rows[0].lastCompletedAt).toISOString();
+  }
+  lastSkippedAt = new Date().toISOString();
+  return false;
+};
 
 export const runStorageDeletionMaintenance = async () => {
   const result = await drainStorageDeletionQueue();
@@ -40,6 +71,10 @@ export const runDatabaseMaintenance = async () => {
   let storageAttachmentIds: string[] = [];
   try {
     await client.query("BEGIN");
+    if (!(await acquireMaintenanceLease(client))) {
+      await client.query("COMMIT");
+      return;
+    }
     await client.query(
       `DELETE FROM mutation_receipts
        WHERE id IN (
@@ -63,6 +98,25 @@ export const runDatabaseMaintenance = async () => {
        WHERE id IN (
          SELECT id FROM content_views
          WHERE created_at < now() - interval '2 days'
+         ORDER BY created_at ASC
+         LIMIT 5000
+      )`
+    );
+    await client.query(
+      `DELETE FROM audit_logs
+       WHERE id IN (
+         SELECT id FROM audit_logs
+         WHERE created_at < now() - interval '90 days'
+         ORDER BY created_at ASC
+         LIMIT 5000
+       )`
+    );
+    await client.query(
+      `DELETE FROM notifications
+       WHERE id IN (
+         SELECT id FROM notifications
+         WHERE (read_at IS NOT NULL AND created_at < now() - interval '90 days')
+            OR created_at < now() - interval '365 days'
          ORDER BY created_at ASC
          LIMIT 5000
        )`
@@ -162,10 +216,17 @@ export const runDatabaseMaintenance = async () => {
     storageAttachmentIds = Array.from(
       new Set([...expiredIds, ...abandonedIds, ...legacyStagingIds, ...replacedProfileIds])
     );
+    await client.query(
+      `UPDATE maintenance_leases
+       SET last_completed_at = now(), lease_expires_at = now(), updated_at = now()
+       WHERE key = $1`,
+      [maintenanceLeaseKey]
+    );
     await client.query("COMMIT");
     committed = true;
     lastCompletedAt = new Date().toISOString();
     lastErrorAt = null;
+    lastSkippedAt = null;
   } catch (error) {
     await client.query("ROLLBACK");
     lastErrorAt = new Date().toISOString();

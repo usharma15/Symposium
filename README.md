@@ -33,8 +33,8 @@ npm run api:smoke:writes
 
 Use `.env.example` as the provider checklist. `live:env:report` prints a secret-safe backend/frontend live-env report, while `live:env:check` exits nonzero until required live envs are present. The API exposes `/healthz` for liveness and `/readyz` for live provider readiness without returning secret values. `api:smoke:writes` is intentionally separate from the default smoke because it creates test content.
 
-The current Next API routes proxy to the live backend when `SYMPOSIUM_API_URL` is set. Without that env var, local development continues to use the v0 file/Postgres fallback.
-Once `SYMPOSIUM_API_URL` is set, the bridge treats the live backend as authoritative and returns a controlled 503 if Render is unavailable.
+When `SYMPOSIUM_API_URL` is set, normal browser traffic and live events connect directly to the live backend with Clerk authentication; the Next API routes remain as a narrow compatibility and local-preview bridge. Without that env var, local development continues to use the v0 file/Postgres fallback.
+Once `SYMPOSIUM_API_URL` is set, Render is authoritative. Requests never silently fall back to local v0 storage when the live backend is unavailable.
 
 See `docs/backend.md` for the Neon, Clerk, Upstash, R2, Render, and Vercel environment setup.
 

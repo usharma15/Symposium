@@ -5,7 +5,7 @@ This repo now has two runtime surfaces:
 - `next dev` / Vercel: the laptop-first SYMPOSIUM interface.
 - `npm run api:dev` / Render: the live TypeScript backend.
 
-The existing Next API routes remain in place as a compatibility bridge. When `SYMPOSIUM_API_URL` is set on Vercel, ordinary requests can proxy to the Render backend, while the browser's authenticated live-event stream connects directly to Render so Vercel never holds a long-running relay function open. When the backend URL is not set, local development keeps using the existing `.data/symposium.json` fallback.
+The existing Next API routes remain in place for local preview, Clerk profile synchronization, protected attachment delivery, and compatibility fallback. When `SYMPOSIUM_API_URL` is set on Vercel, ordinary browser requests and the authenticated live-event stream connect directly to Render with the Clerk bearer token. This removes the Vercel function hop from normal traffic. A failed direct GET or idempotent mutation may retry through the compatibility bridge; application errors never replay. When the backend URL is not set, local development keeps using the existing `.data/symposium.json` fallback.
 
 Current production endpoints:
 
@@ -14,7 +14,7 @@ Current production endpoints:
 - Liveness: `https://symposium-api-ue3p.onrender.com/healthz`
 - Readiness: `https://symposium-api-ue3p.onrender.com/readyz`
 
-The production bridge forces `Cache-Control: no-store` and varies responses by authorization and cookie state. This is enforced at the Vercel boundary even if an upstream response later supplies a cacheable directive.
+Render forces `Cache-Control: no-store` on `/v1/*`. The compatibility bridge also forces `no-store` and varies responses by authorization and cookie state.
 
 ## Local API
 
@@ -33,6 +33,8 @@ Useful endpoints:
 - `POST /v1/posts`
 - `POST /v1/posts/:id/comments`
 - `POST /v1/posts/:id/actions`
+- `POST /v1/posts/:id/views`
+- `POST /v1/posts/:id/comments/:commentId/views`
 - `GET /v1/follows`
 - `POST /v1/profiles/:handle/follow`
 - `DELETE /v1/profiles/:handle/follow`
@@ -51,8 +53,8 @@ Useful endpoints:
 - `POST /v1/notes/blocks`
 - `POST /v1/notes/publish`
 - `POST /v1/assistant/messages`
-- `/trpc/*` for the typed procedure router
-- Socket.IO on the same server for realtime presence/events
+- Authenticated browser clients call `/v1/*` directly; the matching Next.js routes remain compatibility fallbacks.
+- Server-sent events provide the single realtime transport. The unused Socket.IO and tRPC HTTP surfaces have been removed.
 
 Every API response includes `X-Request-Id`. Validation and application errors also include the same value in the JSON body, so a client-visible failure can be matched to one backend log entry without exposing internal exception text.
 
@@ -102,7 +104,7 @@ SYMPOSIUM_REQUIRE_AUTH=false
 
 That lets local development fall back to `x-symposium-handle` when no Clerk token is available. Production should use Clerk tokens.
 
-When `SYMPOSIUM_API_URL` is configured on Vercel, the Next API bridge treats Render as the source of truth. If Render is unreachable, writes return a controlled 503 instead of silently falling back to local v0 storage.
+When `SYMPOSIUM_API_URL` is configured on Vercel, Render is the source of truth. Direct requests do not fall back to local v0 storage, and the compatibility bridge returns a controlled 503 when Render is unavailable.
 
 ## Deployment Preflight
 

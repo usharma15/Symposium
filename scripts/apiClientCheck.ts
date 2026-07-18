@@ -3,6 +3,7 @@ import {
   SymposiumApiError,
   createRetryMutationRegistry,
   createSymposiumApiClient,
+  resolveSymposiumApiRequest,
   shouldRetainRetryMutation
 } from "@/features/api/symposiumApiClient";
 import { profileAvatarForPersistence } from "@/features/profiles/profilePersistence";
@@ -34,6 +35,66 @@ const main = async () => {
   assert.equal(new Headers(requests[0]?.init?.headers).get("Content-Type"), "application/json");
   assert.equal(requests[0]?.init?.body, JSON.stringify({ title: "Revision-safe" }));
   assert.equal(requests[0]?.init?.keepalive, true);
+
+  assert.deepEqual(
+    resolveSymposiumApiRequest(
+      "/api/communities/research/membership",
+      { method: "POST", body: { action: "leave", actorHandle: "@ada" } },
+      "https://api.example/"
+    ),
+    {
+      body: {},
+      direct: true,
+      input: "https://api.example/v1/communities/research/membership",
+      method: "DELETE"
+    }
+  );
+  assert.deepEqual(
+    resolveSymposiumApiRequest(
+      "/api/workspace/documents/note-1/publish",
+      { method: "POST", body: { expectedRevision: 3 } },
+      "https://api.example"
+    ),
+    {
+      body: { expectedRevision: 3, noteId: "note-1" },
+      direct: true,
+      input: "https://api.example/v1/notes/publish",
+      method: "POST"
+    }
+  );
+  assert.equal(
+    resolveSymposiumApiRequest(
+      "/api/posts/p1/actions",
+      { method: "POST", body: { action: "read", actorHandle: "@ada" } },
+      "https://api.example"
+    ).input,
+    "https://api.example/v1/posts/p1/views"
+  );
+  assert.equal(
+    resolveSymposiumApiRequest("/api/auth/sync", { method: "POST" }, "https://api.example").direct,
+    false
+  );
+
+  const directRequests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const directClient = createSymposiumApiClient(async (input, init) => {
+    directRequests.push({ input, init });
+    return jsonResponse({ ok: true });
+  }, {
+    backendUrl: "https://api.example",
+    getAccessToken: async () => "token-1"
+  });
+  await directClient.request("/api/posts?limit=24", { cache: "no-store" });
+  assert.equal(directRequests[0]?.input, "https://api.example/v1/posts?limit=24");
+  assert.equal(new Headers(directRequests[0]?.init?.headers).get("Authorization"), "Bearer token-1");
+
+  const fallbackRequests: string[] = [];
+  const fallbackClient = createSymposiumApiClient(async (input) => {
+    fallbackRequests.push(String(input));
+    if (String(input).startsWith("https://api.example")) throw new TypeError("cors");
+    return jsonResponse({ ok: true });
+  }, { backendUrl: "https://api.example", getAccessToken: async () => "token-1" });
+  await fallbackClient.request("/api/posts?limit=24");
+  assert.deepEqual(fallbackRequests, ["https://api.example/v1/posts?limit=24", "/api/posts?limit=24"]);
 
   const conflictClient = createSymposiumApiClient(async () => jsonResponse({ error: "Still processing" }, 409));
   const conflict = await conflictClient.request("/api/posts", { method: "POST", body: {} }).catch((error) => error);

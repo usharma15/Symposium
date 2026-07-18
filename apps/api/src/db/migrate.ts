@@ -1819,7 +1819,23 @@ const migrations: Migration[] = [
             coalesce(name, '') || ' ' || coalesce(field, '') || ' ' || coalesce(summary, '') || ' ' ||
             coalesce(keywords::text, '')
           )
-        );
+      );
+    `
+  },
+  {
+    id: "0032_maintenance_cost_boundaries",
+    sql: `
+      CREATE TABLE IF NOT EXISTS maintenance_leases (
+        key TEXT PRIMARY KEY,
+        last_completed_at TIMESTAMPTZ,
+        lease_expires_at TIMESTAMPTZ NOT NULL DEFAULT to_timestamp(0),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS audit_logs_created_idx
+        ON audit_logs (created_at);
+      CREATE INDEX IF NOT EXISTS notifications_retention_idx
+        ON notifications (created_at)
+        WHERE read_at IS NOT NULL;
     `
   }
 ];
