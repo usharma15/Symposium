@@ -288,9 +288,9 @@ const profileActivityActionsForScope = (scope: ProfileActivityPageScope): Toggle
   return [];
 };
 
-const profileActivityCommentModeForScope = (scope: ProfileActivityPageScope): "all" | "quotes" | "none" => {
+const profileActivityCommentModeForScope = (scope: ProfileActivityPageScope): "all" | "none" => {
   if (scope === "all" || scope === "comments") return "all";
-  return scope === "reshares" ? "quotes" : "none";
+  return "none";
 };
 
 const profileActivityScopeIncludesComments = (scope: ProfileActivityPageScope) =>
@@ -2160,7 +2160,6 @@ function SymposiumExperience({
         actorHandle: cleanActor,
         actions: requestedActions.join(","),
         includeComments: String(requestComments),
-        commentQuotesOnly: String(commentMode === "quotes"),
         includeSummary: String(requestSummary)
       });
       if (startCursor) params.set("cursor", startCursor);

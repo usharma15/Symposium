@@ -247,7 +247,6 @@ export const PROFILE_AUTHORED_COMMENTS_SQL = `SELECT
        AND post.deleted_at IS NULL
        AND ($5::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
        AND ($5::boolean OR post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public')
-       AND ($6::boolean = false OR comment.quote IS NOT NULL)
        AND (
          $2::timestamptz IS NULL OR
          (comment.created_at, comment.id) < ($2::timestamptz, $3::text)
@@ -260,7 +259,6 @@ export const PROFILE_ACTIVITY_COUNTS_SQL = `WITH scoped_posts AS (
          post.id,
          post.post_type,
          post.author_handle,
-         post.quote,
          COALESCE(community.visibility = 'private' AND post.post_type IS DISTINCT FROM 'paper', false) AS hidden
        FROM posts post
        LEFT JOIN communities community ON community.id = post.community_id
@@ -268,18 +266,18 @@ export const PROFILE_ACTIVITY_COUNTS_SQL = `WITH scoped_posts AS (
          AND ($2::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
      ),
      authored_posts AS (
-       SELECT ('post:' || post.id) AS key, post.post_type, post.quote, post.hidden
+       SELECT ('post:' || post.id) AS key, post.post_type, post.hidden
        FROM scoped_posts post
        WHERE post.author_handle = $1
      ),
      scoped_comments AS (
-       SELECT comment.id, comment.author_handle, comment.quote, post.hidden
+       SELECT comment.id, comment.author_handle, post.hidden
        FROM comments comment
        INNER JOIN scoped_posts post ON post.id = comment.post_id
        WHERE comment.deleted_at IS NULL
      ),
      authored_comments AS (
-       SELECT ('comment:' || comment.id) AS key, comment.quote, comment.hidden
+       SELECT ('comment:' || comment.id) AS key, comment.hidden
        FROM scoped_comments comment
        WHERE comment.author_handle = $1
      ),
@@ -293,10 +291,6 @@ export const PROFILE_ACTIVITY_COUNTS_SQL = `WITH scoped_posts AS (
        FROM comment_actions action
        INNER JOIN scoped_comments comment ON comment.id = action.comment_id
        WHERE action.actor_handle = $1 AND action.action = 'fork' AND action.active = true
-       UNION
-       SELECT key, hidden FROM authored_posts WHERE quote IS NOT NULL
-       UNION
-       SELECT key, hidden FROM authored_comments WHERE quote IS NOT NULL
      ),
      like_subjects AS (
        SELECT ('post:' || action.post_id) AS key, post.hidden
@@ -452,8 +446,7 @@ const listAuthoredProfileComments = async (
       cursor?.occurredAt ?? null,
       cursor?.commentId ?? "",
       query.limit + 1,
-      includePrivateWorkspace,
-      query.commentQuotesOnly
+      includePrivateWorkspace
     ]
   );
   const activities = result.rows.map((row): ProfileAuthoredCommentActivityContract => ({

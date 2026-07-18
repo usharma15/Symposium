@@ -21,7 +21,6 @@ type ProfileActivityQuery = {
   limit?: string;
   actions?: string;
   includeComments?: string;
-  commentQuotesOnly?: string;
   includeSummary?: string;
 };
 

@@ -122,6 +122,58 @@ assert.deepEqual(exactCounts, {
   likes: 3,
   saved: 3
 });
+
+const quoteSnapshot = {
+  sourceType: "post" as const,
+  sourceId: "quoted-source",
+  sourcePostId: "quoted-source",
+  available: true,
+  attachmentCount: 0
+};
+const quoteOnlyCounts = profileActivityCounts([
+  {
+    ...item,
+    id: "authored-quote-only",
+    quote: quoteSnapshot,
+    saved: false,
+    savedBy: [],
+    signaledBy: [],
+    forkedBy: []
+  },
+  {
+    ...item,
+    id: "comment-quote-host",
+    author: "Grace Hopper",
+    authorHandle: "@grace",
+    saved: false,
+    savedBy: [],
+    signaledBy: [],
+    forkedBy: [],
+    comments: [{
+      id: "authored-comment-quote-only",
+      author: person.name,
+      authorHandle: person.handle,
+      body: "A quote is authored content, not a reshare action.",
+      stance: "Comment",
+      quote: quoteSnapshot,
+      replies: [],
+      savedBy: [],
+      signaledBy: [],
+      forkedBy: []
+    }]
+  }
+], person.handle);
+assert.deepEqual(quoteOnlyCounts, {
+  all: 2,
+  papers: 0,
+  thoughts: 1,
+  proposals: 0,
+  opportunities: 0,
+  comments: 1,
+  reshares: 0,
+  likes: 0,
+  saved: 0
+}, "Quoting content must not be classified or counted as a reshare action.");
 assert.deepEqual(
   applyProfileActivityActionTotalTransition(exactCounts, "signal", true, false, false),
   { ...exactCounts, likes: 2 }
@@ -221,11 +273,6 @@ const authoredCommentHost: InquiryItem = {
 };
 const authoredComments = buildLegacyProfileAuthoredComments([authoredCommentHost], person.handle);
 assert.deepEqual(authoredComments.map((entry) => entry.commentId), ["newer-comment", "older-comment"]);
-assert.deepEqual(
-  buildLegacyProfileAuthoredComments([authoredCommentHost], person.handle, { quotesOnly: true })
-    .map((entry) => entry.commentId),
-  ["newer-comment"]
-);
 
 const allSlots = [
   { id: "authored", recency: 12 },
@@ -258,6 +305,11 @@ assert.match(profileViews, /canonicalActivityError \? \(/);
 assert.match(profileViews, /canonicalPostActivity\(item, action\)\?\.occurredAt/);
 assert.doesNotMatch(
   profileViews,
+  /quotedPostEntries|quotedCommentEntries/,
+  "The Reshares tab must be sourced only from canonical fork actions."
+);
+assert.doesNotMatch(
+  profileViews,
   /canonicalActivityLoaded && !tabs\.some/,
   "Canonical profile routes must survive the authenticated identity transition."
 );
@@ -266,7 +318,6 @@ const profileShell = readFileSync(path.join(process.cwd(), "components/Symposium
 for (const scopedPagingBoundary of [
   "commentsCursor",
   "includeComments",
-  "commentQuotesOnly",
   "actions: requestedActions.join(\",\")",
   "const requestKey = `${clean}:${scope}`"
 ]) {
@@ -301,7 +352,6 @@ for (const authoredCommentBoundary of [
   "comment.author_handle = $1",
   "(comment.created_at, comment.id) <",
   "ORDER BY comment.created_at DESC, comment.id DESC",
-  "$6::boolean = false OR comment.quote IS NOT NULL",
   "post.post_type = 'paper' OR community.visibility = 'public'"
 ]) {
   assert.ok(
@@ -309,6 +359,11 @@ for (const authoredCommentBoundary of [
     `Authored comment paging must retain ${authoredCommentBoundary}.`
   );
 }
+assert.doesNotMatch(
+  PROFILE_ACTIVITY_COUNTS_SQL,
+  /quote\s+IS\s+NOT\s+NULL/i,
+  "Exact reshare totals must come only from active fork ledger rows."
+);
 for (const exactCountBoundary of [
   "totalAll",
   "totalPapers",
@@ -330,6 +385,7 @@ console.log(
       ok: true,
       checked: [
         "self-authored profile actions",
+        "quote and reshare semantic separation",
         "authored comment paging and hydration",
         "activity deduplication",
         "persisted action-timestamp ordering",

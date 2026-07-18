@@ -406,12 +406,6 @@ export function ProfileView({
   const savedEntries = saved.map((item) => postEntry(item, postActionRecency(item, "save")));
   const commentEntries = commentActivities.map(commentEntry);
   const commentReshareEntries = commentReshares.map(commentEntry);
-  const quotedPostEntries = authored
-    .filter((item) => Boolean(item.quote))
-    .map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
-  const quotedCommentEntries = commentActivities
-    .filter((activity) => Boolean(activity.comment.quote))
-    .map(commentEntry);
   const commentLikeEntries = commentLikes.map(commentEntry);
   const commentSavedEntries = commentSaved.map(commentEntry);
   const allActivity = uniqueProfileActivityEntries(
@@ -423,7 +417,7 @@ export function ProfileView({
   );
 
   const reshareTabEntries = uniqueProfileActivityEntries(
-    sortEntries([...reshareEntries, ...commentReshareEntries, ...quotedPostEntries, ...quotedCommentEntries]),
+    sortEntries([...reshareEntries, ...commentReshareEntries]),
     (entry) => entry.id
   );
   const tabEntries: Record<ProfileTab, ProfileActivityEntry[]> = {

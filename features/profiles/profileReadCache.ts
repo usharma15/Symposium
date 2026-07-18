@@ -20,12 +20,12 @@ type CachedProfileSocialPage = {
 };
 
 type ProfileReadCache = {
-  version: 1;
+  version: 2;
   activity: CachedProfileActivityPage[];
   social: CachedProfileSocialPage[];
 };
 
-const profileReadCacheKey = "symposium-profile-read-cache-v1";
+const profileReadCacheKey = "symposium-profile-read-cache-v2";
 const profileActivityCacheLimit = 8;
 const profileSocialCacheLimit = 16;
 export const profileReadCacheMaxAgeMs = 24 * 60 * 60 * 1000;
@@ -38,16 +38,16 @@ const normalizedHandle = (value: string) => {
 const normalizedHandles = (values: string[]) =>
   Array.from(new Set(values.map(normalizedHandle).filter((handle): handle is string => Boolean(handle))));
 
-const emptyCache = (): ProfileReadCache => ({ version: 1, activity: [], social: [] });
+const emptyCache = (): ProfileReadCache => ({ version: 2, activity: [], social: [] });
 
 const readCache = (storage: Pick<Storage, "getItem">): ProfileReadCache => {
   try {
     const raw = storage.getItem(profileReadCacheKey);
     if (!raw) return emptyCache();
     const parsed = JSON.parse(raw) as Partial<ProfileReadCache>;
-    if (parsed.version !== 1) return emptyCache();
+    if (parsed.version !== 2) return emptyCache();
     return {
-      version: 1,
+      version: 2,
       activity: Array.isArray(parsed.activity) ? parsed.activity : [],
       social: Array.isArray(parsed.social) ? parsed.social : []
     };

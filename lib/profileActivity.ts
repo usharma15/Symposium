@@ -89,7 +89,6 @@ const scopedProfileActivityCounts = (
       if (cleanHandle(comment.authorHandle ?? comment.author) === actorHandle) {
         comments.add(key);
         all.add(key);
-        if (comment.quote && allowed.has("fork")) reshares.add(key);
       }
       if (allowed.has("fork") && hasHandle(comment.forkedBy, actorHandle)) {
         reshares.add(key);
@@ -112,7 +111,6 @@ const scopedProfileActivityCounts = (
       if (itemHasPostType(item, "thought")) authored.thoughts.add(key);
       if (itemHasPostType(item, "proposal")) authored.proposals.add(key);
       if (itemHasPostType(item, "opportunity")) authored.opportunities.add(key);
-      if (item.quote && allowed.has("fork")) reshares.add(key);
     }
     if (includePost && allowed.has("fork") && hasHandle(item.forkedBy, actorHandle)) {
       reshares.add(key);
@@ -392,8 +390,7 @@ export const buildLegacyProfileActivity = (
 
 export const buildLegacyProfileAuthoredComments = (
   items: InquiryItem[],
-  actorHandle: string,
-  options: { quotesOnly?: boolean } = {}
+  actorHandle: string
 ): ProfileAuthoredCommentActivityContract[] => {
   const cleanActor = cleanHandle(actorHandle);
   const entries: ProfileAuthoredCommentActivityContract[] = [];
@@ -402,8 +399,7 @@ export const buildLegacyProfileAuthoredComments = (
       if (
         comment.id &&
         !isDeletedComment(comment) &&
-        cleanHandle(comment.authorHandle ?? comment.author) === cleanActor &&
-        (!options.quotesOnly || Boolean(comment.quote))
+        cleanHandle(comment.authorHandle ?? comment.author) === cleanActor
       ) {
         entries.push({
           commentId: comment.id,
