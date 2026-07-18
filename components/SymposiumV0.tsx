@@ -1343,7 +1343,7 @@ function SymposiumExperience({
       if (current?.detailLoaded && !incoming.detailLoaded) {
         next = {
           ...next,
-          comments: current.comments,
+          comments: mergeSparseProfileComments(current.comments, incoming.comments ?? []),
           attachments: current.attachments,
           commentCount: incoming.commentCount ?? current.commentCount,
           detailLoaded: true
