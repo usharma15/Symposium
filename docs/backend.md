@@ -62,6 +62,8 @@ Every API response also includes a `Server-Timing` measurement for total applica
 
 Profile activity is one bounded read model: its timeline response carries the required post/comment card projections and public profiles, so the browser does not fan one filter load into follow-up post requests. Exact aggregate totals are returned on the first load and explicit live refreshes; cursor continuation pages reuse those authoritative totals instead of repeating the aggregate query.
 
+Returning browsers may paint a bounded, viewer-scoped first page of profile activity and social lists from local storage while that same route request revalidates against the API. The projection is keyed by the exact authenticated viewer and target, expires after 24 hours, and never replaces canonical mutation or live-event reconciliation. Cached Clerk identity is keyed by the exact Clerk user ID solely to start reads before `/v1/auth/sync` completes; the existing sync request still verifies and replaces it. These acceleration layers add no provider requests, fail open under storage pressure, and never cache cursor continuation pages.
+
 ## Environment
 
 Backend:

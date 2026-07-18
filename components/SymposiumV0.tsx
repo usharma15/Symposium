@@ -106,6 +106,7 @@ import {
   type ViewSnapshot
 } from "@/features/navigation/viewState";
 import { selectActiveProfile } from "@/features/identity/selectActiveProfile";
+import { persistCachedIdentity, readCachedIdentity } from "@/features/identity/cachedIdentity";
 import { useInquiryEntityStore } from "@/features/entities/useInquiryEntityStore";
 import {
   buildPostAttachmentMetadata,
@@ -165,6 +166,12 @@ import {
   type ProfileTab
 } from "@/features/profiles/ProfileViews";
 import { profileAvatarForPersistence } from "@/features/profiles/profilePersistence";
+import {
+  persistCachedProfileActivity,
+  persistCachedProfileSocial,
+  readCachedProfileActivity,
+  readCachedProfileSocial
+} from "@/features/profiles/profileReadCache";
 import {
   CommunitiesStage
 } from "@/features/communities/CommunityViews";
@@ -258,6 +265,7 @@ type ProfileActivityPageState = {
   loading: boolean;
   nextCursor: string | null;
   commentsNextCursor: string | null;
+  stale?: boolean;
 };
 type ProfileActivitySnapshot = {
   entries: CanonicalActionActivityContract[];
@@ -502,6 +510,7 @@ function SymposiumExperience({
   const [theme, setTheme] = useState<Theme>("day");
   const [entryMode, setEntryMode] = useState<EntryMode>(() => entryModeForBrowserSession(initialShouldPlayEntrance));
   const [signedIn, setSignedIn] = useState(false);
+  const readSessionReady = !clerkEnabled || (authLoaded && (!isSignedIn || signedIn));
   const { replayEntrance, shouldPlayEntrance } = useBrowserSessionEntrance(initialShouldPlayEntrance);
   const [activeRoom, setActiveRoom] = useState<RoomId>(() =>
     roomForCanonicalRoute(
@@ -613,6 +622,7 @@ function SymposiumExperience({
   const canonicalActionRevisionRef = useRef<Record<string, number>>({});
   const pendingCanonicalActionKeysRef = useRef(new Set<string>());
   const profileActivityRequestRef = useRef<Record<string, number>>({});
+  const profileActivityCacheHydrationRef = useRef(new Set<string>());
   const feedPagesRef = useRef<Record<string, FeedPageState>>({});
   const feedActorHandleRef = useRef(currentProfile.handle);
   const retryMutationRegistryRef = useRef(createRetryMutationRegistry());
@@ -1051,14 +1061,23 @@ function SymposiumExperience({
     );
   };
 
-  const applySocialLists = (handle: string, lists: ProfileSocialLists) => {
+  const applySocialLists = (handle: string, lists: ProfileSocialLists, persist = true) => {
+    const normalizedHandle = cleanHandle(handle);
+    const normalizedLists = {
+      following: Array.from(new Set(lists.following.map(cleanHandle).filter((candidate) => candidate !== "@"))),
+      followers: Array.from(new Set(lists.followers.map(cleanHandle).filter((candidate) => candidate !== "@")))
+    };
     setProfileSocialLists((current) => ({
       ...current,
-      [handle]: {
-        following: Array.from(new Set(lists.following.map(cleanHandle).filter(Boolean))),
-        followers: Array.from(new Set(lists.followers.map(cleanHandle).filter(Boolean)))
-      }
+      [normalizedHandle]: normalizedLists
     }));
+    if (persist) {
+      persistCachedProfileSocial(window.localStorage, {
+        viewerHandle: currentProfileRef.current.handle,
+        targetHandle: normalizedHandle,
+        lists: normalizedLists
+      });
+    }
   };
 
   const captureFollowRevisions = (data: ProfileFollowResponse) => {
@@ -1294,7 +1313,7 @@ function SymposiumExperience({
   const mergeBoundedRead = (data: {
     items: InquiryItem[];
     profiles?: Record<string, ResearchProfile>;
-  }) => {
+  }, options: { persist?: boolean } = {}) => {
     let nextProfiles = profilesRef.current;
     if (data.profiles && Object.keys(data.profiles).length) {
       nextProfiles = { ...profilesRef.current };
@@ -1347,7 +1366,9 @@ function SymposiumExperience({
     profilesRef.current = nextProfiles;
     setProfiles(nextProfiles);
     replaceItems(nextItems);
-    persistLocalSnapshot(nextItems, nextProfiles, currentProfileRef.current);
+    if (options.persist !== false) {
+      persistLocalSnapshot(nextItems, nextProfiles, currentProfileRef.current);
+    }
   };
 
   const setFeedPageState = (key: string, next: FeedPageState) => {
@@ -1780,9 +1801,9 @@ function SymposiumExperience({
   }, [currentProfile.handle, signedIn]);
 
   useEffect(() => {
-    if (!selectedProfile?.handle) return;
+    if (!readSessionReady || !selectedProfile?.handle) return;
     void refreshProfileFollows(selectedProfile.handle);
-  }, [selectedProfile?.handle]);
+  }, [readSessionReady, selectedProfile?.handle]);
 
   useEffect(() => {
     if (entryMode !== "approach" || shouldPlayEntrance !== true) return undefined;
@@ -1819,6 +1840,16 @@ function SymposiumExperience({
     if (!userId || syncedClerkUserId === userId) return;
 
     let cancelled = false;
+    const cachedIdentity = readCachedIdentity(window.localStorage, userId);
+    if (cachedIdentity) {
+      authenticatedProfileHandleRef.current = cachedIdentity.handle;
+      currentProfileRef.current = cachedIdentity;
+      const cachedProfiles = { ...profilesRef.current, [cachedIdentity.handle]: cachedIdentity };
+      profilesRef.current = cachedProfiles;
+      setProfiles(cachedProfiles);
+      setCurrentProfile(cachedIdentity);
+      setSignedIn(true);
+    }
 
     const syncAccount = async () => {
       setSyncStatus("Syncing account");
@@ -1836,6 +1867,7 @@ function SymposiumExperience({
       setCurrentProfile(data.profile);
       setSignedIn(true);
       setSyncedClerkUserId(userId);
+      persistCachedIdentity(window.localStorage, userId, data.profile);
       if (shouldCompleteEntryAfterAccountSync(entryModeRef.current)) {
         setEntryMode("complete");
         applyInitialRouteState();
@@ -2020,7 +2052,8 @@ function SymposiumExperience({
     requestedActions: ToggleActionContract[],
     response: ProfileActivityResponseContract,
     requestStartRevisions: Record<string, number>,
-    append = false
+    append = false,
+    stale = false
   ) => {
     const clean = cleanHandle(handle);
     const current = profileActivityByHandleRef.current[clean] ?? emptyProfileActivitySnapshot();
@@ -2061,7 +2094,8 @@ function SymposiumExperience({
           loaded: true,
           loading: false,
           nextCursor: response.nextCursor,
-          commentsNextCursor: response.commentsNextCursor ?? null
+          commentsNextCursor: response.commentsNextCursor ?? null,
+          stale
         }
       },
       hiddenCommunityCounts: response.hiddenCommunityCounts ?? current.hiddenCommunityCounts,
@@ -2188,14 +2222,25 @@ function SymposiumExperience({
       }
 
       if (profileActivityRequestRef.current[requestKey] !== requestId) return;
-      replaceCanonicalProfileActivity(clean, scope, requestedActions, {
+      const canonicalResponse = {
         entries,
         nextCursor: typeof data.nextCursor === "string" ? data.nextCursor : null,
         authoredComments,
         commentsNextCursor: typeof data.commentsNextCursor === "string" ? data.commentsNextCursor : null,
         hiddenCommunityCounts: data.hiddenCommunityCounts ?? existingSnapshot?.hiddenCommunityCounts ?? emptyProfileActivityCounts(),
-        totals: data.totals ?? existingSnapshot?.totals
-      } as ProfileActivityResponseContract, requestStartRevisions, append);
+        totals: data.totals ?? existingSnapshot?.totals,
+        items: data.items,
+        profiles: data.profiles
+      } as ProfileActivityResponseContract;
+      replaceCanonicalProfileActivity(clean, scope, requestedActions, canonicalResponse, requestStartRevisions, append);
+      if (!append && (canonicalResponse.items || canonicalResponse.profiles)) {
+        persistCachedProfileActivity(window.localStorage, {
+          viewerHandle: cleanActor,
+          targetHandle: clean,
+          scope,
+          response: canonicalResponse
+        });
+      }
     })().catch((error) => {
       if (profileActivityRequestRef.current[requestKey] === requestId) {
         setProfileActivityErrors((current) => ({ ...current, [clean]: true }));
@@ -2313,26 +2358,65 @@ function SymposiumExperience({
     return current?.active === desiredActive && revision > (previous?.revision ?? 0);
   };
 
-  useEffect(() => {
-    if (entryMode !== "complete" || syncStatus === liveStatus.loading || !currentProfile.handle) return;
-    if (
-      selectedProfile?.handle &&
-      cleanHandle(selectedProfile.handle) === cleanHandle(currentProfile.handle) &&
-      profileActivityScopeForTab(profileActiveTab) !== "all"
-    ) return;
-    if (profileActivityByHandleRef.current[currentProfile.handle]?.pages.all?.loaded) return;
-    void refreshProfileActivity(currentProfile.handle, currentProfile.handle, "all").catch(() => undefined);
-  }, [currentProfile.handle, entryMode, profileActiveTab, selectedProfile?.handle, syncStatus]);
-
-  useEffect(() => {
-    if (entryMode !== "complete" || syncStatus === liveStatus.loading || !selectedProfile?.handle) return;
+  useLayoutEffect(() => {
+    if (entryMode !== "complete" || !readSessionReady || !selectedProfile?.handle) return;
+    const targetHandle = cleanHandle(selectedProfile.handle);
+    const viewerHandle = cleanHandle(currentProfile.handle);
     const scope = profileActivityScopeForTab(profileActiveTab);
-    if (profileActivityByHandleRef.current[selectedProfile.handle]?.pages[scope]?.loaded) return;
-    void refreshProfileActivity(selectedProfile.handle, currentProfile.handle, scope).catch(() => undefined);
-  }, [currentProfile.handle, entryMode, profileActiveTab, selectedProfile?.handle, syncStatus]);
+    const cacheKey = `${viewerHandle}:${targetHandle}:${scope}`;
+    if (profileActivityCacheHydrationRef.current.has(cacheKey)) return;
+    profileActivityCacheHydrationRef.current.add(cacheKey);
+
+    const social = readCachedProfileSocial(window.localStorage, { viewerHandle, targetHandle });
+    if (social && !profileSocialLists[targetHandle]) applySocialLists(targetHandle, social, false);
+
+    const currentPage = profileActivityByHandleRef.current[targetHandle]?.pages[scope];
+    if (currentPage?.loaded) return;
+    const cached = readCachedProfileActivity(window.localStorage, { viewerHandle, targetHandle, scope });
+    if (!cached) return;
+    mergeBoundedRead({ items: cached.items ?? [], profiles: cached.profiles ?? {} }, { persist: false });
+    replaceCanonicalProfileActivity(
+      targetHandle,
+      scope,
+      profileActivityActionsForScope(scope),
+      cached,
+      {},
+      false,
+      true
+    );
+  }, [
+    currentProfile.handle,
+    entryMode,
+    profileActiveTab,
+    profileSocialLists,
+    readSessionReady,
+    selectedProfile?.handle
+  ]);
 
   useEffect(() => {
-    if (entryMode !== "complete" || syncStatus === liveStatus.loading || !activeFeedRequest) return;
+    if (entryMode !== "complete" || !readSessionReady || !currentProfile.handle) return;
+    if (selectedProfile?.handle) return;
+    const page = profileActivityByHandleRef.current[currentProfile.handle]?.pages.all;
+    if (page?.loaded && !page.stale) return;
+    void refreshProfileActivity(currentProfile.handle, currentProfile.handle, "all").catch(() => undefined);
+  }, [currentProfile.handle, entryMode, readSessionReady, selectedProfile?.handle]);
+
+  useEffect(() => {
+    if (entryMode !== "complete" || !readSessionReady || !selectedProfile?.handle) return;
+    const scope = profileActivityScopeForTab(profileActiveTab);
+    const page = profileActivityByHandleRef.current[selectedProfile.handle]?.pages[scope];
+    if (page?.loaded && !page.stale) return;
+    void refreshProfileActivity(
+      selectedProfile.handle,
+      currentProfile.handle,
+      scope,
+      false,
+      Boolean(page?.stale)
+    ).catch(() => undefined);
+  }, [currentProfile.handle, entryMode, profileActiveTab, readSessionReady, selectedProfile?.handle]);
+
+  useEffect(() => {
+    if (entryMode !== "complete" || !readSessionReady || !activeFeedRequest) return;
     if (selectedItemId || applicationReviewPostId || selectedProfileName || messagesOpen) return;
     if (feedPagesRef.current[activeFeedRequest.key]?.initialized) return;
     void loadPostPage(activeFeedRequest.key, activeFeedRequest.query).catch(() => {
@@ -2346,12 +2430,12 @@ function SymposiumExperience({
     messagesOpen,
     selectedItemId,
     selectedProfileName,
-    syncStatus
+    readSessionReady
   ]);
 
   useEffect(() => {
     const postId = selectedItemId ?? applicationReviewPostId;
-    if (!postId || syncStatus === liveStatus.loading) return;
+    if (!postId || !readSessionReady) return;
     const current = itemsRef.current.find((item) => item.id === postId);
     if (current?.detailLoaded) return;
     let cancelled = false;
@@ -2366,10 +2450,10 @@ function SymposiumExperience({
     return () => {
       cancelled = true;
     };
-  }, [applicationReviewPostId, currentProfile.handle, selectedItem?.detailLoaded, selectedItemId, syncStatus]);
+  }, [applicationReviewPostId, currentProfile.handle, readSessionReady, selectedItem?.detailLoaded, selectedItemId]);
 
   useEffect(() => {
-    if (syncStatus === liveStatus.loading || !selectedProfileHandle || selectedProfileHandle === "@") return;
+    if (!readSessionReady || !selectedProfileHandle || selectedProfileHandle === "@") return;
     const stored = profilesRef.current[selectedProfileHandle];
     if (stored) return;
     let cancelled = false;
@@ -2382,14 +2466,15 @@ function SymposiumExperience({
     return () => {
       cancelled = true;
     };
-  }, [selectedProfileHandle, syncStatus]);
+  }, [readSessionReady, selectedProfileHandle]);
 
   useEffect(() => {
-    if (syncStatus === liveStatus.loading || !selectedProfileHandle || selectedProfileHandle === "@") return;
+    if (!readSessionReady || !selectedProfileHandle || selectedProfileHandle === "@") return;
+    if (!profileTabUsesAuthoredPosts(profileActiveTab)) return;
     const key = `profile:${selectedProfileHandle}:authored`;
     if (feedPagesRef.current[key]?.initialized) return;
     void loadPostPage(key, { authorHandle: selectedProfileHandle, limit: 24 }).catch(() => undefined);
-  }, [selectedProfileHandle, syncStatus]);
+  }, [profileActiveTab, readSessionReady, selectedProfileHandle]);
 
   useEffect(() => {
     const query = searchQuery.trim();

@@ -11,6 +11,19 @@ import {
   readCachedBootstrapSnapshot,
   resolveCachedBootstrap
 } from "@/features/bootstrap/cachedBootstrap";
+import {
+  persistCachedProfileActivity,
+  persistCachedProfileSocial,
+  profileReadCacheMaxAgeMs,
+  readCachedProfileActivity,
+  readCachedProfileSocial
+} from "@/features/profiles/profileReadCache";
+import {
+  cachedIdentityMaxAgeMs,
+  persistCachedIdentity,
+  readCachedIdentity
+} from "@/features/identity/cachedIdentity";
+import { emptyProfileActivityCounts } from "@/lib/profileActivity";
 import { inquiryItems, profile } from "@/lib/mockData";
 
 const storage = (value: string | null): Pick<Storage, "getItem"> => ({ getItem: () => value });
@@ -70,6 +83,66 @@ const main = async () => {
   );
   assert.equal(storageAttempts, 2);
 
+  const identityCacheValues = new Map<string, string>();
+  const identityCacheStorage = {
+    getItem: (key: string) => identityCacheValues.get(key) ?? null,
+    setItem: (key: string, value: string) => { identityCacheValues.set(key, value); }
+  };
+  assert.equal(persistCachedIdentity(identityCacheStorage, "clerk-user-1", cachedProfile, 20_000), true);
+  assert.deepEqual(readCachedIdentity(identityCacheStorage, "clerk-user-1", 20_001), cachedProfile);
+  assert.equal(readCachedIdentity(identityCacheStorage, "clerk-user-2", 20_001), null);
+  assert.equal(readCachedIdentity(
+    identityCacheStorage,
+    "clerk-user-1",
+    20_000 + cachedIdentityMaxAgeMs + 1
+  ), null);
+
+  const profileCacheValues = new Map<string, string>();
+  const profileCacheStorage = {
+    getItem: (key: string) => profileCacheValues.get(key) ?? null,
+    setItem: (key: string, value: string) => { profileCacheValues.set(key, value); }
+  };
+  const activityResponse = {
+    entries: [],
+    nextCursor: null,
+    authoredComments: [],
+    commentsNextCursor: null,
+    hiddenCommunityCounts: emptyProfileActivityCounts(),
+    totals: emptyProfileActivityCounts(),
+    items: [cachedItem],
+    profiles: { [cachedProfile.handle]: cachedProfile }
+  };
+  assert.equal(persistCachedProfileActivity(profileCacheStorage, {
+    viewerHandle: "@viewer",
+    targetHandle: cachedProfile.handle,
+    scope: "all",
+    response: activityResponse
+  }, 10_000), true);
+  assert.deepEqual(readCachedProfileActivity(profileCacheStorage, {
+    viewerHandle: "@viewer",
+    targetHandle: cachedProfile.handle,
+    scope: "all"
+  }, 10_001), activityResponse);
+  assert.equal(readCachedProfileActivity(profileCacheStorage, {
+    viewerHandle: "@another-viewer",
+    targetHandle: cachedProfile.handle,
+    scope: "all"
+  }, 10_001), null);
+  assert.equal(readCachedProfileActivity(profileCacheStorage, {
+    viewerHandle: "@viewer",
+    targetHandle: cachedProfile.handle,
+    scope: "all"
+  }, 10_000 + profileReadCacheMaxAgeMs + 1), null);
+  assert.equal(persistCachedProfileSocial(profileCacheStorage, {
+    viewerHandle: "@viewer",
+    targetHandle: cachedProfile.handle,
+    lists: { following: ["@one", "@one"], followers: ["@two"] }
+  }, 10_000), true);
+  assert.deepEqual(readCachedProfileSocial(profileCacheStorage, {
+    viewerHandle: "@viewer",
+    targetHandle: cachedProfile.handle
+  }, 10_001), { following: ["@one"], followers: ["@two"] });
+
   const component = await readFile(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
   const symposiumPage = await readFile(path.join(process.cwd(), "app/SymposiumPage.tsx"), "utf8");
   const entryViews = await readFile(path.join(process.cwd(), "features/shell/SymposiumShellViews.tsx"), "utf8");
@@ -90,6 +163,12 @@ const main = async () => {
   assert.match(component, /entranceStartedAtRef\.current = Date\.now\(\);\s+replayEntrance\(\);\s+setEntryMode\("approach"\);/);
   assert.match(component, /const presentedEntryMode = resolvePresentedEntryMode\(/);
   assert.match(component, /profileActivityInFlightRef/);
+  assert.match(component, /readCachedProfileActivity/);
+  assert.match(component, /page\?\.loaded && !page\.stale/);
+  assert.match(component, /if \(selectedProfile\?\.handle\) return;/);
+  assert.match(component, /const readSessionReady = !clerkEnabled/);
+  assert.match(component, /const cachedIdentity = readCachedIdentity\(window\.localStorage, userId\)/);
+  assert.match(component, /persistCachedIdentity\(window\.localStorage, userId, data\.profile\)/);
   assert.match(component, /window\.setTimeout\(\(\) => controller\.abort\(\), 15_000\)/);
   assert.match(component, /canonicalActivityError=/);
   assert.match(entryViews, /className={`entry-image \$\{playApproach \? "approaching" : "stationary"\}`}/);
@@ -113,7 +192,9 @@ const main = async () => {
           "authenticated identity-only visibility gate",
           "non-blocking bootstrap and profile activity",
           "bounded inline profile activity loading",
-          "single authenticated bootstrap request"
+          "single authenticated bootstrap request",
+          "exact-Clerk-user cached identity isolation",
+          "bounded viewer-scoped profile read projections"
         ]
       },
       null,
