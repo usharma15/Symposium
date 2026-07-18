@@ -660,6 +660,37 @@ function SymposiumExperience({
       current
     );
 
+  const reconcileBoundedReadItem = (
+    incoming: InquiryItem,
+    current: InquiryItem | undefined,
+    actorHandle = currentProfileRef.current.handle
+  ) => {
+    let next = reconcileCommittedItem(incoming, current, actorHandle);
+    if (current?.detailLoaded && !incoming.detailLoaded) {
+      next = {
+        ...next,
+        comments: mergeSparseProfileComments(current.comments, incoming.comments ?? []),
+        attachments: current.attachments,
+        commentCount: incoming.commentCount ?? current.commentCount,
+        detailLoaded: true
+      };
+    } else if (incoming.detailLoaded) {
+      next = {
+        ...next,
+        comments: incoming.comments,
+        attachments: incoming.attachments,
+        commentCount: incoming.commentCount,
+        detailLoaded: true
+      };
+    } else {
+      next = {
+        ...next,
+        comments: mergeSparseProfileComments(current?.comments ?? [], incoming.comments ?? [])
+      };
+    }
+    return next;
+  };
+
   const activeRoomData = getRoom(activeRoom);
   const themedRoomRenders = roomRenders[theme];
   const themedCommunityRenders = communityRenders[theme];
@@ -1183,9 +1214,13 @@ function SymposiumExperience({
 
     const currentById = new Map(itemsRef.current.map((item) => [item.id, item]));
     const normalizedItems = sortByPublishedRecency(
-      normalizeClientSeedTimes(data.items).map((item) =>
-        preservePostSemanticProjection(item, currentById.get(item.id))
-      )
+      normalizeClientSeedTimes(data.items).map((rawIncoming) => {
+        const current = currentById.get(rawIncoming.id);
+        const incoming = preservePostSemanticProjection(rawIncoming, current);
+        const comparison = compareEntityRevisions(incoming, current);
+        if (current && comparison !== null && comparison < 0) return current;
+        return reconcileBoundedReadItem(incoming, current, nextProfile.handle);
+      })
     );
     for (const incoming of normalizedItems) {
       if (!itemMutationCoordinatorRef.current.changedSince(mutationSnapshot, incoming.id)) {
@@ -1339,29 +1374,7 @@ function SymposiumExperience({
       const comparison = compareEntityRevisions(incoming, current);
       if (current && comparison !== null && comparison < 0) continue;
 
-      let next = reconcileCommittedItem(incoming, current, currentProfileRef.current.handle);
-      if (current?.detailLoaded && !incoming.detailLoaded) {
-        next = {
-          ...next,
-          comments: mergeSparseProfileComments(current.comments, incoming.comments ?? []),
-          attachments: current.attachments,
-          commentCount: incoming.commentCount ?? current.commentCount,
-          detailLoaded: true
-        };
-      } else if (incoming.detailLoaded) {
-        next = {
-          ...next,
-          comments: incoming.comments,
-          attachments: incoming.attachments,
-          commentCount: incoming.commentCount,
-          detailLoaded: true
-        };
-      } else {
-        next = {
-          ...next,
-          comments: mergeSparseProfileComments(current?.comments ?? [], incoming.comments ?? [])
-        };
-      }
+      const next = reconcileBoundedReadItem(incoming, current, currentProfileRef.current.handle);
       nextById.set(next.id, next);
     }
 

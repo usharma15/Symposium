@@ -317,8 +317,13 @@ assert.doesNotMatch(
 const profileShell = readFileSync(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
 assert.match(
   profileShell,
-  /current\?\.detailLoaded && !incoming\.detailLoaded[\s\S]*?comments: mergeSparseProfileComments\(current\.comments, incoming\.comments \?\? \[\]\)/,
+  /const reconcileBoundedReadItem =[\s\S]*?current\?\.detailLoaded && !incoming\.detailLoaded[\s\S]*?comments: mergeSparseProfileComments\(current\.comments, incoming\.comments \?\? \[\]\)/,
   "A cached detail response must retain sparse comments selected by canonical profile activity."
+);
+assert.match(
+  profileShell,
+  /const normalizedItems =[\s\S]*?return reconcileBoundedReadItem\(incoming, current, nextProfile\.handle\);/,
+  "A bounded bootstrap refresh must retain sparse comments already hydrated by profile activity."
 );
 for (const scopedPagingBoundary of [
   "commentsCursor",
@@ -399,6 +404,7 @@ console.log(
         "rapid profile-filter request isolation",
         "loading-to-canonical first-frame replacement",
         "detail-loaded sparse profile comment hydration",
+        "bounded bootstrap sparse profile comment retention",
         "authoritative profile count and order loading boundary",
         "cursor-independent exact activity totals",
         "instant optimistic total transitions",
