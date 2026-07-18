@@ -61,7 +61,7 @@ const main = async () => {
   assert.match(attachmentSource, /"verification_failed"/);
   assert.match(identitySource, /queueUnreferencedProfileStorageDeletion/);
   assert.match(maintenanceSource, /failed_or_abandoned_upload/);
-  assert.match(maintenanceSource, /owner_type IN \('post', 'comment', 'note', 'note_comment'\)/);
+  assert.match(maintenanceSource, /owner_type IN \('post', 'comment', 'message', 'note', 'note_comment', 'opportunity_application'\)/);
   assert.match(maintenanceSource, /profile_attachment_replaced/);
   assert.match(maintenanceSource, /maintenanceIntervalMs = 6 \* 60 \* 60 \* 1000/);
   assert.match(maintenanceSource, /await runStorageDeletionMaintenance\(\)/);
@@ -80,7 +80,7 @@ const main = async () => {
           "atomic attachment unavailability and deletion enqueue",
           "post tombstone storage cleanup",
           "comment and reply tombstone storage cleanup",
-          "ownerless comment upload cleanup",
+          "ownerless public, message, workspace, and application upload cleanup",
           "failed and abandoned upload cleanup",
           "legacy promoted staging-object cleanup",
           "replaced profile image cleanup",

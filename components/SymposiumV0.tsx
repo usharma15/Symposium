@@ -187,7 +187,8 @@ import { WorkspaceView } from "@/features/workspace/WorkspaceView";
 import { savePostDraftToWorkspace } from "@/features/workspace/savePostDraftToWorkspace";
 import type { WorkspacePublicationResponse } from "@/lib/workspaceTypes";
 import { SearchModal } from "@/features/search/SearchModal";
-import { MessagesModal } from "@/features/messages/MessagesModal";
+import { MessagesQuickAccess, MessagesStage } from "@/features/messages/MessagesSection";
+import { NotificationsControl } from "@/features/notifications/NotificationsPanel";
 import { RoomView } from "@/features/rooms/RoomView";
 import { opportunityApplicationsView, opportunityPostView, OpportunityApplicationsStage, useOpportunityApplicationComposer } from "@/features/opportunities/OpportunityExperience";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
@@ -573,7 +574,9 @@ function SymposiumExperience({
   const [searchOpen, setSearchOpen] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(initialRoute.kind === "messages");
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
-  const [messageRecipientHandle, setMessageRecipientHandle] = useState<string | null>(null);
+  const [messagesQuickOpen, setMessagesQuickOpen] = useState(false);
+  const [quickConversationId, setQuickConversationId] = useState<string | null>(null);
+  const [messagingRevision, setMessagingRevision] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [remoteSearchResults, setRemoteSearchResults] = useState<SearchResults | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -1580,6 +1583,16 @@ function SymposiumExperience({
 
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
     const payload = event.payload ?? {};
+    if (
+      event.kind.startsWith("message.") ||
+      event.kind.startsWith("conversation.") ||
+      event.kind.startsWith("notification.") ||
+      event.kind === "profile.blocked" ||
+      event.kind === "profile.unblocked"
+    ) {
+      setMessagingRevision((revision) => revision + 1);
+      return;
+    }
     if (payload.action && payload.metrics && !isLiveInquiryItem(payload.item)) {
       mergeLiveMetricPatch(payload);
       return;
@@ -2707,6 +2720,7 @@ function SymposiumExperience({
     setComposerCommunityId(null);
     setSettingsOpen(false);
     setSearchOpen(false);
+    setMessagesQuickOpen(false);
     setMessagesOpen(snapshot.messagesOpen);
     setSelectedConversationId(snapshot.selectedConversationId ?? null);
     restoreScrollPosition(snapshot);
@@ -2786,6 +2800,7 @@ function SymposiumExperience({
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
+    setMessagesQuickOpen(false);
     setMessagesOpen(next.messagesOpen ?? false);
     if (next.selectedConversationId !== undefined) setSelectedConversationId(next.selectedConversationId);
     else if (!next.messagesOpen) setSelectedConversationId(null);
@@ -2859,7 +2874,7 @@ function SymposiumExperience({
     setSettingsOpen(false);
     setSearchOpen(false);
     setMessagesOpen(false);
-    setMessageRecipientHandle(null);
+    setMessagesQuickOpen(false);
     setTabletOpen(true);
   };
 
@@ -2868,6 +2883,7 @@ function SymposiumExperience({
     setComposerOpen(false);
     setSettingsOpen(false);
     setMessagesOpen(false);
+    setMessagesQuickOpen(false);
     setSearchOpen(true);
   };
 
@@ -3985,7 +4001,7 @@ function SymposiumExperience({
       className={`symposium-shell ${theme}`}
       data-room={activeRoom}
       data-community-selected={selectedCommunity ? "true" : undefined}
-      data-view={applicationReviewItem ? "opportunity-applications" : selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
+      data-view={messagesOpen ? "messages" : applicationReviewItem ? "opportunity-applications" : selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
       style={{ "--room-bg": `url(${activeRoomRender})` } as CSSProperties}
     >
       <div className="ambient-layer" aria-hidden="true" />
@@ -4020,17 +4036,26 @@ function SymposiumExperience({
           >
             {theme === "day" ? <Moon size={18} /> : <Sun size={18} />}
           </button>
-          <CanonicalLink
+          <NotificationsControl
+            actorHandle={currentProfile.handle}
+            liveRevision={messagingRevision}
+            onOpenConversation={(conversationId) => {
+              setMessagesQuickOpen(false);
+              navigateView({ messagesOpen: true, selectedConversationId: conversationId });
+            }}
+          />
+          <button
             className="icon-button"
-            title="Messages"
-            route={{ kind: "messages" }}
-            onNavigate={() => {
-              setMessageRecipientHandle(null);
-              navigateView({ messagesOpen: true, selectedConversationId: null });
+            type="button"
+            title="Quick messages"
+            aria-expanded={messagesQuickOpen}
+            onClick={() => {
+              setQuickConversationId(null);
+              setMessagesQuickOpen(true);
             }}
           >
             <MessageCircle size={18} />
-          </CanonicalLink>
+          </button>
           <CanonicalLink
             className="profile-button"
             title="Open your profile"
@@ -4047,14 +4072,27 @@ function SymposiumExperience({
         {syncStatus}
       </div>
 
-      <button className="search-launcher bottom-action bottom-action-search" type="button" onClick={openSearch}>
-        <Search size={17} />
-        <span>Search</span>
-      </button>
+      {!messagesOpen ? (
+        <button className="search-launcher bottom-action bottom-action-search" type="button" onClick={openSearch}>
+          <Search size={17} />
+          <span>Search</span>
+        </button>
+      ) : null}
 
       <section className="stage">
         <CommunityGovernanceProvider community={selectedCommunity} items={items}>
-        {applicationReviewItem ? (
+        {messagesOpen ? (
+          <MessagesStage
+            actor={currentProfile}
+            profiles={profiles}
+            selectedConversationId={selectedConversationId}
+            onSelectConversation={(conversationId) =>
+              navigateView({ messagesOpen: true, selectedConversationId: conversationId }, null)
+            }
+            onOpenProfile={openProfile}
+            liveRevision={messagingRevision}
+          />
+        ) : applicationReviewItem ? (
           <OpportunityApplicationsStage
             item={applicationReviewItem}
             actorHandle={currentProfile.handle}
@@ -4084,6 +4122,10 @@ function SymposiumExperience({
               setSettingsOpen(true);
             }}
             onToggleFollow={toggleFollow}
+            onMessage={(handle) => {
+              const normalized = cleanHandle(handle);
+              navigateView({ messagesOpen: true, selectedConversationId: `direct:${normalized}` }, null);
+            }}
             actorHandle={currentProfile.handle}
             profiles={profiles}
             socialLists={profileSocialLists[selectedProfile.handle] ?? { following: [], followers: [] }}
@@ -4226,7 +4268,7 @@ function SymposiumExperience({
               onDeleteAnnouncement: communityController.deleteAnnouncement,
               onCreatePost: () => { if (selectedCommunity) { setComposerCommunityId(selectedCommunity.id); setComposerOpen(true); } },
               onCreateCall: communityController.createCall, onJoinCall: communityController.joinCall,
-              onInvite: communityController.invite, onMessageModerator: (handle) => { const normalized = cleanHandle(handle); setMessageRecipientHandle(normalized); navigateView({ messagesOpen: true, selectedConversationId: `direct:${normalized}` }, null); },
+              onInvite: communityController.invite, onMessageModerator: (handle) => { const normalized = cleanHandle(handle); navigateView({ messagesOpen: true, selectedConversationId: `direct:${normalized}` }, null); },
               onOpenCommunity: openCommunity, onCreateCommunity: communityController.createCommunity,
               onSelect: openPost, onOpenProfile: openProfile, onAction: applyAction, onQuote: beginQuote,
               onOpenQuote: openQuotedSource, onEditPost: setEditingPost, onDeletePost: deletePost,
@@ -4269,33 +4311,37 @@ function SymposiumExperience({
         </CommunityGovernanceProvider>
       </section>
 
-      <button
-        className="new-post-launcher bottom-action bottom-action-new"
-        type="button"
-        onClick={() => {
-          setTabletOpen(false);
-          setSettingsOpen(false);
-          setSearchOpen(false);
-          setMessagesOpen(false);
-          setComposerCommunityId(selectedCommunity && canParticipateInCommunity(selectedCommunity, currentProfile) ? selectedCommunity.id : null);
-          setComposerOpen(true);
-        }}
-      >
-        <NotebookPen size={18} />
-        <span>New post</span>
-      </button>
+      {!messagesOpen ? (
+        <>
+          <button
+            className="new-post-launcher bottom-action bottom-action-new"
+            type="button"
+            onClick={() => {
+              setTabletOpen(false);
+              setSettingsOpen(false);
+              setSearchOpen(false);
+              setMessagesOpen(false);
+              setComposerCommunityId(selectedCommunity && canParticipateInCommunity(selectedCommunity, currentProfile) ? selectedCommunity.id : null);
+              setComposerOpen(true);
+            }}
+          >
+            <NotebookPen size={18} />
+            <span>New post</span>
+          </button>
 
-      <ScribbleLauncher />
+          <ScribbleLauncher />
 
-      <button
-        className="pocket pocket-right bottom-action bottom-action-tablet"
-        type="button"
-        title="AI tablet"
-        onClick={openTablet}
-      >
-        <BrainCircuit size={18} />
-        <span>AI Tablet</span>
-      </button>
+          <button
+            className="pocket pocket-right bottom-action bottom-action-tablet"
+            type="button"
+            title="AI tablet"
+            onClick={openTablet}
+          >
+            <BrainCircuit size={18} />
+            <span>AI Tablet</span>
+          </button>
+        </>
+      ) : null}
 
       {tabletOpen ? (
         <TabletPanel
@@ -4306,14 +4352,22 @@ function SymposiumExperience({
         />
       ) : null}
 
-      {messagesOpen ? (
-        <MessagesModal
-          activeConversationId={selectedConversationId}
-          directRecipient={messageRecipientHandle ? findProfile(messageRecipientHandle) : undefined}
-          onClose={goBack}
-          onOpenConversation={(conversationId) =>
-            navigateView({ messagesOpen: true, selectedConversationId: conversationId }, null)
-          }
+      {messagesQuickOpen ? (
+        <MessagesQuickAccess
+          actor={currentProfile}
+          profiles={profiles}
+          selectedConversationId={quickConversationId}
+          onSelectConversation={setQuickConversationId}
+          onOpenProfile={(handle) => {
+            setMessagesQuickOpen(false);
+            openProfile(handle);
+          }}
+          onOpenFull={(conversationId) => {
+            setMessagesQuickOpen(false);
+            navigateView({ messagesOpen: true, selectedConversationId: conversationId }, null);
+          }}
+          onClose={() => setMessagesQuickOpen(false)}
+          liveRevision={messagingRevision}
         />
       ) : null}
 

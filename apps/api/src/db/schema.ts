@@ -622,10 +622,18 @@ export const conversations = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     kind: text("kind").default("direct").notNull(),
     title: text("title"),
+    ownerHandle: text("owner_handle").references(() => profiles.handle, { onDelete: "set null" }),
+    revision: integer("revision").default(1).notNull(),
+    nextMessageSequence: bigint("next_message_sequence", { mode: "number" }).default(0).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
-  (table) => [check("conversations_kind_check", sql`${table.kind} IN ('direct', 'group')`)]
+  (table) => [
+    index("conversations_updated_idx").on(table.updatedAt, table.id),
+    check("conversations_kind_check", sql`${table.kind} IN ('direct', 'group')`),
+    check("conversations_revision_check", sql`${table.revision} >= 1`),
+    check("conversations_sequence_check", sql`${table.nextMessageSequence} >= 0`)
+  ]
 );
 
 export const conversationParticipants = pgTable(
@@ -638,12 +646,28 @@ export const conversationParticipants = pgTable(
       .notNull()
       .references(() => profiles.handle, { onDelete: "cascade" }),
     role: text("role").default("member").notNull(),
+    status: text("status").default("active").notNull(),
     lastReadAt: timestamp("last_read_at", { withTimezone: true }),
+    lastReadSequence: bigint("last_read_sequence", { mode: "number" }).default(0).notNull(),
+    clearedThroughSequence: bigint("cleared_through_sequence", { mode: "number" }).default(0).notNull(),
+    removedThroughSequence: bigint("removed_through_sequence", { mode: "number" }),
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+    muted: boolean("muted").default(false).notNull(),
+    pinned: boolean("pinned").default(false).notNull(),
+    draftBody: text("draft_body").default("").notNull(),
+    draftUpdatedAt: timestamp("draft_updated_at", { withTimezone: true }),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
     createdAt: createdAtColumn()
   },
   (table) => [
     primaryKey({ columns: [table.conversationId, table.profileHandle] }),
-    index("conversation_participants_profile_idx").on(table.profileHandle)
+    index("conversation_participants_profile_idx").on(table.profileHandle),
+    index("conversation_participants_profile_status_idx").on(table.profileHandle, table.status, table.hiddenAt),
+    check("conversation_participants_role_check", sql`${table.role} IN ('owner', 'admin', 'member')`),
+    check("conversation_participants_status_check", sql`${table.status} IN ('invited', 'active', 'removed')`),
+    check("conversation_participants_read_sequence_check", sql`${table.lastReadSequence} >= 0`),
+    check("conversation_participants_cleared_sequence_check", sql`${table.clearedThroughSequence} >= 0`)
   ]
 );
 
@@ -654,15 +678,61 @@ export const messages = pgTable(
     conversationId: uuid("conversation_id")
       .notNull()
       .references(() => conversations.id, { onDelete: "cascade" }),
+    sequence: bigint("sequence", { mode: "number" }).notNull(),
+    revision: integer("revision").default(1).notNull(),
     senderHandle: text("sender_handle").references(() => profiles.handle, { onDelete: "set null" }),
     body: text("body").notNull(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default(jsonObject).notNull(),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: text("deleted_by").references(() => profiles.handle, { onDelete: "set null" }),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
   (table) => [
     index("messages_sender_idx").on(table.senderHandle),
-    index("messages_conversation_created_idx").on(table.conversationId, table.createdAt)
+    index("messages_conversation_created_idx").on(table.conversationId, table.createdAt),
+    uniqueIndex("messages_conversation_sequence_idx").on(table.conversationId, table.sequence),
+    index("messages_search_body_idx").using("gin", sql`to_tsvector('english', ${table.body})`),
+    check("messages_sequence_check", sql`${table.sequence} > 0`),
+    check("messages_revision_check", sql`${table.revision} >= 1`)
+  ]
+);
+
+export const messageStars = pgTable(
+  "message_stars",
+  {
+    messageId: uuid("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+    profileHandle: text("profile_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    createdAt: createdAtColumn()
+  },
+  (table) => [
+    primaryKey({ columns: [table.messageId, table.profileHandle] }),
+    index("message_stars_profile_created_idx").on(table.profileHandle, table.createdAt)
+  ]
+);
+
+export const messageHiddenFor = pgTable(
+  "message_hidden_for",
+  {
+    messageId: uuid("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+    profileHandle: text("profile_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    createdAt: createdAtColumn()
+  },
+  (table) => [primaryKey({ columns: [table.messageId, table.profileHandle] })]
+);
+
+export const profileBlocks = pgTable(
+  "profile_blocks",
+  {
+    blockerHandle: text("blocker_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    blockedHandle: text("blocked_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    createdAt: createdAtColumn()
+  },
+  (table) => [
+    primaryKey({ columns: [table.blockerHandle, table.blockedHandle] }),
+    index("profile_blocks_blocked_idx").on(table.blockedHandle),
+    check("profile_blocks_not_self_check", sql`${table.blockerHandle} <> ${table.blockedHandle}`)
   ]
 );
 
@@ -999,6 +1069,7 @@ export const notifications = pgTable(
     title: text("title").notNull(),
     body: text("body").notNull(),
     href: text("href"),
+    dedupeKey: text("dedupe_key"),
     readAt: timestamp("read_at", { withTimezone: true }),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default(jsonObject).notNull(),
     createdAt: createdAtColumn()
@@ -1006,7 +1077,8 @@ export const notifications = pgTable(
   (table) => [
     index("notifications_read_idx").on(table.readAt),
     index("notifications_profile_created_idx").on(table.profileHandle, table.createdAt),
-    index("notifications_retention_idx").on(table.createdAt).where(sql`${table.readAt} IS NOT NULL`)
+    index("notifications_retention_idx").on(table.createdAt).where(sql`${table.readAt} IS NOT NULL`),
+    uniqueIndex("notifications_profile_dedupe_idx").on(table.profileHandle, table.dedupeKey).where(sql`${table.dedupeKey} IS NOT NULL`)
   ]
 );
 

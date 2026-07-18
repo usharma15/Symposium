@@ -1849,6 +1849,119 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS comment_actions_profile_timeline_idx
         ON comment_actions (actor_handle, action, updated_at DESC, comment_id DESC);
     `
+  },
+  {
+    id: "0034_messaging_foundation",
+    sql: `
+      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS owner_handle TEXT REFERENCES profiles(handle) ON DELETE SET NULL;
+      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS next_message_sequence BIGINT NOT NULL DEFAULT 0;
+
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS last_read_sequence BIGINT NOT NULL DEFAULT 0;
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS cleared_through_sequence BIGINT NOT NULL DEFAULT 0;
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS removed_through_sequence BIGINT;
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMPTZ;
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS muted BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS draft_body TEXT NOT NULL DEFAULT '';
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS draft_updated_at TIMESTAMPTZ;
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+      ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ;
+
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS sequence BIGINT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by TEXT REFERENCES profiles(handle) ON DELETE SET NULL;
+
+      WITH ranked AS (
+        SELECT id, row_number() OVER (PARTITION BY conversation_id ORDER BY created_at ASC, id ASC) AS sequence
+        FROM messages
+        WHERE sequence IS NULL
+      )
+      UPDATE messages message
+      SET sequence = ranked.sequence
+      FROM ranked
+      WHERE message.id = ranked.id;
+
+      ALTER TABLE messages ALTER COLUMN sequence SET NOT NULL;
+
+      UPDATE conversations conversation
+      SET next_message_sequence = GREATEST(
+        conversation.next_message_sequence,
+        COALESCE((SELECT max(message.sequence) FROM messages message WHERE message.conversation_id = conversation.id), 0)
+      );
+
+      CREATE TABLE IF NOT EXISTS message_stars (
+        message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        profile_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (message_id, profile_handle)
+      );
+
+      CREATE TABLE IF NOT EXISTS message_hidden_for (
+        message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        profile_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (message_id, profile_handle)
+      );
+
+      CREATE TABLE IF NOT EXISTS profile_blocks (
+        blocker_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        blocked_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (blocker_handle, blocked_handle),
+        CONSTRAINT profile_blocks_not_self_check CHECK (blocker_handle <> blocked_handle)
+      );
+
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dedupe_key TEXT;
+
+      CREATE INDEX IF NOT EXISTS conversations_updated_idx ON conversations (updated_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS conversation_participants_profile_status_idx
+        ON conversation_participants (profile_handle, status, hidden_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS messages_conversation_sequence_idx
+        ON messages (conversation_id, sequence);
+      CREATE INDEX IF NOT EXISTS messages_search_body_idx
+        ON messages USING gin (to_tsvector('english', body));
+      CREATE INDEX IF NOT EXISTS message_stars_profile_created_idx
+        ON message_stars (profile_handle, created_at DESC);
+      CREATE INDEX IF NOT EXISTS profile_blocks_blocked_idx ON profile_blocks (blocked_handle);
+      CREATE UNIQUE INDEX IF NOT EXISTS notifications_profile_dedupe_idx
+        ON notifications (profile_handle, dedupe_key) WHERE dedupe_key IS NOT NULL;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversations_revision_check') THEN
+          ALTER TABLE conversations ADD CONSTRAINT conversations_revision_check CHECK (revision >= 1);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversations_sequence_check') THEN
+          ALTER TABLE conversations ADD CONSTRAINT conversations_sequence_check CHECK (next_message_sequence >= 0);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversations_kind_check') THEN
+          ALTER TABLE conversations ADD CONSTRAINT conversations_kind_check CHECK (kind IN ('direct', 'group'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversation_participants_role_check') THEN
+          ALTER TABLE conversation_participants ADD CONSTRAINT conversation_participants_role_check CHECK (role IN ('owner', 'admin', 'member'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversation_participants_status_check') THEN
+          ALTER TABLE conversation_participants ADD CONSTRAINT conversation_participants_status_check CHECK (status IN ('invited', 'active', 'removed'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversation_participants_read_sequence_check') THEN
+          ALTER TABLE conversation_participants ADD CONSTRAINT conversation_participants_read_sequence_check CHECK (last_read_sequence >= 0);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversation_participants_cleared_sequence_check') THEN
+          ALTER TABLE conversation_participants ADD CONSTRAINT conversation_participants_cleared_sequence_check CHECK (cleared_through_sequence >= 0);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'messages_sequence_check') THEN
+          ALTER TABLE messages ADD CONSTRAINT messages_sequence_check CHECK (sequence > 0);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'messages_revision_check') THEN
+          ALTER TABLE messages ADD CONSTRAINT messages_revision_check CHECK (revision >= 1);
+        END IF;
+      END
+      $$;
+    `
   }
 ];
 

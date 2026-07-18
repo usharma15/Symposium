@@ -53,7 +53,7 @@ const actorHandleFromRequest = (path: string, body: unknown) => {
 const shouldStayOnNext = (pathname: string) =>
   pathname === "/api/auth/sync" ||
   pathname.startsWith("/api/attachments/local") ||
-  /^\/api\/(?:workspace|opportunity)-attachments\//.test(pathname);
+  /^\/api\/(?:workspace|opportunity|message)-attachments\//.test(pathname);
 
 export const resolveSymposiumApiRequest = (
   path: string,

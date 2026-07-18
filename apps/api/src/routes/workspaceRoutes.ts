@@ -3,8 +3,6 @@ import { withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
 import { mutationContextFromRequest } from "../services/mutations";
 import { askAssistant } from "../repository/assistant";
-import { listConversations, sendMessage } from "../repository/conversations";
-import { listNotifications } from "../repository/notifications";
 import { createOpportunity, listOpportunities } from "../repository/opportunities";
 import { saveNoteBlock } from "../repository/workspace";
 import {
@@ -61,40 +59,6 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
         mutationContextFromRequest(request, "opportunity.create", request.body)
       );
       return reply.send({ opportunity });
-    } catch (error) {
-      return sendError(app, reply, error);
-    }
-  });
-
-  app.get("/v1/conversations", async (request, reply) => {
-    try {
-      const actor = await withWriteActor(request);
-      const conversations = await listConversations(actor);
-      return reply.send({ conversations });
-    } catch (error) {
-      return sendError(app, reply, error);
-    }
-  });
-
-  app.post("/v1/messages", async (request, reply) => {
-    try {
-      const actor = await withWriteActor(request, { shared: true, scope: "message-send", limit: 60 });
-      const message = await sendMessage(
-        request.body,
-        actor,
-        mutationContextFromRequest(request, "message.send", request.body)
-      );
-      return reply.send({ message });
-    } catch (error) {
-      return sendError(app, reply, error);
-    }
-  });
-
-  app.get("/v1/notifications", async (request, reply) => {
-    try {
-      const actor = await withWriteActor(request);
-      const notifications = await listNotifications(actor);
-      return reply.send({ notifications });
     } catch (error) {
       return sendError(app, reply, error);
     }

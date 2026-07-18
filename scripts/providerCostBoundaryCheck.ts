@@ -17,6 +17,7 @@ const actors = readFileSync("apps/api/src/http/actors.ts", "utf8");
 const events = readFileSync("apps/api/src/services/events.ts", "utf8");
 const attachmentRoutes = readFileSync("apps/api/src/routes/attachmentRoutes.ts", "utf8");
 const workspaceRoutes = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
+const messageRoutes = readFileSync("apps/api/src/routes/messageRoutes.ts", "utf8");
 const auth = readFileSync("apps/api/src/services/auth.ts", "utf8");
 const dbClient = readFileSync("apps/api/src/db/client.ts", "utf8");
 const apiClient = readFileSync("features/api/symposiumApiClient.ts", "utf8");
@@ -55,7 +56,7 @@ assert.match(
 assert.match(actors, /shared: options\.shared \?\? false/);
 assert.match(attachmentRoutes, /shared: true, scope: "attachment"/);
 assert.match(workspaceRoutes, /shared: true, scope: "assistant"/);
-assert.match(workspaceRoutes, /shared: true, scope: "message-send"/);
+assert.match(messageRoutes, /shared: true, scope: "message-send"/);
 assert.match(auth, /syncedHandleCacheTtlMs = 5 \* 60 \* 1000/);
 assert.match(dbClient, /max: env\.DATABASE_POOL_MAX/);
 assert.match(dbClient, /pool\.on\("connect", instrumentPoolClient\)/);

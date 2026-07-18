@@ -92,7 +92,8 @@ const main = async () => {
     "CommentThread",
     "CommunitiesDirectoryView",
     "FeedPost",
-    "MessagesModal",
+    "MessagesStage",
+    "MessagesQuickAccess",
     "ProfileView",
     "RoomView",
     "SearchModal"

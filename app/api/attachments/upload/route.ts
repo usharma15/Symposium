@@ -33,8 +33,8 @@ export async function POST(request: Request) {
   const contentType = inferAttachmentContentType(String(body.fileName ?? ""), String(body.contentType ?? ""));
   const byteSize = Number(body.byteSize ?? 0);
 
-  if (!["post", "comment", "note", "note_comment", "opportunity_application", "profile"].includes(ownerType)) {
-    return jsonError("Private attachment delivery is not enabled for message uploads yet.", 412);
+  if (!["post", "comment", "message", "note", "note_comment", "opportunity_application", "profile"].includes(ownerType)) {
+    return jsonError("Unsupported attachment owner.", 400);
   }
 
   if (ownerType === "profile") {

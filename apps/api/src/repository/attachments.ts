@@ -74,7 +74,7 @@ const requireAttachmentDatabase = (ownerType: string) => {
       message: "Persistent attachment storage is not configured."
     });
   }
-  if (ownerType !== "note" && ownerType !== "note_comment" && ownerType !== "opportunity_application" && !env.R2_PUBLIC_BASE_URL) {
+  if (ownerType !== "message" && ownerType !== "note" && ownerType !== "note_comment" && ownerType !== "opportunity_application" && !env.R2_PUBLIC_BASE_URL) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "Persistent public attachment delivery is not configured."
@@ -169,11 +169,8 @@ export const createAttachmentUpload = async (
   };
   const handle = actorHandle(actor);
 
-  if (!["post", "comment", "note", "note_comment", "opportunity_application", "profile"].includes(input.ownerType)) {
-    throw new TRPCError({
-      code: "PRECONDITION_FAILED",
-      message: "Private attachment delivery must be enabled before message uploads can be accepted."
-    });
+  if (!["post", "comment", "message", "note", "note_comment", "opportunity_application", "profile"].includes(input.ownerType)) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Unsupported attachment owner." });
   }
 
   if (input.ownerType === "profile") {
@@ -249,7 +246,7 @@ export const createAttachmentUpload = async (
       attachmentId,
       objectKey,
       uploadObjectKey,
-      publicUrl: input.ownerType === "note" || input.ownerType === "note_comment" || input.ownerType === "opportunity_application" ? null : publicObjectUrl(objectKey)
+      publicUrl: input.ownerType === "message" || input.ownerType === "note" || input.ownerType === "note_comment" || input.ownerType === "opportunity_application" ? null : publicObjectUrl(objectKey)
     };
     await stageAuditLog(client, {
       actorHandle: handle,
@@ -340,7 +337,7 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
   if (existing.status === "uploaded" || existing.status === "previewed") {
     return {
       attachmentId: existing.attachmentId,
-      publicUrl: existing.ownerType === "note" || existing.ownerType === "note_comment" || existing.ownerType === "opportunity_application" ? null : publicObjectUrl(existing.objectKey),
+      publicUrl: existing.ownerType === "message" || existing.ownerType === "note" || existing.ownerType === "note_comment" || existing.ownerType === "opportunity_application" ? null : publicObjectUrl(existing.objectKey),
       status: existing.status
     };
   }
@@ -469,7 +466,13 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
 
   return {
     attachmentId: attachment.attachmentId,
-    publicUrl: attachment.ownerType === "note" || attachment.ownerType === "note_comment" || attachment.ownerType === "opportunity_application" ? null : publicObjectUrl(attachment.objectKey),
+    publicUrl:
+      attachment.ownerType === "note" ||
+      attachment.ownerType === "note_comment" ||
+      attachment.ownerType === "opportunity_application" ||
+      attachment.ownerType === "message"
+        ? null
+        : publicObjectUrl(attachment.objectKey),
     status: "uploaded" as const
   };
 };

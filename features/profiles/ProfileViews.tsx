@@ -204,6 +204,7 @@ export function ProfileView({
   onDeleteComment,
   onOpenSettings,
   onToggleFollow,
+  onMessage,
   actorHandle,
   profiles,
   socialLists,
@@ -245,6 +246,7 @@ export function ProfileView({
   onDeleteComment: (itemId: string, commentId: string) => void;
   onOpenSettings: () => void;
   onToggleFollow: (handle: string) => void;
+  onMessage: (handle: string) => void;
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
   socialLists: ProfileSocialLists;
@@ -523,14 +525,20 @@ export function ProfileView({
               <span>Edit profile</span>
             </button>
           ) : (
-            <button
-              className={`profile-follow-button ${isFollowing ? "active" : ""}`}
-              type="button"
-              onClick={() => onToggleFollow(person.handle)}
-            >
-              <UserRound size={17} />
-              <span>{isFollowing ? "Following" : "Follow"}</span>
-            </button>
+            <div className="profile-primary-actions">
+              <button
+                className={`profile-follow-button ${isFollowing ? "active" : ""}`}
+                type="button"
+                onClick={() => onToggleFollow(person.handle)}
+              >
+                <UserRound size={17} />
+                <span>{isFollowing ? "Following" : "Follow"}</span>
+              </button>
+              <button className="profile-message-button" type="button" onClick={() => onMessage(person.handle)}>
+                <MessageCircle size={17} />
+                <span>Message</span>
+              </button>
+            </div>
           )}
           <h1>{person.name}</h1>
           <p className="profile-handle">{person.handle}</p>

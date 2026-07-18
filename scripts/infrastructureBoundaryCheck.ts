@@ -4,9 +4,13 @@ import { latestMigrationId, migrationIds } from "@/apps/api/src/db/migrate";
 import {
   comments,
   communities,
+  conversations,
+  conversationParticipants,
   communityMemberships,
   events,
   maintenanceLeases,
+  messages,
+  messageStars,
   noteBlocks,
   notes,
   opportunityApplicationComments,
@@ -28,7 +32,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0033_profile_activity_timelines");
+  assert.equal(latestMigrationId, "0034_messaging_foundation");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -47,6 +51,13 @@ const main = async () => {
   assert.ok("communityId" in posts);
   assert.ok("moderatorHandles" in communities);
   assert.ok("lastAccessedAt" in communityMemberships);
+  assert.ok("revision" in conversations);
+  assert.ok("nextMessageSequence" in conversations);
+  assert.ok("status" in conversationParticipants);
+  assert.ok("clearedThroughSequence" in conversationParticipants);
+  assert.ok("sequence" in messages);
+  assert.ok("revision" in messages);
+  assert.ok("profileHandle" in messageStars);
   assert.ok("shortlisted" in opportunityApplications);
   assert.ok("revision" in opportunityApplications);
   assert.ok("applicationId" in opportunityApplicationComments);

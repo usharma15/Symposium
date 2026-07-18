@@ -1036,12 +1036,6 @@ export const searchResponseSchema = z.object({
   nextCursor: z.string().nullable().default(null)
 });
 
-export const sendMessageInputSchema = z.object({
-  conversationId: z.string().uuid().optional(),
-  recipientHandle: z.string().trim().min(1).max(80).optional(),
-  body: z.string().trim().min(1).max(8000)
-});
-
 export const saveNoteBlockInputSchema = z.object({
   workspaceId: z.string().uuid().optional(),
   noteId: z.string().uuid().optional(),
@@ -1234,8 +1228,169 @@ export const assistantMessageInputSchema = z.object({
   contextId: z.string().trim().min(1).max(240).optional()
 });
 
+export const conversationKindSchema = z.enum(["direct", "group"]);
+export const conversationParticipantRoleSchema = z.enum(["owner", "admin", "member"]);
+export const conversationParticipantStatusSchema = z.enum(["invited", "active", "removed"]);
+
+export const conversationParticipantSchema = z.object({
+  handle: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(160),
+  avatarUrl: safeExternalUrlSchema.optional(),
+  role: conversationParticipantRoleSchema,
+  status: conversationParticipantStatusSchema
+});
+
+export const messageSchema = z.object({
+  id: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  sequence: z.number().int().positive(),
+  revision: z.number().int().positive(),
+  senderHandle: z.string().trim().min(1).max(80).nullable(),
+  body: z.string().max(8000),
+  attachments: z.array(inquiryAttachmentSchema).max(10).default([]),
+  starred: z.boolean().default(false),
+  editedAt: z.string().datetime().nullable().default(null),
+  deletedAt: z.string().datetime().nullable().default(null),
+  createdAt: z.string().datetime()
+});
+
+export const conversationSummarySchema = z.object({
+  id: z.string().uuid(),
+  revision: z.number().int().positive(),
+  kind: conversationKindSchema,
+  title: z.string().trim().min(1).max(120).nullable(),
+  role: conversationParticipantRoleSchema,
+  status: conversationParticipantStatusSchema,
+  muted: z.boolean(),
+  pinned: z.boolean(),
+  blockedByViewer: z.boolean().default(false),
+  unreadCount: z.number().int().nonnegative(),
+  participants: z.array(conversationParticipantSchema).max(64),
+  lastMessage: messageSchema.nullable(),
+  draftBody: z.string().max(8000),
+  updatedAt: z.string().datetime()
+});
+
+export const conversationListQuerySchema = z.object({
+  cursor: z.string().trim().max(500).optional(),
+  limit: z.coerce.number().int().positive().max(50).default(24)
+});
+
+export const conversationPageSchema = z.object({
+  conversations: z.array(conversationSummarySchema).max(50),
+  nextCursor: z.string().nullable()
+});
+
+export const messageListQuerySchema = z.object({
+  cursor: z.string().trim().max(500).optional(),
+  limit: z.coerce.number().int().positive().max(100).default(40)
+});
+
+export const messagePageSchema = z.object({
+  conversation: conversationSummarySchema,
+  messages: z.array(messageSchema).max(100),
+  nextCursor: z.string().nullable()
+});
+
+export const sendMessageInputSchema = z.object({
+  conversationId: z.string().uuid().optional(),
+  recipientHandle: z.string().trim().min(1).max(80).optional(),
+  body: z.string().trim().max(8000).default(""),
+  attachmentIds: z.array(z.string().uuid()).max(10).default([])
+}).superRefine((input, context) => {
+  if (!input.conversationId && !input.recipientHandle) {
+    context.addIssue({ code: "custom", message: "Choose a recipient or conversation." });
+  }
+  if (!input.body && !input.attachmentIds.length) {
+    context.addIssue({ code: "custom", message: "Write a message or attach a file." });
+  }
+});
+
+export const createGroupConversationInputSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  inviteeHandles: z.array(z.string().trim().min(1).max(80)).min(1).max(49)
+});
+
+export const inviteConversationParticipantsInputSchema = z.object({
+  handles: z.array(z.string().trim().min(1).max(80)).min(1).max(49)
+});
+
+export const updateConversationParticipantInputSchema = z.object({
+  role: z.enum(["admin", "member"])
+});
+
+export const resolveConversationInviteInputSchema = z.object({
+  action: z.enum(["accept", "decline"])
+});
+
+export const updateConversationPreferencesInputSchema = z.object({
+  muted: z.boolean().optional(),
+  pinned: z.boolean().optional()
+}).refine((input) => input.muted !== undefined || input.pinned !== undefined, {
+  message: "Choose a conversation preference to update."
+});
+
+export const saveConversationDraftInputSchema = z.object({
+  body: z.string().max(8000)
+});
+
+export const markConversationReadInputSchema = z.object({
+  sequence: z.number().int().nonnegative()
+});
+
+export const starMessageInputSchema = z.object({
+  active: z.boolean()
+});
+
+export const editMessageInputSchema = z.object({
+  body: z.string().trim().min(1).max(8000),
+  expectedRevision: z.number().int().positive()
+});
+
+export const deleteMessageInputSchema = z.object({
+  mode: z.enum(["self", "everyone"]),
+  expectedRevision: z.number().int().positive().optional()
+});
+
+export const blockProfileInputSchema = z.object({
+  targetHandle: z.string().trim().min(1).max(80),
+  active: z.boolean()
+});
+
+export const conversationSearchInputSchema = z.object({
+  query: z.string().trim().max(160).default(""),
+  kind: attachmentKindSchema.or(z.literal("links")).optional(),
+  limit: z.coerce.number().int().positive().max(50).default(24),
+  cursor: z.string().trim().max(500).optional()
+}).refine((input) => Boolean(input.query || input.kind), { message: "Enter a search term or choose a media type." });
+
+export const notificationSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.string().min(1).max(80),
+  title: z.string().min(1).max(200),
+  body: z.string().max(1000),
+  href: z.string().max(500).nullable(),
+  readAt: z.string().datetime().nullable(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  createdAt: z.string().datetime()
+});
+
+export const notificationListQuerySchema = z.object({
+  cursor: z.string().trim().max(500).optional(),
+  limit: z.coerce.number().int().positive().max(50).default(30)
+});
+
+export const notificationPageSchema = z.object({
+  notifications: z.array(notificationSchema).max(50),
+  unreadCount: z.number().int().nonnegative(),
+  nextCursor: z.string().nullable()
+});
+
 export const markNotificationInputSchema = z.object({
-  notificationId: z.string().uuid()
+  notificationId: z.string().uuid().optional(),
+  all: z.boolean().default(false)
+}).refine((input) => input.all || Boolean(input.notificationId), {
+  message: "Choose a notification or mark all notifications read."
 });
 
 export const profileFollowSchema = z.object({
@@ -1379,6 +1534,32 @@ export type BootstrapResponseContract = z.infer<typeof bootstrapResponseSchema>;
 export type PostPageQueryContract = z.infer<typeof postPageQuerySchema>;
 export type PostPageResponseContract = z.infer<typeof postPageResponseSchema>;
 export type SearchResponseContract = z.infer<typeof searchResponseSchema>;
+export type ConversationKindContract = z.infer<typeof conversationKindSchema>;
+export type ConversationParticipantRoleContract = z.infer<typeof conversationParticipantRoleSchema>;
+export type ConversationParticipantStatusContract = z.infer<typeof conversationParticipantStatusSchema>;
+export type ConversationParticipantContract = z.infer<typeof conversationParticipantSchema>;
+export type MessageContract = z.infer<typeof messageSchema>;
+export type ConversationSummaryContract = z.infer<typeof conversationSummarySchema>;
+export type ConversationListQueryContract = z.infer<typeof conversationListQuerySchema>;
+export type ConversationPageContract = z.infer<typeof conversationPageSchema>;
+export type MessageListQueryContract = z.infer<typeof messageListQuerySchema>;
+export type MessagePageContract = z.infer<typeof messagePageSchema>;
+export type SendMessageInputContract = z.infer<typeof sendMessageInputSchema>;
+export type CreateGroupConversationInputContract = z.infer<typeof createGroupConversationInputSchema>;
+export type InviteConversationParticipantsInputContract = z.infer<typeof inviteConversationParticipantsInputSchema>;
+export type UpdateConversationParticipantInputContract = z.infer<typeof updateConversationParticipantInputSchema>;
+export type ResolveConversationInviteInputContract = z.infer<typeof resolveConversationInviteInputSchema>;
+export type UpdateConversationPreferencesInputContract = z.infer<typeof updateConversationPreferencesInputSchema>;
+export type SaveConversationDraftInputContract = z.infer<typeof saveConversationDraftInputSchema>;
+export type MarkConversationReadInputContract = z.infer<typeof markConversationReadInputSchema>;
+export type StarMessageInputContract = z.infer<typeof starMessageInputSchema>;
+export type EditMessageInputContract = z.infer<typeof editMessageInputSchema>;
+export type DeleteMessageInputContract = z.infer<typeof deleteMessageInputSchema>;
+export type BlockProfileInputContract = z.infer<typeof blockProfileInputSchema>;
+export type ConversationSearchInputContract = z.infer<typeof conversationSearchInputSchema>;
+export type NotificationContract = z.infer<typeof notificationSchema>;
+export type NotificationListQueryContract = z.infer<typeof notificationListQuerySchema>;
+export type NotificationPageContract = z.infer<typeof notificationPageSchema>;
 export type FollowProfileInputContract = z.infer<typeof followProfileInputSchema>;
 export type ProfileFollowContract = z.infer<typeof profileFollowSchema>;
 export type CommunityCallContract = z.infer<typeof communityCallSchema>;
@@ -1453,7 +1634,25 @@ export const procedureNames = [
   "notifications.list",
   "notifications.markRead",
   "messages.listConversations",
+  "messages.getConversation",
+  "messages.listMessages",
   "messages.send",
+  "messages.createGroup",
+  "messages.inviteParticipants",
+  "messages.resolveInvite",
+  "messages.updateParticipant",
+  "messages.removeParticipant",
+  "messages.updatePreferences",
+  "messages.saveDraft",
+  "messages.markRead",
+  "messages.clear",
+  "messages.deleteConversation",
+  "messages.search",
+  "messages.listStarred",
+  "messages.star",
+  "messages.edit",
+  "messages.delete",
+  "messages.blockProfile",
   "notes.getWorkspace",
   "notes.createDocument",
   "notes.updateDocument",

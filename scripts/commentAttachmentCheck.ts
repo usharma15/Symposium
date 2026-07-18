@@ -94,7 +94,10 @@ const [commentRepository, postRepository, maintenance, controller, commentViews,
 assert.match(commentRepository, /replaceOwnerAttachments/);
 assert.match(commentRepository, /queueAttachmentsForOwnerStorageDeletion/);
 assert.match(postRepository, /"comment",[\s\S]*commentIds,[\s\S]*"post_deleted"/);
-  assert.match(maintenance, /owner_type IN \('post', 'comment', 'note', 'note_comment'\)/);
+assert.match(
+  maintenance,
+  /owner_type IN \('post', 'comment', 'message', 'note', 'note_comment', 'opportunity_application'\)/
+);
 assert.match(controller, /attachmentIds: attachments\.map/);
 assert.match(commentViews, /<AttachmentCarousel/);
 assert.match(localCommentRoute, /existingComment\.editedAt \?\? null/);

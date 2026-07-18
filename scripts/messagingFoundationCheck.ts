@@ -1,0 +1,107 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { buildApp } from "@/apps/api/src/server";
+import {
+  conversationListQuerySchema,
+  createGroupConversationInputSchema,
+  deleteMessageInputSchema,
+  editMessageInputSchema,
+  markConversationReadInputSchema,
+  notificationListQuerySchema,
+  saveConversationDraftInputSchema,
+  sendMessageInputSchema
+} from "@/packages/contracts/src";
+
+const validConversationId = "00000000-0000-4000-8000-000000000001";
+
+const main = async () => {
+  assert.equal(sendMessageInputSchema.safeParse({ recipientHandle: "@mira", body: "hello" }).success, true);
+  assert.equal(sendMessageInputSchema.safeParse({ conversationId: validConversationId, attachmentIds: [validConversationId] }).success, true);
+  assert.equal(sendMessageInputSchema.safeParse({ body: "" }).success, false);
+  assert.equal(sendMessageInputSchema.safeParse({ recipientHandle: "@mira", body: "x".repeat(8001) }).success, false);
+  assert.equal(createGroupConversationInputSchema.safeParse({ title: "Lab", inviteeHandles: [] }).success, false);
+  assert.equal(createGroupConversationInputSchema.safeParse({ title: "Lab", inviteeHandles: Array.from({ length: 50 }, (_, index) => `@p${index}`) }).success, false);
+  assert.equal(conversationListQuerySchema.parse({ limit: "50" }).limit, 50);
+  assert.equal(conversationListQuerySchema.safeParse({ limit: 51 }).success, false);
+  assert.equal(notificationListQuerySchema.safeParse({ limit: 51 }).success, false);
+  assert.equal(saveConversationDraftInputSchema.safeParse({ body: "x".repeat(8001) }).success, false);
+  assert.equal(markConversationReadInputSchema.safeParse({ sequence: -1 }).success, false);
+  assert.equal(editMessageInputSchema.safeParse({ body: "revised", expectedRevision: 1 }).success, true);
+  assert.equal(deleteMessageInputSchema.safeParse({ mode: "everyone" }).success, true);
+
+  const repository = readFileSync("apps/api/src/repository/conversations.ts", "utf8");
+  const notifications = readFileSync("apps/api/src/repository/notifications.ts", "utf8");
+  const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
+  const routes = readFileSync("apps/api/src/routes/messageRoutes.ts", "utf8");
+  const workspaceRoutes = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
+  const server = readFileSync("apps/api/src/server.ts", "utf8");
+  const client = readFileSync("features/messages/MessagesSection.tsx", "utf8");
+  const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
+  const messageAttachmentRoute = readFileSync("app/api/message-attachments/[attachmentId]/route.ts", "utf8");
+
+  assert.match(server, /registerMessageRoutes\(app\)/);
+  assert.doesNotMatch(workspaceRoutes, /\/v1\/(?:conversations|messages|notifications)/);
+  assert.match(routes, /shared: true, scope: "message-send", limit: 60/);
+  assert.match(routes, /uuidParam\(request\.params\.id\)/);
+  assert.match(routes, /\/v1\/message-attachments\/:attachmentId\/access/);
+  assert.match(repository, /message\.sequence > viewer\.cleared_through_sequence/);
+  assert.match(repository, /viewer\.removed_through_sequence IS NULL OR message\.sequence <= viewer\.removed_through_sequence/);
+  assert.match(repository, /viewer\.hidden_at IS NULL/);
+  assert.match(repository, /message\.deleted_at IS NULL/);
+  assert.match(repository, /assertDirectMessageAllowed/);
+  assert.match(repository, /profile_blocks/);
+  assert.match(repository, /hidden_at = now\(\), cleared_through_sequence/);
+  assert.match(repository, /cleared_through_sequence = CASE WHEN hidden_at IS NOT NULL/);
+  assert.match(repository, /status = 'removed'[\s\S]*removed_through_sequence/);
+  assert.match(repository, /Date\.now\(\) - new Date\(message\.createdAt\)\.getTime\(\) > messageEditWindowMs/);
+  assert.match(repository, /draft_body IS DISTINCT FROM/);
+  assert.match(repository, /last_read_sequence < \$3/);
+  assert.match(repository, /createNotifications\(client, visibleRecipients/);
+  assert.match(notifications, /jsonb_to_recordset/);
+  assert.match(notifications, /ON CONFLICT \(profile_handle, dedupe_key\)/);
+  assert.match(migration, /0034_messaging_foundation/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS message_stars/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS message_hidden_for/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS profile_blocks/);
+  assert.match(client, /Math\.min\(textarea\.scrollHeight, 288\)/);
+  assert.match(client, /symposium:message-draft/);
+  assert.match(client, /ownerType: "message"/);
+  assert.match(client, /Open full messages/);
+  assert.match(client, /IntersectionObserver/);
+  assert.match(shell, /data-view=\{messagesOpen \? "messages"/);
+  assert.match(shell, /onMessage=\{/);
+  assert.match(messageAttachmentRoute, /record\.ownerType !== "message"/);
+  assert.match(messageAttachmentRoute, /Cache-Control": "private, no-store"/);
+
+  const app = await buildApp({ logger: false });
+  try {
+    const invalidMessage = await app.inject({
+      method: "POST",
+      url: "/v1/messages",
+      headers: { "content-type": "application/json", "x-symposium-handle": "@boundary" },
+      payload: {}
+    });
+    assert.equal(invalidMessage.statusCode, 400);
+
+    const malformedConversation = await app.inject({
+      method: "GET",
+      url: "/v1/conversations/not-a-uuid",
+      headers: { "x-symposium-handle": "@boundary" }
+    });
+    assert.equal(malformedConversation.statusCode, 400);
+
+    const oversizedGroup = await app.inject({
+      method: "POST",
+      url: "/v1/conversations/groups",
+      headers: { "content-type": "application/json", "x-symposium-handle": "@boundary" },
+      payload: { title: "Too large", inviteeHandles: Array.from({ length: 50 }, (_, index) => `@p${index}`) }
+    });
+    assert.equal(oversizedGroup.statusCode, 400);
+  } finally {
+    await app.close();
+  }
+
+  console.log("Messaging foundation checks passed.");
+};
+
+void main();
