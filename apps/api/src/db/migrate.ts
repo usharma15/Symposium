@@ -1837,6 +1837,18 @@ const migrations: Migration[] = [
         ON notifications (created_at)
         WHERE read_at IS NOT NULL;
     `
+  },
+  {
+    id: "0033_profile_activity_timelines",
+    sql: `
+      CREATE INDEX IF NOT EXISTS comments_profile_activity_idx
+        ON comments (author_handle, created_at DESC, id DESC)
+        WHERE deleted_at IS NULL;
+      CREATE INDEX IF NOT EXISTS post_actions_profile_timeline_idx
+        ON post_actions (actor_handle, action, updated_at DESC, post_id DESC);
+      CREATE INDEX IF NOT EXISTS comment_actions_profile_timeline_idx
+        ON comment_actions (actor_handle, action, updated_at DESC, comment_id DESC);
+    `
   }
 ];
 

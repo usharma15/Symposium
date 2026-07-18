@@ -26,6 +26,7 @@ export const registerPostRoutes = (app: FastifyInstance) => {
     saved?: string;
     following?: string;
     ids?: string;
+    commentIds?: string;
   } }>("/v1/posts", async (request, reply) => {
     try {
       const actor = await getActorFromRequest(request);
@@ -39,7 +40,8 @@ export const registerPostRoutes = (app: FastifyInstance) => {
         authorHandle: request.query.authorHandle,
         saved: request.query.saved === "true" ? true : undefined,
         following: request.query.following === "true" ? true : undefined,
-        ids: request.query.ids?.split(",").filter(Boolean)
+        ids: request.query.ids?.split(",").filter(Boolean),
+        commentIds: request.query.commentIds?.split(",").filter(Boolean)
       }, actor.handle);
       return reply.send(page);
     } catch (error) {

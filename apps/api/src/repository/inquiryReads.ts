@@ -14,7 +14,9 @@ import {
   commentTreesFromRows,
   defaultProfile,
   ensureLiveData,
+  getActiveAttachmentsByOwner,
   getPostConversationAttachments,
+  json,
   listPublicCommunities,
   listPublicCommunityCallMap,
   publicProfile,
@@ -31,6 +33,30 @@ type ViewerActionRow = {
   subjectId: string;
   action: "save" | "signal" | "fork";
 };
+
+const selectedCommentFromRow = (
+  row: CommentRow,
+  attachments: Awaited<ReturnType<typeof getActiveAttachmentsByOwner>>
+) => ({
+  id: row.id,
+  parentId: row.parentId,
+  author: row.authorName,
+  authorHandle: row.authorHandle ?? undefined,
+  stance: row.stance,
+  body: row.body,
+  document: row.document ?? undefined,
+  createdAt: new Date(row.createdAt).toISOString(),
+  editedAt: row.editedAt ? new Date(row.editedAt).toISOString() : undefined,
+  deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : undefined,
+  revision: row.revision,
+  metrics: json(row.metrics, { signal: "0", forks: "0", saves: "0", reads: "0" }),
+  savedBy: json(row.savedBy, [] as string[]),
+  signaledBy: json(row.signaledBy, [] as string[]),
+  forkedBy: json(row.forkedBy, [] as string[]),
+  attachments: attachments.get(row.id),
+  quote: json(row.quote, undefined),
+  replies: []
+});
 
 const postColumns = `
   post.id,
@@ -94,6 +120,20 @@ export const decodePostCursor = (cursor?: string | null): PostCursor | null => {
 const countComments = (comments: InquiryItemContract["comments"]): number =>
   comments.reduce((total, comment) => total + (comment.deletedAt ? 0 : 1) + countComments(comment.replies ?? []), 0);
 
+const selectCommentsById = (
+  comments: InquiryItemContract["comments"],
+  selectedIds: ReadonlySet<string>
+): InquiryItemContract["comments"] => {
+  const selected: InquiryItemContract["comments"] = [];
+  for (const comment of comments) {
+    if (comment.id && selectedIds.has(comment.id) && !comment.deletedAt) {
+      selected.push({ ...comment, replies: [] });
+    }
+    selected.push(...selectCommentsById(comment.replies ?? [], selectedIds));
+  }
+  return selected;
+};
+
 const localItemIsReadable = (
   item: InquiryItemContract,
   requesterHandle: string | null,
@@ -106,7 +146,7 @@ const localItemIsReadable = (
     const community = communities.find((candidate) => candidate.id === item.communityId);
     const member = Boolean(requesterHandle && community?.memberHandles.some((handle) => cleanHandle(handle) === requesterHandle));
     if (community?.visibility !== "public" && !member && !isOwner) return false;
-    if (!query.communityId && !query.authorHandle && !query.saved && !query.ids?.length) return false;
+    if (!query.communityId && !query.authorHandle && !query.saved && !query.ids?.length && !query.commentIds?.length) return false;
   }
   return true;
 };
@@ -123,6 +163,7 @@ const localPage = (
   if (query.cursor && !cursor) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid post cursor." });
   const requestedTypes = new Set(query.postTypes ?? (query.postType ? [query.postType] : []));
   const requestedIds = new Set(query.ids ?? []);
+  const requestedCommentIds = new Set(query.commentIds ?? []);
   const sorted = [...snapshot.items]
     .filter((item) => !item.deletedAt)
     .filter((item) => localItemIsReadable(item, requesterHandle, query, communities))
@@ -133,6 +174,7 @@ const localPage = (
     .filter((item) => !query.saved || Boolean(requesterHandle && item.savedBy?.some((handle) => cleanHandle(handle) === requesterHandle)))
     .filter((item) => !query.following || Boolean(requesterHandle && cleanHandle(item.authorHandle ?? "") === requesterHandle))
     .filter((item) => !requestedIds.size || requestedIds.has(item.id))
+    .filter((item) => requestedIds.size || !requestedCommentIds.size || selectCommentsById(item.comments, requestedCommentIds).length > 0)
     .filter((item) => {
       if (!cursor) return true;
       const createdAt = item.createdAt ?? "1970-01-01T00:00:00.000Z";
@@ -150,7 +192,7 @@ const localPage = (
     ...item,
     commentCount: countComments(item.comments),
     detailLoaded: false,
-    comments: [],
+    comments: requestedCommentIds.size ? selectCommentsById(item.comments, requestedCommentIds) : [],
     attachments: item.attachments?.slice(0, 10),
     saved: Boolean(requesterHandle && item.savedBy?.some((handle) => cleanHandle(handle) === requesterHandle)),
     savedBy: requesterHandle && item.savedBy?.some((handle) => cleanHandle(handle) === requesterHandle) ? [requesterHandle] : [],
@@ -219,6 +261,26 @@ const viewerActionsForPosts = async (postIds: string[], requesterHandle: string 
     byPost.set(row.subjectId, actions);
   }
   return byPost;
+};
+
+const viewerActionsForComments = async (commentIds: string[], requesterHandle: string | null) => {
+  const byComment = new Map<string, Set<ViewerActionRow["action"]>>();
+  if (!commentIds.length || !requesterHandle) return byComment;
+  const result = await getPool().query<ViewerActionRow>(
+    `SELECT comment_id AS "subjectId", action
+     FROM comment_actions
+     WHERE comment_id = ANY($1::text[])
+       AND actor_handle = $2
+       AND active = true
+       AND action IN ('save', 'signal', 'fork')`,
+    [commentIds, requesterHandle]
+  );
+  for (const row of result.rows) {
+    const actions = byComment.get(row.subjectId) ?? new Set<ViewerActionRow["action"]>();
+    actions.add(row.action);
+    byComment.set(row.subjectId, actions);
+  }
+  return byComment;
 };
 
 const previewAttachments = async (postIds: string[]) => {
@@ -308,7 +370,15 @@ export const listPostPage = async (
     )`);
   }
   if (query.ids?.length) conditions.push(`post.id = ANY(${bind(query.ids)}::text[])`);
-  if (!query.communityId && !query.authorHandle && !query.saved && !query.ids?.length) {
+  if (query.commentIds?.length && !query.ids?.length) {
+    conditions.push(`EXISTS (
+      SELECT 1 FROM comments selected_comment
+      WHERE selected_comment.post_id = post.id
+        AND selected_comment.id = ANY(${bind(query.commentIds)}::text[])
+        AND selected_comment.deleted_at IS NULL
+    )`);
+  }
+  if (!query.communityId && !query.authorHandle && !query.saved && !query.ids?.length && !query.commentIds?.length) {
     conditions.push(`(post.community_id IS NULL OR post.post_type = 'paper')`);
   }
   if (cursor) {
@@ -335,10 +405,55 @@ export const listPostPage = async (
   const hasNextPage = !query.ids?.length && result.rows.length > limit;
   const rows = result.rows.slice(0, limit);
   const postIds = rows.map((row) => row.id);
-  const [actionsByPost, attachmentsByPost] = await Promise.all([
+  const requestedCommentIds = query.commentIds ?? [];
+  const [actionsByPost, attachmentsByPost, selectedCommentResult] = await Promise.all([
     viewerActionsForPosts(postIds, requesterHandle),
-    previewAttachments(postIds)
+    previewAttachments(postIds),
+    requestedCommentIds.length && postIds.length
+      ? getPool().query<CommentRow>(
+          `SELECT
+             id,
+             revision,
+             post_id AS "postId",
+             parent_id AS "parentId",
+             author_handle AS "authorHandle",
+             author_name AS "authorName",
+             stance,
+             body,
+             content_document AS "document",
+             metrics,
+             saved_by AS "savedBy",
+             signaled_by AS "signaledBy",
+             forked_by AS "forkedBy",
+             quote,
+             edited_at AS "editedAt",
+             deleted_at AS "deletedAt",
+             created_at AS "createdAt"
+           FROM comments
+           WHERE id = ANY($1::text[])
+             AND post_id = ANY($2::text[])
+             AND deleted_at IS NULL
+           ORDER BY created_at DESC, id DESC`,
+          [requestedCommentIds, postIds]
+        )
+      : Promise.resolve({ rows: [] as CommentRow[] })
   ]);
+  const selectedCommentIds = selectedCommentResult.rows.map((comment) => comment.id);
+  const [actionsByComment, attachmentsByComment] = await Promise.all([
+    viewerActionsForComments(selectedCommentIds, requesterHandle),
+    getActiveAttachmentsByOwner(getPool(), "comment", selectedCommentIds)
+  ]);
+  const commentsByPost = new Map<string, ReturnType<typeof selectedCommentFromRow>[]>();
+  for (const comment of selectedCommentResult.rows) {
+    const actions = actionsByComment.get(comment.id) ?? new Set<ViewerActionRow["action"]>();
+    const projected = selectedCommentFromRow({
+      ...comment,
+      savedBy: actions.has("save") && requesterHandle ? [requesterHandle] : [],
+      signaledBy: actions.has("signal") && requesterHandle ? [requesterHandle] : [],
+      forkedBy: actions.has("fork") && requesterHandle ? [requesterHandle] : []
+    }, attachmentsByComment);
+    commentsByPost.set(comment.postId, [...(commentsByPost.get(comment.postId) ?? []), projected]);
+  }
   const items = rows.map((row) => {
     const actions = actionsByPost.get(row.id) ?? new Set<ViewerActionRow["action"]>();
     const item = rowToItem({
@@ -347,11 +462,12 @@ export const listPostPage = async (
       savedBy: actions.has("save") && requesterHandle ? [requesterHandle] : [],
       signaledBy: actions.has("signal") && requesterHandle ? [requesterHandle] : [],
       forkedBy: actions.has("fork") && requesterHandle ? [requesterHandle] : []
-    }, [], attachmentsByPost.get(row.id));
+    }, commentsByPost.get(row.id) ?? [], attachmentsByPost.get(row.id));
     return { ...item, commentCount: row.commentCount, detailLoaded: false };
   });
   const profiles = await listProfilesByHandles([
     ...items.flatMap((item) => item.authorHandle ? [item.authorHandle] : []),
+    ...selectedCommentResult.rows.flatMap((comment) => comment.authorHandle ? [comment.authorHandle] : []),
     ...(requesterHandle ? [requesterHandle] : [])
   ]);
   const last = rows.at(-1);

@@ -1,4 +1,4 @@
-import type { CanonicalActionActivityContract, ProfileActivityCountsContract, ToggleActionContract } from "@/packages/contracts/src";
+import type { CanonicalActionActivityContract, ProfileActivityCountsContract, ProfileAuthoredCommentActivityContract, ToggleActionContract } from "@/packages/contracts/src";
 import type { InquiryComment, InquiryItem, ResearchCommunity, ResearchProfile } from "@/lib/mockData";
 import { cleanHandle, hasHandle, isDeletedComment, isDeletedPost, isSavedBy } from "@/lib/symposiumCore";
 import { itemHasPostType } from "@/lib/postSemantics";
@@ -187,7 +187,7 @@ export const itemMatchesProfilePostAction = (
   return isSavedBy(item, person.handle, defaultSavedHandle);
 };
 
-export const uniqueProfileActivityEntries = <T extends { recency: number }>(
+export const uniqueProfileActivityEntries = <T extends { id: string; recency: number }>(
   entries: T[],
   contentKey: (entry: T) => string
 ) => {
@@ -199,19 +199,18 @@ export const uniqueProfileActivityEntries = <T extends { recency: number }>(
     if (!current || entry.recency > current.recency) unique.set(key, entry);
   }
 
-  return [...unique.values()].sort((a, b) => b.recency - a.recency);
+  return [...unique.values()].sort((a, b) => {
+    const timestampDelta = b.recency - a.recency;
+    return timestampDelta || b.id.localeCompare(a.id);
+  });
 };
 
 export const reconcileProfileActivitySlots = <T extends { id: string }>(current: T[], next: T[]) => {
-  const nextById = new Map(next.map((slot) => [slot.id, slot]));
-  const currentIds = new Set(current.map((slot) => slot.id));
-  const added = next.filter((slot) => !currentIds.has(slot.id));
-  const retained = current.flatMap((slot) => {
-    const updated = nextById.get(slot.id);
-    return updated ? [updated] : [];
-  });
-
-  return [...added, ...retained];
+  if (
+    current.length === next.length &&
+    current.every((slot, index) => slot.id === next[index]?.id && slot === next[index])
+  ) return current;
+  return next;
 };
 
 export const selectProfileActivitySlots = <T extends { id: string }>(
@@ -270,7 +269,13 @@ export const mergeCanonicalActivities = (
     const existing = merged.get(key);
     if (!existing || activity.revision >= existing.revision) merged.set(key, activity);
   }
-  return [...merged.values()].sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+  return [...merged.values()].sort((a, b) => {
+    const timestampDelta = Date.parse(b.occurredAt) - Date.parse(a.occurredAt);
+    if (timestampDelta) return timestampDelta;
+    return `${b.subjectType}:${b.subjectId}:${b.action}`.localeCompare(
+      `${a.subjectType}:${a.subjectId}:${a.action}`
+    );
+  });
 };
 
 export const reconcileCanonicalActivityRefresh = ({
@@ -383,6 +388,37 @@ export const buildLegacyProfileActivity = (
   }
 
   return entries.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+};
+
+export const buildLegacyProfileAuthoredComments = (
+  items: InquiryItem[],
+  actorHandle: string
+): ProfileAuthoredCommentActivityContract[] => {
+  const cleanActor = cleanHandle(actorHandle);
+  const entries: ProfileAuthoredCommentActivityContract[] = [];
+  const visit = (item: InquiryItem, comments: InquiryComment[]) => {
+    for (const comment of comments) {
+      if (
+        comment.id &&
+        !isDeletedComment(comment) &&
+        cleanHandle(comment.authorHandle ?? comment.author) === cleanActor
+      ) {
+        entries.push({
+          commentId: comment.id,
+          postId: item.id,
+          occurredAt: legacyActivityTimestamp(comment.createdAt ?? item.createdAt)
+        });
+      }
+      visit(item, comment.replies ?? []);
+    }
+  };
+  for (const item of items) {
+    if (!isDeletedPost(item)) visit(item, item.comments);
+  }
+  return entries.sort((a, b) => {
+    const timestampDelta = Date.parse(b.occurredAt) - Date.parse(a.occurredAt);
+    return timestampDelta || b.commentId.localeCompare(a.commentId);
+  });
 };
 
 export const buildLegacyActionLedger = (items: InquiryItem[]) => {

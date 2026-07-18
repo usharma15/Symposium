@@ -34,6 +34,7 @@ import type {
   PostPageResponseContract,
   PostPageQueryContract,
   ProfileActivityCountsContract,
+  ProfileAuthoredCommentActivityContract,
   ProfileActivityResponseContract,
   SearchResponseContract,
   ToggleActionContract,
@@ -251,12 +252,65 @@ type LiveEventPayload = {
   revision?: number;
 };
 
+type ProfileActivityPageScope = "all" | "comments" | "reshares" | "likes" | "saved";
+type ProfileActivityPageState = {
+  loaded: boolean;
+  loading: boolean;
+  nextCursor: string | null;
+  commentsNextCursor: string | null;
+};
 type ProfileActivitySnapshot = {
   entries: CanonicalActionActivityContract[];
   loaded: boolean;
   nextCursor: string | null;
+  pages: Partial<Record<ProfileActivityPageScope, ProfileActivityPageState>>;
   hiddenCommunityCounts: ProfileActivityCountsContract;
   totals?: ProfileActivityCountsContract;
+};
+
+const profileActivityScopeForTab = (tab: ProfileTab): ProfileActivityPageScope => {
+  if (tab === "comments" || tab === "reshares" || tab === "likes" || tab === "saved") return tab;
+  return "all";
+};
+
+const profileActivityActionsForScope = (scope: ProfileActivityPageScope): ToggleActionContract[] => {
+  if (scope === "likes") return ["signal"];
+  if (scope === "saved") return ["save"];
+  if (scope === "reshares" || scope === "all") return ["fork"];
+  return [];
+};
+
+const profileActivityScopeIncludesComments = (scope: ProfileActivityPageScope) =>
+  scope === "all" || scope === "comments";
+
+const profileTabUsesAuthoredPosts = (tab: ProfileTab) =>
+  tab === "all" || tab === "papers" || tab === "thoughts" || tab === "proposals" ||
+  tab === "opportunities" || tab === "reshares";
+
+const emptyProfileActivitySnapshot = (): ProfileActivitySnapshot => ({
+  entries: [],
+  loaded: false,
+  nextCursor: null,
+  pages: {},
+  hiddenCommunityCounts: emptyProfileActivityCounts()
+});
+
+const mergeSparseProfileComments = (
+  current: InquiryComment[],
+  incoming: InquiryComment[]
+) => {
+  const existingIds = new Set<string>();
+  const collectIds = (comments: InquiryComment[]) => {
+    for (const comment of comments) {
+      if (comment.id) existingIds.add(comment.id);
+      collectIds(comment.replies ?? []);
+    }
+  };
+  collectIds(current);
+  return [
+    ...current,
+    ...incoming.filter((comment) => !comment.id || !existingIds.has(comment.id))
+  ];
 };
 
 type SymposiumLiveEvent = {
@@ -637,6 +691,11 @@ function SymposiumExperience({
   const selectedProfileHandle = selectedProfileName
     ? selectedProfile?.handle ?? cleanHandle(selectedProfileName)
     : null;
+  const selectedProfileActivityScope = profileActivityScopeForTab(profileActiveTab);
+  const selectedProfileActivitySnapshot = selectedProfileHandle
+    ? profileActivityByHandle[selectedProfileHandle]
+    : undefined;
+  const selectedProfileActivityPage = selectedProfileActivitySnapshot?.pages[selectedProfileActivityScope];
 
   useSymposiumRenderPreload(themePreloadRenders, activeRoomRender);
 
@@ -1270,6 +1329,11 @@ function SymposiumExperience({
           commentCount: incoming.commentCount,
           detailLoaded: true
         };
+      } else {
+        next = {
+          ...next,
+          comments: mergeSparseProfileComments(current?.comments ?? [], incoming.comments ?? [])
+        };
       }
       nextById.set(next.id, next);
     }
@@ -1430,8 +1494,11 @@ function SymposiumExperience({
         ?? Object.values(profilesRef.current).find((person) => person.name === selectedKey)
         ?? getProfileForName(selectedKey)
       : null;
-    return [refreshData(handle), refreshFollowing(handle), refreshProfileActivity(handle, handle),
-      ...(selected?.handle ? [refreshProfileFollows(selected.handle), refreshProfileActivity(selected.handle, handle)] : [])];
+    return [refreshData(handle), refreshFollowing(handle), refreshProfileActivity(handle, handle, "all"),
+      ...(selected?.handle ? [
+        refreshProfileFollows(selected.handle),
+        refreshProfileActivity(selected.handle, handle, profileActivityScopeForTab(profileActiveTab))
+      ] : [])];
   });
 
   const scheduleProfileActivityRefresh = useCoalescedRefresh(() => {
@@ -1442,8 +1509,15 @@ function SymposiumExperience({
         ?? Object.values(profilesRef.current).find((person) => person.name === selectedKey)
         ?? getProfileForName(selectedKey)
       : null;
-    const handles = Array.from(new Set([viewerHandle, selected?.handle].filter((handle): handle is string => Boolean(handle))));
-    return handles.map((handle) => refreshProfileActivity(handle, viewerHandle));
+    const requests = [refreshProfileActivity(viewerHandle, viewerHandle, "all")];
+    if (selected?.handle && cleanHandle(selected.handle) !== cleanHandle(viewerHandle)) {
+      requests.push(refreshProfileActivity(
+        selected.handle,
+        viewerHandle,
+        profileActivityScopeForTab(profileActiveTab)
+      ));
+    }
+    return requests;
   });
 
   const invalidateLiveQuotedSource = (source: QuoteSelection) => {
@@ -1908,7 +1982,7 @@ function SymposiumExperience({
     canonicalActionRevisionRef.current[key] = activity.revision;
     const handle = cleanHandle(activity.actorHandle);
     const current = profileActivityByHandleRef.current[handle]
-      ?? { entries: [], loaded: false, nextCursor: null, hiddenCommunityCounts: emptyProfileActivityCounts() };
+      ?? emptyProfileActivitySnapshot();
     const previous = canonicalActionState(
       current.entries,
       activity.subjectType,
@@ -1935,23 +2009,29 @@ function SymposiumExperience({
 
   const replaceCanonicalProfileActivity = (
     handle: string,
+    scope: ProfileActivityPageScope,
+    requestedActions: ToggleActionContract[],
     response: ProfileActivityResponseContract,
     requestStartRevisions: Record<string, number>,
     append = false
   ) => {
     const clean = cleanHandle(handle);
-    const currentEntries = profileActivityByHandleRef.current[clean]?.entries ?? [];
-    const entries = reconcileCanonicalActivityRefresh({
-      current: currentEntries,
-      incoming: append ? mergeCanonicalActivities(currentEntries, response.entries) : response.entries,
+    const current = profileActivityByHandleRef.current[clean] ?? emptyProfileActivitySnapshot();
+    const actionSet = new Set(requestedActions);
+    const currentScopeEntries = current.entries.filter((activity) => actionSet.has(activity.action));
+    const retainedEntries = current.entries.filter((activity) => !actionSet.has(activity.action));
+    const reconciledScopeEntries = reconcileCanonicalActivityRefresh({
+      current: currentScopeEntries,
+      incoming: append ? mergeCanonicalActivities(currentScopeEntries, response.entries) : response.entries,
       pendingKeys: pendingCanonicalActionKeysRef.current,
       currentRevisions: canonicalActionRevisionRef.current,
       requestStartRevisions
     });
-    const finalKeys = new Set(entries.map(canonicalActivityKey));
-    for (const activity of currentEntries) {
+    const entries = mergeCanonicalActivities(retainedEntries, reconciledScopeEntries);
+    const finalScopeKeys = new Set(reconciledScopeEntries.map(canonicalActivityKey));
+    for (const activity of currentScopeEntries) {
       const key = canonicalActivityKey(activity);
-      if (!finalKeys.has(key)) delete canonicalActionRevisionRef.current[key];
+      if (!finalScopeKeys.has(key)) delete canonicalActionRevisionRef.current[key];
     }
     const recencyUpdates: Record<string, number> = {};
     for (const activity of response.entries) {
@@ -1964,30 +2044,60 @@ function SymposiumExperience({
     }
     recordActivityRecency(recencyUpdates, Boolean(selectedProfileNameRef.current));
     setProfileActivitySnapshot(clean, {
+      ...current,
       entries,
       loaded: true,
-      nextCursor: response.nextCursor,
-      hiddenCommunityCounts: response.hiddenCommunityCounts,
-      totals: response.totals
+      nextCursor: scope === "all" ? response.nextCursor : current.nextCursor,
+      pages: {
+        ...current.pages,
+        [scope]: {
+          loaded: true,
+          loading: false,
+          nextCursor: response.nextCursor,
+          commentsNextCursor: response.commentsNextCursor ?? null
+        }
+      },
+      hiddenCommunityCounts: response.hiddenCommunityCounts ?? current.hiddenCommunityCounts,
+      totals: response.totals ?? current.totals
     });
   };
 
   const refreshProfileActivity = (
     handle: string,
     actorHandle = currentProfileRef.current.handle,
+    scope: ProfileActivityPageScope = "all",
     append = false
   ) => {
     const clean = cleanHandle(handle);
     const cleanActor = cleanHandle(actorHandle);
     if (!clean || clean === "@") return Promise.resolve();
-    const existingSnapshot = profileActivityByHandleRef.current[clean];
-    const startCursor = append ? existingSnapshot?.nextCursor ?? null : null;
-    if (append && !startCursor) return Promise.resolve();
-    const inFlightKey = `${clean}:${cleanActor}:${startCursor ?? "first"}`;
+    const existingSnapshot = profileActivityByHandleRef.current[clean] ?? emptyProfileActivitySnapshot();
+    const existingPage = existingSnapshot.pages[scope];
+    const configuredActions = profileActivityActionsForScope(scope);
+    const includeComments = profileActivityScopeIncludesComments(scope);
+    const startCursor = append ? existingPage?.nextCursor ?? null : null;
+    const commentsCursor = append ? existingPage?.commentsNextCursor ?? null : null;
+    const requestedActions = append && !startCursor ? [] : configuredActions;
+    const requestComments = includeComments && (!append || Boolean(commentsCursor));
+    if (append && !requestedActions.length && !requestComments) return Promise.resolve();
+    const inFlightKey = `${clean}:${cleanActor}:${scope}:${startCursor ?? "actions-end"}:${commentsCursor ?? "comments-end"}`;
     const existingRequest = profileActivityInFlightRef.current[inFlightKey];
     if (existingRequest) return existingRequest;
-    const requestId = (profileActivityRequestRef.current[clean] ?? 0) + 1;
-    profileActivityRequestRef.current[clean] = requestId;
+    const requestKey = `${clean}:${scope}`;
+    const requestId = (profileActivityRequestRef.current[requestKey] ?? 0) + 1;
+    profileActivityRequestRef.current[requestKey] = requestId;
+    setProfileActivitySnapshot(clean, {
+      ...existingSnapshot,
+      pages: {
+        ...existingSnapshot.pages,
+        [scope]: {
+          loaded: existingPage?.loaded ?? false,
+          loading: true,
+          nextCursor: existingPage?.nextCursor ?? null,
+          commentsNextCursor: existingPage?.commentsNextCursor ?? null
+        }
+      }
+    });
     setProfileActivityErrors((current) => {
       if (!current[clean]) return current;
       const next = { ...current };
@@ -1997,8 +2107,14 @@ function SymposiumExperience({
 
     const request = (async () => {
       const requestStartRevisions = { ...canonicalActionRevisionRef.current };
-      const params = new URLSearchParams({ limit: "50", actorHandle: cleanActor });
+      const params = new URLSearchParams({
+        limit: "50",
+        actorHandle: cleanActor,
+        actions: requestedActions.join(","),
+        includeComments: String(requestComments)
+      });
       if (startCursor) params.set("cursor", startCursor);
+      if (commentsCursor) params.set("commentsCursor", commentsCursor);
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 15_000);
       let data: Partial<ProfileActivityResponseContract>;
@@ -2012,30 +2128,71 @@ function SymposiumExperience({
       }
 
       const entries = (data.entries ?? []).filter(isCanonicalActionActivity);
-      const postIds = Array.from(new Set(entries.map((entry) => entry.postId))).slice(0, 50);
-      if (postIds.length) {
+      const authoredComments = (data.authoredComments ?? []).filter(
+        (activity): activity is ProfileAuthoredCommentActivityContract =>
+          Boolean(
+            activity &&
+            typeof activity.commentId === "string" &&
+            typeof activity.postId === "string" &&
+            typeof activity.occurredAt === "string" &&
+            Number.isFinite(Date.parse(activity.occurredAt))
+          )
+      );
+      const hydrateSubjects = async (
+        postIds: string[],
+        commentIds: string[]
+      ) => {
+        if (!postIds.length) return;
         const postParameters = new URLSearchParams({
-          ids: postIds.join(","),
+          ids: Array.from(new Set(postIds)).slice(0, 50).join(","),
           limit: String(postIds.length),
           actorHandle: cleanActor
         });
-        const page = await symposiumApi.request<PostPageResponseContract>(
+        if (commentIds.length) {
+          postParameters.set("commentIds", Array.from(new Set(commentIds)).slice(0, 50).join(","));
+        }
+        return symposiumApi.request<PostPageResponseContract>(
           `/api/posts?${postParameters.toString()}`,
           { cache: "no-store" }
         );
-        mergeBoundedRead(page);
-      }
+      };
+      const hydratedPages = await Promise.all([
+        hydrateSubjects(
+          entries.map((entry) => entry.postId),
+          entries.filter((entry) => entry.subjectType === "comment").map((entry) => entry.subjectId)
+        ),
+        hydrateSubjects(
+          authoredComments.map((activity) => activity.postId),
+          authoredComments.map((activity) => activity.commentId)
+        )
+      ]);
+      for (const page of hydratedPages) if (page) mergeBoundedRead(page);
 
-      if (profileActivityRequestRef.current[clean] !== requestId) return;
-      replaceCanonicalProfileActivity(clean, {
+      if (profileActivityRequestRef.current[requestKey] !== requestId) return;
+      replaceCanonicalProfileActivity(clean, scope, requestedActions, {
         entries,
         nextCursor: typeof data.nextCursor === "string" ? data.nextCursor : null,
+        authoredComments,
+        commentsNextCursor: typeof data.commentsNextCursor === "string" ? data.commentsNextCursor : null,
         hiddenCommunityCounts: data.hiddenCommunityCounts ?? existingSnapshot?.hiddenCommunityCounts ?? emptyProfileActivityCounts(),
         totals: data.totals ?? existingSnapshot?.totals
-      }, requestStartRevisions, append);
+      } as ProfileActivityResponseContract, requestStartRevisions, append);
     })().catch((error) => {
-      if (profileActivityRequestRef.current[clean] === requestId) {
+      if (profileActivityRequestRef.current[requestKey] === requestId) {
         setProfileActivityErrors((current) => ({ ...current, [clean]: true }));
+        const latest = profileActivityByHandleRef.current[clean] ?? emptyProfileActivitySnapshot();
+        setProfileActivitySnapshot(clean, {
+          ...latest,
+          pages: {
+            ...latest.pages,
+            [scope]: {
+              loaded: latest.pages[scope]?.loaded ?? false,
+              loading: false,
+              nextCursor: latest.pages[scope]?.nextCursor ?? null,
+              commentsNextCursor: latest.pages[scope]?.commentsNextCursor ?? null
+            }
+          }
+        });
       }
       throw error;
     });
@@ -2059,7 +2216,7 @@ function SymposiumExperience({
   ) => {
     const handle = cleanHandle(actorHandle);
     const current = profileActivityByHandleRef.current[handle]
-      ?? { entries: [], loaded: false, nextCursor: null, hiddenCommunityCounts: emptyProfileActivityCounts() };
+      ?? emptyProfileActivitySnapshot();
     const previous = canonicalActionState(current.entries, subjectType, subjectId, handle, action);
     const key = canonicalActivityKey({ subjectType, subjectId, actorHandle: handle, action });
     pendingCanonicalActionKeysRef.current.add(key);
@@ -2139,15 +2296,16 @@ function SymposiumExperience({
 
   useEffect(() => {
     if (entryMode !== "complete" || syncStatus === liveStatus.loading || !currentProfile.handle) return;
-    if (profileActivityByHandleRef.current[currentProfile.handle]?.loaded) return;
-    void refreshProfileActivity(currentProfile.handle, currentProfile.handle).catch(() => undefined);
+    if (profileActivityByHandleRef.current[currentProfile.handle]?.pages.all?.loaded) return;
+    void refreshProfileActivity(currentProfile.handle, currentProfile.handle, "all").catch(() => undefined);
   }, [currentProfile.handle, entryMode, syncStatus]);
 
   useEffect(() => {
     if (entryMode !== "complete" || syncStatus === liveStatus.loading || !selectedProfile?.handle) return;
-    if (profileActivityByHandleRef.current[selectedProfile.handle]?.loaded) return;
-    void refreshProfileActivity(selectedProfile.handle, currentProfile.handle).catch(() => undefined);
-  }, [currentProfile.handle, entryMode, selectedProfile?.handle, syncStatus]);
+    const scope = profileActivityScopeForTab(profileActiveTab);
+    if (profileActivityByHandleRef.current[selectedProfile.handle]?.pages[scope]?.loaded) return;
+    void refreshProfileActivity(selectedProfile.handle, currentProfile.handle, scope).catch(() => undefined);
+  }, [currentProfile.handle, entryMode, profileActiveTab, selectedProfile?.handle, syncStatus]);
 
   useEffect(() => {
     if (entryMode !== "complete" || syncStatus === liveStatus.loading || !activeFeedRequest) return;
@@ -3815,31 +3973,46 @@ function SymposiumExperience({
             getProfileCommentRecency={getProfileCommentRecency}
             activeTab={profileActiveTab}
             activityRevision={profileActivityRevision}
-            canonicalActivities={profileActivityByHandle[selectedProfile.handle]?.entries ?? []}
-            canonicalActivityLoaded={profileActivityByHandle[selectedProfile.handle]?.loaded ?? false}
+            canonicalActivities={selectedProfileActivitySnapshot?.entries ?? []}
+            canonicalActivityLoaded={selectedProfileActivityPage?.loaded ?? false}
             canonicalActivityError={Boolean(profileActivityErrors[selectedProfile.handle])}
-            canonicalActivityComplete={!profileActivityByHandle[selectedProfile.handle]?.nextCursor}
-            canonicalActivityTotals={profileActivityByHandle[selectedProfile.handle]?.totals}
-            authoredActivityComplete={!feedPages[`profile:${selectedProfile.handle}:authored`]?.nextCursor}
-            activityLoadingMore={Boolean(
-              profileActivityInFlightRef.current[
-                `${selectedProfile.handle}:${currentProfile.handle}:${profileActivityByHandle[selectedProfile.handle]?.nextCursor ?? "first"}`
-              ] || feedPages[`profile:${selectedProfile.handle}:authored`]?.loading
+            canonicalActivityComplete={Boolean(
+              selectedProfileActivityPage?.loaded &&
+              (!profileActivityActionsForScope(selectedProfileActivityScope).length || !selectedProfileActivityPage.nextCursor) &&
+              (!profileActivityScopeIncludesComments(selectedProfileActivityScope) || !selectedProfileActivityPage.commentsNextCursor)
             )}
-            hiddenCommunityCounts={profileActivityByHandle[selectedProfile.handle]?.hiddenCommunityCounts ?? emptyProfileActivityCounts()}
+            canonicalActivityTotals={selectedProfileActivitySnapshot?.totals}
+            authoredActivityComplete={
+              !profileTabUsesAuthoredPosts(profileActiveTab) ||
+              Boolean(feedPages[`profile:${selectedProfile.handle}:authored`]?.initialized && !feedPages[`profile:${selectedProfile.handle}:authored`]?.nextCursor)
+            }
+            activityLoadingMore={Boolean(
+              selectedProfileActivityPage?.loading ||
+              (profileTabUsesAuthoredPosts(profileActiveTab) && feedPages[`profile:${selectedProfile.handle}:authored`]?.loading)
+            )}
+            hiddenCommunityCounts={selectedProfileActivitySnapshot?.hiddenCommunityCounts ?? emptyProfileActivityCounts()}
             communities={communities}
             onOpenCommunity={openCommunity}
             onActiveTabChange={changeProfileTab}
             onRetryActivity={() => {
-              void refreshProfileActivity(selectedProfile.handle, currentProfile.handle).catch(() => undefined);
+              void refreshProfileActivity(
+                selectedProfile.handle,
+                currentProfile.handle,
+                selectedProfileActivityScope
+              ).catch(() => undefined);
             }}
             onLoadMoreActivity={() => {
               const tasks: Promise<unknown>[] = [];
-              if (profileActivityByHandle[selectedProfile.handle]?.nextCursor) {
-                tasks.push(refreshProfileActivity(selectedProfile.handle, currentProfile.handle, true));
+              if (selectedProfileActivityPage?.nextCursor || selectedProfileActivityPage?.commentsNextCursor) {
+                tasks.push(refreshProfileActivity(
+                  selectedProfile.handle,
+                  currentProfile.handle,
+                  selectedProfileActivityScope,
+                  true
+                ));
               }
               const postPageKey = `profile:${selectedProfile.handle}:authored`;
-              if (feedPages[postPageKey]?.nextCursor) {
+              if (profileTabUsesAuthoredPosts(profileActiveTab) && feedPages[postPageKey]?.nextCursor) {
                 tasks.push(loadPostPage(postPageKey, { authorHandle: selectedProfile.handle, limit: 24 }, true));
               }
               void Promise.all(tasks).catch(() => setSyncStatus("More profile activity could not load"));

@@ -22,6 +22,20 @@ export const dynamic = "force-dynamic";
 const localCommentCount = (comments: Awaited<ReturnType<typeof getSnapshot>>["items"][number]["comments"]): number =>
   comments.reduce((total, comment) => total + (comment.deletedAt ? 0 : 1) + localCommentCount(comment.replies ?? []), 0);
 
+const selectLocalComments = (
+  comments: Awaited<ReturnType<typeof getSnapshot>>["items"][number]["comments"],
+  selectedIds: ReadonlySet<string>
+): Awaited<ReturnType<typeof getSnapshot>>["items"][number]["comments"] => {
+  const selected: Awaited<ReturnType<typeof getSnapshot>>["items"][number]["comments"] = [];
+  for (const comment of comments) {
+    if (comment.id && selectedIds.has(comment.id) && !comment.deletedAt) {
+      selected.push({ ...comment, replies: [] });
+    }
+    selected.push(...selectLocalComments(comment.replies ?? [], selectedIds));
+  }
+  return selected;
+};
+
 export async function GET(request: Request) {
   const parameters = new URL(request.url).searchParams;
   const actorHandle = parameters.get("actorHandle") ?? undefined;
@@ -43,7 +57,8 @@ export async function GET(request: Request) {
     authorHandle: parameters.get("authorHandle") ?? undefined,
     saved: parameters.get("saved") === "true" ? true : undefined,
     following: parameters.get("following") === "true" ? true : undefined,
-    ids: parameters.get("ids")?.split(",").filter(Boolean)
+    ids: parameters.get("ids")?.split(",").filter(Boolean),
+    commentIds: parameters.get("commentIds")?.split(",").filter(Boolean)
   });
   if (!parsed.success) return jsonError("Invalid post page query.", 400);
   const input = parsed.data;
@@ -63,7 +78,7 @@ export async function GET(request: Request) {
     .filter((item) => !item.deletedAt)
     .filter((item) => (item.room !== "office" && item.kind !== "draft")
       || Boolean(viewerHandle && cleanHandle(item.authorHandle ?? "") === viewerHandle))
-    .filter((item) => input.communityId || !item.communityId || item.postType === "paper")
+    .filter((item) => input.communityId || input.ids?.length || input.commentIds?.length || !item.communityId || item.postType === "paper")
     .filter((item) => !input.room || item.room === input.room)
     .filter((item) => !input.postType || postTypeForItem(item) === input.postType)
     .filter((item) => !input.postTypes?.length || input.postTypes.includes(postTypeForItem(item)!))
@@ -77,11 +92,12 @@ export async function GET(request: Request) {
   const limit = input.ids?.length ? Math.min(input.ids.length, 50) : input.limit;
   const page = visible.slice(0, limit + 1);
   const hasMore = page.length > limit;
+  const selectedCommentIds = new Set(input.commentIds ?? []);
   const items = page.slice(0, limit).map((item) => ({
     ...item,
     commentCount: localCommentCount(item.comments),
     detailLoaded: false,
-    comments: [],
+    comments: selectedCommentIds.size ? selectLocalComments(item.comments, selectedCommentIds) : [],
     saved: Boolean(viewerHandle && item.savedBy?.some((handle) => cleanHandle(handle) === viewerHandle)),
     savedBy: viewerHandle && item.savedBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : [],
     signaledBy: viewerHandle && item.signaledBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : [],

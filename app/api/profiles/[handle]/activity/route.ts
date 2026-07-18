@@ -2,7 +2,7 @@ import { getSnapshot } from "@/lib/dataStore";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 import type { ToggleActionContract } from "@/packages/contracts/src";
-import { emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "@/lib/profileActivity";
 import { listLocalCommunities } from "@/lib/localCommunityStore";
 
 export const runtime = "nodejs";
@@ -37,21 +37,30 @@ export async function GET(request: Request, context: Context) {
   ];
   const rawLimit = Number(url.searchParams.get("limit") ?? 200);
   const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 500) : 200;
-  const rawCursor = url.searchParams.get("cursor");
-  let offset = 0;
-  if (rawCursor) {
+  const decodeOffset = (rawCursor: string | null) => {
+    if (!rawCursor) return 0;
     try {
       const parsed = JSON.parse(Buffer.from(rawCursor, "base64url").toString("utf8")) as { offset?: unknown };
       if (typeof parsed.offset !== "number" || !Number.isInteger(parsed.offset) || parsed.offset < 0) {
-        return Response.json({ error: "Invalid activity cursor." }, { status: 400 });
+        return null;
       }
-      offset = parsed.offset;
+      return parsed.offset;
     } catch {
-      return Response.json({ error: "Invalid activity cursor." }, { status: 400 });
+      return null;
     }
+  };
+  const offset = decodeOffset(url.searchParams.get("cursor"));
+  const commentsOffset = decodeOffset(url.searchParams.get("commentsCursor"));
+  if (offset === null || commentsOffset === null) {
+    return Response.json({ error: "Invalid profile activity cursor." }, { status: 400 });
   }
-  const allowed = new Set(allowedActions);
-  const communities = await listLocalCommunities();
+  const requestedActions = new Set(
+    (url.searchParams.get("actions")?.split(",").filter(Boolean) ?? allowedActions) as ToggleActionContract[]
+  );
+  const activityActions = allowedActions.filter((action) => requestedActions.has(action));
+  const allowed = new Set(activityActions);
+  const includeComments = url.searchParams.get("includeComments") !== "false";
+  const communities = await listLocalCommunities(actorHandle === "@" ? undefined : actorHandle);
   const itemById = new Map(snapshot.items.map((item) => [item.id, item]));
   const entries = Object.values(snapshot.actionLedger)
     .filter(
@@ -74,12 +83,25 @@ export async function GET(request: Request, context: Context) {
     });
   const page = entries.slice(offset, offset + limit);
   const nextOffset = offset + page.length;
+  const authoredCommentEntries = includeComments
+    ? buildLegacyProfileAuthoredComments(
+        snapshot.items.filter((item) => ownProfile || profileCommentsArePubliclyListable(item, communities)),
+        targetHandle
+      )
+    : [];
+  const authoredComments = authoredCommentEntries.slice(commentsOffset, commentsOffset + limit);
+  const nextCommentsOffset = commentsOffset + authoredComments.length;
 
   return Response.json({
     entries: page,
     nextCursor:
       nextOffset < entries.length
         ? Buffer.from(JSON.stringify({ offset: nextOffset })).toString("base64url")
+        : null,
+    authoredComments,
+    commentsNextCursor:
+      nextCommentsOffset < authoredCommentEntries.length
+        ? Buffer.from(JSON.stringify({ offset: nextCommentsOffset })).toString("base64url")
         : null,
     hiddenCommunityCounts: ownProfile
       ? emptyProfileActivityCounts()

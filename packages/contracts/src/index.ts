@@ -831,9 +831,24 @@ export const canonicalActionActivitySchema = z.object({
   occurredAt: z.string().datetime()
 });
 
+export const profileAuthoredCommentActivitySchema = z.object({
+  commentId: z.string().min(1),
+  postId: z.string().min(1),
+  occurredAt: z.string().datetime()
+});
+
 export const profileActivityQuerySchema = z.object({
   cursor: z.string().max(300).optional(),
-  limit: z.coerce.number().int().positive().max(500).default(200)
+  commentsCursor: z.string().max(300).optional(),
+  limit: z.coerce.number().int().positive().max(500).default(200),
+  actions: z.preprocess(
+    (value) => typeof value === "string" ? value.split(",").filter(Boolean) : value,
+    z.array(toggleActionSchema).max(3).optional()
+  ),
+  includeComments: z.preprocess(
+    (value) => value === "true" ? true : value === "false" ? false : value,
+    z.boolean().default(true)
+  )
 });
 
 export const profileActivityCountsSchema = z.object({
@@ -851,6 +866,8 @@ export const profileActivityCountsSchema = z.object({
 export const profileActivityResponseSchema = z.object({
   entries: z.array(canonicalActionActivitySchema),
   nextCursor: z.string().nullable(),
+  authoredComments: z.array(profileAuthoredCommentActivitySchema).optional(),
+  commentsNextCursor: z.string().nullable().optional(),
   hiddenCommunityCounts: profileActivityCountsSchema,
   totals: profileActivityCountsSchema.optional()
 });
@@ -996,7 +1013,8 @@ export const postPageQuerySchema = z.object({
   authorHandle: z.string().trim().min(1).max(80).optional(),
   saved: z.boolean().optional(),
   following: z.boolean().optional(),
-  ids: z.array(z.string().trim().min(1).max(240)).max(50).optional()
+  ids: z.array(z.string().trim().min(1).max(240)).max(50).optional(),
+  commentIds: z.array(z.string().trim().min(1).max(240)).max(50).optional()
 });
 
 export const postPageResponseSchema = z.object({
@@ -1345,6 +1363,7 @@ export type CreateCommentInputContract = z.infer<typeof createCommentInputSchema
 export type UpdateCommentInputContract = z.infer<typeof updateCommentInputSchema>;
 export type PostActionInputContract = z.infer<typeof postActionInputSchema>;
 export type CanonicalActionActivityContract = z.infer<typeof canonicalActionActivitySchema>;
+export type ProfileAuthoredCommentActivityContract = z.infer<typeof profileAuthoredCommentActivitySchema>;
 export type ProfileActivityQueryContract = z.infer<typeof profileActivityQuerySchema>;
 export type ProfileActivityCountsContract = z.infer<typeof profileActivityCountsSchema>;
 export type ProfileActivityResponseContract = z.infer<typeof profileActivityResponseSchema>;

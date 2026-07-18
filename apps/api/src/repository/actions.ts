@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import type {
   CanonicalActionActivityContract,
+  ProfileAuthoredCommentActivityContract,
   ProfileActivityCountsContract,
   ProfileActivityQueryContract,
   ProfileActivityResponseContract,
@@ -161,7 +162,12 @@ type ActivityCursor = {
   action: ToggleActionContract;
 };
 
-const encodeActivityCursor = (activity: CanonicalActionActivityContract) =>
+type ProfileCommentCursor = {
+  occurredAt: string;
+  commentId: string;
+};
+
+export const encodeActivityCursor = (activity: CanonicalActionActivityContract) =>
   Buffer.from(
     JSON.stringify({
       occurredAt: activity.occurredAt,
@@ -190,11 +196,63 @@ export const decodeActivityCursor = (cursor?: string) => {
   }
 };
 
+export const encodeProfileCommentCursor = (activity: ProfileAuthoredCommentActivityContract) =>
+  Buffer.from(
+    JSON.stringify({
+      occurredAt: activity.occurredAt,
+      commentId: activity.commentId
+    } satisfies ProfileCommentCursor)
+  ).toString("base64url");
+
+export const decodeProfileCommentCursor = (cursor?: string) => {
+  if (!cursor) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<ProfileCommentCursor>;
+    if (
+      typeof parsed.occurredAt !== "string" ||
+      Number.isNaN(Date.parse(parsed.occurredAt)) ||
+      typeof parsed.commentId !== "string" ||
+      !parsed.commentId ||
+      parsed.commentId.length > 240
+    ) {
+      return null;
+    }
+    return parsed as ProfileCommentCursor;
+  } catch {
+    return null;
+  }
+};
+
 type ProfileActivityRow = ActionLedgerRow & {
   subjectType: CanonicalActionActivityContract["subjectType"];
   subjectId: string;
   postId: string;
 };
+
+type ProfileAuthoredCommentRow = {
+  commentId: string;
+  postId: string;
+  occurredAt: Date | string;
+};
+
+export const PROFILE_AUTHORED_COMMENTS_SQL = `SELECT
+       comment.id AS "commentId",
+       comment.post_id AS "postId",
+       comment.created_at AS "occurredAt"
+     FROM comments comment
+     INNER JOIN posts post ON post.id = comment.post_id
+     LEFT JOIN communities community ON community.id = post.community_id
+     WHERE comment.author_handle = $1
+       AND comment.deleted_at IS NULL
+       AND post.deleted_at IS NULL
+       AND ($5::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
+       AND ($5::boolean OR post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public')
+       AND (
+         $2::timestamptz IS NULL OR
+         (comment.created_at, comment.id) < ($2::timestamptz, $3::text)
+       )
+     ORDER BY comment.created_at DESC, comment.id DESC
+     LIMIT $4`;
 
 export const PROFILE_ACTIVITY_COUNTS_SQL = `WITH scoped_posts AS (
        SELECT
@@ -376,6 +434,41 @@ export const PROFILE_ACTIVITY_SQL = `WITH profile_activity AS (
      ORDER BY "updatedAt" DESC, "subjectType" DESC, "subjectId" DESC, action DESC
      LIMIT $7`;
 
+const listAuthoredProfileComments = async (
+  client: PoolClient,
+  actorHandle: string,
+  query: ProfileActivityQueryContract,
+  includePrivateWorkspace: boolean
+) => {
+  if (!query.includeComments) {
+    return { authoredComments: [], commentsNextCursor: null };
+  }
+  const cursor = decodeProfileCommentCursor(query.commentsCursor);
+  const result = await client.query<ProfileAuthoredCommentRow>(
+    PROFILE_AUTHORED_COMMENTS_SQL,
+    [
+      actorHandle,
+      cursor?.occurredAt ?? null,
+      cursor?.commentId ?? "",
+      query.limit + 1,
+      includePrivateWorkspace
+    ]
+  );
+  const activities = result.rows.map((row): ProfileAuthoredCommentActivityContract => ({
+    commentId: row.commentId,
+    postId: row.postId,
+    occurredAt: new Date(row.occurredAt).toISOString()
+  }));
+  const hasNextPage = activities.length > query.limit;
+  const authoredComments = hasNextPage ? activities.slice(0, query.limit) : activities;
+  return {
+    authoredComments,
+    commentsNextCursor: hasNextPage && authoredComments.length
+      ? encodeProfileCommentCursor(authoredComments[authoredComments.length - 1])
+      : null
+  };
+};
+
 export const listCanonicalProfileActivity = async (
   client: PoolClient,
   actorHandle: string,
@@ -384,13 +477,18 @@ export const listCanonicalProfileActivity = async (
   includeInactive: boolean
 ): Promise<ProfileActivityResponseContract> => {
   const countSummary = await profileActivityCountSummary(client, actorHandle, allowedActions, includeInactive);
-  if (!allowedActions.length) return { entries: [], nextCursor: null, ...countSummary };
+  const requestedActions = new Set(query.actions ?? allowedActions);
+  const activityActions = allowedActions.filter((action) => requestedActions.has(action));
+  const commentSummary = await listAuthoredProfileComments(client, actorHandle, query, includeInactive);
+  if (!activityActions.length) {
+    return { entries: [], nextCursor: null, ...commentSummary, ...countSummary };
+  }
   const cursor = decodeActivityCursor(query.cursor);
   const result = await client.query<ProfileActivityRow>(
     PROFILE_ACTIVITY_SQL,
     [
       actorHandle,
-      allowedActions,
+      activityActions,
       cursor?.occurredAt ?? null,
       cursor?.subjectType ?? "post",
       cursor?.subjectId ?? "",
@@ -408,6 +506,7 @@ export const listCanonicalProfileActivity = async (
   return {
     entries,
     nextCursor: hasNextPage && entries.length ? encodeActivityCursor(entries[entries.length - 1]) : null,
+    ...commentSummary,
     ...countSummary
   };
 };

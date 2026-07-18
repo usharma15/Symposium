@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { PROFILE_ACTIVITY_COUNTS_SQL, PROFILE_ACTIVITY_SQL } from "@/apps/api/src/repository/actions";
+import {
+  PROFILE_ACTIVITY_COUNTS_SQL,
+  PROFILE_ACTIVITY_SQL,
+  PROFILE_AUTHORED_COMMENTS_SQL
+} from "@/apps/api/src/repository/actions";
+import type { CanonicalActionActivityContract } from "@/packages/contracts/src";
 import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
 import {
   applyProfileActivityActionTotalTransition,
+  buildLegacyProfileAuthoredComments,
   itemMatchesProfilePostAction,
+  mergeCanonicalActivities,
   profileActivityCounts,
   profileCommentsArePubliclyListable,
   profileItemIsPubliclyListable,
@@ -147,6 +154,67 @@ assert.deepEqual(reconciled, [
   { id: "added", recency: 20 },
   { id: "existing-a", recency: 12 }
 ]);
+assert.deepEqual(
+  reconcileProfileActivitySlots(
+    [{ id: "older", recency: 10 }, { id: "newer", recency: 20 }],
+    [{ id: "newer", recency: 20 }, { id: "older", recency: 10 }]
+  ).map((entry) => entry.id),
+  ["newer", "older"],
+  "A canonical refresh must adopt the server's exact newest-first order."
+);
+
+const canonicalActivity = (
+  subjectId: string,
+  occurredAt: string,
+  action: CanonicalActionActivityContract["action"] = "signal"
+): CanonicalActionActivityContract => ({
+  subjectType: "post",
+  subjectId,
+  postId: subjectId,
+  actorHandle: person.handle,
+  action,
+  active: true,
+  count: 1,
+  revision: 1,
+  occurredAt
+});
+assert.deepEqual(
+  mergeCanonicalActivities([], [
+    canonicalActivity("oldest", "2026-07-15T12:00:00.000Z"),
+    canonicalActivity("newest", "2026-07-17T12:00:00.000Z"),
+    canonicalActivity("tie-a", "2026-07-16T12:00:00.000Z"),
+    canonicalActivity("tie-b", "2026-07-16T12:00:00.000Z")
+  ]).map((entry) => entry.subjectId),
+  ["newest", "tie-b", "tie-a", "oldest"]
+);
+
+const authoredComments = buildLegacyProfileAuthoredComments([
+  {
+    ...item,
+    id: "comment-host",
+    comments: [
+      {
+        id: "older-comment",
+        author: person.name,
+        authorHandle: person.handle,
+        body: "Older comment",
+        stance: "Comment",
+        createdAt: "2026-07-15T12:00:00.000Z",
+        replies: []
+      },
+      {
+        id: "newer-comment",
+        author: person.name,
+        authorHandle: person.handle,
+        body: "Newer comment",
+        stance: "Comment",
+        createdAt: "2026-07-17T12:00:00.000Z",
+        replies: []
+      }
+    ]
+  }
+], person.handle);
+assert.deepEqual(authoredComments.map((entry) => entry.commentId), ["newer-comment", "older-comment"]);
 
 const allSlots = [
   { id: "authored", recency: 12 },
@@ -176,6 +244,25 @@ assert.match(profileViews, /InfiniteFeedBoundary/);
 assert.match(profileViews, /onLoadMore=\{onLoadMoreActivity\}/);
 assert.match(profileViews, /Counts and post order will appear together when they are authoritative\./);
 assert.match(profileViews, /canonicalActivityError \? \(/);
+assert.match(profileViews, /canonicalPostActivity\(item, action\)\?\.occurredAt/);
+assert.doesNotMatch(
+  profileViews,
+  /canonicalActivityLoaded && !tabs\.some/,
+  "Canonical profile routes must survive the authenticated identity transition."
+);
+
+const profileShell = readFileSync(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
+for (const scopedPagingBoundary of [
+  "commentsCursor",
+  "includeComments",
+  "actions: requestedActions.join(\",\")",
+  "const requestKey = `${clean}:${scope}`"
+]) {
+  assert.ok(
+    profileShell.includes(scopedPagingBoundary),
+    `Profile activity paging must retain ${scopedPagingBoundary}.`
+  );
+}
 
 for (const qualifiedReference of [
   "post_action.revision",
@@ -198,6 +285,17 @@ assert.ok(
   PROFILE_ACTIVITY_SQL.includes("$8::boolean OR post.community_id IS NULL"),
   "A profile owner must receive their complete private-community activity ledger."
 );
+for (const authoredCommentBoundary of [
+  "comment.author_handle = $1",
+  "(comment.created_at, comment.id) <",
+  "ORDER BY comment.created_at DESC, comment.id DESC",
+  "post.post_type = 'paper' OR community.visibility = 'public'"
+]) {
+  assert.ok(
+    PROFILE_AUTHORED_COMMENTS_SQL.includes(authoredCommentBoundary),
+    `Authored comment paging must retain ${authoredCommentBoundary}.`
+  );
+}
 for (const exactCountBoundary of [
   "totalAll",
   "totalPapers",
@@ -219,8 +317,12 @@ console.log(
       ok: true,
       checked: [
         "self-authored profile actions",
+        "authored comment paging and hydration",
         "activity deduplication",
+        "persisted action-timestamp ordering",
+        "deterministic equal-timestamp ordering",
         "live slot reconciliation",
+        "rapid profile-filter request isolation",
         "loading-to-canonical first-frame replacement",
         "authoritative profile count and order loading boundary",
         "cursor-independent exact activity totals",

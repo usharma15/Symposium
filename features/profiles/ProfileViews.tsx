@@ -301,7 +301,10 @@ export function ProfileView({
     activity,
     recency: activity.recency
   });
-  const sortEntries = (entries: ProfileActivityEntry[]) => [...entries].sort((a, b) => b.recency - a.recency);
+  const sortEntries = (entries: ProfileActivityEntry[]) => [...entries].sort((a, b) => {
+    const timestampDelta = b.recency - a.recency;
+    return timestampDelta || b.id.localeCompare(a.id);
+  });
   const entryToSlot = (entry: ProfileActivityEntry): ProfileActivitySlot =>
     entry.type === "post"
       ? { id: entry.id, type: "post", itemId: entry.item.id, recency: entry.recency }
@@ -318,14 +321,21 @@ export function ProfileView({
   const canShowLikes = actorHandle === person.handle || inferredLikesPublic(person);
   const canShowReshares = actorHandle === person.handle || inferredResharesPublic(person);
   const canShowSaved = actorHandle === person.handle;
+  const canonicalPostActivity = (item: InquiryItem, action: ToggleActionContract) =>
+    canonicalActionState(canonicalActivities, "post", item.id, person.handle, action);
   const canonicalPostActionActive = (item: InquiryItem, action: ToggleActionContract) => {
     if (!canonicalActivityLoaded) {
       return itemMatchesProfilePostAction(item, person, action, profile.handle);
     }
-    const activity = canonicalActionState(canonicalActivities, "post", item.id, person.handle, action);
-    return activity
-      ? activity.active
-      : !canonicalActivityComplete && itemMatchesProfilePostAction(item, person, action, profile.handle);
+    const activity = canonicalPostActivity(item, action);
+    return activity?.active ?? false;
+  };
+  const postActionRecency = (item: InquiryItem, action: ToggleActionContract) => {
+    const occurredAt = canonicalPostActivity(item, action)?.occurredAt;
+    const timestamp = occurredAt ? Date.parse(occurredAt) : Number.NaN;
+    return canonicalActivityLoaded && Number.isFinite(timestamp)
+      ? timestamp
+      : getProfileRecency(item, person.handle, action);
   };
   const canonicalCommentActionMatches = (
     _item: InquiryItem,
@@ -336,9 +346,7 @@ export function ProfileView({
     if (!comment.id) return false;
     if (!canonicalActivityLoaded) return commentMatchesProfileActivity(comment, person, kind);
     const activity = canonicalActionState(canonicalActivities, "comment", comment.id, person.handle, kind);
-    return activity
-      ? activity.active
-      : !canonicalActivityComplete && commentMatchesProfileActivity(comment, person, kind);
+    return activity?.active ?? false;
   };
   const authored = byPublishedRecency(profileItems.filter(isAuthor));
   const papers = authored.filter((item) => itemHasPostType(item, "paper"));
@@ -346,7 +354,20 @@ export function ProfileView({
   const proposals = authored.filter((item) => itemHasPostType(item, "proposal"));
   const opportunities = authored.filter((item) => itemHasPostType(item, "opportunity"));
   const commentRecency = (item: InquiryItem, comment: InquiryComment, kind: ProfileCommentActivityKind) =>
-    getProfileCommentRecency(item, comment, person.handle, kind);
+    (() => {
+      if (kind !== "comments" && comment.id && canonicalActivityLoaded) {
+        const occurredAt = canonicalActionState(
+          canonicalActivities,
+          "comment",
+          comment.id,
+          person.handle,
+          kind
+        )?.occurredAt;
+        const timestamp = occurredAt ? Date.parse(occurredAt) : Number.NaN;
+        if (Number.isFinite(timestamp)) return timestamp;
+      }
+      return getProfileCommentRecency(item, comment, person.handle, kind);
+    })();
   const commentActivities = collectProfileComments(
     profileCommentItems,
     person,
@@ -380,9 +401,9 @@ export function ProfileView({
   const thoughtEntries = thoughts.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
   const proposalEntries = proposals.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
   const opportunityEntries = opportunities.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
-  const reshareEntries = reshares.map((item) => postEntry(item, getProfileRecency(item, person.handle, "fork")));
-  const likeEntries = likes.map((item) => postEntry(item, getProfileRecency(item, person.handle, "signal")));
-  const savedEntries = saved.map((item) => postEntry(item, getProfileRecency(item, person.handle, "save")));
+  const reshareEntries = reshares.map((item) => postEntry(item, postActionRecency(item, "fork")));
+  const likeEntries = likes.map((item) => postEntry(item, postActionRecency(item, "signal")));
+  const savedEntries = saved.map((item) => postEntry(item, postActionRecency(item, "save")));
   const commentEntries = commentActivities.map(commentEntry);
   const commentReshareEntries = commentReshares.map(commentEntry);
   const quotedPostEntries = authored
@@ -443,10 +464,6 @@ export function ProfileView({
     ...(canShowLikes ? [{ id: "likes" as const, label: "Likes" }] : []),
     ...(canShowSaved ? [{ id: "saved" as const, label: "Saved" }] : [])
   ];
-
-  useEffect(() => {
-    if (!tabs.some((tab) => tab.id === activeTab)) onActiveTabChange("all");
-  }, [activeTab, onActiveTabChange, tabs]);
 
   const nextVisibleSlots = tabEntries[activeTab].map(entryToSlot);
   const visibleSlotContext = `${person.handle}:${activeTab}:${activityRevision}:${canonicalActivityLoaded ? "canonical" : "loading"}`;

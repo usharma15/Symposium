@@ -6,7 +6,7 @@ import {
   type ProfileActivityResponseContract,
   type ToggleActionContract
 } from "../../../../packages/contracts/src";
-import { buildLegacyProfileActivity, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { buildLegacyProfileActivity, buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "@/lib/profileActivity";
 import { researchCommunities } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
@@ -15,7 +15,7 @@ import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";
 import { runAtomic } from "../services/transactions";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
-import { decodeActivityCursor, listCanonicalProfileActivity } from "./actions";
+import { decodeActivityCursor, decodeProfileCommentCursor, encodeActivityCursor, encodeProfileCommentCursor, listCanonicalProfileActivity } from "./actions";
 import { actorHandle, ensureLiveData, ensureProfileHandle, getInitialState } from "./foundation";
 
 export const listProfileActivity = async (
@@ -27,6 +27,9 @@ export const listProfileActivity = async (
   const query = profileActivityQuerySchema.parse(rawQuery ?? {});
   if (query.cursor && !decodeActivityCursor(query.cursor)) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid profile activity cursor." });
+  }
+  if (query.commentsCursor && !decodeProfileCommentCursor(query.commentsCursor)) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid profile comment cursor." });
   }
 
   const requesterHandle = actor.handle ? cleanHandle(actor.handle) : null;
@@ -41,13 +44,40 @@ export const listProfileActivity = async (
       ...(ownProfile || person.likesPublic !== false ? (["signal"] as const) : []),
       ...(ownProfile || person.resharesPublic !== false ? (["fork"] as const) : [])
     ];
-    return {
-      entries: buildLegacyProfileActivity(
+    const requestedActions = new Set(query.actions ?? allowedActions);
+    const activityActions = allowedActions.filter((action) => requestedActions.has(action));
+    const activityCursor = decodeActivityCursor(query.cursor);
+    const allEntries = buildLegacyProfileActivity(
         snapshot.items.filter((item) => ownProfile || profileItemIsPubliclyListable(item, researchCommunities)),
         handle,
-        allowedActions
-      ).slice(0, query.limit),
-      nextCursor: null,
+        activityActions
+      ).filter((activity) => !activityCursor || (
+        activity.occurredAt < activityCursor.occurredAt ||
+        (activity.occurredAt === activityCursor.occurredAt &&
+          `${activity.subjectType}:${activity.subjectId}:${activity.action}` <
+          `${activityCursor.subjectType}:${activityCursor.subjectId}:${activityCursor.action}`)
+      ));
+    const entries = allEntries.slice(0, query.limit);
+    const commentCursor = decodeProfileCommentCursor(query.commentsCursor);
+    const allAuthoredComments = query.includeComments
+      ? buildLegacyProfileAuthoredComments(
+          snapshot.items.filter((item) => ownProfile || profileCommentsArePubliclyListable(item, researchCommunities)),
+          handle
+        ).filter((activity) => !commentCursor || (
+          activity.occurredAt < commentCursor.occurredAt ||
+          (activity.occurredAt === commentCursor.occurredAt && activity.commentId < commentCursor.commentId)
+        ))
+      : [];
+    const authoredComments = allAuthoredComments.slice(0, query.limit);
+    return {
+      entries,
+      nextCursor: allEntries.length > entries.length && entries.length
+        ? encodeActivityCursor(entries[entries.length - 1])
+        : null,
+      authoredComments,
+      commentsNextCursor: allAuthoredComments.length > authoredComments.length && authoredComments.length
+        ? encodeProfileCommentCursor(authoredComments[authoredComments.length - 1])
+        : null,
       hiddenCommunityCounts: ownProfile
         ? emptyProfileActivityCounts()
         : hiddenCommunityActivityCounts(snapshot.items, researchCommunities, handle, allowedActions),
