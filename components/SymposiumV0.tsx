@@ -510,7 +510,10 @@ function SymposiumExperience({
   const [theme, setTheme] = useState<Theme>("day");
   const [entryMode, setEntryMode] = useState<EntryMode>(() => entryModeForBrowserSession(initialShouldPlayEntrance));
   const [signedIn, setSignedIn] = useState(false);
-  const readSessionReady = !clerkEnabled || (authLoaded && (!isSignedIn || signedIn));
+  const [browserReadStateHydrated, setBrowserReadStateHydrated] = useState(false);
+  const readSessionReady = browserReadStateHydrated && (
+    !clerkEnabled || (authLoaded && (!isSignedIn || signedIn))
+  );
   const { replayEntrance, shouldPlayEntrance } = useBrowserSessionEntrance(initialShouldPlayEntrance);
   const [activeRoom, setActiveRoom] = useState<RoomId>(() =>
     roomForCanonicalRoute(
@@ -1772,6 +1775,7 @@ function SymposiumExperience({
       applyInitialRouteState();
       window.sessionStorage.setItem("symposium-entry-complete", "true");
     }
+    setBrowserReadStateHydrated(true);
 
     if (!clerkEnabled) {
       refreshData(storedProfileHandle ?? undefined).catch(() => {

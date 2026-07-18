@@ -166,7 +166,8 @@ const main = async () => {
   assert.match(component, /readCachedProfileActivity/);
   assert.match(component, /page\?\.loaded && !page\.stale/);
   assert.match(component, /if \(selectedProfile\?\.handle\) return;/);
-  assert.match(component, /const readSessionReady = !clerkEnabled/);
+  assert.match(component, /const readSessionReady = browserReadStateHydrated &&/);
+  assert.match(component, /setBrowserReadStateHydrated\(true\);\s+if \(!clerkEnabled\)/);
   assert.match(component, /const cachedIdentity = readCachedIdentity\(window\.localStorage, userId\)/);
   assert.match(component, /persistCachedIdentity\(window\.localStorage, userId, data\.profile\)/);
   assert.match(component, /window\.setTimeout\(\(\) => controller\.abort\(\), 15_000\)/);
@@ -193,6 +194,7 @@ const main = async () => {
           "non-blocking bootstrap and profile activity",
           "bounded inline profile activity loading",
           "single authenticated bootstrap request",
+          "persisted-viewer read hydration gate",
           "exact-Clerk-user cached identity isolation",
           "bounded viewer-scoped profile read projections"
         ]
