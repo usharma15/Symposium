@@ -1268,6 +1268,7 @@ export const conversationSummarySchema = z.object({
   participants: z.array(conversationParticipantSchema).max(64),
   lastMessage: messageSchema.nullable(),
   draftBody: z.string().max(8000),
+  draftUpdatedAt: z.string().datetime().nullable(),
   updatedAt: z.string().datetime()
 });
 

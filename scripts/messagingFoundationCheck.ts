@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildApp } from "@/apps/api/src/server";
+import { emptyMessageDraftState, reduceMessageDraft } from "@/features/messages/messageDraftState";
 import {
   conversationListQuerySchema,
   createGroupConversationInputSchema,
@@ -29,17 +30,75 @@ const main = async () => {
   assert.equal(editMessageInputSchema.safeParse({ body: "revised", expectedRevision: 1 }).success, true);
   assert.equal(deleteMessageInputSchema.safeParse({ mode: "everyone" }).success, true);
 
+  const selectedDraft = reduceMessageDraft(emptyMessageDraftState, {
+    type: "select",
+    conversationId: validConversationId,
+    localBody: null,
+    serverBody: "",
+    serverUpdatedAt: "2026-07-18T20:00:00.000Z"
+  });
+  const locallyEditedDraft = reduceMessageDraft(selectedDraft, {
+    type: "edit",
+    conversationId: validConversationId,
+    body: "normal typing survives"
+  });
+  const staleProjectionDuringTyping = reduceMessageDraft(locallyEditedDraft, {
+    type: "server",
+    conversationId: validConversationId,
+    body: "",
+    preserveLocal: true,
+    updatedAt: "2026-07-18T20:00:00.000Z"
+  });
+  assert.equal(staleProjectionDuringTyping.body, "normal typing survives");
+  assert.equal(staleProjectionDuringTyping.dirty, true);
+  const savedDraft = reduceMessageDraft(staleProjectionDuringTyping, {
+    type: "saved",
+    conversationId: validConversationId,
+    body: "normal typing survives",
+    updatedAt: "2026-07-18T20:00:02.000Z"
+  });
+  const lateOlderResponse = reduceMessageDraft(savedDraft, {
+    type: "server",
+    conversationId: validConversationId,
+    body: "",
+    preserveLocal: false,
+    updatedAt: "2026-07-18T20:00:01.000Z"
+  });
+  assert.equal(lateOlderResponse.body, "normal typing survives");
+  const newerRemoteDraft = reduceMessageDraft(lateOlderResponse, {
+    type: "server",
+    conversationId: validConversationId,
+    body: "newer cross-device draft",
+    preserveLocal: false,
+    updatedAt: "2026-07-18T20:00:03.000Z"
+  });
+  assert.equal(newerRemoteDraft.body, "newer cross-device draft");
+  assert.equal(newerRemoteDraft.dirty, false);
+  const clearedForSend = reduceMessageDraft(newerRemoteDraft, {
+    type: "clear",
+    conversationId: validConversationId
+  });
+  const nextMessageWhileSending = reduceMessageDraft(clearedForSend, {
+    type: "edit",
+    conversationId: validConversationId,
+    body: "typed while the prior message sends"
+  });
+  assert.equal(nextMessageWhileSending.body, "typed while the prior message sends");
+
   const repository = readFileSync("apps/api/src/repository/conversations.ts", "utf8");
   const notifications = readFileSync("apps/api/src/repository/notifications.ts", "utf8");
   const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
   const routes = readFileSync("apps/api/src/routes/messageRoutes.ts", "utf8");
   const workspaceRoutes = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
   const server = readFileSync("apps/api/src/server.ts", "utf8");
+  const storage = readFileSync("apps/api/src/services/storage.ts", "utf8");
+  const readiness = readFileSync("apps/api/src/config/readiness.ts", "utf8");
   const client = readFileSync("features/messages/MessagesSection.tsx", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
   const messageAttachmentRoute = readFileSync("app/api/message-attachments/[attachmentId]/route.ts", "utf8");
 
   assert.match(server, /registerMessageRoutes\(app\)/);
+  assert.match(server, /ensureR2BrowserUploadCors/);
   assert.doesNotMatch(workspaceRoutes, /\/v1\/(?:conversations|messages|notifications)/);
   assert.match(routes, /shared: true, scope: "message-send", limit: 60/);
   assert.match(routes, /uuidParam\(request\.params\.id\)/);
@@ -65,6 +124,10 @@ const main = async () => {
   assert.match(migration, /CREATE TABLE IF NOT EXISTS profile_blocks/);
   assert.match(client, /Math\.min\(textarea\.scrollHeight, 288\)/);
   assert.match(client, /symposium:message-draft/);
+  assert.match(client, /document\.activeElement === textareaRef\.current/);
+  assert.match(client, /draftSaveTimerRef/);
+  assert.match(client, /conversationLoadEpochRef/);
+  assert.match(client, /bodyTypedWhileSending/);
   assert.match(client, /ownerType: "message"/);
   assert.match(client, /Open full messages/);
   assert.match(client, /IntersectionObserver/);
@@ -72,6 +135,12 @@ const main = async () => {
   assert.match(shell, /onMessage=\{/);
   assert.match(messageAttachmentRoute, /record\.ownerType !== "message"/);
   assert.match(messageAttachmentRoute, /Cache-Control": "private, no-store"/);
+  assert.match(storage, /GetBucketCorsCommand/);
+  assert.match(storage, /PutBucketCorsCommand/);
+  assert.match(storage, /origins\.every\(\(origin\) => allowedOrigins\.has\(origin\)\)/);
+  assert.match(storage, /AllowedMethods:[\s\S]*"PUT"/);
+  assert.match(storage, /AllowedHeaders:[\s\S]*"Content-Type"/);
+  assert.match(readiness, /key: "r2_upload_cors"/);
 
   const app = await buildApp({ logger: false });
   try {

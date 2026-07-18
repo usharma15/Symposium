@@ -58,6 +58,7 @@ type MembershipRow = {
   muted: boolean;
   pinned: boolean;
   draftBody: string;
+  draftUpdatedAt: Date | string | null;
 };
 
 type MessageRow = {
@@ -172,7 +173,7 @@ const membershipSelect = `
     me.role, me.status, me.last_read_sequence AS "lastReadSequence",
     me.cleared_through_sequence AS "clearedThroughSequence",
     me.removed_through_sequence AS "removedThroughSequence", me.hidden_at AS "hiddenAt",
-    me.muted, me.pinned, me.draft_body AS "draftBody"
+    me.muted, me.pinned, me.draft_body AS "draftBody", me.draft_updated_at AS "draftUpdatedAt"
   FROM conversations c
   JOIN conversation_participants me ON me.conversation_id = c.id`;
 
@@ -285,6 +286,7 @@ const summariesForMemberships = async (
       participants: conversationParticipants,
       lastMessage: last ? messageContract(last, lastAttachments.get(last.id) ?? []) : null,
       draftBody: membership.draftBody ?? "",
+      draftUpdatedAt: membership.draftUpdatedAt ? new Date(membership.draftUpdatedAt).toISOString() : null,
       updatedAt: new Date(membership.updatedAt).toISOString()
     };
   });
@@ -856,18 +858,22 @@ export const updateConversationPreferences = async (conversationId: string, rawI
 export const saveConversationDraft = async (conversationId: string, rawInput: unknown, actor: Actor) => {
   const input = saveConversationDraftInputSchema.parse(rawInput);
   const handle = actorHandle(actor);
-  if (!hasDatabase()) return { conversationId, body: input.body };
+  if (!hasDatabase()) return { conversationId, body: input.body, updatedAt: new Date().toISOString() };
   await ensureLiveData();
   return runAtomic(async (client) => {
     const membership = await getMembership(client, conversationId, handle, { lock: true });
     if (membership.status !== "active") throw new TRPCError({ code: "FORBIDDEN", message: "Join this conversation before saving a draft." });
-    const updated = await client.query(
+    const updated = await client.query<{ updatedAt: Date | string }>(
       `UPDATE conversation_participants SET draft_body = $3, draft_updated_at = now()
        WHERE conversation_id = $1 AND profile_handle = $2 AND draft_body IS DISTINCT FROM $3
-       RETURNING profile_handle`,
+       RETURNING draft_updated_at AS "updatedAt"`,
       [conversationId, handle, input.body]
     );
-    const value = { conversationId, body: input.body };
+    const value = {
+      conversationId,
+      body: input.body,
+      updatedAt: new Date(updated.rows[0]?.updatedAt ?? membership.draftUpdatedAt ?? new Date()).toISOString()
+    };
     if (!updated.rowCount) return { value };
     const event = await stageEvent(client, {
       kind: "conversation.draft.updated", actorHandle: handle, subjectType: "conversation", subjectId: conversationId,

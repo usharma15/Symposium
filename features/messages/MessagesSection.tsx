@@ -29,6 +29,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type ChangeEvent,
@@ -47,6 +48,11 @@ import { cleanHandle } from "@/lib/symposiumCore";
 import { profileInitials } from "@/features/identity/profilePresentation";
 import { createClientMutationId, symposiumApi } from "@/features/api/symposiumApiClient";
 import { uploadConfirmedAttachment } from "@/features/attachments/attachmentUploadClient";
+import {
+  emptyMessageDraftState,
+  reduceMessageDraft,
+  type MessageDraftState
+} from "@/features/messages/messageDraftState";
 
 const messageIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const mediaKinds: Array<{ id: AttachmentKindContract | "links" | "starred"; label: string; icon: ReactNode }> = [
@@ -321,7 +327,8 @@ export function MessagingExperience({
   const [conversation, setConversation] = useState<ConversationSummaryContract | null>(null);
   const [messages, setMessages] = useState<MessageContract[]>([]);
   const [messageCursor, setMessageCursor] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
+  const [draftState, dispatchDraft] = useReducer(reduceMessageDraft, emptyMessageDraftState);
+  const draft = draftState.body;
   const [pendingAttachments, setPendingAttachments] = useState<InquiryAttachmentContract[]>([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -337,11 +344,18 @@ export function MessagingExperience({
   const historyRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const conversationSentinelRef = useRef<HTMLDivElement | null>(null);
-  const draftHydrationRef = useRef("");
+  const draftStateRef = useRef<MessageDraftState>(draftState);
+  const draftSaveTimerRef = useRef<number | null>(null);
+  const liveRefreshTimerRef = useRef<number | null>(null);
+  const conversationListEpochRef = useRef(0);
+  const conversationLoadEpochRef = useRef(0);
   const selectedRef = useRef(selectedConversationId);
   selectedRef.current = selectedConversationId;
+  draftStateRef.current = draftState;
 
   const loadConversations = useCallback(async (append = false) => {
+    const requestEpoch = append ? conversationListEpochRef.current : conversationListEpochRef.current + 1;
+    if (!append) conversationListEpochRef.current = requestEpoch;
     const cursor = append ? conversationCursor : null;
     const parameters = new URLSearchParams({ limit: quick ? "8" : "24" });
     if (cursor) parameters.set("cursor", cursor);
@@ -350,6 +364,7 @@ export function MessagingExperience({
         withActor(`/api/conversations?${parameters.toString()}`, actor.handle),
         { cache: "no-store" }
       );
+      if (requestEpoch !== conversationListEpochRef.current) return;
       setConversations((current) => append
         ? [...current, ...page.conversations.filter((entry) => !current.some((existing) => existing.id === entry.id))]
         : page.conversations);
@@ -363,6 +378,8 @@ export function MessagingExperience({
   }, [actor.handle, conversationCursor, quick]);
 
   const loadConversation = useCallback(async (conversationId: string, options: { older?: boolean; quiet?: boolean } = {}) => {
+    const requestEpoch = options.older ? conversationLoadEpochRef.current : conversationLoadEpochRef.current + 1;
+    if (!options.older) conversationLoadEpochRef.current = requestEpoch;
     if (!messageIdPattern.test(conversationId)) {
       const recipientHandle = cleanHandle(conversationId.replace(/^direct:/, ""));
       const recipient = profiles[recipientHandle];
@@ -384,6 +401,7 @@ export function MessagingExperience({
         withActor(`/api/conversations/${encodeURIComponent(conversationId)}/messages?${parameters.toString()}`, actor.handle),
         { cache: "no-store" }
       );
+      if (requestEpoch !== conversationLoadEpochRef.current || selectedRef.current !== conversationId) return;
       setConversation(page.conversation);
       setMessages((current) => options.older
         ? [...page.messages, ...current.filter((entry) => !page.messages.some((incoming) => incoming.id === entry.id))]
@@ -418,60 +436,93 @@ export function MessagingExperience({
 
   useEffect(() => {
     void loadConversations(false);
-  }, [actor.handle, liveRevision]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [actor.handle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (selectedConversationId && messageIdPattern.test(selectedConversationId) && liveRevision > 0) {
-      void loadConversation(selectedConversationId, { quiet: true });
-    }
+    if (liveRevision <= 0) return;
+    if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
+    liveRefreshTimerRef.current = window.setTimeout(() => {
+      liveRefreshTimerRef.current = null;
+      void loadConversations(false);
+      const activeConversationId = selectedRef.current;
+      if (activeConversationId && messageIdPattern.test(activeConversationId)) {
+        void loadConversation(activeConversationId, { quiet: true });
+      }
+    }, 80);
+    return () => {
+      if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
+      liveRefreshTimerRef.current = null;
+    };
   }, [liveRevision]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedConversationId) {
       setConversation(null);
       setMessages([]);
-      setDraft("");
+      dispatchDraft({ type: "select", conversationId: null, localBody: null, serverBody: "", serverUpdatedAt: null });
       setPendingAttachments([]);
       return;
     }
     const local = window.localStorage.getItem(localDraftKey(actor.handle, selectedConversationId));
-    draftHydrationRef.current = local ?? "";
-    setDraft(local ?? "");
+    const summary = conversations.find((entry) => entry.id === selectedConversationId);
+    dispatchDraft({
+      type: "select",
+      conversationId: selectedConversationId,
+      localBody: local,
+      serverBody: summary?.draftBody ?? "",
+      serverUpdatedAt: summary?.draftUpdatedAt ?? null
+    });
     setPendingAttachments([]);
     shouldStickToBottomRef.current = true;
     setSearchResults(null);
     setMediaKind(null);
-    void loadConversation(selectedConversationId).then(() => {
-      const summary = conversations.find((entry) => entry.id === selectedConversationId);
-      if (!local && summary?.draftBody) {
-        draftHydrationRef.current = summary.draftBody;
-        setDraft(summary.draftBody);
-      }
-    });
+    void loadConversation(selectedConversationId);
   }, [actor.handle, selectedConversationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedConversationId) return;
     const summary = conversations.find((entry) => entry.id === selectedConversationId);
-    if (!summary || summary.draftBody === draft) return;
-    const local = window.localStorage.getItem(localDraftKey(actor.handle, selectedConversationId)) ?? "";
-    if (local !== draftHydrationRef.current) return;
-    draftHydrationRef.current = summary.draftBody;
-    setDraft(summary.draftBody);
-  }, [actor.handle, conversations, draft, selectedConversationId]);
+    if (!summary) return;
+    dispatchDraft({
+      type: "server",
+      conversationId: selectedConversationId,
+      body: summary.draftBody,
+      preserveLocal: document.activeElement === textareaRef.current,
+      updatedAt: summary.draftUpdatedAt
+    });
+  }, [conversations, selectedConversationId]);
+
+  const persistDraft = useCallback(async (conversationId: string, body: string) => {
+    if (!messageIdPattern.test(conversationId)) return;
+    try {
+      const saved = await symposiumApi.request<{ body: string; updatedAt: string | null }>(`/api/conversations/${encodeURIComponent(conversationId)}/draft`, {
+        method: "PATCH",
+        body: { actorHandle: actor.handle, body }
+      });
+      dispatchDraft({ type: "saved", conversationId, body: saved.body, updatedAt: saved.updatedAt });
+    } catch {
+      // The immediately persisted local draft remains authoritative and will retry
+      // on the next edit or blur without interrupting typing.
+    }
+  }, [actor.handle]);
 
   useEffect(() => {
-    if (!selectedConversationId) return;
-    window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), draft);
-    const timer = window.setTimeout(() => {
-      if (!messageIdPattern.test(selectedConversationId)) return;
-      void symposiumApi.request(`/api/conversations/${encodeURIComponent(selectedConversationId)}/draft`, {
-        method: "PATCH",
-        body: { actorHandle: actor.handle, body: draft }
-      }).catch(() => undefined);
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [actor.handle, draft, selectedConversationId]);
+    if (!selectedConversationId || draftState.conversationId !== selectedConversationId) return;
+    if (draftSaveTimerRef.current !== null) window.clearTimeout(draftSaveTimerRef.current);
+    if (draftState.body) window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), draftState.body);
+    else window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
+    if (draftState.dirty && messageIdPattern.test(selectedConversationId)) {
+      const body = draftState.body;
+      draftSaveTimerRef.current = window.setTimeout(() => {
+        draftSaveTimerRef.current = null;
+        void persistDraft(selectedConversationId, body);
+      }, 900);
+    }
+    return () => {
+      if (draftSaveTimerRef.current !== null) window.clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    };
+  }, [actor.handle, draftState, persistDraft, selectedConversationId]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -516,7 +567,11 @@ export function MessagingExperience({
     setBusy(true);
     shouldStickToBottomRef.current = true;
     const originalDraft = draft;
+    const originalAttachments = pendingAttachments;
     const attachmentIds = pendingAttachments.map((attachment) => attachment.id);
+    dispatchDraft({ type: "clear", conversationId: selectedConversationId });
+    setPendingAttachments([]);
+    window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
     try {
       const directRecipient = !messageIdPattern.test(selectedConversationId)
         ? cleanHandle(selectedConversationId.replace(/^direct:/, ""))
@@ -531,9 +586,6 @@ export function MessagingExperience({
           attachmentIds
         }
       });
-      setDraft("");
-      setPendingAttachments([]);
-      window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
       if (data.message.conversationId !== selectedConversationId) selectConversation(data.message.conversationId);
       else {
         setMessages((current) => [...current.filter((entry) => entry.id !== data.message.id), data.message]);
@@ -541,6 +593,19 @@ export function MessagingExperience({
       }
       await loadConversations(false);
     } catch (sendError) {
+      const activeDraft = draftStateRef.current;
+      if (activeDraft.conversationId === selectedConversationId) {
+        const bodyTypedWhileSending = activeDraft.body === originalDraft ? "" : activeDraft.body;
+        const restoredBody = bodyTypedWhileSending
+          ? `${originalDraft}${originalDraft ? "\n" : ""}${bodyTypedWhileSending}`
+          : originalDraft;
+        dispatchDraft({ type: "edit", conversationId: selectedConversationId, body: restoredBody });
+        if (restoredBody) window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), restoredBody);
+      }
+      setPendingAttachments((current) => [
+        ...originalAttachments,
+        ...current.filter((entry) => !originalAttachments.some((original) => original.id === entry.id))
+      ].slice(0, 10));
       setError(errorText(sendError));
     } finally {
       setBusy(false);
@@ -634,7 +699,7 @@ export function MessagingExperience({
     try {
       await symposiumApi.request(`/api/conversations/${conversation.id}/clear`, { method: "POST", body: { actorHandle: actor.handle } });
       setMessages([]);
-      setDraft("");
+      dispatchDraft({ type: "clear", conversationId: conversation.id });
       window.localStorage.removeItem(localDraftKey(actor.handle, conversation.id));
       await loadConversations(false);
     } catch (actionError) { setError(errorText(actionError)); }
@@ -802,7 +867,21 @@ export function MessagingExperience({
                   value={draft}
                   placeholder={conversation?.status === "removed" ? "You are no longer in this group" : conversation?.blockedByViewer ? "Unblock this person to send a message" : "Write a message"}
                   disabled={conversation?.status === "removed" || conversation?.blockedByViewer}
-                  onChange={(event) => setDraft(event.target.value)}
+                  onChange={(event) => {
+                    if (!selectedConversationId) return;
+                    const body = event.target.value;
+                    if (body) window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), body);
+                    else window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
+                    dispatchDraft({ type: "edit", conversationId: selectedConversationId, body });
+                  }}
+                  onBlur={() => {
+                    const current = draftStateRef.current;
+                    if (current.conversationId && current.dirty) {
+                      if (draftSaveTimerRef.current !== null) window.clearTimeout(draftSaveTimerRef.current);
+                      draftSaveTimerRef.current = null;
+                      void persistDraft(current.conversationId, current.body);
+                    }
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
