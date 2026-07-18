@@ -852,6 +852,10 @@ export const profileActivityQuerySchema = z.object({
   commentQuotesOnly: z.preprocess(
     (value) => value === "true" ? true : value === "false" ? false : value,
     z.boolean().default(false)
+  ),
+  includeSummary: z.preprocess(
+    (value) => value === "true" ? true : value === "false" ? false : value,
+    z.boolean().default(true)
   )
 });
 
@@ -872,8 +876,10 @@ export const profileActivityResponseSchema = z.object({
   nextCursor: z.string().nullable(),
   authoredComments: z.array(profileAuthoredCommentActivitySchema).optional(),
   commentsNextCursor: z.string().nullable().optional(),
-  hiddenCommunityCounts: profileActivityCountsSchema,
-  totals: profileActivityCountsSchema.optional()
+  hiddenCommunityCounts: profileActivityCountsSchema.optional(),
+  totals: profileActivityCountsSchema.optional(),
+  items: z.array(inquiryItemSchema).max(100).optional(),
+  profiles: z.record(z.string(), researchProfileSchema).optional()
 });
 
 export const joinCommunityInputSchema = z.object({

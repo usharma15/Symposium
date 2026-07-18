@@ -317,6 +317,118 @@ const previewAttachments = async (postIds: string[]) => {
   return byPost;
 };
 
+type HydratedPostSubjects = Pick<PostPageResponseContract, "items" | "profiles">;
+
+const hydratePostRows = async (
+  rows: FeedRow[],
+  requestedCommentIds: string[],
+  requesterHandle: string | null
+): Promise<HydratedPostSubjects> => {
+  const postIds = rows.map((row) => row.id);
+  const [actionsByPost, attachmentsByPost, selectedCommentResult] = await Promise.all([
+    viewerActionsForPosts(postIds, requesterHandle),
+    previewAttachments(postIds),
+    requestedCommentIds.length && postIds.length
+      ? getPool().query<CommentRow>(
+          `SELECT
+             id,
+             revision,
+             post_id AS "postId",
+             parent_id AS "parentId",
+             author_handle AS "authorHandle",
+             author_name AS "authorName",
+             stance,
+             body,
+             content_document AS "document",
+             metrics,
+             saved_by AS "savedBy",
+             signaled_by AS "signaledBy",
+             forked_by AS "forkedBy",
+             quote,
+             edited_at AS "editedAt",
+             deleted_at AS "deletedAt",
+             created_at AS "createdAt"
+           FROM comments
+           WHERE id = ANY($1::text[])
+             AND post_id = ANY($2::text[])
+             AND deleted_at IS NULL
+           ORDER BY created_at DESC, id DESC`,
+          [requestedCommentIds, postIds]
+        )
+      : Promise.resolve({ rows: [] as CommentRow[] })
+  ]);
+  const selectedCommentIds = selectedCommentResult.rows.map((comment) => comment.id);
+  const [actionsByComment, attachmentsByComment] = await Promise.all([
+    viewerActionsForComments(selectedCommentIds, requesterHandle),
+    getActiveAttachmentsByOwner(getPool(), "comment", selectedCommentIds)
+  ]);
+  const commentsByPost = new Map<string, ReturnType<typeof selectedCommentFromRow>[]>();
+  for (const comment of selectedCommentResult.rows) {
+    const actions = actionsByComment.get(comment.id) ?? new Set<ViewerActionRow["action"]>();
+    const projected = selectedCommentFromRow({
+      ...comment,
+      savedBy: actions.has("save") && requesterHandle ? [requesterHandle] : [],
+      signaledBy: actions.has("signal") && requesterHandle ? [requesterHandle] : [],
+      forkedBy: actions.has("fork") && requesterHandle ? [requesterHandle] : []
+    }, attachmentsByComment);
+    commentsByPost.set(comment.postId, [...(commentsByPost.get(comment.postId) ?? []), projected]);
+  }
+  const items = rows.map((row) => {
+    const actions = actionsByPost.get(row.id) ?? new Set<ViewerActionRow["action"]>();
+    const item = rowToItem({
+      ...row,
+      saved: actions.has("save"),
+      savedBy: actions.has("save") && requesterHandle ? [requesterHandle] : [],
+      signaledBy: actions.has("signal") && requesterHandle ? [requesterHandle] : [],
+      forkedBy: actions.has("fork") && requesterHandle ? [requesterHandle] : []
+    }, commentsByPost.get(row.id) ?? [], attachmentsByPost.get(row.id));
+    return { ...item, commentCount: row.commentCount, detailLoaded: false };
+  });
+  const profiles = await listProfilesByHandles([
+    ...items.flatMap((item) => item.authorHandle ? [item.authorHandle] : []),
+    ...selectedCommentResult.rows.flatMap((comment) => comment.authorHandle ? [comment.authorHandle] : []),
+    ...(requesterHandle ? [requesterHandle] : [])
+  ]);
+  return { items, profiles };
+};
+
+export const listProfileActivitySubjects = async (
+  rawPostIds: string[],
+  rawCommentIds: string[],
+  rawRequesterHandle?: string | null
+): Promise<HydratedPostSubjects> => {
+  const postIds = Array.from(new Set(rawPostIds.filter((id) => id && id.length <= 240))).slice(0, 100);
+  const commentIds = Array.from(new Set(rawCommentIds.filter((id) => id && id.length <= 240))).slice(0, 100);
+  if (!hasDatabase() || !postIds.length) return { items: [], profiles: {} };
+  const requesterHandle = rawRequesterHandle ? cleanHandle(rawRequesterHandle) : null;
+  await ensureLiveData();
+  const result = await getPool().query<FeedRow>(
+    `SELECT
+       ${postColumns},
+       COALESCE(comment_count.total, 0)::int AS "commentCount"
+     FROM posts post
+     LEFT JOIN communities community ON community.id = post.community_id
+     LEFT JOIN LATERAL (
+       SELECT count(*)::int AS total FROM comments comment WHERE comment.post_id = post.id AND comment.deleted_at IS NULL
+     ) comment_count ON true
+     WHERE post.id = ANY($2::text[])
+       AND post.deleted_at IS NULL
+       AND ((post.room <> 'office' AND post.kind <> 'draft') OR ($1::text IS NOT NULL AND post.author_handle = $1))
+       AND (post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public'
+         OR ($1::text IS NOT NULL AND post.author_handle = $1)
+         OR EXISTS (
+           SELECT 1 FROM community_memberships viewer
+           WHERE viewer.community_id = post.community_id
+             AND viewer.profile_handle = $1
+             AND viewer.status = 'active'
+         ))
+     ORDER BY post.created_at DESC, post.id DESC
+     LIMIT 100`,
+    [requesterHandle, postIds]
+  );
+  return hydratePostRows(result.rows, commentIds, requesterHandle);
+};
+
 export const listPostPage = async (
   rawQuery: unknown,
   rawRequesterHandle?: string | null
@@ -404,76 +516,10 @@ export const listPostPage = async (
   );
   const hasNextPage = !query.ids?.length && result.rows.length > limit;
   const rows = result.rows.slice(0, limit);
-  const postIds = rows.map((row) => row.id);
-  const requestedCommentIds = query.commentIds ?? [];
-  const [actionsByPost, attachmentsByPost, selectedCommentResult] = await Promise.all([
-    viewerActionsForPosts(postIds, requesterHandle),
-    previewAttachments(postIds),
-    requestedCommentIds.length && postIds.length
-      ? getPool().query<CommentRow>(
-          `SELECT
-             id,
-             revision,
-             post_id AS "postId",
-             parent_id AS "parentId",
-             author_handle AS "authorHandle",
-             author_name AS "authorName",
-             stance,
-             body,
-             content_document AS "document",
-             metrics,
-             saved_by AS "savedBy",
-             signaled_by AS "signaledBy",
-             forked_by AS "forkedBy",
-             quote,
-             edited_at AS "editedAt",
-             deleted_at AS "deletedAt",
-             created_at AS "createdAt"
-           FROM comments
-           WHERE id = ANY($1::text[])
-             AND post_id = ANY($2::text[])
-             AND deleted_at IS NULL
-           ORDER BY created_at DESC, id DESC`,
-          [requestedCommentIds, postIds]
-        )
-      : Promise.resolve({ rows: [] as CommentRow[] })
-  ]);
-  const selectedCommentIds = selectedCommentResult.rows.map((comment) => comment.id);
-  const [actionsByComment, attachmentsByComment] = await Promise.all([
-    viewerActionsForComments(selectedCommentIds, requesterHandle),
-    getActiveAttachmentsByOwner(getPool(), "comment", selectedCommentIds)
-  ]);
-  const commentsByPost = new Map<string, ReturnType<typeof selectedCommentFromRow>[]>();
-  for (const comment of selectedCommentResult.rows) {
-    const actions = actionsByComment.get(comment.id) ?? new Set<ViewerActionRow["action"]>();
-    const projected = selectedCommentFromRow({
-      ...comment,
-      savedBy: actions.has("save") && requesterHandle ? [requesterHandle] : [],
-      signaledBy: actions.has("signal") && requesterHandle ? [requesterHandle] : [],
-      forkedBy: actions.has("fork") && requesterHandle ? [requesterHandle] : []
-    }, attachmentsByComment);
-    commentsByPost.set(comment.postId, [...(commentsByPost.get(comment.postId) ?? []), projected]);
-  }
-  const items = rows.map((row) => {
-    const actions = actionsByPost.get(row.id) ?? new Set<ViewerActionRow["action"]>();
-    const item = rowToItem({
-      ...row,
-      saved: actions.has("save"),
-      savedBy: actions.has("save") && requesterHandle ? [requesterHandle] : [],
-      signaledBy: actions.has("signal") && requesterHandle ? [requesterHandle] : [],
-      forkedBy: actions.has("fork") && requesterHandle ? [requesterHandle] : []
-    }, commentsByPost.get(row.id) ?? [], attachmentsByPost.get(row.id));
-    return { ...item, commentCount: row.commentCount, detailLoaded: false };
-  });
-  const profiles = await listProfilesByHandles([
-    ...items.flatMap((item) => item.authorHandle ? [item.authorHandle] : []),
-    ...selectedCommentResult.rows.flatMap((comment) => comment.authorHandle ? [comment.authorHandle] : []),
-    ...(requesterHandle ? [requesterHandle] : [])
-  ]);
+  const hydrated = await hydratePostRows(rows, query.commentIds ?? [], requesterHandle);
   const last = rows.at(-1);
   return {
-    items,
-    profiles,
+    ...hydrated,
     nextCursor: hasNextPage && last ? encodePostCursor(last) : null
   };
 };

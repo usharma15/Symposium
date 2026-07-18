@@ -17,6 +17,7 @@ import { runAtomic } from "../services/transactions";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { decodeActivityCursor, decodeProfileCommentCursor, encodeActivityCursor, encodeProfileCommentCursor, listCanonicalProfileActivity } from "./actions";
 import { actorHandle, ensureLiveData, ensureProfileHandle, getInitialState } from "./foundation";
+import { listProfileActivitySubjects } from "./inquiryReads";
 
 export const listProfileActivity = async (
   rawHandle: string,
@@ -79,10 +80,12 @@ export const listProfileActivity = async (
       commentsNextCursor: allAuthoredComments.length > authoredComments.length && authoredComments.length
         ? encodeProfileCommentCursor(authoredComments[authoredComments.length - 1])
         : null,
-      hiddenCommunityCounts: ownProfile
-        ? emptyProfileActivityCounts()
-        : hiddenCommunityActivityCounts(snapshot.items, researchCommunities, handle, allowedActions),
-      totals: profileActivityCounts(snapshot.items, handle, allowedActions, { includePrivateWorkspace: ownProfile })
+      ...(query.includeSummary ? {
+        hiddenCommunityCounts: ownProfile
+          ? emptyProfileActivityCounts()
+          : hiddenCommunityActivityCounts(snapshot.items, researchCommunities, handle, allowedActions),
+        totals: profileActivityCounts(snapshot.items, handle, allowedActions, { includePrivateWorkspace: ownProfile })
+      } : {})
     };
   }
 
@@ -104,11 +107,24 @@ export const listProfileActivity = async (
     ...(ownProfile || person.resharesPublic ? (["fork"] as const) : [])
   ];
   const client = await getPool().connect();
+  let activity: ProfileActivityResponseContract;
   try {
-    return await listCanonicalProfileActivity(client, handle, allowedActions, query, ownProfile);
+    activity = await listCanonicalProfileActivity(client, handle, allowedActions, query, ownProfile);
   } finally {
     client.release();
   }
+  const hydration = await listProfileActivitySubjects(
+    [
+      ...activity.entries.map((entry) => entry.postId),
+      ...(activity.authoredComments ?? []).map((entry) => entry.postId)
+    ],
+    [
+      ...activity.entries.filter((entry) => entry.subjectType === "comment").map((entry) => entry.subjectId),
+      ...(activity.authoredComments ?? []).map((entry) => entry.commentId)
+    ],
+    requesterHandle
+  );
+  return { ...activity, ...hydration };
 };
 
 export const followProfile = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {

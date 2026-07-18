@@ -61,6 +61,7 @@ export async function GET(request: Request, context: Context) {
   const allowed = new Set(activityActions);
   const includeComments = url.searchParams.get("includeComments") !== "false";
   const commentQuotesOnly = url.searchParams.get("commentQuotesOnly") === "true";
+  const includeSummary = url.searchParams.get("includeSummary") !== "false";
   const communities = await listLocalCommunities(actorHandle === "@" ? undefined : actorHandle);
   const itemById = new Map(snapshot.items.map((item) => [item.id, item]));
   const entries = Object.values(snapshot.actionLedger)
@@ -105,9 +106,11 @@ export async function GET(request: Request, context: Context) {
       nextCommentsOffset < authoredCommentEntries.length
         ? Buffer.from(JSON.stringify({ offset: nextCommentsOffset })).toString("base64url")
         : null,
-    hiddenCommunityCounts: ownProfile
-      ? emptyProfileActivityCounts()
-      : hiddenCommunityActivityCounts(snapshot.items, communities, targetHandle, allowedActions),
-    totals: profileActivityCounts(snapshot.items, targetHandle, allowedActions, { includePrivateWorkspace: ownProfile })
+    ...(includeSummary ? {
+      hiddenCommunityCounts: ownProfile
+        ? emptyProfileActivityCounts()
+        : hiddenCommunityActivityCounts(snapshot.items, communities, targetHandle, allowedActions),
+      totals: profileActivityCounts(snapshot.items, targetHandle, allowedActions, { includePrivateWorkspace: ownProfile })
+    } : {})
   });
 }

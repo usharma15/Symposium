@@ -478,7 +478,9 @@ export const listCanonicalProfileActivity = async (
   query: ProfileActivityQueryContract,
   includeInactive: boolean
 ): Promise<ProfileActivityResponseContract> => {
-  const countSummary = await profileActivityCountSummary(client, actorHandle, allowedActions, includeInactive);
+  const countSummary = query.includeSummary
+    ? await profileActivityCountSummary(client, actorHandle, allowedActions, includeInactive)
+    : {};
   const requestedActions = new Set(query.actions ?? allowedActions);
   const activityActions = allowedActions.filter((action) => requestedActions.has(action));
   const commentSummary = await listAuthoredProfileComments(client, actorHandle, query, includeInactive);

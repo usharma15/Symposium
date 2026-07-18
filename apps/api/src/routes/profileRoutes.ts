@@ -22,6 +22,7 @@ type ProfileActivityQuery = {
   actions?: string;
   includeComments?: string;
   commentQuotesOnly?: string;
+  includeSummary?: string;
 };
 
 export const registerProfileRoutes = (app: FastifyInstance) => {

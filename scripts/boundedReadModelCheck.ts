@@ -16,6 +16,8 @@ const infiniteFeed = readFileSync("features/feeds/InfiniteFeedBoundary.tsx", "ut
 
 assert.match(contracts, /postPageQuerySchema[\s\S]*max\(50\)/);
 assert.match(contracts, /commentIds: z\.array\(z\.string\(\)\.trim\(\)\.min\(1\)\.max\(240\)\)\.max\(50\)\.optional\(\)/);
+assert.match(contracts, /includeSummary:[\s\S]*z\.boolean\(\)\.default\(true\)/);
+assert.match(contracts, /profileActivityResponseSchema[\s\S]*items: z\.array\(inquiryItemSchema\)\.max\(100\)\.optional\(\)/);
 assert.match(contracts, /commentCount: z\.number\(\)\.int\(\)\.nonnegative\(\)\.optional\(\)/);
 assert.match(systemRoutes, /getBoundedBootstrap/);
 assert.doesNotMatch(systemRoutes, /getInitialState|getPublicInitialState/);
@@ -56,6 +58,10 @@ const main = async () => {
     const headers = { "x-symposium-handle": "@bounded-reader" };
     const bootstrapResponse = await app.inject({ method: "GET", url: "/v1/bootstrap", headers });
     assert.equal(bootstrapResponse.statusCode, 200);
+    assert.match(
+      String(bootstrapResponse.headers["server-timing"]),
+      /db;dur=[\d.]+;desc="\d+ queries", app;dur=[\d.]+/
+    );
     const bootstrap = bootstrapResponse.json();
     assert.equal(bootstrap.readModelVersion, 2);
     assert.ok(bootstrap.items.length <= 24);
@@ -86,6 +92,15 @@ const main = async () => {
     const profileResponse = await app.inject({ method: "GET", url: "/v1/profiles/@salma_idris", headers });
     assert.equal(profileResponse.statusCode, 200);
     assert.equal(profileResponse.json().profile.email, undefined);
+
+    const activityPageResponse = await app.inject({
+      method: "GET",
+      url: "/v1/profiles/@salma_idris/activity?limit=2&actions=signal&includeComments=false&includeSummary=false",
+      headers
+    });
+    assert.equal(activityPageResponse.statusCode, 200);
+    assert.equal(activityPageResponse.json().totals, undefined);
+    assert.equal(activityPageResponse.json().hiddenCommunityCounts, undefined);
 
     const searchResponse = await app.inject({ method: "GET", url: "/v1/search?q=s&limit=3", headers });
     assert.equal(searchResponse.statusCode, 200);

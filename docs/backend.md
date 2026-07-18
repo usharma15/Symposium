@@ -58,6 +58,10 @@ Useful endpoints:
 
 Every API response includes `X-Request-Id`. Validation and application errors also include the same value in the JSON body, so a client-visible failure can be matched to one backend log entry without exposing internal exception text.
 
+Every API response also includes a `Server-Timing` measurement for total application time and cumulative Postgres time, with the request-scoped query count in the database metric description. The backend emits structured `request_cost_sample` logs for a deterministic two-percent sample and `request_cost_budget_exceeded` for every route-budget violation. Routes are logged by their Fastify templates rather than concrete IDs, so the measurements remain low-cardinality and do not expose resource identifiers.
+
+Profile activity is one bounded read model: its timeline response carries the required post/comment card projections and public profiles, so the browser does not fan one filter load into follow-up post requests. Exact aggregate totals are returned on the first load and explicit live refreshes; cursor continuation pages reuse those authoritative totals instead of repeating the aggregate query.
+
 ## Environment
 
 Backend:

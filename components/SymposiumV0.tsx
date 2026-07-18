@@ -1499,10 +1499,10 @@ function SymposiumExperience({
         ?? Object.values(profilesRef.current).find((person) => person.name === selectedKey)
         ?? getProfileForName(selectedKey)
       : null;
-    return [refreshData(handle), refreshFollowing(handle), refreshProfileActivity(handle, handle, "all"),
+    return [refreshData(handle), refreshFollowing(handle), refreshProfileActivity(handle, handle, "all", false, true),
       ...(selected?.handle ? [
         refreshProfileFollows(selected.handle),
-        refreshProfileActivity(selected.handle, handle, profileActivityScopeForTab(profileActiveTab))
+        refreshProfileActivity(selected.handle, handle, profileActivityScopeForTab(profileActiveTab), false, true)
       ] : [])];
   });
 
@@ -1514,12 +1514,14 @@ function SymposiumExperience({
         ?? Object.values(profilesRef.current).find((person) => person.name === selectedKey)
         ?? getProfileForName(selectedKey)
       : null;
-    const requests = [refreshProfileActivity(viewerHandle, viewerHandle, "all")];
+    const requests = [refreshProfileActivity(viewerHandle, viewerHandle, "all", false, true)];
     if (selected?.handle && cleanHandle(selected.handle) !== cleanHandle(viewerHandle)) {
       requests.push(refreshProfileActivity(
         selected.handle,
         viewerHandle,
-        profileActivityScopeForTab(profileActiveTab)
+        profileActivityScopeForTab(profileActiveTab),
+        false,
+        true
       ));
     }
     return requests;
@@ -2071,7 +2073,8 @@ function SymposiumExperience({
     handle: string,
     actorHandle = currentProfileRef.current.handle,
     scope: ProfileActivityPageScope = "all",
-    append = false
+    append = false,
+    forceSummary = false
   ) => {
     const clean = cleanHandle(handle);
     const cleanActor = cleanHandle(actorHandle);
@@ -2085,6 +2088,7 @@ function SymposiumExperience({
     const commentsCursor = append ? existingPage?.commentsNextCursor ?? null : null;
     const requestedActions = append && !startCursor ? [] : configuredActions;
     const requestComments = includeComments && (!append || Boolean(commentsCursor));
+    const requestSummary = !append && (forceSummary || !existingSnapshot.totals);
     if (append && !requestedActions.length && !requestComments) return Promise.resolve();
     const inFlightKey = `${clean}:${cleanActor}:${scope}:${startCursor ?? "actions-end"}:${commentsCursor ?? "comments-end"}`;
     const existingRequest = profileActivityInFlightRef.current[inFlightKey];
@@ -2118,7 +2122,8 @@ function SymposiumExperience({
         actorHandle: cleanActor,
         actions: requestedActions.join(","),
         includeComments: String(requestComments),
-        commentQuotesOnly: String(commentMode === "quotes")
+        commentQuotesOnly: String(commentMode === "quotes"),
+        includeSummary: String(requestSummary)
       });
       if (startCursor) params.set("cursor", startCursor);
       if (commentsCursor) params.set("commentsCursor", commentsCursor);
@@ -2163,17 +2168,24 @@ function SymposiumExperience({
           { cache: "no-store" }
         );
       };
-      const hydratedPages = await Promise.all([
-        hydrateSubjects(
-          entries.map((entry) => entry.postId),
-          entries.filter((entry) => entry.subjectType === "comment").map((entry) => entry.subjectId)
-        ),
-        hydrateSubjects(
-          authoredComments.map((activity) => activity.postId),
-          authoredComments.map((activity) => activity.commentId)
-        )
-      ]);
-      for (const page of hydratedPages) if (page) mergeBoundedRead(page);
+      if (data.items?.length || data.profiles) {
+        mergeBoundedRead({
+          items: data.items ?? [],
+          profiles: data.profiles ?? {}
+        });
+      } else {
+        const hydratedPages = await Promise.all([
+          hydrateSubjects(
+            entries.map((entry) => entry.postId),
+            entries.filter((entry) => entry.subjectType === "comment").map((entry) => entry.subjectId)
+          ),
+          hydrateSubjects(
+            authoredComments.map((activity) => activity.postId),
+            authoredComments.map((activity) => activity.commentId)
+          )
+        ]);
+        for (const page of hydratedPages) if (page) mergeBoundedRead(page);
+      }
 
       if (profileActivityRequestRef.current[requestKey] !== requestId) return;
       replaceCanonicalProfileActivity(clean, scope, requestedActions, {
@@ -2303,9 +2315,14 @@ function SymposiumExperience({
 
   useEffect(() => {
     if (entryMode !== "complete" || syncStatus === liveStatus.loading || !currentProfile.handle) return;
+    if (
+      selectedProfile?.handle &&
+      cleanHandle(selectedProfile.handle) === cleanHandle(currentProfile.handle) &&
+      profileActivityScopeForTab(profileActiveTab) !== "all"
+    ) return;
     if (profileActivityByHandleRef.current[currentProfile.handle]?.pages.all?.loaded) return;
     void refreshProfileActivity(currentProfile.handle, currentProfile.handle, "all").catch(() => undefined);
-  }, [currentProfile.handle, entryMode, syncStatus]);
+  }, [currentProfile.handle, entryMode, profileActiveTab, selectedProfile?.handle, syncStatus]);
 
   useEffect(() => {
     if (entryMode !== "complete" || syncStatus === liveStatus.loading || !selectedProfile?.handle) return;
@@ -4005,7 +4022,9 @@ function SymposiumExperience({
               void refreshProfileActivity(
                 selectedProfile.handle,
                 currentProfile.handle,
-                selectedProfileActivityScope
+                selectedProfileActivityScope,
+                false,
+                true
               ).catch(() => undefined);
             }}
             onLoadMoreActivity={() => {
