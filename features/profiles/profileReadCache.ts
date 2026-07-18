@@ -5,7 +5,7 @@ export type CachedProfileActivityScope = "all" | "comments" | "reshares" | "like
 export type CachedProfileSocialLists = { following: string[]; followers: string[] };
 
 type CachedProfileActivityPage = {
-  semantics: 3;
+  semantics: 4;
   viewerHandle: string;
   targetHandle: string;
   scope: CachedProfileActivityScope;
@@ -87,7 +87,7 @@ export const readCachedProfileActivity = (
   const page = readCache(storage).activity.find((candidate) =>
     activityIdentity(candidate) === activityIdentity({ ...input, viewerHandle, targetHandle })
   );
-  if (!page || page.semantics !== 3 || !isFresh(page.savedAt, now)) return null;
+  if (!page || page.semantics !== 4 || !isFresh(page.savedAt, now)) return null;
   if (!Array.isArray(page.response?.entries)) return null;
   if (page.response.items && !Array.isArray(page.response.items)) return null;
   if (page.response.profiles && typeof page.response.profiles !== "object") return null;
@@ -109,7 +109,7 @@ export const persistCachedProfileActivity = (
   if (!viewerHandle || !targetHandle) return false;
   const cache = readCache(storage);
   const nextPage: CachedProfileActivityPage = {
-    semantics: 3,
+    semantics: 4,
     viewerHandle,
     targetHandle,
     scope: input.scope,

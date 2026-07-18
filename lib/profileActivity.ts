@@ -15,6 +15,8 @@ export const emptyProfileActivityCounts = (): ProfileActivityCountsContract => (
   saved: 0
 });
 
+export const universalProfileActivityActions: ToggleActionContract[] = ["save", "signal", "fork"];
+
 export const profileItemIsInActivityScope = (item: InquiryItem) =>
   item.room !== "office" && item.kind !== "draft";
 

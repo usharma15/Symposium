@@ -7,6 +7,7 @@ import type {
   ProfileActivityResponseContract,
   ToggleActionContract
 } from "../../../../packages/contracts/src";
+import { universalProfileActivityActions } from "@/lib/profileActivity";
 
 type ActionLedgerRow = {
   actorHandle: string;
@@ -476,7 +477,12 @@ export const listCanonicalProfileActivity = async (
   includeHiddenCommunityActivity: boolean
 ): Promise<ProfileActivityResponseContract> => {
   const countSummary = query.includeSummary
-    ? await profileActivityCountSummary(client, actorHandle, allowedActions, includeHiddenCommunityActivity)
+    ? await profileActivityCountSummary(
+        client,
+        actorHandle,
+        universalProfileActivityActions,
+        includeHiddenCommunityActivity
+      )
     : {};
   const requestedActions = new Set(query.actions ?? allowedActions);
   const activityActions = allowedActions.filter((action) => requestedActions.has(action));

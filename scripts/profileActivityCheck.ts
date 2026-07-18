@@ -19,6 +19,7 @@ import {
   profileItemIsPubliclyListable,
   reconcileProfileActivitySlots,
   selectProfileActivitySlots,
+  universalProfileActivityActions,
   uniqueProfileActivityEntries
 } from "@/lib/profileActivity";
 
@@ -123,6 +124,11 @@ assert.deepEqual(exactCounts, {
   likes: 3,
   saved: 3
 });
+assert.deepEqual(
+  universalProfileActivityActions,
+  ["save", "signal", "fork"],
+  "Exact profile totals must cover every durable action independently of viewer-specific detail visibility."
+);
 
 const quoteSnapshot = {
   sourceType: "post" as const,
@@ -337,6 +343,18 @@ assert.doesNotMatch(
   /canonicalActivityLoaded && !tabs\.some/,
   "Canonical profile routes must survive the authenticated identity transition."
 );
+for (const universallyCountedTab of ["reshares", "likes", "saved"]) {
+  assert.match(
+    profileViews,
+    new RegExp(`\\{ id: "${universallyCountedTab}", label:`),
+    `The ${universallyCountedTab} true-count tile must remain visible to every profile viewer.`
+  );
+}
+assert.match(
+  profileViews,
+  /The true count is shown, but only activity visible to you appears here\./,
+  "Private activity details must not make an authoritative nonzero count look empty."
+);
 
 const profileShell = readFileSync(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
 assert.match(
@@ -358,6 +376,20 @@ for (const scopedPagingBoundary of [
   assert.ok(
     profileShell.includes(scopedPagingBoundary),
     `Profile activity paging must retain ${scopedPagingBoundary}.`
+  );
+}
+
+const actionRepository = readFileSync(path.join(process.cwd(), "apps/api/src/repository/actions.ts"), "utf8");
+const profileRepository = readFileSync(path.join(process.cwd(), "apps/api/src/repository/profiles.ts"), "utf8");
+const profileActivityRoute = readFileSync(
+  path.join(process.cwd(), "app/api/profiles/[handle]/activity/route.ts"),
+  "utf8"
+);
+for (const universalSummaryBoundary of [actionRepository, profileRepository, profileActivityRoute]) {
+  assert.match(
+    universalSummaryBoundary,
+    /universalProfileActivityActions/,
+    "Every profile activity summary path must use viewer-independent action totals."
   );
 }
 
@@ -450,6 +482,7 @@ console.log(
         "profile tab isolation",
         "public-community authored post visibility",
         "private-community paper discussion visibility",
+        "universal totals with viewer-private activity details",
         "unambiguous live activity query",
         "private-community profile visibility boundary"
       ]

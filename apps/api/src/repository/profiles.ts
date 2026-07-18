@@ -6,7 +6,7 @@ import {
   type ProfileActivityResponseContract,
   type ToggleActionContract
 } from "../../../../packages/contracts/src";
-import { buildLegacyProfileActivity, buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsInActivityScope, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { buildLegacyProfileActivity, buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsInActivityScope, profileItemIsPubliclyListable, universalProfileActivityActions } from "@/lib/profileActivity";
 import { researchCommunities } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
@@ -83,8 +83,8 @@ export const listProfileActivity = async (
       ...(query.includeSummary ? {
         hiddenCommunityCounts: ownProfile
           ? emptyProfileActivityCounts()
-          : hiddenCommunityActivityCounts(snapshot.items, researchCommunities, handle, allowedActions),
-        totals: profileActivityCounts(snapshot.items, handle, allowedActions)
+          : hiddenCommunityActivityCounts(snapshot.items, researchCommunities, handle, universalProfileActivityActions),
+        totals: profileActivityCounts(snapshot.items, handle, universalProfileActivityActions)
       } : {})
     };
   }

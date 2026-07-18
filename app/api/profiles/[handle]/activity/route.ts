@@ -2,7 +2,7 @@ import { getSnapshot } from "@/lib/dataStore";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 import type { ToggleActionContract } from "@/packages/contracts/src";
-import { buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsInActivityScope, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsInActivityScope, profileItemIsPubliclyListable, universalProfileActivityActions } from "@/lib/profileActivity";
 import { listLocalCommunities } from "@/lib/localCommunityStore";
 
 export const runtime = "nodejs";
@@ -107,8 +107,8 @@ export async function GET(request: Request, context: Context) {
     ...(includeSummary ? {
       hiddenCommunityCounts: ownProfile
         ? emptyProfileActivityCounts()
-        : hiddenCommunityActivityCounts(snapshot.items, communities, targetHandle, allowedActions),
-      totals: profileActivityCounts(snapshot.items, targetHandle, allowedActions)
+        : hiddenCommunityActivityCounts(snapshot.items, communities, targetHandle, universalProfileActivityActions),
+      totals: profileActivityCounts(snapshot.items, targetHandle, universalProfileActivityActions)
     } : {})
   });
 }

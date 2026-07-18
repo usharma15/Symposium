@@ -456,9 +456,9 @@ export function ProfileView({
     { id: "proposals", label: "Proposals" },
     { id: "opportunities", label: "Opportunities" },
     { id: "comments", label: "Comments" },
-    ...(canShowReshares ? [{ id: "reshares" as const, label: "Reshares" }] : []),
-    ...(canShowLikes ? [{ id: "likes" as const, label: "Likes" }] : []),
-    ...(canShowSaved ? [{ id: "saved" as const, label: "Saved" }] : [])
+    { id: "reshares", label: "Reshares" },
+    { id: "likes", label: "Likes" },
+    { id: "saved", label: "Saved" }
   ];
 
   const nextVisibleSlots = tabEntries[activeTab].map(entryToSlot);
@@ -508,6 +508,7 @@ export function ProfileView({
   const visibleEntries = renderedVisibleSlots
     .map(resolveSlot)
     .filter((entry): entry is ProfileActivityEntry => Boolean(entry));
+  const activeTabHasPrivateActivity = activityTotals[activeTab] > visibleEntries.length;
 
   return (
     <article className="profile-page">
@@ -641,8 +642,12 @@ export function ProfileView({
         ) : (
           <>
           <div className="empty-feed">
-            <strong>No items here yet.</strong>
-            <span>This section will fill as the profile has more activity.</span>
+            <strong>{activeTabHasPrivateActivity ? "Activity details are private." : "No items here yet."}</strong>
+            <span>
+              {activeTabHasPrivateActivity
+                ? "The true count is shown, but only activity visible to you appears here."
+                : "This section will fill as the profile has more activity."}
+            </span>
           </div>
           <InfiniteFeedBoundary
             hasMore={hasMoreActivity}
