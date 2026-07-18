@@ -131,7 +131,8 @@ assert.deepEqual(
 
 const profileViews = readFileSync(path.join(process.cwd(), "features/profiles/ProfileViews.tsx"), "utf8");
 assert.match(profileViews, /aria-busy={!canonicalActivityLoaded}/);
-assert.match(profileViews, /canonicalActivityLoaded \? tabCounts\[tab\.id\] : "—"/);
+assert.match(profileViews, /canonicalActivityLoaded \? `\$\{tabCounts\[tab\.id\]\}/);
+assert.match(profileViews, /Show more activity/);
 assert.match(profileViews, /Counts and post order will appear together when they are authoritative\./);
 assert.match(profileViews, /canonicalActivityError \? \(/);
 

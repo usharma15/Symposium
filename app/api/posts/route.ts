@@ -2,9 +2,10 @@ import { createPost, getSnapshot, type CreatePostInput } from "@/lib/dataStore";
 import type { ContentKind, RoomId } from "@/lib/mockData";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
-import { contentKinds, postRooms } from "@/lib/symposiumCore";
+import { cleanHandle, contentKinds, isSavedBy, postRooms } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
-import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, postTypeSchema, versionedDocumentSchema } from "@/packages/contracts/src";
+import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, postPageQuerySchema, postTypeSchema, versionedDocumentSchema } from "@/packages/contracts/src";
+import { postTypeForItem } from "@/lib/postSemantics";
 import {
   LocalAttachmentStoreError,
   replaceLocalOwnerAttachments,
@@ -13,20 +14,90 @@ import {
 import { listLocalCommunities } from "@/lib/localCommunityStore";
 import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
 import { assertLocalQuoteDestination, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
+import { publicResearchProfile } from "@/lib/publicProfile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const localCommentCount = (comments: Awaited<ReturnType<typeof getSnapshot>>["items"][number]["comments"]): number =>
+  comments.reduce((total, comment) => total + (comment.deletedAt ? 0 : 1) + localCommentCount(comment.replies ?? []), 0);
+
 export async function GET(request: Request) {
-  const actorHandle = new URL(request.url).searchParams.get("actorHandle") ?? undefined;
-  const live = await proxyLiveBackend("/v1/posts", { actorHandle });
+  const parameters = new URL(request.url).searchParams;
+  const actorHandle = parameters.get("actorHandle") ?? undefined;
+  parameters.delete("actorHandle");
+  const query = parameters.toString();
+  const live = await proxyLiveBackend(`/v1/posts${query ? `?${query}` : ""}`, { actorHandle });
   if (live) return live;
 
   const snapshot = await getSnapshot();
   const communities = await listLocalCommunities(actorHandle);
+  const viewerHandle = actorHandle ? cleanHandle(actorHandle) : null;
+  const parsed = postPageQuerySchema.safeParse({
+    cursor: parameters.get("cursor") ?? undefined,
+    limit: parameters.get("limit") ? Number(parameters.get("limit")) : undefined,
+    room: parameters.get("room") ?? undefined,
+    postType: parameters.get("postType") ?? undefined,
+    postTypes: parameters.get("postTypes")?.split(",").filter(Boolean),
+    communityId: parameters.get("communityId") ?? undefined,
+    authorHandle: parameters.get("authorHandle") ?? undefined,
+    saved: parameters.get("saved") === "true" ? true : undefined,
+    following: parameters.get("following") === "true" ? true : undefined,
+    ids: parameters.get("ids")?.split(",").filter(Boolean)
+  });
+  if (!parsed.success) return jsonError("Invalid post page query.", 400);
+  const input = parsed.data;
+  const cursor = input.cursor
+    ? (() => {
+        try {
+          return JSON.parse(Buffer.from(input.cursor!, "base64url").toString("utf8")) as { createdAt?: string; id?: string };
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+  if (input.cursor && (!cursor?.createdAt || !cursor.id || Number.isNaN(Date.parse(cursor.createdAt)))) {
+    return jsonError("Invalid post cursor.", 400);
+  }
+  const visible = projectCommunityItemsForViewer(snapshot.items, communities, actorHandle)
+    .filter((item) => !item.deletedAt)
+    .filter((item) => (item.room !== "office" && item.kind !== "draft")
+      || Boolean(viewerHandle && cleanHandle(item.authorHandle ?? "") === viewerHandle))
+    .filter((item) => input.communityId || !item.communityId || item.postType === "paper")
+    .filter((item) => !input.room || item.room === input.room)
+    .filter((item) => !input.postType || postTypeForItem(item) === input.postType)
+    .filter((item) => !input.postTypes?.length || input.postTypes.includes(postTypeForItem(item)!))
+    .filter((item) => !input.communityId || item.communityId === input.communityId)
+    .filter((item) => !input.authorHandle || cleanHandle(item.authorHandle ?? "") === cleanHandle(input.authorHandle))
+    .filter((item) => !input.saved || isSavedBy(item, actorHandle ?? "", ""))
+    .filter((item) => !input.following || Boolean(viewerHandle && cleanHandle(item.authorHandle ?? "") === viewerHandle))
+    .filter((item) => !input.ids?.length || input.ids.includes(item.id))
+    .filter((item) => !cursor || (item.createdAt ?? "") < cursor.createdAt! || ((item.createdAt ?? "") === cursor.createdAt && item.id < cursor.id!))
+    .sort((left, right) => Date.parse(right.createdAt ?? "") - Date.parse(left.createdAt ?? "") || right.id.localeCompare(left.id));
+  const limit = input.ids?.length ? Math.min(input.ids.length, 50) : input.limit;
+  const page = visible.slice(0, limit + 1);
+  const hasMore = page.length > limit;
+  const items = page.slice(0, limit).map((item) => ({
+    ...item,
+    commentCount: localCommentCount(item.comments),
+    detailLoaded: false,
+    comments: [],
+    saved: Boolean(viewerHandle && item.savedBy?.some((handle) => cleanHandle(handle) === viewerHandle)),
+    savedBy: viewerHandle && item.savedBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : [],
+    signaledBy: viewerHandle && item.signaledBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : [],
+    forkedBy: viewerHandle && item.forkedBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : []
+  }));
+  const profiles = Object.fromEntries(items.flatMap((item) => {
+    const handle = cleanHandle(item.authorHandle ?? "");
+    return snapshot.profiles[handle] ? [[handle, publicResearchProfile(snapshot.profiles[handle])]] : [];
+  }));
+  const last = items.at(-1);
   return Response.json({
-    items: projectCommunityItemsForViewer(snapshot.items, communities, actorHandle)
-      .filter((item) => !item.communityId || item.postType === "paper")
+    items,
+    profiles,
+    nextCursor: hasMore && last
+      ? Buffer.from(JSON.stringify({ createdAt: last.createdAt, id: last.id })).toString("base64url")
+      : null
   });
 }
 

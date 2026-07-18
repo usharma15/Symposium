@@ -47,6 +47,7 @@ import {
   ensureLiveData,
   getActiveAttachmentsByOwner,
   getInitialState,
+  getProfileByHandle,
   newId,
   rowToAttachment,
   rowToItem,
@@ -71,9 +72,8 @@ const lockedPostSelect = `SELECT
 
 export const createPost = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = createPostInputSchema.parse(rawInput);
-  const snapshot = await getInitialState();
   const handle = actorHandle(actor, input.authorHandle);
-  const author = snapshot.profiles[handle];
+  const author = await getProfileByHandle(handle);
   if (!author) throw new TRPCError({ code: "NOT_FOUND", message: "Author profile not found." });
   if (input.communityId) await assertCommunityParticipation(input.communityId, handle);
   const isPaper = input.kind === "paper";

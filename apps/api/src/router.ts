@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import {
   assistantMessageInputSchema,
   callIdInputSchema,
@@ -46,11 +47,10 @@ import {
 import { recordCommunityAccess } from "./repository/communityMembers";
 import { listConversations, sendMessage } from "./repository/conversations";
 import {
-  getInitialState,
   getPublicCommunity,
-  getPublicInitialState,
   listPublicCommunities
 } from "./repository/foundation";
+import { getBoundedBootstrap, getPostDetail, listPostPage, listProfilesByHandles } from "./repository/inquiryReads";
 import { syncUser, upsertProfile } from "./repository/identity";
 import { listNotifications, markNotificationRead } from "./repository/notifications";
 import { createOpportunity, listOpportunities } from "./repository/opportunities";
@@ -76,7 +76,7 @@ import {
   updateWorkspaceComment
 } from "./repository/workspaceComments";
 import { publishNote } from "./services/notePublishing";
-import { authedProcedure, publicProcedure, router } from "./trpc";
+import { authedProcedure, publicProcedure, router, sharedAuthedProcedure } from "./trpc";
 import { mutationContextFromRequest } from "./services/mutations";
 
 export const appRouter = router({
@@ -84,12 +84,13 @@ export const appRouter = router({
     syncUser: authedProcedure.mutation(({ ctx, input }) => syncUser(input, ctx.actor))
   }),
   bootstrap: router({
-    getInitialState: publicProcedure.query(({ ctx }) => getPublicInitialState(ctx.actor.handle))
+    getInitialState: publicProcedure.query(({ ctx }) => getBoundedBootstrap(ctx.actor.handle))
   }),
   profiles: router({
     getMe: authedProcedure.query(async ({ ctx }) => {
-      const snapshot = await getInitialState();
-      return ctx.actor.handle ? snapshot.profiles[ctx.actor.handle] ?? null : null;
+      if (!ctx.actor.handle) return null;
+      const profiles = await listProfilesByHandles([ctx.actor.handle]);
+      return profiles[ctx.actor.handle] ?? null;
     }),
     update: authedProcedure.input(createProfileInputSchema).mutation(({ ctx, input }) => upsertProfile(input, ctx.actor)),
     follow: authedProcedure.input(followProfileInputSchema).mutation(({ ctx, input }) => followProfile(input, ctx.actor)),
@@ -100,14 +101,16 @@ export const appRouter = router({
     getFeed: publicProcedure
       .input(z.object({ room: z.string().optional(), limit: z.number().int().positive().max(100).default(50) }).optional())
       .query(async ({ ctx, input }) => {
-        const snapshot = await getPublicInitialState(ctx.actor.handle);
-        const externallyDiscoverable = snapshot.items.filter((item) => !item.communityId || item.postType === "paper");
-        const items = input?.room ? externallyDiscoverable.filter((item) => item.room === input.room) : externallyDiscoverable;
-        return items.slice(0, input?.limit ?? 50);
+        const page = await listPostPage({ room: input?.room, limit: Math.min(input?.limit ?? 50, 50) }, ctx.actor.handle);
+        return page.items;
       }),
     getDetail: publicProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
-      const snapshot = await getPublicInitialState(ctx.actor.handle);
-      return snapshot.items.find((item) => item.id === input.id) ?? null;
+      try {
+        return (await getPostDetail(input.id, ctx.actor.handle)).item;
+      } catch (error) {
+        if (error instanceof TRPCError && error.code === "NOT_FOUND") return null;
+        throw error;
+      }
     }),
     create: authedProcedure.input(createPostInputSchema).mutation(({ ctx, input }) =>
       createPost(input, ctx.actor, mutationContextFromRequest(ctx.req, "post.create", input))
@@ -131,8 +134,12 @@ export const appRouter = router({
   }),
   comments: router({
     list: publicProcedure.input(z.object({ postId: z.string() })).query(async ({ ctx, input }) => {
-      const snapshot = await getPublicInitialState(ctx.actor.handle);
-      return snapshot.items.find((item) => item.id === input.postId)?.comments ?? [];
+      try {
+        return (await getPostDetail(input.postId, ctx.actor.handle)).item.comments;
+      } catch (error) {
+        if (error instanceof TRPCError && error.code === "NOT_FOUND") return [];
+        throw error;
+      }
     }),
     create: authedProcedure.input(z.object({ postId: z.string() }).merge(createCommentInputSchema)).mutation(({ ctx, input }) =>
       addComment(
@@ -166,14 +173,14 @@ export const appRouter = router({
     endCall: authedProcedure.input(callIdInputSchema).mutation(({ ctx, input }) => endCommunityCall(input, ctx.actor))
   }),
   attachments: router({
-    createUpload: authedProcedure.input(createAttachmentUploadInputSchema).mutation(({ ctx, input }) =>
+    createUpload: sharedAuthedProcedure.input(createAttachmentUploadInputSchema).mutation(({ ctx, input }) =>
       createAttachmentUpload(
         input,
         ctx.actor,
         mutationContextFromRequest(ctx.req, "attachment.prepare", input)
       )
     ),
-    confirmUpload: authedProcedure.input(confirmAttachmentInputSchema).mutation(({ ctx, input }) => confirmAttachment(input, ctx.actor))
+    confirmUpload: sharedAuthedProcedure.input(confirmAttachmentInputSchema).mutation(({ ctx, input }) => confirmAttachment(input, ctx.actor))
   }),
   opportunities: router({
     list: publicProcedure.input(createOpportunityInputSchema.partial().optional()).query(({ input }) => listOpportunities(input)),
@@ -190,7 +197,7 @@ export const appRouter = router({
   }),
   messages: router({
     listConversations: authedProcedure.query(({ ctx }) => listConversations(ctx.actor)),
-    send: authedProcedure.input(sendMessageInputSchema).mutation(({ ctx, input }) =>
+    send: sharedAuthedProcedure.input(sendMessageInputSchema).mutation(({ ctx, input }) =>
       sendMessage(input, ctx.actor, mutationContextFromRequest(ctx.req, "message.send", input))
     )
   }),
@@ -256,7 +263,7 @@ export const appRouter = router({
     )
   }),
   assistant: router({
-    ask: authedProcedure.input(assistantMessageInputSchema).mutation(({ ctx, input }) =>
+    ask: sharedAuthedProcedure.input(assistantMessageInputSchema).mutation(({ ctx, input }) =>
       askAssistant(input, ctx.actor, mutationContextFromRequest(ctx.req, "assistant.message", input))
     )
   })

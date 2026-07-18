@@ -31,7 +31,10 @@ export function RoomView({
   onOpenSaved,
   actorHandle,
   profiles,
-  onOpenAttachmentPreview
+  onOpenAttachmentPreview,
+  hasMore,
+  loadingMore,
+  onLoadMore
 }: {
   room: Room;
   items: InquiryItem[];
@@ -50,6 +53,9 @@ export function RoomView({
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
   onOpenAttachmentPreview: AttachmentPreviewHandler;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }) {
   const roomTitle = officeMode === "saved"
           ? "Saved for later"
@@ -117,6 +123,16 @@ export function RoomView({
             <span>Try another room, topic, or search.</span>
           </div>
         )}
+        {hasMore && onLoadMore ? (
+          <button
+            className="feed-load-more"
+            type="button"
+            disabled={loadingMore}
+            onClick={onLoadMore}
+          >
+            {loadingMore ? "Loading…" : "Show more"}
+          </button>
+        ) : null}
       </section>
     </div>
   );

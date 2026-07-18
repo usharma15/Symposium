@@ -72,7 +72,11 @@ export const profiles = pgTable(
   },
   (table) => [
     index("profiles_user_id_idx").on(table.userId),
-    index("profiles_name_idx").on(table.name)
+    index("profiles_name_idx").on(table.name),
+    index("profiles_search_document_idx").using("gin", sql`to_tsvector('english',
+      coalesce(${table.name}, '') || ' ' || coalesce(${table.handle}, '') || ' ' || coalesce(${table.role}, '') || ' ' ||
+      coalesce(${table.location}, '') || ' ' || coalesce(${table.bio}, '') || ' ' || coalesce(${table.fields}::text, '')
+    )`)
   ]
 );
 
@@ -122,7 +126,11 @@ export const communities = pgTable(
   },
   (table) => [
     index("communities_visibility_idx").on(table.visibility),
-    index("communities_name_idx").on(table.name)
+    index("communities_name_idx").on(table.name),
+    index("communities_search_document_idx").using("gin", sql`to_tsvector('english',
+      coalesce(${table.name}, '') || ' ' || coalesce(${table.field}, '') || ' ' ||
+      coalesce(${table.summary}, '') || ' ' || coalesce(${table.keywords}::text, '')
+    )`)
   ]
 );
 
@@ -265,6 +273,11 @@ export const posts = pgTable(
     index("posts_author_idx").on(table.authorHandle),
     index("posts_community_idx").on(table.communityId),
     index("posts_created_at_idx").on(table.createdAt),
+    index("posts_created_id_idx").on(table.createdAt.desc(), table.id.desc()),
+    index("posts_type_created_id_idx").on(table.postType, table.createdAt.desc(), table.id.desc()),
+    index("posts_room_created_id_idx").on(table.room, table.createdAt.desc(), table.id.desc()),
+    index("posts_community_created_id_idx").on(table.communityId, table.createdAt.desc(), table.id.desc()),
+    index("posts_author_created_id_idx").on(table.authorHandle, table.createdAt.desc(), table.id.desc()),
     check(
       "posts_semantic_destination_check",
       sql`${table.postType} IS NULL OR (${table.postType} = 'proposal' AND ${table.room} = 'funding') OR (${table.postType} = 'opportunity' AND ${table.room} = 'opportunities') OR (${table.postType} IN ('paper', 'thought') AND ${table.room} NOT IN ('office', 'funding', 'opportunities'))`
@@ -374,6 +387,8 @@ export const comments = pgTable(
     index("comments_post_idx").on(table.postId),
     index("comments_parent_idx").on(table.parentId),
     index("comments_author_idx").on(table.authorHandle),
+    index("comments_post_created_id_idx").on(table.postId, table.createdAt, table.id),
+    index("comments_search_body_idx").using("gin", sql`to_tsvector('english', ${table.body})`),
     index("comments_quote_source_post_idx").on(sql`(${table.quote}->>'sourcePostId')`).where(sql`${table.quote} IS NOT NULL`),
     index("comments_quote_comment_source_idx").on(sql`(${table.quote}->>'sourceId')`).where(sql`${table.quote}->>'sourceType' = 'comment'`)
   ]
@@ -400,6 +415,7 @@ export const postActions = pgTable(
     uniqueIndex("post_actions_unique_idx").on(table.postId, table.actorHandle, table.action),
     index("post_actions_actor_idx").on(table.actorHandle),
     index("post_actions_activity_idx").on(table.actorHandle, table.updatedAt, table.action, table.active),
+    index("post_actions_viewer_active_idx").on(table.actorHandle, table.action, table.active, table.postId),
     check("post_actions_action_check", sql`${table.action} IN ('save', 'signal', 'fork', 'read')`),
     check("post_actions_count_check", sql`${table.count} >= 0`),
     check("post_actions_revision_check", sql`${table.revision} >= 1`)
@@ -431,6 +447,7 @@ export const commentActions = pgTable(
     index("comment_actions_actor_idx").on(table.actorHandle),
     index("comment_actions_post_idx").on(table.postId),
     index("comment_actions_activity_idx").on(table.actorHandle, table.updatedAt, table.action, table.active),
+    index("comment_actions_viewer_active_idx").on(table.actorHandle, table.action, table.active, table.commentId),
     check("comment_actions_action_check", sql`${table.action} IN ('save', 'signal', 'fork')`),
     check("comment_actions_count_check", sql`${table.count} >= 0`),
     check("comment_actions_revision_check", sql`${table.revision} >= 1`)

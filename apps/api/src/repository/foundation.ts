@@ -168,6 +168,32 @@ export const ensureProfileHandle = async (handle: string) => {
   return clean;
 };
 
+export const getProfileByHandle = async (handle: string) => {
+  const clean = cleanHandle(handle);
+  if (!hasDatabase()) return seedSnapshot().profiles[clean] ?? null;
+  await ensureLiveData();
+  const result = await getPool().query<ResearchProfileContract & { avatarUrl: string | null }>(
+    `SELECT
+       handle,
+       email,
+       name,
+       avatar_url AS "avatarUrl",
+       likes_public AS "likesPublic",
+       reshares_public AS "resharesPublic",
+       role,
+       location,
+       bio,
+       fields,
+       revision
+     FROM profiles
+     WHERE handle = $1
+     LIMIT 1`,
+    [clean]
+  );
+  const person = result.rows[0];
+  return person ? { ...person, avatarUrl: person.avatarUrl ?? undefined } : null;
+};
+
 export const callRowToContract = (row: {
   id: string;
   communityId: string;
@@ -913,7 +939,7 @@ export const attachmentsByOwner = (rows: AttachmentRow[]) => {
 };
 
 export const getActiveAttachmentsByOwner = async (
-  client: PoolClient,
+  client: Pick<PoolClient, "query">,
   ownerType: "post" | "comment",
   ownerIds: string[]
 ) => {
@@ -940,7 +966,7 @@ export const getActiveAttachmentsByOwner = async (
 };
 
 export const getPostConversationAttachments = (
-  client: PoolClient,
+  client: Pick<PoolClient, "query">,
   postId: string,
   commentRows: CommentRow[]
 ) =>
@@ -1026,7 +1052,7 @@ export const rowToItem = (
   };
 };
 
-const communityRowToContract = (community: ResearchCommunityContract): ResearchCommunityContract => ({
+export const communityRowToContract = (community: ResearchCommunityContract): ResearchCommunityContract => ({
   ...community,
   memberHandles: json(community.memberHandles, []),
   keywords: json(community.keywords, []),
@@ -1274,7 +1300,44 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
   }
 };
 
-export const listCommunities = async () => (await getInitialState()).communities ?? [];
+export const listCommunities = async () => {
+  if (!hasDatabase()) return researchCommunities;
+  await ensureLiveData();
+  const result = await getPool().query<ResearchCommunityContract>(
+    `SELECT
+       id,
+       name,
+       field,
+       summary,
+       visibility,
+       online,
+       COALESCE((
+         SELECT jsonb_agg(member.value ORDER BY member.ordinality)
+         FROM jsonb_array_elements(community.member_handles) WITH ORDINALITY AS member(value, ordinality)
+         WHERE member.ordinality <= 50
+       ), '[]'::jsonb) AS "memberHandles",
+       keywords,
+       seed_counts AS "seedCounts",
+       call_status AS "callStatus",
+       (
+         SELECT membership.profile_handle
+         FROM community_memberships membership
+         WHERE membership.community_id = community.id
+           AND membership.status = 'active'
+           AND membership.role = 'owner'
+         ORDER BY membership.created_at ASC
+         LIMIT 1
+       ) AS "ownerHandle",
+       moderator_handles AS "moderatorHandles",
+       guidelines,
+       announcements,
+       revision
+     FROM communities community
+     ORDER BY name ASC
+     LIMIT 200`
+  );
+  return result.rows.map(communityRowToContract);
+};
 
 const communityMemberPreviewLimit = 50;
 
@@ -1351,7 +1414,7 @@ type CommunityViewerState = {
   monthlyActive: number;
 };
 
-const communityViewerState = async (
+export const communityViewerState = async (
   communities: ResearchCommunityContract[],
   requesterHandle: string | null
 ) => {
@@ -1454,8 +1517,85 @@ export const getPublicInitialState = async (rawRequesterHandle?: string | null) 
   };
 };
 
-export const listPublicCommunities = async (requesterHandle?: string | null) =>
-  (await getPublicInitialState(requesterHandle)).communities ?? [];
+export const listPublicCommunities = async (rawRequesterHandle?: string | null) => {
+  const communities = await listCommunities();
+  const requesterHandle = rawRequesterHandle ? cleanHandle(rawRequesterHandle) : null;
+  const viewerState = await communityViewerState(communities, requesterHandle);
+  return communities.map((community) => {
+    const viewer = viewerState.get(community.id) ?? {
+      status: "none" as const,
+      role: undefined,
+      lastAccessedAt: undefined,
+      memberCount: 0,
+      monthlyActive: 0
+    };
+    return publicCommunity({
+      ...community,
+      viewerRole: viewer.role,
+      memberCount: viewer.memberCount,
+      monthlyActive: viewer.monthlyActive,
+      lastAccessedAt: viewer.lastAccessedAt
+    }, viewer.status);
+  });
+};
+
+export const listPublicCommunityCallMap = async (
+  communities: ResearchCommunityContract[],
+  _rawRequesterHandle?: string | null
+) => {
+  if (!communities.length) return {};
+  if (!hasDatabase()) {
+    const calls = seededCommunityCallMap(communities);
+    return Object.fromEntries(communities.map((community) => [
+      community.id,
+      community.visibility === "public" || community.membershipStatus === "active"
+        ? calls[community.id] ?? []
+        : []
+    ]));
+  }
+  await ensureLiveData();
+  const readableCommunityIds = communities
+    .filter((community) => community.visibility === "public" || community.membershipStatus === "active")
+    .map((community) => community.id);
+  const callMap = Object.fromEntries(communities.map((community) => [community.id, [] as CommunityCallContract[]]));
+  if (!readableCommunityIds.length) return callMap;
+  const result = await getPool().query(
+    `WITH ranked_calls AS (
+       SELECT community_call.*, ROW_NUMBER() OVER (PARTITION BY community_id ORDER BY created_at DESC) AS rank
+       FROM community_calls community_call
+       WHERE community_call.community_id = ANY($1::text[])
+         AND community_call.status IN ('live', 'scheduled')
+     )
+     SELECT
+       community_call.id,
+       community_call.community_id AS "communityId",
+       community_call.host_handle AS "hostHandle",
+       community_call.title,
+       community_call.kind,
+       community_call.status,
+       community_call.starts_at AS "startsAt",
+       community_call.ended_at AS "endedAt",
+       community_call.provider,
+       community_call.provider_room_id AS "providerRoomId",
+       COALESCE(json_agg(participant.profile_handle) FILTER (WHERE participant.profile_handle IS NOT NULL), '[]') AS "participantHandles"
+     FROM ranked_calls community_call
+     LEFT JOIN LATERAL (
+       SELECT call_participant.profile_handle
+       FROM call_participants call_participant
+       WHERE call_participant.call_id = community_call.id
+         AND call_participant.left_at IS NULL
+       ORDER BY call_participant.joined_at ASC, call_participant.profile_handle ASC
+       LIMIT 50
+     ) participant ON true
+     WHERE community_call.rank <= 5
+     GROUP BY community_call.id, community_call.community_id, community_call.host_handle, community_call.title, community_call.kind, community_call.status,
+       community_call.starts_at, community_call.ended_at, community_call.provider, community_call.provider_room_id, community_call.created_at
+     ORDER BY community_call.community_id, community_call.created_at DESC`,
+    [readableCommunityIds]
+  );
+  for (const row of result.rows) (callMap[row.communityId] ??= []).push(callRowToContract(row));
+  return callMap;
+};
 
 export const getCommunity = async (communityId: string) => {
   if (!hasDatabase()) {

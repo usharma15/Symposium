@@ -732,7 +732,7 @@ export function FeedPost({
         <PostTimeFooter item={item} />
         <SocialActions
           item={item}
-          commentCount={countComments(item.comments)}
+          commentCount={item.commentCount ?? countComments(item.comments)}
           onAction={onAction}
           onQuote={() => onQuote({ sourceType: "post", sourceId: item.id, sourcePostId: item.id })}
           onCommentsClick={() => onSelect(item.id, commentsSectionTargetId)}

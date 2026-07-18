@@ -28,8 +28,8 @@ const popularityWindowMs: Record<Exclude<CommunityPopularityWindow, "all-time">,
 const commentCount = (item: InquiryItem): number =>
   item.comments.reduce((total, comment) => {
     const nested = (comments: typeof comment.replies): number =>
-      (comments ?? []).reduce((count, reply) => count + 1 + nested(reply.replies), 0);
-    return total + 1 + nested(comment.replies);
+      (comments ?? []).reduce((count, reply) => count + (reply.deletedAt ? 0 : 1) + nested(reply.replies), 0);
+    return total + (comment.deletedAt ? 0 : 1) + nested(comment.replies);
   }, 0);
 
 const communityEngagementScore = (item: InquiryItem) =>
@@ -37,7 +37,7 @@ const communityEngagementScore = (item: InquiryItem) =>
   + metricNumber(item.metrics.forks) * 5
   + metricNumber(item.metrics.saves) * 3
   + metricNumber(item.metrics.reads) * 0.08
-  + commentCount(item) * 6;
+  + (item.commentCount ?? commentCount(item)) * 6;
 
 const matchesCommunityContent = (item: InquiryItem, content: CommunityFeedContent) =>
   content === "all" || itemHasPostType(item, content);

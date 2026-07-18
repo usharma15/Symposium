@@ -8,17 +8,48 @@ import {
   deleteComment,
   updateComment,
 } from "../repository/comments";
-import { getPublicInitialState } from "../repository/foundation";
+import { getPostDetail, listPostPage } from "../repository/inquiryReads";
 import { applyPostAction, createPost, deletePost, updatePost } from "../repository/posts";
 import { getActorFromRequest } from "../services/auth";
 import type { RouteParams } from "./types";
 
 export const registerPostRoutes = (app: FastifyInstance) => {
-  app.get("/v1/posts", async (request, reply) => {
+  app.get<{ Querystring: {
+    cursor?: string;
+    limit?: string;
+    room?: string;
+    postType?: string;
+    postTypes?: string;
+    communityId?: string;
+    authorHandle?: string;
+    saved?: string;
+    following?: string;
+    ids?: string;
+  } }>("/v1/posts", async (request, reply) => {
     try {
       const actor = await getActorFromRequest(request);
-      const state = await getPublicInitialState(actor.handle);
-      return reply.send({ items: state.items.filter((item) => !item.communityId || item.postType === "paper") });
+      const page = await listPostPage({
+        cursor: request.query.cursor,
+        limit: request.query.limit ? Number(request.query.limit) : undefined,
+        room: request.query.room,
+        postType: request.query.postType,
+        postTypes: request.query.postTypes?.split(",").filter(Boolean),
+        communityId: request.query.communityId,
+        authorHandle: request.query.authorHandle,
+        saved: request.query.saved === "true" ? true : undefined,
+        following: request.query.following === "true" ? true : undefined,
+        ids: request.query.ids?.split(",").filter(Boolean)
+      }, actor.handle);
+      return reply.send(page);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: RouteParams }>("/v1/posts/:id", async (request, reply) => {
+    try {
+      const actor = await getActorFromRequest(request);
+      return reply.send(await getPostDetail(request.params.id, actor.handle));
     } catch (error) {
       return sendError(app, reply, error);
     }
@@ -26,7 +57,7 @@ export const registerPostRoutes = (app: FastifyInstance) => {
 
   app.post("/v1/posts", async (request, reply) => {
     try {
-      const actor = await withWriteActor(request);
+      const actor = await withWriteActor(request, { shared: true, scope: "content-create", limit: 30 });
       const mutation = mutationContextFromRequest(request, "post.create", request.body);
       const item = await createPost(request.body, actor, mutation);
       return reply.send({ item });
@@ -62,7 +93,7 @@ export const registerPostRoutes = (app: FastifyInstance) => {
 
   app.post<{ Params: RouteParams }>("/v1/posts/:id/comments", async (request, reply) => {
     try {
-      const actor = await withWriteActor(request);
+      const actor = await withWriteActor(request, { shared: true, scope: "content-create", limit: 30 });
       const mutation = mutationContextFromRequest(request, "comment.create", {
         postId: request.params.id,
         body: request.body

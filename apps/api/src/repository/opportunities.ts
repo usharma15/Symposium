@@ -6,19 +6,18 @@ import {
 } from "../../../../packages/contracts/src";
 import type { Actor } from "../services/auth";
 import type { MutationContext } from "../services/mutations";
-import { getPublicInitialState } from "./foundation";
+import { listPostPage } from "./inquiryReads";
 import { createPost } from "./posts";
 
 // Compatibility facade for early API clients. Canonical persistence and live events
 // now run through posts; the legacy opportunity_posts table receives no new writes.
 export const listOpportunities = async (rawInput?: unknown) => {
   const input = rawInput ? createOpportunityInputSchema.partial().parse(rawInput) : {};
-  const state = await getPublicInitialState();
-  return state.items
-    .filter((item) => item.room === "opportunities" && item.opportunity)
+  const page = await listPostPage({ postType: "opportunity", room: "opportunities", limit: 50 });
+  return page.items
+    .filter((item) => item.opportunity)
     .filter((item) => !input.kind || item.opportunity?.kind === input.kind)
     .filter((item) => !input.status || input.status === item.opportunity?.status)
-    .slice(0, 100)
     .map((item): OpportunityContract => ({
       id: item.id,
       title: item.title,

@@ -629,6 +629,8 @@ export const inquiryItemSchema = z.object({
   evidence: z.array(z.string()),
   tests: z.array(z.string()),
   forks: z.array(z.string()),
+  commentCount: z.number().int().nonnegative().optional(),
+  detailLoaded: z.boolean().optional(),
   comments: z.array(inquiryCommentSchema),
   attachments: z.array(inquiryAttachmentSchema).max(100).optional(),
   quote: contentQuoteSchema.optional(),
@@ -976,7 +978,34 @@ export const confirmAttachmentInputSchema = z.object({
 
 export const searchInputSchema = z.object({
   query: z.string().trim().min(1).max(160),
-  limit: z.number().int().positive().max(50).default(12)
+  limit: z.number().int().positive().max(50).default(12),
+  cursor: z.string().trim().max(500).optional()
+});
+
+export const postPageQuerySchema = z.object({
+  cursor: z.string().trim().max(500).optional(),
+  limit: z.number().int().positive().max(50).default(24),
+  room: postRoomSchema.optional(),
+  postType: postTypeSchema.optional(),
+  postTypes: z.array(postTypeSchema).min(1).max(4).optional(),
+  communityId: z.string().trim().min(1).max(120).optional(),
+  authorHandle: z.string().trim().min(1).max(80).optional(),
+  saved: z.boolean().optional(),
+  following: z.boolean().optional(),
+  ids: z.array(z.string().trim().min(1).max(240)).max(50).optional()
+});
+
+export const postPageResponseSchema = z.object({
+  items: z.array(inquiryItemSchema).max(50),
+  profiles: z.record(z.string(), researchProfileSchema),
+  nextCursor: z.string().nullable()
+});
+
+export const searchResponseSchema = z.object({
+  posts: z.array(inquiryItemSchema).max(50),
+  profiles: z.array(researchProfileSchema).max(50),
+  communities: z.array(researchCommunitySchema).max(50),
+  nextCursor: z.string().nullable().default(null)
 });
 
 export const sendMessageInputSchema = z.object({
@@ -1259,10 +1288,12 @@ export const assistantResponseSchema = z.object({
 
 export const bootstrapResponseSchema = z.object({
   profiles: z.record(z.string(), researchProfileSchema),
-  items: z.array(inquiryItemSchema),
-  communities: z.array(researchCommunitySchema).optional(),
-  communityCalls: z.record(z.string(), z.array(communityCallSchema)).optional(),
-  defaultProfile: researchProfileSchema
+  items: z.array(inquiryItemSchema).max(50),
+  communities: z.array(researchCommunitySchema).max(200).optional(),
+  communityCalls: z.record(z.string(), z.array(communityCallSchema).max(5)).optional(),
+  defaultProfile: researchProfileSchema,
+  nextCursor: z.string().nullable().optional(),
+  readModelVersion: z.literal(2).optional()
 });
 
 export type RoomIdContract = z.infer<typeof roomIdSchema>;
@@ -1316,6 +1347,9 @@ export type ProfileActivityResponseContract = z.infer<typeof profileActivityResp
 export type AttachmentStatusContract = z.infer<typeof attachmentStatusSchema>;
 export type AttachmentKindContract = z.infer<typeof attachmentKindSchema>;
 export type BootstrapResponseContract = z.infer<typeof bootstrapResponseSchema>;
+export type PostPageQueryContract = z.infer<typeof postPageQuerySchema>;
+export type PostPageResponseContract = z.infer<typeof postPageResponseSchema>;
+export type SearchResponseContract = z.infer<typeof searchResponseSchema>;
 export type FollowProfileInputContract = z.infer<typeof followProfileInputSchema>;
 export type ProfileFollowContract = z.infer<typeof profileFollowSchema>;
 export type CommunityCallContract = z.infer<typeof communityCallSchema>;

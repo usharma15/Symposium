@@ -31,8 +31,11 @@ import type {
   CanonicalActionActivityContract,
   OpportunityPostInputContract,
   PatronageProposalInputContract,
+  PostPageResponseContract,
+  PostPageQueryContract,
   ProfileActivityCountsContract,
   ProfileActivityResponseContract,
+  SearchResponseContract,
   ToggleActionContract,
   VersionedDocumentContract
 } from "@/packages/contracts/src";
@@ -191,6 +194,7 @@ import {
   preservePublishedPosition
 } from "@/features/bootstrap/clientItemNormalization";
 import {
+  cachedBootstrapItemLimit,
   persistCachedBootstrap,
   readCachedBootstrapSnapshot,
   resolveCachedBootstrap
@@ -212,6 +216,16 @@ type EditingCommentTarget = {
 };
 
 type ProfileFollowRecord = RevisionedFollowRecord;
+type FeedPageState = {
+  initialized: boolean;
+  loading: boolean;
+  nextCursor: string | null;
+};
+type SearchResults = {
+  titleMatches: InquiryItem[];
+  contentMatches: InquiryItem[];
+  profileMatches: ResearchProfile[];
+};
 type ProfileFollowResponse = {
   following?: ProfileFollowRecord[];
   followers?: ProfileFollowRecord[];
@@ -258,6 +272,10 @@ type SymposiumAuthState = {
   userId: string | null;
   signOut: () => Promise<void>;
 };
+
+const initialBoundedInquiryItems = [...inquiryItems]
+  .sort((left, right) => itemTimestampScore(right) - itemTimestampScore(left))
+  .slice(0, cachedBootstrapItemLimit);
 
 const liveStatus = {
   loading: "Loading live data",
@@ -425,7 +443,7 @@ function SymposiumExperience({
       (postId) => inquiryItems.find((item) => item.id === postId)?.room
     )
   );
-  const { items, itemsRef, replaceItems } = useInquiryEntityStore(inquiryItems);
+  const { items, itemsRef, replaceItems } = useInquiryEntityStore(initialBoundedInquiryItems);
   const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
   const [currentProfile, setCurrentProfile] = useState<ResearchProfile>(profile);
   const [followingHandles, setFollowingHandles] = useState<string[]>([]);
@@ -478,6 +496,9 @@ function SymposiumExperience({
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
   const [messageRecipientHandle, setMessageRecipientHandle] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [remoteSearchResults, setRemoteSearchResults] = useState<SearchResults | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [feedPages, setFeedPages] = useState<Record<string, FeedPageState>>({});
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(
     initialRoute.kind === "profile" ? initialRoute.handle : null
   );
@@ -524,12 +545,14 @@ function SymposiumExperience({
   const canonicalActionRevisionRef = useRef<Record<string, number>>({});
   const pendingCanonicalActionKeysRef = useRef(new Set<string>());
   const profileActivityRequestRef = useRef<Record<string, number>>({});
+  const feedPagesRef = useRef<Record<string, FeedPageState>>({});
+  const feedActorHandleRef = useRef(currentProfile.handle);
   const retryMutationRegistryRef = useRef(createRetryMutationRegistry());
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
   const itemMutationCoordinatorRef = useRef(createItemMutationCoordinator<InquiryItem>({ equalRevisionProjectionChanged: communityViewerProjectionChanged }));
   const profileMutationCoordinatorRef = useRef(createItemMutationCoordinator<ProfileSyncEntity>());
   const followMutationCoordinatorRef = useRef(createFollowMutationCoordinator());
-  const lastPersistedItemsRef = useRef<InquiryItem[]>(inquiryItems);
+  const lastPersistedItemsRef = useRef<InquiryItem[]>(initialBoundedInquiryItems);
   const lastPersistedProfilesRef = useRef<ProfileSyncEntity[]>([]);
   const authenticatedProfileHandleRef = useRef<string | null>(null);
   const entranceStartedAtRef = useRef<number | null>(null);
@@ -602,6 +625,9 @@ function SymposiumExperience({
     profileList.find((person) => person.name === nameOrHandle) ??
     getProfileForName(nameOrHandle);
   const selectedProfile = selectedProfileName ? findProfile(selectedProfileName) : null;
+  const selectedProfileHandle = selectedProfileName
+    ? selectedProfile?.handle ?? cleanHandle(selectedProfileName)
+    : null;
 
   useSymposiumRenderPreload(themePreloadRenders, activeRoomRender);
 
@@ -609,6 +635,17 @@ function SymposiumExperience({
   useEffect(() => {
     profilesRef.current = profiles;
   }, [profiles]);
+
+  useEffect(() => {
+    feedPagesRef.current = feedPages;
+  }, [feedPages]);
+
+  useEffect(() => {
+    if (feedActorHandleRef.current === currentProfile.handle) return;
+    feedActorHandleRef.current = currentProfile.handle;
+    feedPagesRef.current = {};
+    setFeedPages({});
+  }, [currentProfile.handle]);
 
   useEffect(() => {
     profileActivityByHandleRef.current = profileActivityByHandle;
@@ -728,6 +765,40 @@ function SymposiumExperience({
       followingHandles
     }));
   }, [activeItems, activeRoom, currentProfile, feedScope, followingHandles, officeMode]);
+
+  const activeFeedRequest = useMemo<{
+    key: string;
+    query: PostPageQueryContract;
+  } | null>(() => {
+    const following = feedScope === "following" ? true : undefined;
+    if (activeRoom === "communities" && selectedCommunityId) {
+      return {
+        key: `community:${selectedCommunityId}`,
+        query: { communityId: selectedCommunityId, limit: 24 }
+      };
+    }
+    if (activeRoom === "office" && officeMode === "saved") {
+      return { key: "office:saved", query: { saved: true, limit: 24 } };
+    }
+    if (activeRoom === "hall" || activeRoom === "office" || activeRoom === "communities") return null;
+    if (activeRoom === "symposium") {
+      return {
+        key: `symposium:${feedScope}`,
+        query: { postTypes: ["paper", "thought"], following, limit: 24 }
+      };
+    }
+    const postType = activeRoom === "library"
+      ? "paper" as const
+      : activeRoom === "amphitheater"
+        ? "thought" as const
+        : activeRoom === "funding"
+          ? "proposal" as const
+          : "opportunity" as const;
+    return {
+      key: `${activeRoom}:${feedScope}`,
+      query: { postType, following, limit: 24 }
+    };
+  }, [activeRoom, feedScope, officeMode, selectedCommunityId]);
 
   const persistLocalSnapshot = (
     nextItems = items,
@@ -992,9 +1063,10 @@ function SymposiumExperience({
       communityCalls?: typeof communityCalls;
       defaultProfile: ResearchProfile;
     }>(`/api/bootstrap?actorHandle=${encodeURIComponent(preferredHandle)}`, { cache: "no-store" });
-    let loadedProfiles = Object.keys(data.profiles).length
+    const incomingProfiles = Object.keys(data.profiles).length
       ? data.profiles
       : { [data.defaultProfile.handle]: data.defaultProfile };
+    let loadedProfiles = { ...profilesRef.current, ...incomingProfiles };
     loadedProfiles = Object.fromEntries(
       Object.entries(loadedProfiles).map(([handle, incoming]) => [
         handle,
@@ -1025,9 +1097,14 @@ function SymposiumExperience({
         settleFreshItemActionState(incoming, nextProfile.handle);
       }
     }
+    const incomingIds = new Set(normalizedItems.map((item) => item.id));
+    const refreshInput = [
+      ...normalizedItems,
+      ...itemsRef.current.filter((item) => !incomingIds.has(item.id))
+    ];
     const crossTabSafeItems = sortByPublishedRecency(
       itemMutationCoordinatorRef.current.reconcileRefresh(
-        normalizedItems,
+        refreshInput,
         itemsRef.current,
         mutationSnapshot
       )
@@ -1139,6 +1216,108 @@ function SymposiumExperience({
       broadcastProfileHandles: [handle]
     });
     return true;
+  };
+
+  const mergeBoundedRead = (data: {
+    items: InquiryItem[];
+    profiles?: Record<string, ResearchProfile>;
+  }) => {
+    let nextProfiles = profilesRef.current;
+    if (data.profiles && Object.keys(data.profiles).length) {
+      nextProfiles = { ...profilesRef.current };
+      for (const [rawHandle, incoming] of Object.entries(data.profiles)) {
+        const handle = cleanHandle(rawHandle);
+        if (!handle || handle === "@") continue;
+        const current = nextProfiles[handle];
+        const protectedEntity = profileMutationCoordinatorRef.current.protectIncomingItem(
+          profileSyncEntity({ ...incoming, handle }),
+          current ? profileSyncEntity(current) : undefined
+        );
+        nextProfiles[handle] = researchProfileFromSyncEntity(protectedEntity);
+      }
+    }
+
+    const nextById = new Map(itemsRef.current.map((item) => [item.id, item]));
+    for (const rawIncoming of normalizeClientSeedTimes(data.items)) {
+      const current = nextById.get(rawIncoming.id);
+      const incoming = preservePostSemanticProjection(rawIncoming, current);
+      const comparison = compareEntityRevisions(incoming, current);
+      if (current && comparison !== null && comparison < 0) continue;
+
+      let next = reconcileCommittedItem(incoming, current, currentProfileRef.current.handle);
+      if (current?.detailLoaded && !incoming.detailLoaded) {
+        next = {
+          ...next,
+          comments: current.comments,
+          attachments: current.attachments,
+          commentCount: incoming.commentCount ?? current.commentCount,
+          detailLoaded: true
+        };
+      } else if (incoming.detailLoaded) {
+        next = {
+          ...next,
+          comments: incoming.comments,
+          attachments: incoming.attachments,
+          commentCount: incoming.commentCount,
+          detailLoaded: true
+        };
+      }
+      nextById.set(next.id, next);
+    }
+
+    const nextItems = sortByPublishedRecency([...nextById.values()]);
+    profilesRef.current = nextProfiles;
+    setProfiles(nextProfiles);
+    replaceItems(nextItems);
+    persistLocalSnapshot(nextItems, nextProfiles, currentProfileRef.current);
+  };
+
+  const setFeedPageState = (key: string, next: FeedPageState) => {
+    const pages = { ...feedPagesRef.current, [key]: next };
+    feedPagesRef.current = pages;
+    setFeedPages(pages);
+  };
+
+  const loadPostPage = async (
+    key: string,
+    query: PostPageQueryContract,
+    append = false
+  ) => {
+    const current = feedPagesRef.current[key];
+    if (current?.loading || (append && !current?.nextCursor)) return;
+    setFeedPageState(key, {
+      initialized: current?.initialized ?? false,
+      loading: true,
+      nextCursor: current?.nextCursor ?? null
+    });
+    try {
+      const parameters = new URLSearchParams({
+        limit: String(query.limit),
+        actorHandle: currentProfileRef.current.handle
+      });
+      if (append && current?.nextCursor) parameters.set("cursor", current.nextCursor);
+      if (query.room) parameters.set("room", query.room);
+      if (query.postType) parameters.set("postType", query.postType);
+      if (query.postTypes?.length) parameters.set("postTypes", query.postTypes.join(","));
+      if (query.communityId) parameters.set("communityId", query.communityId);
+      if (query.authorHandle) parameters.set("authorHandle", query.authorHandle);
+      if (query.saved) parameters.set("saved", "true");
+      if (query.following) parameters.set("following", "true");
+      if (query.ids?.length) parameters.set("ids", query.ids.join(","));
+      const page = await symposiumApi.request<PostPageResponseContract>(
+        `/api/posts?${parameters.toString()}`,
+        { cache: "no-store" }
+      );
+      mergeBoundedRead(page);
+      setFeedPageState(key, { initialized: true, loading: false, nextCursor: page.nextCursor });
+    } catch (error) {
+      setFeedPageState(key, {
+        initialized: current?.initialized ?? false,
+        loading: false,
+        nextCursor: current?.nextCursor ?? null
+      });
+      throw error;
+    }
   };
 
   const mergeLiveMetricPatch = (payload: LiveEventPayload) => {
@@ -1413,7 +1592,7 @@ function SymposiumExperience({
     const cached = resolveCachedBootstrap({
       fallbackProfile: profile,
       preferredHandle: storedProfileHandle,
-      seedItems: inquiryItems,
+      seedItems: initialBoundedInquiryItems,
       snapshot: readCachedBootstrapSnapshot(window.localStorage)
     });
     const cachedItems = sortByPublishedRecency(normalizeClientSeedTimes(cached.items));
@@ -1705,13 +1884,14 @@ function SymposiumExperience({
   const replaceCanonicalProfileActivity = (
     handle: string,
     response: ProfileActivityResponseContract,
-    requestStartRevisions: Record<string, number>
+    requestStartRevisions: Record<string, number>,
+    append = false
   ) => {
     const clean = cleanHandle(handle);
     const currentEntries = profileActivityByHandleRef.current[clean]?.entries ?? [];
     const entries = reconcileCanonicalActivityRefresh({
       current: currentEntries,
-      incoming: response.entries,
+      incoming: append ? mergeCanonicalActivities(currentEntries, response.entries) : response.entries,
       pendingKeys: pendingCanonicalActionKeysRef.current,
       currentRevisions: canonicalActionRevisionRef.current,
       requestStartRevisions
@@ -1739,11 +1919,18 @@ function SymposiumExperience({
     });
   };
 
-  const refreshProfileActivity = (handle: string, actorHandle = currentProfileRef.current.handle) => {
+  const refreshProfileActivity = (
+    handle: string,
+    actorHandle = currentProfileRef.current.handle,
+    append = false
+  ) => {
     const clean = cleanHandle(handle);
     const cleanActor = cleanHandle(actorHandle);
     if (!clean || clean === "@") return Promise.resolve();
-    const inFlightKey = `${clean}:${cleanActor}`;
+    const existingSnapshot = profileActivityByHandleRef.current[clean];
+    const startCursor = append ? existingSnapshot?.nextCursor ?? null : null;
+    if (append && !startCursor) return Promise.resolve();
+    const inFlightKey = `${clean}:${cleanActor}:${startCursor ?? "first"}`;
     const existingRequest = profileActivityInFlightRef.current[inFlightKey];
     if (existingRequest) return existingRequest;
     const requestId = (profileActivityRequestRef.current[clean] ?? 0) + 1;
@@ -1757,40 +1944,41 @@ function SymposiumExperience({
 
     const request = (async () => {
       const requestStartRevisions = { ...canonicalActionRevisionRef.current };
-      const entries: CanonicalActionActivityContract[] = [];
-      let hiddenCommunityCounts = emptyProfileActivityCounts();
-      const seenCursors = new Set<string>();
-      let cursor: string | null = null;
-      do {
-        const params = new URLSearchParams({ limit: "500", actorHandle: cleanActor });
-        if (cursor) params.set("cursor", cursor);
-        const controller = new AbortController();
-        const timeout = window.setTimeout(() => controller.abort(), 15_000);
-        try {
-          const data = await symposiumApi.request<Partial<ProfileActivityResponseContract>>(
-            `/api/profiles/${encodeURIComponent(clean)}/activity?${params.toString()}`,
-            { cache: "no-store", signal: controller.signal }
-          );
-          entries.push(...(data.entries ?? []).filter(isCanonicalActionActivity));
-          if (data.hiddenCommunityCounts) hiddenCommunityCounts = data.hiddenCommunityCounts;
-          const nextCursor = typeof data.nextCursor === "string" ? data.nextCursor : null;
-          if (!nextCursor || seenCursors.has(nextCursor)) {
-            cursor = null;
-          } else {
-            seenCursors.add(nextCursor);
-            cursor = nextCursor;
-          }
-        } finally {
-          window.clearTimeout(timeout);
-        }
-      } while (cursor);
+      const params = new URLSearchParams({ limit: "50", actorHandle: cleanActor });
+      if (startCursor) params.set("cursor", startCursor);
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 15_000);
+      let data: Partial<ProfileActivityResponseContract>;
+      try {
+        data = await symposiumApi.request<Partial<ProfileActivityResponseContract>>(
+          `/api/profiles/${encodeURIComponent(clean)}/activity?${params.toString()}`,
+          { cache: "no-store", signal: controller.signal }
+        );
+      } finally {
+        window.clearTimeout(timeout);
+      }
+
+      const entries = (data.entries ?? []).filter(isCanonicalActionActivity);
+      const postIds = Array.from(new Set(entries.map((entry) => entry.postId))).slice(0, 50);
+      if (postIds.length) {
+        const postParameters = new URLSearchParams({
+          ids: postIds.join(","),
+          limit: String(postIds.length),
+          actorHandle: cleanActor
+        });
+        const page = await symposiumApi.request<PostPageResponseContract>(
+          `/api/posts?${postParameters.toString()}`,
+          { cache: "no-store" }
+        );
+        mergeBoundedRead(page);
+      }
 
       if (profileActivityRequestRef.current[clean] !== requestId) return;
       replaceCanonicalProfileActivity(clean, {
         entries,
-        nextCursor: null,
-        hiddenCommunityCounts
-      }, requestStartRevisions);
+        nextCursor: typeof data.nextCursor === "string" ? data.nextCursor : null,
+        hiddenCommunityCounts: data.hiddenCommunityCounts ?? existingSnapshot?.hiddenCommunityCounts ?? emptyProfileActivityCounts()
+      }, requestStartRevisions, append);
     })().catch((error) => {
       if (profileActivityRequestRef.current[clean] === requestId) {
         setProfileActivityErrors((current) => ({ ...current, [clean]: true }));
@@ -1873,16 +2061,120 @@ function SymposiumExperience({
   };
 
   useEffect(() => {
-    if (!signedIn || !currentProfile.handle) return;
+    if (entryMode !== "complete" || syncStatus === liveStatus.loading || !currentProfile.handle) return;
     if (profileActivityByHandleRef.current[currentProfile.handle]?.loaded) return;
     void refreshProfileActivity(currentProfile.handle, currentProfile.handle).catch(() => undefined);
-  }, [currentProfile.handle, signedIn]);
+  }, [currentProfile.handle, entryMode, syncStatus]);
 
   useEffect(() => {
-    if (!signedIn || !selectedProfile?.handle) return;
+    if (entryMode !== "complete" || syncStatus === liveStatus.loading || !selectedProfile?.handle) return;
     if (profileActivityByHandleRef.current[selectedProfile.handle]?.loaded) return;
     void refreshProfileActivity(selectedProfile.handle, currentProfile.handle).catch(() => undefined);
-  }, [currentProfile.handle, selectedProfile?.handle, signedIn]);
+  }, [currentProfile.handle, entryMode, selectedProfile?.handle, syncStatus]);
+
+  useEffect(() => {
+    if (entryMode !== "complete" || syncStatus === liveStatus.loading || !activeFeedRequest) return;
+    if (selectedItemId || applicationReviewPostId || selectedProfileName || messagesOpen) return;
+    if (feedPagesRef.current[activeFeedRequest.key]?.initialized) return;
+    void loadPostPage(activeFeedRequest.key, activeFeedRequest.query).catch(() => {
+      setSyncStatus("Feed could not refresh");
+    });
+  }, [
+    activeFeedRequest,
+    applicationReviewPostId,
+    entryMode,
+    feedPages,
+    messagesOpen,
+    selectedItemId,
+    selectedProfileName,
+    syncStatus
+  ]);
+
+  useEffect(() => {
+    const postId = selectedItemId ?? applicationReviewPostId;
+    if (!postId || syncStatus === liveStatus.loading) return;
+    const current = itemsRef.current.find((item) => item.id === postId);
+    if (current?.detailLoaded) return;
+    let cancelled = false;
+    void symposiumApi.request<{ item: InquiryItem; profiles?: Record<string, ResearchProfile> }>(
+      `/api/posts/${encodeURIComponent(postId)}?actorHandle=${encodeURIComponent(currentProfile.handle)}`,
+      { cache: "no-store" }
+    ).then((data) => {
+      if (!cancelled) mergeBoundedRead({ items: [data.item], profiles: data.profiles });
+    }).catch(() => {
+      if (!cancelled) setSyncStatus("Post detail could not load");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [applicationReviewPostId, currentProfile.handle, selectedItem?.detailLoaded, selectedItemId, syncStatus]);
+
+  useEffect(() => {
+    if (syncStatus === liveStatus.loading || !selectedProfileHandle || selectedProfileHandle === "@") return;
+    const stored = profilesRef.current[selectedProfileHandle];
+    if (stored) return;
+    let cancelled = false;
+    void symposiumApi.request<{ profile: ResearchProfile }>(
+      `/api/profiles/${encodeURIComponent(selectedProfileHandle)}`,
+      { cache: "no-store" }
+    ).then((data) => {
+      if (!cancelled) mergeBoundedRead({ items: [], profiles: { [data.profile.handle]: data.profile } });
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProfileHandle, syncStatus]);
+
+  useEffect(() => {
+    if (syncStatus === liveStatus.loading || !selectedProfileHandle || selectedProfileHandle === "@") return;
+    const key = `profile:${selectedProfileHandle}:authored`;
+    if (feedPagesRef.current[key]?.initialized) return;
+    void loadPostPage(key, { authorHandle: selectedProfileHandle, limit: 24 }).catch(() => undefined);
+  }, [selectedProfileHandle, syncStatus]);
+
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!searchOpen || !query) {
+      setRemoteSearchResults(null);
+      setSearchLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setSearchLoading(true);
+      const parameters = new URLSearchParams({
+        q: query,
+        limit: "16",
+        actorHandle: currentProfile.handle
+      });
+      void symposiumApi.request<SearchResponseContract>(
+        `/api/search?${parameters.toString()}`,
+        { cache: "no-store" }
+      ).then((data) => {
+        if (cancelled) return;
+        mergeBoundedRead({
+          items: data.posts,
+          profiles: Object.fromEntries(data.profiles.map((person) => [person.handle, person]))
+        });
+        const normalized = normalizeSearchPhrase(query);
+        const titleMatches = data.posts.filter((item) => normalizeSearchPhrase(item.title).includes(normalized));
+        const titleIds = new Set(titleMatches.map((item) => item.id));
+        setRemoteSearchResults({
+          titleMatches,
+          contentMatches: data.posts.filter((item) => !titleIds.has(item.id)),
+          profileMatches: data.profiles
+        });
+      }).catch(() => {
+        if (!cancelled) setRemoteSearchResults(null);
+      }).finally(() => {
+        if (!cancelled) setSearchLoading(false);
+      });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [currentProfile.handle, searchOpen, searchQuery]);
 
   const updateCommentSegmentStack = (key: string, stack: string[]) => {
     setCommentSegmentStacks((current) => {
@@ -3240,7 +3532,7 @@ function SymposiumExperience({
     ? `${selectedItem.title}: ${selectedItem.gatheringReason}`
     : `${activeRoomData.name}: ${activeRoomData.description}`;
 
-  const searchResults = useMemo(() => {
+  const localSearchResults = useMemo<SearchResults>(() => {
     const term = normalizeSearchPhrase(searchQuery);
     if (!term) return { titleMatches: [] as InquiryItem[], contentMatches: [] as InquiryItem[], profileMatches: [] as ResearchProfile[] };
     const searchableItems = activeItems.filter(communityPostIsExternallyDiscoverable);
@@ -3263,6 +3555,7 @@ function SymposiumExperience({
 
     return { titleMatches, contentMatches, profileMatches };
   }, [activeItems, profileList, searchQuery]);
+  const searchResults = remoteSearchResults ?? localSearchResults;
 
   const presentedEntryMode = resolvePresentedEntryMode({
     entryMode,
@@ -3407,12 +3700,19 @@ function SymposiumExperience({
             canonicalActivities={profileActivityByHandle[selectedProfile.handle]?.entries ?? []}
             canonicalActivityLoaded={profileActivityByHandle[selectedProfile.handle]?.loaded ?? false}
             canonicalActivityError={Boolean(profileActivityErrors[selectedProfile.handle])}
+            canonicalActivityComplete={!profileActivityByHandle[selectedProfile.handle]?.nextCursor}
+            activityLoadingMore={Boolean(profileActivityInFlightRef.current[
+              `${selectedProfile.handle}:${currentProfile.handle}:${profileActivityByHandle[selectedProfile.handle]?.nextCursor ?? "first"}`
+            ])}
             hiddenCommunityCounts={profileActivityByHandle[selectedProfile.handle]?.hiddenCommunityCounts ?? emptyProfileActivityCounts()}
             communities={communities}
             onOpenCommunity={openCommunity}
             onActiveTabChange={changeProfileTab}
             onRetryActivity={() => {
               void refreshProfileActivity(selectedProfile.handle, currentProfile.handle).catch(() => undefined);
+            }}
+            onLoadMoreActivity={() => {
+              void refreshProfileActivity(selectedProfile.handle, currentProfile.handle, true).catch(() => undefined);
             }}
             onSocialViewChange={changeProfileSocialView}
             onEditPost={setEditingPost}
@@ -3516,6 +3816,13 @@ function SymposiumExperience({
             actorHandle={currentProfile.handle}
             profiles={profiles}
             onOpenAttachmentPreview={openAttachmentPreview}
+            hasMore={Boolean(activeFeedRequest && feedPages[activeFeedRequest.key]?.nextCursor)}
+            loadingMore={Boolean(activeFeedRequest && feedPages[activeFeedRequest.key]?.loading)}
+            onLoadMore={activeFeedRequest ? () => {
+              void loadPostPage(activeFeedRequest.key, activeFeedRequest.query, true).catch(() => {
+                setSyncStatus("More posts could not load");
+              });
+            } : undefined}
           />
         )}
         </CommunityGovernanceProvider>
@@ -3650,6 +3957,7 @@ function SymposiumExperience({
           query={searchQuery}
           setQuery={setSearchQuery}
           results={searchResults}
+          loading={searchLoading}
           onClose={() => setSearchOpen(false)}
           onOpenPost={(id) => {
             setSearchOpen(false);

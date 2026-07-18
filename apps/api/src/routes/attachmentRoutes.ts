@@ -7,7 +7,7 @@ import { mutationContextFromRequest } from "../services/mutations";
 export const registerAttachmentRoutes = (app: FastifyInstance) => {
   app.post("/v1/attachments/upload", async (request, reply) => {
     try {
-      const actor = await withWriteActor(request);
+      const actor = await withWriteActor(request, { shared: true, scope: "attachment", limit: 30 });
       const upload = await createAttachmentUpload(
         request.body,
         actor,
@@ -21,7 +21,7 @@ export const registerAttachmentRoutes = (app: FastifyInstance) => {
 
   app.post("/v1/attachments/confirm", async (request, reply) => {
     try {
-      const actor = await withWriteActor(request);
+      const actor = await withWriteActor(request, { shared: true, scope: "attachment", limit: 30 });
       const attachment = await confirmAttachment(request.body, actor);
       return reply.send(attachment);
     } catch (error) {

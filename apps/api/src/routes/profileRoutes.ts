@@ -8,7 +8,8 @@ import {
   listProfileFollows,
   unfollowProfile,
 } from "../repository/profiles";
-import { getPublicInitialState } from "../repository/foundation";
+import { getProfileByHandle, publicProfile } from "../repository/foundation";
+import { listPublicProfiles } from "../repository/inquiryReads";
 import { syncUser, upsertProfile } from "../repository/identity";
 import { getActorFromRequest } from "../services/auth";
 import { mutationContextFromRequest } from "../services/mutations";
@@ -24,16 +25,25 @@ export const registerProfileRoutes = (app: FastifyInstance) => {
     try {
       const actor = await withWriteActor(request);
       const profile = await syncUser(request.body, actor);
-      return reply.send({ profile });
+      return reply.send({ profile: publicProfile(profile) });
     } catch (error) {
       return sendError(app, reply, error);
     }
   });
 
-  app.get("/v1/profiles", async (_request, reply) => {
+  app.get<{ Querystring: { limit?: string } }>("/v1/profiles", async (request, reply) => {
     try {
-      const state = await getPublicInitialState();
-      return reply.send({ profiles: state.profiles });
+      return reply.send({ profiles: await listPublicProfiles(request.query.limit) });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: HandleParams }>("/v1/profiles/:handle", async (request, reply) => {
+    try {
+      const profile = await getProfileByHandle(request.params.handle);
+      if (!profile) return reply.code(404).send({ error: "Profile not found." });
+      return reply.send({ profile: publicProfile(profile) });
     } catch (error) {
       return sendError(app, reply, error);
     }

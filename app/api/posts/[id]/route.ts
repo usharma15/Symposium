@@ -11,6 +11,7 @@ import { cleanHandle, isDeletedPost } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, versionedDocumentSchema } from "@/packages/contracts/src";
 import { assertLocalQuoteDestination, localCommunityManagerAllowed, localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
+import { publicResearchProfile } from "@/lib/publicProfile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +19,58 @@ export const dynamic = "force-dynamic";
 type Context = {
   params: Promise<{ id: string }>;
 };
+
+export async function GET(request: Request, context: Context) {
+  const { id } = await context.params;
+  const actorHandle = new URL(request.url).searchParams.get("actorHandle") ?? undefined;
+  const viewerHandle = actorHandle ? cleanHandle(actorHandle) : null;
+  const live = await proxyLiveBackend(`/v1/posts/${encodeURIComponent(id)}`, { actorHandle });
+  if (live) return live;
+
+  const snapshot = await getSnapshot();
+  const item = snapshot.items.find((candidate) => candidate.id === id);
+  const ownsPrivateItem = Boolean(item && viewerHandle && cleanHandle(item.authorHandle ?? "") === viewerHandle);
+  if (
+    !item
+    || isDeletedPost(item)
+    || ((item.room === "office" || item.kind === "draft") && !ownsPrivateItem)
+    || !(await localCommunityReadAllowed(item, actorHandle ?? ""))
+  ) {
+    return jsonError("Post not found.", 404);
+  }
+  const projectComment = (comment: typeof item.comments[number]): typeof item.comments[number] => ({
+    ...comment,
+    savedBy: viewerHandle && comment.savedBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : [],
+    signaledBy: viewerHandle && comment.signaledBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : [],
+    forkedBy: viewerHandle && comment.forkedBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : [],
+    replies: (comment.replies ?? []).map(projectComment)
+  });
+  const profiles = Object.fromEntries(
+    [item.authorHandle, ...item.comments.flatMap(function handles(comment): string[] {
+      return [...(comment.authorHandle ? [comment.authorHandle] : []), ...(comment.replies ?? []).flatMap(handles)];
+    })]
+      .filter((handle): handle is string => Boolean(handle))
+      .flatMap((handle) => {
+        const person = snapshot.profiles[handle];
+        return person ? [[handle, publicResearchProfile(person)] as const] : [];
+      })
+  );
+  return Response.json({
+    item: {
+      ...item,
+      saved: Boolean(viewerHandle && item.savedBy?.some((handle) => cleanHandle(handle) === viewerHandle)),
+      savedBy: viewerHandle && item.savedBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : [],
+      signaledBy: viewerHandle && item.signaledBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : [],
+      forkedBy: viewerHandle && item.forkedBy?.some((handle) => cleanHandle(handle) === viewerHandle) ? [viewerHandle] : [],
+      comments: item.comments.map(projectComment),
+      commentCount: item.comments.flatMap(function flatten(comment): typeof item.comments {
+        return [...(comment.deletedAt ? [] : [comment]), ...(comment.replies ?? []).flatMap(flatten)];
+      }).length,
+      detailLoaded: true
+    },
+    profiles
+  });
+}
 
 export async function PATCH(request: Request, context: Context) {
   const { id } = await context.params;

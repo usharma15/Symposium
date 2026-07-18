@@ -24,15 +24,42 @@ const bearerToken = (authorization?: string) => {
 const headerValue = (value: string | string[] | undefined) =>
   Array.isArray(value) ? value[0] : value;
 
+const syncedHandleCache = new Map<string, { handle?: string; expiresAt: number }>();
+const syncedHandleCacheTtlMs = 5 * 60 * 1000;
+const syncedHandleCacheMax = 1_000;
+
+export const cacheSyncedUserHandle = (clerkUserId: string, handle?: string) => {
+  if (!handle) {
+    syncedHandleCache.delete(clerkUserId);
+    return;
+  }
+  if (syncedHandleCache.size >= syncedHandleCacheMax && !syncedHandleCache.has(clerkUserId)) {
+    const oldestKey = syncedHandleCache.keys().next().value as string | undefined;
+    if (oldestKey) syncedHandleCache.delete(oldestKey);
+  }
+  syncedHandleCache.delete(clerkUserId);
+  syncedHandleCache.set(clerkUserId, { handle, expiresAt: Date.now() + syncedHandleCacheTtlMs });
+};
+
 const getSyncedUserHandle = async (clerkUserId: string) => {
   if (!hasDatabase()) return undefined;
+
+  const cached = syncedHandleCache.get(clerkUserId);
+  if (cached && cached.expiresAt > Date.now()) {
+    syncedHandleCache.delete(clerkUserId);
+    syncedHandleCache.set(clerkUserId, cached);
+    return cached.handle;
+  }
+  if (cached) syncedHandleCache.delete(clerkUserId);
 
   try {
     const result = await getPool().query<{ handle: string | null }>(
       "SELECT handle FROM users WHERE clerk_user_id = $1 LIMIT 1",
       [clerkUserId]
     );
-    return result.rows[0]?.handle ?? undefined;
+    const handle = result.rows[0]?.handle ?? undefined;
+    if (handle) cacheSyncedUserHandle(clerkUserId, handle);
+    return handle;
   } catch {
     return undefined;
   }

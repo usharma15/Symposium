@@ -36,7 +36,7 @@ import { transitionCommentAction } from "./actions";
 import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
 import { assertCommunityCommentDeletion } from "./communityAuthorization";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
-import { actorHandle, commentTreesFromRows, ensureLiveData, getInitialState, getPostConversationAttachments, newId, rowToAttachment, rowToItem, type CommentRow, type SnapshotRow } from "./foundation";
+import { actorHandle, commentTreesFromRows, ensureLiveData, getInitialState, getPostConversationAttachments, getProfileByHandle, newId, rowToAttachment, rowToItem, type CommentRow, type SnapshotRow } from "./foundation";
 type ActionMutationResult = {
   item: InquiryItemContract;
   activity?: CanonicalActionActivityContract;
@@ -45,30 +45,8 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
   const input = createCommentInputSchema.parse(rawInput);
   const requestedAttachmentIds = canonicalAttachmentIds(input);
   assertUniqueAttachmentIds(requestedAttachmentIds, "comment");
-  const snapshot = await getInitialState();
-  const existing = snapshot.items.find((item) => item.id === postId);
-  if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-  if (isDeletedPost(existing)) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be commented on." });
-  }
-  if (input.parentId && !findCommentInTree(existing.comments, input.parentId)) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
-  }
-  if (requestedAttachmentIds.length && (existing.room === "office" || existing.kind === "draft")) {
-    throw new TRPCError({
-      code: "PRECONDITION_FAILED",
-      message: "Private comment attachments require protected delivery before they can be published."
-    });
-  }
   const handle = actorHandle(actor, input.authorHandle);
-  if (existing.communityId && existing.postType !== "paper") await assertCommunityParticipation(existing.communityId, handle);
-  if (
-    (existing.room === "office" || existing.kind === "draft") &&
-    (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
-  ) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-  }
-  const author = snapshot.profiles[handle];
+  const author = await getProfileByHandle(handle);
   if (!author) throw new TRPCError({ code: "NOT_FOUND", message: "Author profile not found." });
   const comment: InquiryCommentContract = {
     id: newId("comment"),
@@ -87,15 +65,36 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
     attachments: [],
     replies: []
   };
-  const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
-  const nextMetrics = { ...existing.metrics, critiques: nextCritiques };
-  const nextSignals = updateSignalValue(existing.signals, "Critiques", nextCritiques);
-  const memoryAppend = appendCommentToTree(existing.comments, comment);
-  if (!memoryAppend.inserted) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
-  }
-
   if (!hasDatabase()) {
+    const snapshot = await getInitialState();
+    const existing = snapshot.items.find((item) => item.id === postId);
+    if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (isDeletedPost(existing)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be commented on." });
+    }
+    if (input.parentId && !findCommentInTree(existing.comments, input.parentId)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
+    }
+    if (requestedAttachmentIds.length && (existing.room === "office" || existing.kind === "draft")) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Private comment attachments require protected delivery before they can be published."
+      });
+    }
+    if (existing.communityId && existing.postType !== "paper") await assertCommunityParticipation(existing.communityId, handle);
+    if (
+      (existing.room === "office" || existing.kind === "draft") &&
+      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
+    const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
+    const nextMetrics = { ...existing.metrics, critiques: nextCritiques };
+    const nextSignals = updateSignalValue(existing.signals, "Critiques", nextCritiques);
+    const memoryAppend = appendCommentToTree(existing.comments, comment);
+    if (!memoryAppend.inserted) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
+    }
     return {
       comment,
       item: {
@@ -194,6 +193,21 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
     if (isDeletedPost(lockedItem)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be commented on." });
     }
+    if (lockedItem.communityId && lockedItem.postType !== "paper") {
+      await assertCommunityParticipation(lockedItem.communityId, handle);
+    }
+    if (
+      (lockedItem.room === "office" || lockedItem.kind === "draft") &&
+      (!lockedItem.authorHandle || cleanHandle(lockedItem.authorHandle) !== handle)
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    }
+    if (requestedAttachmentIds.length && (lockedItem.room === "office" || lockedItem.kind === "draft")) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Private comment attachments require protected delivery before they can be published."
+      });
+    }
     if (comment.parentId && !findCommentInTree(existingComments, comment.parentId)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
     }
@@ -275,16 +289,16 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
       })
     });
     await completeMutation(client, handle, mutation, { comment, item: updatedItem });
-    const eventScope = await communityEventScope(client, existing.postType === "paper" ? null : existing.communityId);
+    const eventScope = await communityEventScope(client, lockedItem.postType === "paper" ? null : lockedItem.communityId);
     stagedEvents.push(await stageEvent(client, {
       kind: "comment.created",
       actorHandle: comment.authorHandle,
       subjectType: "post",
       subjectId: postId,
-      visibility: existing.room === "office" || existing.kind === "draft" ? "private" : eventScope.visibility,
-      audienceHandles: existing.room === "office" || existing.kind === "draft" ? [handle] : eventScope.audienceHandles,
+      visibility: lockedItem.room === "office" || lockedItem.kind === "draft" ? "private" : eventScope.visibility,
+      audienceHandles: lockedItem.room === "office" || lockedItem.kind === "draft" ? [handle] : eventScope.audienceHandles,
       payload:
-        existing.room === "office" || existing.kind === "draft"
+        lockedItem.room === "office" || lockedItem.kind === "draft"
           ? { comment, item: updatedItem, commentId: comment.id, parentId: comment.parentId }
           : { commentId: comment.id, itemId: postId, parentId: comment.parentId }
     }));

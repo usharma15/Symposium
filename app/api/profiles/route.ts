@@ -1,6 +1,7 @@
 import { getSnapshot, upsertProfile, type CreateProfileInput } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { publicResearchProfile } from "@/lib/publicProfile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +23,10 @@ export async function GET() {
   if (live) return live;
 
   const snapshot = await getSnapshot();
-  return Response.json({ profiles: snapshot.profiles });
+  return Response.json({
+    profiles: Object.fromEntries(Object.entries(snapshot.profiles).slice(0, 50)
+      .map(([handle, person]) => [handle, publicResearchProfile(person)]))
+  });
 }
 
 export async function POST(request: Request) {

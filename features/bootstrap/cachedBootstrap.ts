@@ -2,6 +2,7 @@ import type { InquiryItem, ResearchCommunity, ResearchProfile } from "@/lib/mock
 
 const snapshotStorageKey = "symposium-local-snapshot";
 const profileHandleStorageKey = "symposium-profile-handle";
+export const cachedBootstrapItemLimit = 32;
 
 export type CachedBootstrapSnapshot = {
   profiles: Record<string, ResearchProfile>;
@@ -16,7 +17,7 @@ export const readCachedBootstrapSnapshot = (storage: Pick<Storage, "getItem">): 
     const snapshot = JSON.parse(raw) as Partial<CachedBootstrapSnapshot>;
     if (!Array.isArray(snapshot.items) || !snapshot.profiles || typeof snapshot.profiles !== "object") return null;
     return {
-      items: snapshot.items,
+      items: snapshot.items.slice(0, cachedBootstrapItemLimit),
       profiles: snapshot.profiles,
       communities: Array.isArray(snapshot.communities) ? snapshot.communities : undefined
     };
@@ -49,7 +50,10 @@ export const persistCachedBootstrap = (
   let snapshotStored = false;
   let profileHandleStored = false;
   try {
-    storage.setItem(snapshotStorageKey, JSON.stringify(snapshot));
+    storage.setItem(snapshotStorageKey, JSON.stringify({
+      ...snapshot,
+      items: snapshot.items.slice(0, cachedBootstrapItemLimit)
+    }));
     snapshotStored = true;
   } catch {
     // Cached bootstrap is an acceleration layer; quota pressure must never fail a live mutation.

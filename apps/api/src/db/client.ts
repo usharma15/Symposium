@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { databaseUrl } from "../config/env";
+import { databaseUrl, env } from "../config/env";
 
 let pool: Pool | null = null;
 
@@ -13,6 +13,9 @@ export const getPool = () => {
   if (!pool) {
     pool = new Pool({
       connectionString: databaseUrl,
+      max: env.DATABASE_POOL_MAX,
+      idleTimeoutMillis: env.DATABASE_IDLE_TIMEOUT_MS,
+      connectionTimeoutMillis: 10_000,
       ssl: databaseUrl.includes("localhost") || databaseUrl.includes("127.0.0.1")
         ? undefined
         : { rejectUnauthorized: false }

@@ -10,6 +10,7 @@ export function SearchModal({
   query,
   setQuery,
   results,
+  loading,
   onClose,
   onOpenPost,
   onOpenProfile
@@ -21,6 +22,7 @@ export function SearchModal({
     contentMatches: InquiryItem[];
     profileMatches: ResearchProfile[];
   };
+  loading?: boolean;
   onClose: () => void;
   onOpenPost: (id: string) => void;
   onOpenProfile: (name: string) => void;
@@ -50,6 +52,8 @@ export function SearchModal({
         <div className="search-results">
           {!hasQuery ? (
             <p>Start typing to search across titles, bodies, comments, and profiles.</p>
+          ) : loading && !hasResults ? (
+            <p>Searching Symposium…</p>
           ) : hasResults ? (
             <>
               {results.titleMatches.length ? (
@@ -65,7 +69,7 @@ export function SearchModal({
                     <CanonicalLink
                       key={person.handle}
                       route={{ kind: "profile", handle: person.handle }}
-                      onNavigate={() => onOpenProfile(person.name)}
+                      onNavigate={() => onOpenProfile(person.handle)}
                     >
                       <span className="avatar small">{initial(person.name)}</span>
                       <span>

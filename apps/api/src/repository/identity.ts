@@ -8,7 +8,7 @@ import {
 import { cleanHandle } from "@/lib/symposiumCore";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
-import type { Actor } from "../services/auth";
+import { cacheSyncedUserHandle, type Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
@@ -184,22 +184,33 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
   try {
     await client.query("BEGIN");
     const handle = await resolveSyncedHandle(client, requestedHandle, clerkSubject);
-    const user = await client.query<{ id: string }>(
-      `INSERT INTO users (clerk_user_id, primary_email, handle, display_name, image_url)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (clerk_user_id) DO UPDATE SET
-         primary_email = EXCLUDED.primary_email,
-         handle = EXCLUDED.handle,
-         display_name = EXCLUDED.display_name,
-         image_url = EXCLUDED.image_url,
-         updated_at = now()
-       RETURNING id`,
+    const user = await client.query<{ id: string; changed: boolean }>(
+      `WITH changed_user AS (
+         INSERT INTO users (clerk_user_id, primary_email, handle, display_name, image_url)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (clerk_user_id) DO UPDATE SET
+           primary_email = EXCLUDED.primary_email,
+           handle = EXCLUDED.handle,
+           display_name = EXCLUDED.display_name,
+           image_url = EXCLUDED.image_url,
+           updated_at = now()
+         WHERE (users.primary_email, users.handle, users.display_name, users.image_url)
+           IS DISTINCT FROM (EXCLUDED.primary_email, EXCLUDED.handle, EXCLUDED.display_name, EXCLUDED.image_url)
+         RETURNING id
+       )
+       SELECT id, true AS changed FROM changed_user
+       UNION ALL
+       SELECT id, false AS changed
+       FROM users
+       WHERE clerk_user_id = $1 AND NOT EXISTS (SELECT 1 FROM changed_user)
+       LIMIT 1`,
       [clerkSubject, email ?? null, handle, name, actor.imageUrl ?? input.imageUrl ?? null]
     );
 
-    const existingProfile = await client.query<ResearchProfileContract & { avatarUrl: string | null }>(
+    const existingProfile = await client.query<ResearchProfileContract & { avatarUrl: string | null; userId: string | null }>(
       `SELECT
         handle,
+        user_id AS "userId",
         email,
         name,
         avatar_url AS "avatarUrl",
@@ -228,28 +239,37 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
       bio: existing?.bio ?? "A participant in the current inquiry thread.",
       fields: existing?.fields ?? ["Inquiry"]
     });
-    const storedPerson = await insertProfile(client, person, user.rows[0]?.id);
-    await client.query(
-      `INSERT INTO workspaces (owner_handle, name)
-       VALUES ($1, 'Notebook')
-       ON CONFLICT (owner_handle, name) DO NOTHING`,
-      [handle]
-    );
+    const profileNeedsWrite = !existing || existing.userId !== user.rows[0]?.id;
+    const storedPerson = profileNeedsWrite
+      ? await insertProfile(client, person, user.rows[0]?.id)
+      : { ...person, revision: existing.revision };
+    if (!existing) {
+      await client.query(
+        `INSERT INTO workspaces (owner_handle, name)
+         VALUES ($1, 'Notebook')
+         ON CONFLICT (owner_handle, name) DO NOTHING`,
+        [handle]
+      );
+    }
     syncedProfile = storedPerson;
-    await stageAuditLog(client, {
-      actorHandle: handle,
-      action: "auth.sync",
-      subjectType: "profile",
-      subjectId: handle,
-      metadata: { source: actor.source }
-    });
-    stagedEvent = await stageEvent(client, {
-      kind: "profile.updated",
-      actorHandle: handle,
-      subjectType: "profile",
-      subjectId: handle,
-      payload: { profile: publicProfile(storedPerson) }
-    });
+    if (user.rows[0]?.changed || profileNeedsWrite) {
+      await stageAuditLog(client, {
+        actorHandle: handle,
+        action: "auth.sync",
+        subjectType: "profile",
+        subjectId: handle,
+        metadata: { source: actor.source }
+      });
+    }
+    if (profileNeedsWrite) {
+      stagedEvent = await stageEvent(client, {
+        kind: "profile.updated",
+        actorHandle: handle,
+        subjectType: "profile",
+        subjectId: handle,
+        payload: { profile: publicProfile(storedPerson) }
+      });
+    }
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -262,5 +282,6 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
   if (!syncedProfile) {
     throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The synchronized profile was not returned." });
   }
+  cacheSyncedUserHandle(clerkSubject, syncedProfile.handle);
   return syncedProfile;
 };

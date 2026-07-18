@@ -1761,6 +1761,43 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS profiles_handle_search_idx
         ON profiles USING gin (handle gin_trgm_ops);
     `
+  },
+  {
+    id: "0030_bounded_read_models",
+    sql: `
+      CREATE INDEX IF NOT EXISTS posts_created_id_idx
+        ON posts (created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS posts_type_created_id_idx
+        ON posts (post_type, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS posts_room_created_id_idx
+        ON posts (room, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS posts_community_created_id_idx
+        ON posts (community_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS posts_author_created_id_idx
+        ON posts (author_handle, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS comments_post_created_id_idx
+        ON comments (post_id, created_at ASC, id ASC);
+      CREATE INDEX IF NOT EXISTS comments_search_body_idx
+        ON comments USING gin (to_tsvector('english', body));
+      CREATE INDEX IF NOT EXISTS post_actions_viewer_active_idx
+        ON post_actions (actor_handle, action, active, post_id);
+      CREATE INDEX IF NOT EXISTS comment_actions_viewer_active_idx
+        ON comment_actions (actor_handle, action, active, comment_id);
+      CREATE INDEX IF NOT EXISTS profiles_search_document_idx
+        ON profiles USING gin (
+          to_tsvector('english',
+            coalesce(name, '') || ' ' || coalesce(handle, '') || ' ' || coalesce(role, '') || ' ' ||
+            coalesce(location, '') || ' ' || coalesce(bio, '') || ' ' || coalesce(fields::text, '')
+          )
+        );
+      CREATE INDEX IF NOT EXISTS communities_search_document_idx
+        ON communities USING gin (
+          to_tsvector('english',
+            coalesce(name, '') || ' ' || coalesce(field, '') || ' ' || coalesce(summary, '') || ' ' ||
+            coalesce(keywords::text, '')
+          )
+        );
+    `
   }
 ];
 

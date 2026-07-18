@@ -213,11 +213,14 @@ export function ProfileView({
   canonicalActivities,
   canonicalActivityLoaded,
   canonicalActivityError,
+  canonicalActivityComplete,
+  activityLoadingMore,
   hiddenCommunityCounts,
   communities,
   onOpenCommunity,
   onActiveTabChange,
   onRetryActivity,
+  onLoadMoreActivity,
   onSocialViewChange,
   onEditPost,
   onDeletePost,
@@ -254,11 +257,14 @@ export function ProfileView({
   canonicalActivities: CanonicalActionActivityContract[];
   canonicalActivityLoaded: boolean;
   canonicalActivityError: boolean;
+  canonicalActivityComplete: boolean;
+  activityLoadingMore: boolean;
   hiddenCommunityCounts: ProfileActivityCountsContract;
   communities: ResearchCommunity[];
   onOpenCommunity: (communityId: string) => void;
   onActiveTabChange: (tab: ProfileTab) => void;
   onRetryActivity: () => void;
+  onLoadMoreActivity: () => void;
   onSocialViewChange: (view: ProfileSocialView | null) => void;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
@@ -311,7 +317,10 @@ export function ProfileView({
     if (!canonicalActivityLoaded) {
       return itemMatchesProfilePostAction(item, person, action, profile.handle);
     }
-    return Boolean(canonicalActionState(canonicalActivities, "post", item.id, person.handle, action)?.active);
+    const activity = canonicalActionState(canonicalActivities, "post", item.id, person.handle, action);
+    return activity
+      ? activity.active
+      : !canonicalActivityComplete && itemMatchesProfilePostAction(item, person, action, profile.handle);
   };
   const canonicalCommentActionMatches = (
     _item: InquiryItem,
@@ -321,7 +330,10 @@ export function ProfileView({
     if (kind === "comments") return commentAuthoredByProfile(comment, person);
     if (!comment.id) return false;
     if (!canonicalActivityLoaded) return commentMatchesProfileActivity(comment, person, kind);
-    return Boolean(canonicalActionState(canonicalActivities, "comment", comment.id, person.handle, kind)?.active);
+    const activity = canonicalActionState(canonicalActivities, "comment", comment.id, person.handle, kind);
+    return activity
+      ? activity.active
+      : !canonicalActivityComplete && commentMatchesProfileActivity(comment, person, kind);
   };
   const authored = byPublishedRecency(profileItems.filter(isAuthor));
   const papers = authored.filter((item) => itemHasPostType(item, "paper"));
@@ -526,7 +538,7 @@ export function ProfileView({
                 className={activeTab === tab.id ? "active" : ""}
                 onNavigate={() => onActiveTabChange(tab.id)}
               >
-                <strong>{canonicalActivityLoaded ? tabCounts[tab.id] : "—"}</strong>
+                <strong>{canonicalActivityLoaded ? `${tabCounts[tab.id]}${canonicalActivityComplete ? "" : "+"}` : "—"}</strong>
                 <span>{tab.label}</span>
               </CanonicalLink>
             ))}
@@ -552,7 +564,8 @@ export function ProfileView({
             ) : null}
           </div>
         ) : visibleEntries.length ? (
-          visibleEntries.map((entry) =>
+          <>
+          {visibleEntries.map((entry) =>
             entry.type === "comment" ? (
               <ProfileCommentCard
                 key={entry.id}
@@ -590,7 +603,18 @@ export function ProfileView({
                 onOpenAttachmentPreview={onOpenAttachmentPreview}
               />
             )
-          )
+          )}
+          {!canonicalActivityComplete ? (
+            <button
+              className="feed-load-more"
+              type="button"
+              disabled={activityLoadingMore}
+              onClick={onLoadMoreActivity}
+            >
+              {activityLoadingMore ? "Loading…" : "Show more activity"}
+            </button>
+          ) : null}
+          </>
         ) : (
           <div className="empty-feed">
             <strong>No items here yet.</strong>
