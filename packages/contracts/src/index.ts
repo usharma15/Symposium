@@ -979,7 +979,10 @@ export const confirmAttachmentInputSchema = z.object({
 export const searchInputSchema = z.object({
   query: z.string().trim().min(1).max(160),
   limit: z.number().int().positive().max(50).default(12),
-  cursor: z.string().trim().max(500).optional()
+  cursor: z.string().trim().max(500).optional(),
+  room: postRoomSchema.optional(),
+  postTypes: z.array(postTypeSchema).min(1).max(4).optional(),
+  communityId: z.string().trim().min(1).max(120).optional()
 });
 
 export const postPageQuerySchema = z.object({

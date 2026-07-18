@@ -54,6 +54,7 @@ import { SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument"
 import { appendedContentAttachments } from "@/lib/documentModel";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { FeedPost } from "@/features/posts/PostViews";
+import { InfiniteFeedBoundary } from "@/features/feeds/InfiniteFeedBoundary";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import type { ProfileSocialView, ProfileTab } from "@/features/navigation/canonicalRoute";
@@ -604,16 +605,12 @@ export function ProfileView({
               />
             )
           )}
-          {!canonicalActivityComplete ? (
-            <button
-              className="feed-load-more"
-              type="button"
-              disabled={activityLoadingMore}
-              onClick={onLoadMoreActivity}
-            >
-              {activityLoadingMore ? "Loading…" : "Show more activity"}
-            </button>
-          ) : null}
+          <InfiniteFeedBoundary
+            hasMore={!canonicalActivityComplete}
+            loading={activityLoadingMore}
+            onLoadMore={onLoadMoreActivity}
+            label="activity"
+          />
           </>
         ) : (
           <div className="empty-feed">

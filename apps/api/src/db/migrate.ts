@@ -1798,6 +1798,29 @@ const migrations: Migration[] = [
           )
         );
     `
+  },
+  {
+    id: "0031_prefix_search",
+    sql: `
+      CREATE INDEX IF NOT EXISTS posts_search_prefix_idx
+        ON posts USING gin (to_tsvector('simple', search_text));
+      CREATE INDEX IF NOT EXISTS comments_search_prefix_idx
+        ON comments USING gin (to_tsvector('simple', body));
+      CREATE INDEX IF NOT EXISTS profiles_search_prefix_idx
+        ON profiles USING gin (
+          to_tsvector('simple',
+            coalesce(name, '') || ' ' || coalesce(handle, '') || ' ' || coalesce(role, '') || ' ' ||
+            coalesce(location, '') || ' ' || coalesce(bio, '') || ' ' || coalesce(fields::text, '')
+          )
+        );
+      CREATE INDEX IF NOT EXISTS communities_search_prefix_idx
+        ON communities USING gin (
+          to_tsvector('simple',
+            coalesce(name, '') || ' ' || coalesce(field, '') || ' ' || coalesce(summary, '') || ' ' ||
+            coalesce(keywords::text, '')
+          )
+        );
+    `
   }
 ];
 

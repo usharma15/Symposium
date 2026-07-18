@@ -12,6 +12,7 @@ const search = readFileSync("apps/api/src/repository/search.ts", "utf8");
 const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
 const cachedBootstrap = readFileSync("features/bootstrap/cachedBootstrap.ts", "utf8");
 const localBootstrap = readFileSync("app/api/bootstrap/route.ts", "utf8");
+const infiniteFeed = readFileSync("features/feeds/InfiniteFeedBoundary.tsx", "utf8");
 
 assert.match(contracts, /postPageQuerySchema[\s\S]*max\(50\)/);
 assert.match(contracts, /commentCount: z\.number\(\)\.int\(\)\.nonnegative\(\)\.optional\(\)/);
@@ -29,6 +30,9 @@ assert.match(reads, /detailLoaded: false/);
 assert.match(reads, /detailLoaded: true/);
 assert.match(search, /websearch_to_tsquery/);
 assert.match(search, /to_tsvector\('english', post\.search_text\)/);
+assert.match(search, /to_tsquery\('simple', \$2\)/);
+assert.match(search, /to_tsvector\('simple', post\.search_text\)/);
+assert.match(search, /visible_posts AS NOT MATERIALIZED/);
 assert.doesNotMatch(search, /getInitialState|getPublicInitialState/);
 assert.match(shell, /\/api\/posts\?\$\{parameters\.toString\(\)\}/);
 assert.match(shell, /\/api\/posts\/\$\{encodeURIComponent\(postId\)\}/);
@@ -37,6 +41,9 @@ assert.doesNotMatch(shell, /limit: "500"/);
 assert.match(shell, /useInquiryEntityStore\(initialBoundedInquiryItems\)/);
 assert.match(cachedBootstrap, /cachedBootstrapItemLimit = 32/);
 assert.match(localBootstrap, /projectedItems\.slice\(0, 24\)/);
+assert.match(infiniteFeed, /IntersectionObserver/);
+assert.match(infiniteFeed, /rootMargin: "0px 0px 900px 0px"/);
+assert.match(infiniteFeed, /requestPendingRef/);
 
 const main = async () => {
   const app = await buildApp({ logger: false });
@@ -75,8 +82,10 @@ const main = async () => {
     assert.equal(profileResponse.statusCode, 200);
     assert.equal(profileResponse.json().profile.email, undefined);
 
-    const searchResponse = await app.inject({ method: "GET", url: "/v1/search?q=research&limit=3", headers });
+    const searchResponse = await app.inject({ method: "GET", url: "/v1/search?q=s&limit=3", headers });
     assert.equal(searchResponse.statusCode, 200);
+    assert.ok(searchResponse.json().posts.length > 0);
+    assert.ok(searchResponse.json().profiles.length > 0);
     assert.ok(searchResponse.json().posts.length <= 3);
   } finally {
     await app.close();

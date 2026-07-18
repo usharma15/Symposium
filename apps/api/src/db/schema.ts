@@ -76,6 +76,10 @@ export const profiles = pgTable(
     index("profiles_search_document_idx").using("gin", sql`to_tsvector('english',
       coalesce(${table.name}, '') || ' ' || coalesce(${table.handle}, '') || ' ' || coalesce(${table.role}, '') || ' ' ||
       coalesce(${table.location}, '') || ' ' || coalesce(${table.bio}, '') || ' ' || coalesce(${table.fields}::text, '')
+    )`),
+    index("profiles_search_prefix_idx").using("gin", sql`to_tsvector('simple',
+      coalesce(${table.name}, '') || ' ' || coalesce(${table.handle}, '') || ' ' || coalesce(${table.role}, '') || ' ' ||
+      coalesce(${table.location}, '') || ' ' || coalesce(${table.bio}, '') || ' ' || coalesce(${table.fields}::text, '')
     )`)
   ]
 );
@@ -128,6 +132,10 @@ export const communities = pgTable(
     index("communities_visibility_idx").on(table.visibility),
     index("communities_name_idx").on(table.name),
     index("communities_search_document_idx").using("gin", sql`to_tsvector('english',
+      coalesce(${table.name}, '') || ' ' || coalesce(${table.field}, '') || ' ' ||
+      coalesce(${table.summary}, '') || ' ' || coalesce(${table.keywords}::text, '')
+    )`),
+    index("communities_search_prefix_idx").using("gin", sql`to_tsvector('simple',
       coalesce(${table.name}, '') || ' ' || coalesce(${table.field}, '') || ' ' ||
       coalesce(${table.summary}, '') || ' ' || coalesce(${table.keywords}::text, '')
     )`)
@@ -278,6 +286,7 @@ export const posts = pgTable(
     index("posts_room_created_id_idx").on(table.room, table.createdAt.desc(), table.id.desc()),
     index("posts_community_created_id_idx").on(table.communityId, table.createdAt.desc(), table.id.desc()),
     index("posts_author_created_id_idx").on(table.authorHandle, table.createdAt.desc(), table.id.desc()),
+    index("posts_search_prefix_idx").using("gin", sql`to_tsvector('simple', ${table.searchText})`),
     check(
       "posts_semantic_destination_check",
       sql`${table.postType} IS NULL OR (${table.postType} = 'proposal' AND ${table.room} = 'funding') OR (${table.postType} = 'opportunity' AND ${table.room} = 'opportunities') OR (${table.postType} IN ('paper', 'thought') AND ${table.room} NOT IN ('office', 'funding', 'opportunities'))`
@@ -389,6 +398,7 @@ export const comments = pgTable(
     index("comments_author_idx").on(table.authorHandle),
     index("comments_post_created_id_idx").on(table.postId, table.createdAt, table.id),
     index("comments_search_body_idx").using("gin", sql`to_tsvector('english', ${table.body})`),
+    index("comments_search_prefix_idx").using("gin", sql`to_tsvector('simple', ${table.body})`),
     index("comments_quote_source_post_idx").on(sql`(${table.quote}->>'sourcePostId')`).where(sql`${table.quote} IS NOT NULL`),
     index("comments_quote_comment_source_idx").on(sql`(${table.quote}->>'sourceId')`).where(sql`${table.quote}->>'sourceType' = 'comment'`)
   ]

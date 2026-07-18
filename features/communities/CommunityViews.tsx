@@ -61,6 +61,7 @@ import { CommunityPeopleModal } from "@/features/communities/CommunityPeopleModa
 import { FeedPost } from "@/features/posts/PostViews";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { profileForHandle } from "@/features/identity/profilePresentation";
+import { InfiniteFeedBoundary } from "@/features/feeds/InfiniteFeedBoundary";
 
 export function CommunitiesStage({
   state,
@@ -76,6 +77,10 @@ export function CommunitiesStage({
     profiles: Record<string, ResearchProfile>;
     membershipBusy: boolean;
     feedView: CommunityFeedViewState;
+    feedHasMore: boolean;
+    feedLoadingMore: boolean;
+    feedSearchResultIds: string[] | null;
+    feedSearchLoading: boolean;
   };
   directory: {
     query: string;
@@ -110,6 +115,7 @@ export function CommunitiesStage({
     onDeletePost: (itemId: string) => void;
     onOpenAttachmentPreview: AttachmentPreviewHandler;
     onFeedView: (view: CommunityFeedViewState) => void;
+    onLoadMore: () => void | Promise<void>;
   };
 }) {
   if (!state.selectedCommunity) {
@@ -133,6 +139,10 @@ export function CommunitiesStage({
     profiles={state.profiles}
     membershipBusy={state.membershipBusy}
     feedView={state.feedView}
+    feedHasMore={state.feedHasMore}
+    feedLoadingMore={state.feedLoadingMore}
+    feedSearchResultIds={state.feedSearchResultIds}
+    feedSearchLoading={state.feedSearchLoading}
     onBack={actions.onBack}
     onMembership={actions.onMembership}
     onVisibility={actions.onVisibility}
@@ -157,6 +167,7 @@ export function CommunitiesStage({
     onDeletePost={actions.onDeletePost}
     onOpenAttachmentPreview={actions.onOpenAttachmentPreview}
     onFeedView={actions.onFeedView}
+    onLoadMore={actions.onLoadMore}
   />;
 }
 
@@ -475,6 +486,10 @@ export function SelectedCommunityView({
   profiles,
   membershipBusy,
   feedView,
+  feedHasMore,
+  feedLoadingMore,
+  feedSearchResultIds,
+  feedSearchLoading,
   onBack,
   onMembership,
   onVisibility,
@@ -498,7 +513,8 @@ export function SelectedCommunityView({
   onEditPost,
   onDeletePost,
   onOpenAttachmentPreview,
-  onFeedView
+  onFeedView,
+  onLoadMore
 }: {
   community: ResearchCommunity;
   items: InquiryItem[];
@@ -507,6 +523,10 @@ export function SelectedCommunityView({
   profiles: Record<string, ResearchProfile>;
   membershipBusy: boolean;
   feedView: CommunityFeedViewState;
+  feedHasMore: boolean;
+  feedLoadingMore: boolean;
+  feedSearchResultIds: string[] | null;
+  feedSearchLoading: boolean;
   onBack: () => void;
   onMembership: () => void;
   onVisibility: (visibility: ResearchCommunity["visibility"]) => Promise<{ ok: boolean; error?: string }>;
@@ -531,6 +551,7 @@ export function SelectedCommunityView({
   onDeletePost: (itemId: string) => void;
   onOpenAttachmentPreview: AttachmentPreviewHandler;
   onFeedView: (view: CommunityFeedViewState) => void;
+  onLoadMore: () => void | Promise<void>;
 }) {
   const filter = feedView.filter;
   const feedQuery = feedView.query;
@@ -555,12 +576,16 @@ export function SelectedCommunityView({
   const mayManage = community.viewerRole === "owner" || community.viewerRole === "moderator";
   const relatedItems = useMemo(() => {
     const term = normalizeSearchPhrase(feedQuery);
+    const serverMatches = feedSearchResultIds ? new Set(feedSearchResultIds) : null;
     const matching = getCommunityItems(items, community).filter((item) => {
-      const queryMatches = !term || normalizeSearchPhrase([item.title, item.body, item.author, ...item.tags].join(" ")).includes(term);
+      const queryMatches = !term
+        || (serverMatches
+          ? serverMatches.has(item.id)
+          : normalizeSearchPhrase([item.title, item.body, item.author, ...item.tags].join(" ")).includes(term));
       return queryMatches;
     });
     return filterCommunityFeedItems(matching, filter);
-  }, [community, feedQuery, filter, items]);
+  }, [community, feedQuery, feedSearchResultIds, filter, items]);
   const liveCalls = calls.filter((call) => call.status === "live");
   const upcomingCalls = calls.filter((call) => call.status === "scheduled");
   const announcements = useMemo(
@@ -651,29 +676,43 @@ export function SelectedCommunityView({
             <p>Membership is required to see its feed, calls, announcements, and member activity.</p>
           </section>
         ) : relatedItems.length ? (
-          relatedItems.map((item) => (
-            <FeedPost
-              key={item.id}
-              item={item}
-              onSelect={onSelect}
-              onOpenProfile={onOpenProfile}
-              onAction={onAction}
-              onQuote={onQuote}
-              onOpenQuote={onOpenQuote}
-              onEditPost={onEditPost}
-              onDeletePost={onDeletePost}
-              onOpenAttachmentPreview={onOpenAttachmentPreview}
-              actorHandle={currentProfile.handle}
-              profiles={profiles}
-              surface="community"
-              community={community}
+          <>
+            {relatedItems.map((item) => (
+              <FeedPost
+                key={item.id}
+                item={item}
+                onSelect={onSelect}
+                onOpenProfile={onOpenProfile}
+                onAction={onAction}
+                onQuote={onQuote}
+                onOpenQuote={onOpenQuote}
+                onEditPost={onEditPost}
+                onDeletePost={onDeletePost}
+                onOpenAttachmentPreview={onOpenAttachmentPreview}
+                actorHandle={currentProfile.handle}
+                profiles={profiles}
+                surface="community"
+                community={community}
+              />
+            ))}
+            <InfiniteFeedBoundary
+              hasMore={feedHasMore}
+              loading={feedLoadingMore}
+              onLoadMore={onLoadMore}
             />
-          ))
+          </>
         ) : (
-          <div className="empty-feed">
-            <strong>{feedQuery || filter.content !== "all" || filter.sort !== "recent" ? "No posts match these filters." : "No shared work yet."}</strong>
-            <span>{isMember ? "Create the first post here. Papers will also appear publicly in the Library." : "Join to begin contributing."}</span>
-          </div>
+          <>
+            <div className="empty-feed">
+              <strong>{feedSearchLoading ? "Searching this community…" : feedQuery || filter.content !== "all" || filter.sort !== "recent" ? "No posts match these filters." : "No shared work yet."}</strong>
+              <span>{feedSearchLoading || feedHasMore ? "Searching beyond the posts already on screen…" : isMember ? "Create the first post here. Papers will also appear publicly in the Library." : "Join to begin contributing."}</span>
+            </div>
+            <InfiniteFeedBoundary
+              hasMore={feedHasMore}
+              loading={feedLoadingMore}
+              onLoadMore={onLoadMore}
+            />
+          </>
         )}
       </main>
 

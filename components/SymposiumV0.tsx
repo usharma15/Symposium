@@ -498,6 +498,8 @@ function SymposiumExperience({
   const [searchQuery, setSearchQuery] = useState("");
   const [remoteSearchResults, setRemoteSearchResults] = useState<SearchResults | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [communitySearchResultIds, setCommunitySearchResultIds] = useState<string[] | null>(null);
+  const [communitySearchLoading, setCommunitySearchLoading] = useState(false);
   const [feedPages, setFeedPages] = useState<Record<string, FeedPageState>>({});
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(
     initialRoute.kind === "profile" ? initialRoute.handle : null
@@ -2176,6 +2178,47 @@ function SymposiumExperience({
     };
   }, [currentProfile.handle, searchOpen, searchQuery]);
 
+  useEffect(() => {
+    const query = selectedCommunityFeedView.query.trim();
+    if (activeRoom !== "communities" || !selectedCommunityId || !query) {
+      setCommunitySearchResultIds(null);
+      setCommunitySearchLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setCommunitySearchResultIds(null);
+    const timer = window.setTimeout(() => {
+      setCommunitySearchLoading(true);
+      const parameters = new URLSearchParams({
+        q: query,
+        limit: "50",
+        communityId: selectedCommunityId,
+        actorHandle: currentProfile.handle
+      });
+      void symposiumApi.request<SearchResponseContract>(
+        `/api/search?${parameters.toString()}`,
+        { cache: "no-store" }
+      ).then((data) => {
+        if (cancelled) return;
+        mergeBoundedRead({
+          items: data.posts,
+          profiles: Object.fromEntries(data.profiles.map((person) => [person.handle, person]))
+        });
+        setCommunitySearchResultIds(data.posts.map((item) => item.id));
+      }).catch(() => {
+        if (!cancelled) setCommunitySearchResultIds(null);
+      }).finally(() => {
+        if (!cancelled) setCommunitySearchLoading(false);
+      });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeRoom, currentProfile.handle, selectedCommunityFeedView.query, selectedCommunityId]);
+
   const updateCommentSegmentStack = (key: string, stack: string[]) => {
     setCommentSegmentStacks((current) => {
       const currentStack = current[key] ?? [];
@@ -3776,7 +3819,20 @@ function SymposiumExperience({
           />
         ) : activeRoom === "communities" ? (
           <CommunitiesStage
-            state={{ selectedCommunity, communities, items, calls: selectedCommunity ? communityCalls[selectedCommunity.id] ?? [] : [], currentProfile, profiles, membershipBusy: communityMembershipBusy, feedView: selectedCommunityFeedView }}
+            state={{
+              selectedCommunity,
+              communities,
+              items,
+              calls: selectedCommunity ? communityCalls[selectedCommunity.id] ?? [] : [],
+              currentProfile,
+              profiles,
+              membershipBusy: communityMembershipBusy,
+              feedView: selectedCommunityFeedView,
+              feedHasMore: Boolean(activeFeedRequest && feedPages[activeFeedRequest.key]?.nextCursor),
+              feedLoadingMore: Boolean(activeFeedRequest && feedPages[activeFeedRequest.key]?.loading),
+              feedSearchResultIds: communitySearchResultIds,
+              feedSearchLoading: communitySearchLoading
+            }}
             directory={{ query: communityQuery, onQuery: setCommunityQuery, expanded: communitiesExpanded, onExpanded: setCommunitiesExpanded }}
             actions={{
               onBack: closeCommunity, onMembership: communityController.changeMembership, onVisibility: communityController.changeVisibility,
@@ -3794,7 +3850,12 @@ function SymposiumExperience({
               onSelect: openPost, onOpenProfile: openProfile, onAction: applyAction, onQuote: beginQuote,
               onOpenQuote: openQuotedSource, onEditPost: setEditingPost, onDeletePost: deletePost,
               onOpenAttachmentPreview: openAttachmentPreview,
-              onFeedView: setSelectedCommunityFeedView
+              onFeedView: setSelectedCommunityFeedView,
+              onLoadMore: () => activeFeedRequest
+                ? loadPostPage(activeFeedRequest.key, activeFeedRequest.query, true).catch(() => {
+                    setSyncStatus("More posts could not load");
+                  })
+                : Promise.resolve()
             }}
           />
         ) : (
@@ -3818,11 +3879,10 @@ function SymposiumExperience({
             onOpenAttachmentPreview={openAttachmentPreview}
             hasMore={Boolean(activeFeedRequest && feedPages[activeFeedRequest.key]?.nextCursor)}
             loadingMore={Boolean(activeFeedRequest && feedPages[activeFeedRequest.key]?.loading)}
-            onLoadMore={activeFeedRequest ? () => {
-              void loadPostPage(activeFeedRequest.key, activeFeedRequest.query, true).catch(() => {
+            onLoadMore={activeFeedRequest ? () =>
+              loadPostPage(activeFeedRequest.key, activeFeedRequest.query, true).catch(() => {
                 setSyncStatus("More posts could not load");
-              });
-            } : undefined}
+              }) : undefined}
           />
         )}
         </CommunityGovernanceProvider>

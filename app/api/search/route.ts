@@ -26,9 +26,20 @@ export async function GET(request: Request) {
   const viewerHandle = actorHandle ? cleanHandle(actorHandle) : null;
   const snapshot = await getSnapshot();
   const communities = await listLocalCommunities(actorHandle);
+  const communityId = parameters.get("communityId") || undefined;
+  const room = parameters.get("room") || undefined;
+  const postTypes = parameters.get("postTypes")?.split(",").filter(Boolean) ?? [];
+  const scopedCommunity = communityId ? communities.find((community) => community.id === communityId) : undefined;
+  const canReadScopedCommunity = !scopedCommunity
+    || scopedCommunity.visibility === "public"
+    || Boolean(viewerHandle && scopedCommunity.memberHandles.some((handle) => cleanHandle(handle) === viewerHandle));
   const posts = projectCommunityItemsForViewer(snapshot.items, communities, actorHandle)
     .filter((item) => !item.deletedAt && item.room !== "office" && item.kind !== "draft")
-    .filter(communityPostIsExternallyDiscoverable)
+    .filter((item) => communityId
+      ? canReadScopedCommunity && item.communityId === communityId
+      : communityPostIsExternallyDiscoverable(item))
+    .filter((item) => !room || item.room === room)
+    .filter((item) => !postTypes.length || Boolean(item.postType && postTypes.includes(item.postType)))
     .filter((item) => searchableText(item).includes(term))
     .slice(0, limit)
     .map((item) => ({

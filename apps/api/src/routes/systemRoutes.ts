@@ -32,13 +32,23 @@ export const registerSystemRoutes = (app: FastifyInstance) => {
     }
   });
 
-  app.get<{ Querystring: { q?: string; limit?: string; cursor?: string } }>("/v1/search", async (request, reply) => {
+  app.get<{ Querystring: {
+    q?: string;
+    limit?: string;
+    cursor?: string;
+    room?: string;
+    postTypes?: string;
+    communityId?: string;
+  } }>("/v1/search", async (request, reply) => {
     try {
       const actor = await getActorFromRequest(request);
       const results = await search({
         query: request.query.q ?? "",
         limit: request.query.limit ? Number(request.query.limit) : undefined,
-        cursor: request.query.cursor
+        cursor: request.query.cursor,
+        room: request.query.room,
+        postTypes: request.query.postTypes?.split(",").filter(Boolean),
+        communityId: request.query.communityId
       }, actor.handle);
       return reply.send(results);
     } catch (error) {

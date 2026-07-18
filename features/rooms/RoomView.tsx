@@ -12,6 +12,7 @@ import type { QuoteActionHandler } from "@/features/quotes/QuoteViews";
 import type { AttachmentPreviewHandler } from "@/features/attachments/AttachmentViews";
 import { FeedPost } from "@/features/posts/PostViews";
 import { RoomRender } from "@/features/shell/SymposiumShellViews";
+import { InfiniteFeedBoundary } from "@/features/feeds/InfiniteFeedBoundary";
 
 type OfficeMode = "desk" | "saved" | "notes";
 export function RoomView({
@@ -123,15 +124,12 @@ export function RoomView({
             <span>Try another room, topic, or search.</span>
           </div>
         )}
-        {hasMore && onLoadMore ? (
-          <button
-            className="feed-load-more"
-            type="button"
-            disabled={loadingMore}
-            onClick={onLoadMore}
-          >
-            {loadingMore ? "Loading…" : "Show more"}
-          </button>
+        {onLoadMore ? (
+          <InfiniteFeedBoundary
+            hasMore={Boolean(hasMore)}
+            loading={Boolean(loadingMore)}
+            onLoadMore={onLoadMore}
+          />
         ) : null}
       </section>
     </div>
