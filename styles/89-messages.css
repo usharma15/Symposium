@@ -1535,7 +1535,7 @@
   to { transform: rotate(360deg); }
 }
 
-@media (max-width: 1120px) {
+@media (max-width: 960px) {
   .messaging-experience.full {
     grid-template-columns: minmax(230px, 0.75fr) minmax(390px, 1.4fr);
   }
