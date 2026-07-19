@@ -38,8 +38,9 @@
 
 .symposium-shell[data-view="messages"] .messaging-experience.full {
   --messages-panel-gap: 12px;
+  --messages-panel-top-clearance: 20px;
+  --messages-center-bottom-clearance: 8px;
   --messages-side-controls-clearance: 126px;
-  --messages-info-status-clearance: 36px;
   align-items: start;
   gap: var(--messages-panel-gap);
   min-height: min(520px, calc(100dvh - 234px));
@@ -58,6 +59,8 @@
   .messages-info-panel,
   .messages-no-selection
 ) {
+  margin-top: var(--messages-panel-top-clearance);
+  min-height: 0;
   overflow: hidden;
   border: 1px solid rgba(255, 253, 245, 0.32);
   border-radius: 12px;
@@ -67,19 +70,18 @@
 }
 
 .symposium-shell[data-view="messages"] .messaging-experience.full > .messages-conversations-panel {
-  height: calc(100% - var(--messages-side-controls-clearance));
+  height: calc(100% - var(--messages-panel-top-clearance) - var(--messages-side-controls-clearance));
 }
 
 .symposium-shell[data-view="messages"] .messaging-experience.full > :is(
   .messages-thread-panel,
   .messages-no-selection
 ) {
-  height: 100%;
+  height: calc(100% - var(--messages-panel-top-clearance) - var(--messages-center-bottom-clearance));
 }
 
 .symposium-shell[data-view="messages"] .messaging-experience.full > .messages-info-panel {
-  height: calc(100% - var(--messages-side-controls-clearance) - var(--messages-info-status-clearance));
-  margin-top: var(--messages-info-status-clearance);
+  height: calc(100% - var(--messages-panel-top-clearance) - var(--messages-side-controls-clearance));
 }
 
 .messaging-experience.quick {
@@ -1848,6 +1850,71 @@
   color: #fff8ea;
 }
 
+.symposium-shell.night :is(
+  .new-conversation-panel > header button,
+  .message-person-search,
+  .message-bubble-actions,
+  .notifications-panel > header button
+) {
+  border-color: rgba(255, 253, 245, 0.14);
+  background: rgba(255, 253, 245, 0.08);
+  color: #fff8ea;
+}
+
+.symposium-shell.night :is(
+  .new-conversation-panel > header button.active,
+  .create-message-group,
+  .open-full-messages,
+  .message-media-more
+) {
+  border-color: rgba(131, 203, 209, 0.28);
+  background: rgba(35, 103, 108, 0.44);
+  color: #a5e2e5 !important;
+}
+
+.symposium-shell.night :is(
+  .message-info-actions > button:hover,
+  .message-participant-row > button:first-child:hover,
+  .message-info-results > button:hover,
+  .message-attachment:hover,
+  .message-attachment:focus-visible,
+  .message-composer-attachment-preview:hover,
+  .message-bubble-actions button:hover
+) {
+  background: rgba(35, 103, 108, 0.46);
+  color: #fff8ea;
+}
+
+.symposium-shell.night :is(
+  .message-info-actions,
+  .message-danger-actions,
+  .message-participants,
+  .message-info-results,
+  .message-people-tab-panel > header,
+  .message-shared-tab-panel > header,
+  .message-info-tabs,
+  .message-search-chat button,
+  .open-full-messages
+) {
+  border-color: rgba(255, 253, 245, 0.13);
+}
+
+.symposium-shell.night :is(
+  .conversation-list-copy small.draft,
+  .message-danger-actions > button,
+  .remove-message-participant
+) {
+  color: #e4a096 !important;
+}
+
+.symposium-shell.night .message-danger-actions > button:hover {
+  background: rgba(125, 54, 49, 0.42);
+}
+
+.symposium-shell.night .notifications-more {
+  color: #9bdde1;
+}
+
 .symposium-shell.night .notifications-list > button.unread {
   background: rgba(35, 103, 108, 0.34);
 }
@@ -1881,7 +1948,7 @@
     .messages-thread-panel,
     .messages-no-selection
   ) {
-    height: calc(100% - var(--messages-side-controls-clearance));
+    height: calc(100% - var(--messages-panel-top-clearance) - var(--messages-side-controls-clearance));
   }
 }
 
@@ -1932,6 +1999,8 @@
 
   .symposium-shell[data-view="messages"] .messaging-experience.full {
     --messages-panel-gap: 7px;
+    --messages-panel-top-clearance: 0px;
+    --messages-center-bottom-clearance: 0px;
   }
 
   .symposium-shell[data-view="messages"] .messaging-experience.full > :is(
@@ -2053,11 +2122,11 @@
     .messages-thread-panel,
     .messages-no-selection
   ) {
-    height: 100%;
+    height: calc(100% - var(--messages-panel-top-clearance));
   }
 
   .symposium-shell[data-view="messages"] .messaging-experience.full > .messages-info-panel {
-    height: calc(100% - var(--messages-info-status-clearance));
+    height: calc(100% - var(--messages-panel-top-clearance));
   }
 }
 
