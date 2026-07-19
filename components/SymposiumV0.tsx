@@ -1587,7 +1587,6 @@ function SymposiumExperience({
     const payload = event.payload ?? {};
     if (
       event.kind.startsWith("notification.") ||
-      event.kind === "conversation.invited" ||
       event.kind === "conversation.participant.removed" ||
       event.kind === "note.access.granted" ||
       event.kind === "note.access.revoked"

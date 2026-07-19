@@ -1312,6 +1312,8 @@ export const createGroupConversationInputSchema = z.object({
   inviteeHandles: z.array(z.string().trim().min(1).max(80)).min(1).max(49)
 });
 
+// The wire name remains compatible with older deployed clients; the operation
+// now adds these handles immediately and does not create pending invitations.
 export const inviteConversationParticipantsInputSchema = z.object({
   handles: z.array(z.string().trim().min(1).max(80)).min(1).max(49)
 });

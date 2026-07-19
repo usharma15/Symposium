@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildApp } from "@/apps/api/src/server";
+import { compactAttachmentFileName } from "@/lib/attachmentRules";
 import { emptyMessageDraftState, reduceMessageDraft } from "@/features/messages/messageDraftState";
 import {
   canonicalMessageFromLiveEvent,
@@ -12,6 +13,7 @@ import {
   createGroupConversationInputSchema,
   deleteMessageInputSchema,
   editMessageInputSchema,
+  inviteConversationParticipantsInputSchema,
   markConversationReadInputSchema,
   notificationListQuerySchema,
   saveConversationDraftInputSchema,
@@ -27,6 +29,8 @@ const main = async () => {
   assert.equal(sendMessageInputSchema.safeParse({ recipientHandle: "@mira", body: "x".repeat(8001) }).success, false);
   assert.equal(createGroupConversationInputSchema.safeParse({ title: "Lab", inviteeHandles: [] }).success, false);
   assert.equal(createGroupConversationInputSchema.safeParse({ title: "Lab", inviteeHandles: Array.from({ length: 50 }, (_, index) => `@p${index}`) }).success, false);
+  assert.equal(inviteConversationParticipantsInputSchema.safeParse({ handles: ["@mira"] }).success, true);
+  assert.equal(inviteConversationParticipantsInputSchema.safeParse({ handles: Array.from({ length: 50 }, (_, index) => `@p${index}`) }).success, false);
   assert.equal(conversationListQuerySchema.parse({ limit: "50" }).limit, 50);
   assert.equal(conversationListQuerySchema.safeParse({ limit: 51 }).success, false);
   assert.equal(notificationListQuerySchema.safeParse({ limit: 51 }).success, false);
@@ -34,6 +38,9 @@ const main = async () => {
   assert.equal(markConversationReadInputSchema.safeParse({ sequence: -1 }).success, false);
   assert.equal(editMessageInputSchema.safeParse({ body: "revised", expectedRevision: 1 }).success, true);
   assert.equal(deleteMessageInputSchema.safeParse({ mode: "everyone" }).success, true);
+  assert.equal(compactAttachmentFileName("short-name.jpg"), "short-name.jpg");
+  assert.equal(compactAttachmentFileName("an-ultra-long-research-attachment-name.mp4"), "an-ultra-long-rese….mp4");
+  assert.equal(compactAttachmentFileName("deep/path/to/a-ridiculously-long-script-name.py", 10), "a-ridiculo….py");
 
   const selectedDraft = reduceMessageDraft(emptyMessageDraftState, {
     type: "select",
@@ -154,7 +161,11 @@ const main = async () => {
   assert.match(repository, /message: canonicalMessage/);
   assert.match(repository, /attachment\.owner_id IS NULL AND attachment\.uploader_handle = \$2/);
   assert.doesNotMatch(repository, /createNotifications\(client, visibleRecipients/);
-  assert.match(repository, /kind: "group_invite"/);
+  assert.doesNotMatch(repository, /kind: "group_invite"/);
+  assert.match(repository, /'member', 'active', now\(\)/);
+  assert.match(repository, /kind: "conversation\.created"/);
+  assert.match(repository, /kind: "conversation\.participants\.added"/);
+  assert.match(repository, /maxGroupParticipants = 50/);
   assert.match(repository, /kind: "group_removed"/);
   assert.match(notifications, /jsonb_to_recordset/);
   assert.match(notifications, /input\.kind !== "message"/);
@@ -166,6 +177,9 @@ const main = async () => {
   assert.match(migration, /CREATE TABLE IF NOT EXISTS profile_blocks/);
   assert.match(migration, /0035_message_notification_boundary/);
   assert.match(migration, /DELETE FROM notifications WHERE kind = 'message'/);
+  assert.match(migration, /0036_immediate_group_membership/);
+  assert.match(migration, /WHERE status = 'invited'/);
+  assert.match(migration, /DELETE FROM notifications WHERE kind = 'group_invite'/);
   assert.match(client, /Math\.min\(textarea\.scrollHeight, 288\)/);
   assert.match(client, /symposium:message-draft/);
   assert.match(client, /document\.activeElement === textareaRef\.current/);
@@ -178,6 +192,11 @@ const main = async () => {
   assert.doesNotMatch(client, /if \(!selectedConversationId \|\| busy/);
   assert.match(client, /AttachmentPreviewModal/);
   assert.match(client, /pendingPreviewAttachments\(pendingAttachments\)/);
+  assert.match(client, /messagePreviewAttachments\(message\.attachments, actor\.handle\)/);
+  assert.match(client, /buildPostAttachmentMetadata\(file, contentType\)/);
+  assert.match(client, /compactAttachmentFileName/);
+  assert.doesNotMatch(client, /message-invitation-gate/);
+  assert.match(client, />Add people</);
   assert.match(styles, /\.message-composer\.has-attachments/);
   assert.match(styles, /grid-area: previews/);
   assert.match(client, /ownerType: "message"/);
@@ -187,8 +206,9 @@ const main = async () => {
   assert.match(shell, /onMessage=\{/);
   assert.match(shell, /notificationRevision/);
   assert.match(shell, /setMessagingEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-100\)\)/);
-  assert.match(shell, /event\.kind === "conversation\.invited"/);
+  assert.doesNotMatch(shell, /event\.kind === "conversation\.invited"/);
   assert.match(shell, /event\.kind === "note\.access\.granted"/);
+  assert.match(routes, /\/v1\/conversations\/:id\/participants/);
   assert.match(messageAttachmentRoute, /record\.ownerType !== "message"/);
   assert.match(messageAttachmentRoute, /Cache-Control": "private, no-store"/);
   assert.match(attachmentRoutes, /\/v1\/attachments\/:attachmentId\/content/);
@@ -226,6 +246,25 @@ const main = async () => {
       payload: { title: "Too large", inviteeHandles: Array.from({ length: 50 }, (_, index) => `@p${index}`) }
     });
     assert.equal(oversizedGroup.statusCode, 400);
+
+    const validGroup = await app.inject({
+      method: "POST",
+      url: "/v1/conversations/groups",
+      headers: { "content-type": "application/json", "x-symposium-handle": "@boundary", "idempotency-key": "group-test" },
+      payload: { title: "Immediate group", inviteeHandles: ["@mira"] }
+    });
+    assert.equal(validGroup.statusCode, 200);
+    const localConversationId = validGroup.json<{ conversationId: string }>().conversationId;
+    assert.match(localConversationId, /^[0-9a-f-]{36}$/i);
+
+    const addMember = await app.inject({
+      method: "POST",
+      url: `/v1/conversations/${localConversationId}/participants`,
+      headers: { "content-type": "application/json", "x-symposium-handle": "@boundary" },
+      payload: { handles: ["@lin"] }
+    });
+    assert.equal(addMember.statusCode, 200);
+    assert.deepEqual(addMember.json<{ added: string[] }>().added, ["@lin"]);
 
     const malformedAttachmentDiscard = await app.inject({
       method: "DELETE",

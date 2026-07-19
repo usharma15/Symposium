@@ -38,6 +38,7 @@ import { actorHandle, ensureLiveData, ensureProfileHandle, type AttachmentRow } 
 import { createNotifications } from "./notifications";
 
 const messageEditWindowMs = 15 * 60 * 1000;
+const maxGroupParticipants = 50;
 
 type ConversationCursor = { pinned: boolean; updatedAt: string; id: string };
 type MessageCursor = { sequence: number };
@@ -561,15 +562,15 @@ export const sendMessage = async (rawInput: unknown, actor: Actor, mutation?: Mu
 export const createGroupConversation = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = createGroupConversationInputSchema.parse(rawInput);
   const owner = actorHandle(actor);
-  const invitees = Array.from(new Set(input.inviteeHandles.map(cleanHandle))).filter((handle) => handle !== owner);
-  if (!invitees.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Invite at least one other participant." });
+  const memberHandles = Array.from(new Set(input.inviteeHandles.map(cleanHandle))).filter((handle) => handle !== owner);
+  if (!memberHandles.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Add at least one other participant." });
   if (!hasDatabase()) return { conversationId: randomUUID() };
   await ensureLiveData();
-  await ensureProfileHandles(invitees);
+  await ensureProfileHandles(memberHandles);
   return runAtomic(async (client) => {
     const claim = await claimMutation<{ conversationId: string }>(client, owner, mutation);
     if (claim.replayed) return { value: claim.response };
-    await assertMessageTargetsAllowed(client, owner, invitees);
+    await assertMessageTargetsAllowed(client, owner, memberHandles);
     const created = await client.query<{ id: string }>(
       `INSERT INTO conversations (kind, title, owner_handle) VALUES ('group', $1, $2) RETURNING id::text`,
       [input.title, owner]
@@ -581,19 +582,10 @@ export const createGroupConversation = async (rawInput: unknown, actor: Actor, m
       [conversationId, owner]
     );
     await client.query(
-      `INSERT INTO conversation_participants (conversation_id, profile_handle, role, status)
-       SELECT $1, unnest($2::text[]), 'member', 'invited'`,
-      [conversationId, invitees]
+      `INSERT INTO conversation_participants (conversation_id, profile_handle, role, status, accepted_at)
+       SELECT $1, unnest($2::text[]), 'member', 'active', now()`,
+      [conversationId, memberHandles]
     );
-    await createNotifications(client, invitees.map((invitee) => ({
-        profileHandle: invitee,
-        kind: "group_invite",
-        title: `Invitation to ${input.title}`,
-        body: `${owner} invited you to a private group conversation.`,
-        href: `/messages?conversation=${encodeURIComponent(conversationId)}`,
-        dedupeKey: `group-invite:${conversationId}:${invitee}`,
-        metadata: { conversationId, inviterHandle: owner }
-      })));
     const value = { conversationId };
     await completeMutation(client, owner, mutation, value);
     await stageAuditLog(client, {
@@ -601,71 +593,86 @@ export const createGroupConversation = async (rawInput: unknown, actor: Actor, m
       action: "conversation.group.create",
       subjectType: "conversation",
       subjectId: conversationId,
-      metadata: mutationAuditMetadata(mutation, { inviteeCount: invitees.length })
+      metadata: mutationAuditMetadata(mutation, { memberCount: memberHandles.length + 1 })
     });
     const event = await stageEvent(client, {
-      kind: "conversation.invited",
+      kind: "conversation.created",
       actorHandle: owner,
       subjectType: "conversation",
       subjectId: conversationId,
       visibility: "private",
-      audienceHandles: [owner, ...invitees],
-      payload: { conversationId }
+      audienceHandles: [owner, ...memberHandles],
+      payload: { conversationId, memberHandles: [owner, ...memberHandles] }
     });
     return { value, events: [event] };
   });
 };
 
-export const inviteConversationParticipants = async (conversationId: string, rawInput: unknown, actor: Actor) => {
+export const addConversationParticipants = async (conversationId: string, rawInput: unknown, actor: Actor) => {
   const input = inviteConversationParticipantsInputSchema.parse(rawInput);
-  const inviter = actorHandle(actor);
-  const handles = Array.from(new Set(input.handles.map(cleanHandle))).filter((handle) => handle !== inviter);
-  if (!hasDatabase()) return { invited: handles };
+  const addedBy = actorHandle(actor);
+  const handles = Array.from(new Set(input.handles.map(cleanHandle))).filter((handle) => handle !== addedBy);
+  if (!handles.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Add at least one other participant." });
+  if (!hasDatabase()) return { added: handles };
   await ensureLiveData();
   await ensureProfileHandles(handles);
   return runAtomic(async (client) => {
-    const membership = await getMembership(client, conversationId, inviter, { lock: true });
+    const membership = await getMembership(client, conversationId, addedBy, { lock: true });
     if (membership.kind !== "group" || membership.status !== "active" || !["owner", "admin"].includes(membership.role)) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "Only group owners and administrators can invite participants." });
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only group owners and administrators can add participants." });
     }
-    await assertMessageTargetsAllowed(client, inviter, handles);
-    const invited = await client.query<{ handle: string }>(
-      `INSERT INTO conversation_participants (conversation_id, profile_handle, role, status, hidden_at, removed_at, removed_through_sequence)
-       SELECT $1, unnest($2::text[]), 'member', 'invited', NULL, NULL, NULL
+    const [activeCount, existingTargets] = await Promise.all([
+      client.query<{ count: number }>(
+        `SELECT count(*)::int AS count
+         FROM conversation_participants
+         WHERE conversation_id = $1 AND status = 'active' AND hidden_at IS NULL`,
+        [conversationId]
+      ),
+      client.query<{ handle: string }>(
+        `SELECT profile_handle AS handle
+         FROM conversation_participants
+         WHERE conversation_id = $1 AND profile_handle = ANY($2::text[])
+           AND status = 'active' AND hidden_at IS NULL`,
+        [conversationId, handles]
+      )
+    ]);
+    const alreadyActive = new Set(existingTargets.rows.map((row) => row.handle));
+    const newMemberCount = handles.filter((handle) => !alreadyActive.has(handle)).length;
+    if (Number(activeCount.rows[0]?.count ?? 0) + newMemberCount > maxGroupParticipants) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: `Private groups can contain at most ${maxGroupParticipants} people.` });
+    }
+    await assertMessageTargetsAllowed(client, addedBy, handles);
+    const added = await client.query<{ handle: string }>(
+      `INSERT INTO conversation_participants (conversation_id, profile_handle, role, status, hidden_at, accepted_at, removed_at, removed_through_sequence)
+       SELECT $1, unnest($2::text[]), 'member', 'active', NULL, now(), NULL, NULL
        ON CONFLICT (conversation_id, profile_handle) DO UPDATE
-       SET status = 'invited', hidden_at = NULL, removed_at = NULL, removed_through_sequence = NULL
+       SET status = 'active', hidden_at = NULL, accepted_at = now(), removed_at = NULL, removed_through_sequence = NULL
        WHERE conversation_participants.status = 'removed' OR conversation_participants.hidden_at IS NOT NULL
        RETURNING profile_handle AS handle`,
       [conversationId, handles]
     );
-    const invitedHandles = invited.rows.map((row) => row.handle);
-    if (!invitedHandles.length) return { value: { invited: [] } };
-    await createNotifications(client, invitedHandles.map((handle) => ({
-        profileHandle: handle,
-        kind: "group_invite",
-        title: `Invitation to ${membership.title ?? "a private group"}`,
-        body: `${inviter} invited you to a private group conversation.`,
-        href: `/messages?conversation=${encodeURIComponent(conversationId)}`,
-        dedupeKey: `group-invite:${conversationId}:${handle}:${membership.revision + 1}`,
-        metadata: { conversationId, inviterHandle: inviter }
-      })));
+    const addedHandles = added.rows.map((row) => row.handle);
+    if (!addedHandles.length) return { value: { added: [] } };
     await client.query(`UPDATE conversations SET revision = revision + 1, updated_at = now() WHERE id = $1`, [conversationId]);
     const audience = await client.query<{ handle: string }>(
       `SELECT profile_handle AS handle FROM conversation_participants WHERE conversation_id = $1 AND hidden_at IS NULL`,
       [conversationId]
     );
     const event = await stageEvent(client, {
-      kind: "conversation.invited",
-      actorHandle: inviter,
+      kind: "conversation.participants.added",
+      actorHandle: addedBy,
       subjectType: "conversation",
       subjectId: conversationId,
       visibility: "private",
-      audienceHandles: Array.from(new Set([...audience.rows.map((row) => row.handle), ...invitedHandles])),
-      payload: { conversationId }
+      audienceHandles: Array.from(new Set([...audience.rows.map((row) => row.handle), ...addedHandles])),
+      payload: { conversationId, addedHandles }
     });
-    return { value: { invited: invitedHandles }, events: [event] };
+    return { value: { added: addedHandles }, events: [event] };
   });
 };
+
+// Compatibility alias for older web releases while the add-member route rolls out.
+export const inviteConversationParticipants = addConversationParticipants;
 
 export const resolveConversationInvite = async (conversationId: string, rawInput: unknown, actor: Actor) => {
   const input = resolveConversationInviteInputSchema.parse(rawInput);

@@ -253,6 +253,15 @@ const extensionForFileName = (fileName: string) => {
   return match?.[0] ?? "";
 };
 
+export const compactAttachmentFileName = (fileName: string, maxStemCharacters = 18) => {
+  const normalized = fileName.trim().split(/[\\/]/).at(-1) ?? fileName.trim();
+  const extension = normalized.match(/\.[^.\s]{1,16}$/)?.[0] ?? "";
+  const stem = extension ? normalized.slice(0, -extension.length) : normalized;
+  const characters = Array.from(stem);
+  if (characters.length <= maxStemCharacters) return normalized;
+  return `${characters.slice(0, maxStemCharacters).join("")}…${extension}`;
+};
+
 const normalizedContentType = (contentType: string) => {
   const normalized = contentType.trim().toLowerCase().split(";", 1)[0] ?? "";
   return normalized === "image/jpg" ? "image/jpeg" : normalized;

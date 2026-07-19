@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
 import {
+  addConversationParticipants,
   assertMessageAttachmentAccess,
   clearConversation,
   createGroupConversation,
@@ -83,6 +84,14 @@ export const registerMessageRoutes = (app: FastifyInstance) => {
   app.post<{ Params: RouteParams }>("/v1/conversations/:id/invitations", async (request, reply) => {
     try {
       return reply.send(await inviteConversationParticipants(uuidParam(request.params.id), request.body, await withWriteActor(request, { scope: "group-invite", limit: 30 })));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post<{ Params: RouteParams }>("/v1/conversations/:id/participants", async (request, reply) => {
+    try {
+      return reply.send(await addConversationParticipants(uuidParam(request.params.id), request.body, await withWriteActor(request, { scope: "group-member-add", limit: 30 })));
     } catch (error) {
       return sendError(app, reply, error);
     }

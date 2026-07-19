@@ -44,12 +44,24 @@ import type {
   MessagePageContract
 } from "@/packages/contracts/src";
 import type { ResearchProfile } from "@/lib/mockData";
-import { formatAttachmentBytes } from "@/lib/attachmentRules";
+import {
+  compactAttachmentFileName,
+  formatAttachmentBytes,
+  inferAttachmentContentType
+} from "@/lib/attachmentRules";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { profileInitials } from "@/features/identity/profilePresentation";
-import { createClientMutationId, symposiumApi } from "@/features/api/symposiumApiClient";
+import {
+  createClientMutationId,
+  symposiumApi,
+  SymposiumApiError
+} from "@/features/api/symposiumApiClient";
 import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
 import { uploadConfirmedAttachment } from "@/features/attachments/attachmentUploadClient";
+import {
+  attachmentIcon,
+  buildPostAttachmentMetadata
+} from "@/features/attachments/AttachmentViews";
 import {
   emptyMessageDraftState,
   reduceMessageDraft,
@@ -128,6 +140,30 @@ const discardPendingAttachment = (entry: PendingMessageAttachment, actorHandle: 
 const pendingPreviewAttachments = (entries: PendingMessageAttachment[]) =>
   entries.map((entry) => ({ ...entry.attachment, url: entry.previewUrl }));
 
+const messagePreviewAttachments = (attachments: InquiryAttachmentContract[], actorHandle: string) =>
+  attachments.map((attachment) => ({
+    ...attachment,
+    url: messageAttachmentUrl(attachment, actorHandle)
+  }));
+
+type MessageAttachmentPreview = {
+  attachmentId: string;
+  attachments: InquiryAttachmentContract[];
+  contextTitle: string;
+};
+
+function CompactAttachmentFileName({ fileName, maxStemCharacters = 18 }: { fileName: string; maxStemCharacters?: number }) {
+  const compact = compactAttachmentFileName(fileName, maxStemCharacters);
+  const extension = compact.match(/\.[^.\s]{1,16}$/)?.[0] ?? "";
+  const stem = extension ? compact.slice(0, -extension.length) : compact;
+  return (
+    <span className="compact-attachment-file-name" title={fileName}>
+      <span className="compact-attachment-file-stem">{stem}</span>
+      {extension ? <span className="compact-attachment-file-extension">{extension}</span> : null}
+    </span>
+  );
+}
+
 function Avatar({ person, name, size = "small" }: { person?: { avatarUrl?: string; name: string }; name: string; size?: "small" | "large" }) {
   return (
     <span className={`avatar ${size} messaging-avatar`} aria-hidden="true">
@@ -136,31 +172,30 @@ function Avatar({ person, name, size = "small" }: { person?: { avatarUrl?: strin
   );
 }
 
-function AttachmentTile({ attachment, actorHandle }: { attachment: InquiryAttachmentContract; actorHandle: string }) {
+function AttachmentTile({
+  attachment,
+  actorHandle,
+  onPreview
+}: {
+  attachment: InquiryAttachmentContract;
+  actorHandle: string;
+  onPreview: () => void;
+}) {
   const url = messageAttachmentUrl(attachment, actorHandle);
   if (attachment.kind === "image") {
     return (
-      <a className="message-attachment message-attachment-image" href={url} target="_blank" rel="noreferrer">
-        <img src={url} alt={attachment.fileName} />
-        <span>{attachment.fileName}</span>
-      </a>
-    );
-  }
-  if (attachment.kind === "video") {
-    return (
-      <a className="message-attachment" href={url} target="_blank" rel="noreferrer">
-        <ImageIcon size={17} />
-        <span>{attachment.fileName}</span>
-        <ExternalLink size={13} />
-      </a>
+      <button className="message-attachment message-attachment-image" type="button" title={`Preview ${attachment.fileName}`} onClick={onPreview}>
+        <img src={url} alt="" loading="lazy" />
+        <CompactAttachmentFileName fileName={attachment.fileName} maxStemCharacters={24} />
+      </button>
     );
   }
   return (
-    <a className="message-attachment" href={url} target="_blank" rel="noreferrer">
-      <File size={17} />
-      <span>{attachment.fileName}</span>
-      <ExternalLink size={13} />
-    </a>
+    <button className="message-attachment" type="button" title={`Preview ${attachment.fileName}`} onClick={onPreview}>
+      {attachmentIcon(attachment)}
+      <CompactAttachmentFileName fileName={attachment.fileName} maxStemCharacters={24} />
+      <small>{formatAttachmentBytes(attachment.byteSize)}</small>
+    </button>
   );
 }
 
@@ -170,7 +205,8 @@ function MessageBubble({
   profiles,
   onEdit,
   onDelete,
-  onStar
+  onStar,
+  onPreviewAttachment
 }: {
   actorHandle: string;
   message: MessageContract;
@@ -178,6 +214,7 @@ function MessageBubble({
   onEdit: (message: MessageContract) => void;
   onDelete: (message: MessageContract, mode: "self" | "everyone") => void;
   onStar: (message: MessageContract) => void;
+  onPreviewAttachment: (message: MessageContract, attachmentId: string) => void;
 }) {
   const own = message.senderHandle ? cleanHandle(message.senderHandle) === cleanHandle(actorHandle) : false;
   const sender = message.senderHandle ? profiles[cleanHandle(message.senderHandle)] : undefined;
@@ -193,7 +230,14 @@ function MessageBubble({
             {message.body ? <p>{message.body}</p> : null}
             {message.attachments.length ? (
               <div className="message-attachments">
-                {message.attachments.map((attachment) => <AttachmentTile key={attachment.id} attachment={attachment} actorHandle={actorHandle} />)}
+                {message.attachments.map((attachment) => (
+                  <AttachmentTile
+                    key={attachment.id}
+                    attachment={attachment}
+                    actorHandle={actorHandle}
+                    onPreview={() => onPreviewAttachment(message, attachment.id)}
+                  />
+                ))}
               </div>
             ) : null}
           </>
@@ -239,7 +283,7 @@ function ConversationListItem({
     ? `Draft: ${conversation.draftBody}`
     : conversation.lastMessage?.deletedAt
       ? "Message unsent"
-      : conversation.lastMessage?.body || (conversation.lastMessage?.attachments.length ? "Shared an attachment" : conversation.status === "invited" ? "Invitation waiting" : "No messages yet");
+      : conversation.lastMessage?.body || (conversation.lastMessage?.attachments.length ? "Shared an attachment" : "No messages yet");
   return (
     <button className={`conversation-list-item ${active ? "active" : ""}`} type="button" onClick={onSelect}>
       <Avatar person={peer ?? undefined} name={title} />
@@ -372,7 +416,7 @@ export function MessagingExperience({
   const [searchResults, setSearchResults] = useState<MessageContract[] | null>(null);
   const [mediaKind, setMediaKind] = useState<AttachmentKindContract | "links" | "starred" | null>(null);
   const [mediaResults, setMediaResults] = useState<MessageContract[]>([]);
-  const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState<MessageAttachmentPreview | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -596,7 +640,7 @@ export function MessagingExperience({
       setMessages([]);
       dispatchDraft({ type: "select", conversationId: null, localBody: null, serverBody: "", serverUpdatedAt: null });
       setPendingAttachments([]);
-      setPreviewAttachmentId(null);
+      setAttachmentPreview(null);
       return;
     }
     const local = window.localStorage.getItem(localDraftKey(actor.handle, selectedConversationId));
@@ -609,7 +653,7 @@ export function MessagingExperience({
       serverUpdatedAt: summary?.draftUpdatedAt ?? null
     });
     setPendingAttachments([]);
-    setPreviewAttachmentId(null);
+    setAttachmentPreview(null);
     shouldStickToBottomRef.current = true;
     setSearchResults(null);
     setMediaKind(null);
@@ -724,7 +768,7 @@ export function MessagingExperience({
     const attachmentIds = pendingAttachments.map((entry) => entry.attachment.id);
     dispatchDraft({ type: "clear", conversationId: selectedConversationId });
     setPendingAttachments([]);
-    setPreviewAttachmentId(null);
+    setAttachmentPreview(null);
     window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
     try {
       const directRecipient = !messageIdPattern.test(selectedConversationId)
@@ -770,16 +814,20 @@ export function MessagingExperience({
     if (!uploadConversationId || !files.length) return;
     setUploading(true);
     try {
-      const results = await Promise.allSettled(files.map(async (file) => ({
-        attachment: await uploadConfirmedAttachment({
-          actorHandle: actor.handle,
-          file,
-          idempotencyKey: createClientMutationId("message-attachment"),
-          metadata: { surface: "message" },
-          ownerType: "message"
-        }),
-        previewUrl: URL.createObjectURL(file)
-      })));
+      const results = await Promise.allSettled(files.map(async (file) => {
+        const contentType = inferAttachmentContentType(file.name, file.type);
+        const previewMetadata = await buildPostAttachmentMetadata(file, contentType);
+        return {
+          attachment: await uploadConfirmedAttachment({
+            actorHandle: actor.handle,
+            file,
+            idempotencyKey: createClientMutationId("message-attachment"),
+            metadata: { ...previewMetadata, surface: "message" },
+            ownerType: "message"
+          }),
+          previewUrl: URL.createObjectURL(file)
+        };
+      }));
       const uploaded = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
       if (!mountedRef.current || selectedRef.current !== uploadConversationId) {
         for (const attachment of uploaded) void discardPendingAttachment(attachment, actor.handle);
@@ -845,18 +893,6 @@ export function MessagingExperience({
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
-  const resolveInvite = async (action: "accept" | "decline") => {
-    if (!conversation) return;
-    try {
-      await symposiumApi.request(`/api/conversations/${conversation.id}/invitation`, {
-        method: "POST", body: { actorHandle: actor.handle, action }
-      });
-      if (action === "decline") selectConversation(null);
-      await loadConversations(false);
-      if (action === "accept") await loadConversation(conversation.id);
-    } catch (actionError) { setError(errorText(actionError)); }
-  };
-
   const clearChat = async () => {
     if (!conversation || !window.confirm("Clear all of this chat's current messages and attachments for you? This cannot be undone.")) return;
     try {
@@ -889,7 +925,7 @@ export function MessagingExperience({
     const target = peer?.handle ?? syntheticHandle;
     if (!target) return;
     const active = !conversation?.blockedByViewer;
-    if (active && !window.confirm(`Block ${peer?.name ?? target}? They will not be able to message or invite you.`)) return;
+    if (active && !window.confirm(`Block ${peer?.name ?? target}? They will not be able to message you or add you to groups.`)) return;
     try {
       await symposiumApi.request("/api/blocks", { method: "POST", body: { actorHandle: actor.handle, targetHandle: target, active } });
       if (conversation) setConversation({ ...conversation, blockedByViewer: active });
@@ -917,16 +953,28 @@ export function MessagingExperience({
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
-  const invitePerson = async () => {
+  const addPerson = async () => {
     if (!conversation || conversation.kind !== "group") return;
-    const handle = window.prompt("Invite by handle")?.trim();
+    const handle = window.prompt("Add a member by handle")?.trim();
     if (!handle) return;
     try {
-      await symposiumApi.request(`/api/conversations/${conversation.id}/invitations`, {
-        method: "POST", body: { actorHandle: actor.handle, handles: [handle] }
-      });
+      const body = { actorHandle: actor.handle, handles: [handle] };
+      try {
+        await symposiumApi.request(`/api/conversations/${conversation.id}/participants`, { method: "POST", body });
+      } catch (actionError) {
+        if (!(actionError instanceof SymposiumApiError) || actionError.status !== 404) throw actionError;
+        await symposiumApi.request(`/api/conversations/${conversation.id}/invitations`, { method: "POST", body });
+      }
       await loadConversation(conversation.id, { quiet: true });
     } catch (actionError) { setError(errorText(actionError)); }
+  };
+
+  const openMessageAttachmentPreview = (message: MessageContract, attachmentId: string) => {
+    setAttachmentPreview({
+      attachmentId,
+      attachments: messagePreviewAttachments(message.attachments, actor.handle),
+      contextTitle: "Message attachments"
+    });
   };
 
   const updateParticipantRole = async (handle: string, role: "admin" | "member") => {
@@ -991,103 +1039,107 @@ export function MessagingExperience({
             </button>
             {quick && onOpenFull ? <button type="button" title="Open full messages" onClick={() => onOpenFull(selectedConversationId)}><ExternalLink size={16} /></button> : null}
           </header>
-          {conversation?.status === "invited" ? (
-            <div className="message-invitation-gate">
-              <Users size={24} />
-              <strong>You were invited to {selectedTitle}</strong>
-              <p>Accept to see the existing group history and participate.</p>
-              <span><button type="button" onClick={() => void resolveInvite("decline")}>Decline</button><button type="button" className="primary" onClick={() => void resolveInvite("accept")}>Accept</button></span>
-            </div>
-          ) : (
-            <>
-              <div
-                className="message-history"
-                ref={historyRef}
-                aria-live="polite"
-                onScroll={(event) => {
-                  const target = event.currentTarget;
-                  shouldStickToBottomRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 90;
-                }}
-              >
-                {messageCursor ? <button className="load-older-messages" type="button" disabled={loadingOlder} onClick={() => selectedConversationId && void loadConversation(selectedConversationId, { older: true })}>{loadingOlder ? "Loading…" : "Load older messages"}</button> : null}
-                {!loading && !messages.length ? <div className="empty-message-thread"><MessageCircle size={30} /><strong>{syntheticProfile ? `Start a conversation with ${syntheticProfile.name}` : "No messages here yet"}</strong><p>Messages and attachments will appear here.</p></div> : null}
-                {messages.map((message) => <MessageBubble key={message.id} actorHandle={actor.handle} message={message} profiles={profiles} onEdit={edit} onDelete={removeMessage} onStar={star} />)}
+          <div
+            className="message-history"
+            ref={historyRef}
+            aria-live="polite"
+            onScroll={(event) => {
+              const target = event.currentTarget;
+              shouldStickToBottomRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 90;
+            }}
+          >
+            {messageCursor ? <button className="load-older-messages" type="button" disabled={loadingOlder} onClick={() => selectedConversationId && void loadConversation(selectedConversationId, { older: true })}>{loadingOlder ? "Loading…" : "Load older messages"}</button> : null}
+            {!loading && !messages.length ? <div className="empty-message-thread"><MessageCircle size={30} /><strong>{syntheticProfile ? `Start a conversation with ${syntheticProfile.name}` : "No messages here yet"}</strong><p>Messages and attachments will appear here.</p></div> : null}
+            {messages.map((message) => (
+              <MessageBubble
+                key={message.id}
+                actorHandle={actor.handle}
+                message={message}
+                profiles={profiles}
+                onEdit={edit}
+                onDelete={removeMessage}
+                onStar={star}
+                onPreviewAttachment={openMessageAttachmentPreview}
+              />
+            ))}
+          </div>
+          <div className={`message-composer${pendingAttachments.length ? " has-attachments" : ""}`}>
+            {pendingAttachments.length ? (
+              <div className="message-composer-attachments" role="list" aria-label="Attachments ready to send">
+                {pendingAttachments.map((entry) => {
+                  const attachment = entry.attachment;
+                  return (
+                    <div className="message-composer-attachment" role="listitem" key={attachment.id}>
+                      <button
+                        className="message-composer-attachment-preview"
+                        type="button"
+                        title={`Preview ${attachment.fileName}`}
+                        onClick={() => setAttachmentPreview({
+                          attachmentId: attachment.id,
+                          attachments: pendingPreviewAttachments(pendingAttachments),
+                          contextTitle: "Message attachments"
+                        })}
+                      >
+                        {attachment.kind === "image"
+                          ? <img src={entry.previewUrl} alt="" />
+                          : <span className={`message-composer-file-kind kind-${attachment.kind}`}><File size={18} /><small>{attachment.kind}</small></span>}
+                        <span className="message-composer-attachment-copy">
+                          <strong><CompactAttachmentFileName fileName={attachment.fileName} /></strong>
+                          <small>{formatAttachmentBytes(attachment.byteSize)}</small>
+                        </span>
+                      </button>
+                      <button
+                        className="message-composer-attachment-remove"
+                        type="button"
+                        title={`Remove ${attachment.fileName}`}
+                        onClick={() => {
+                          void discardPendingAttachment(entry, actor.handle);
+                          setPendingAttachments((current) => current.filter((candidate) => candidate.attachment.id !== attachment.id));
+                          if (attachmentPreview?.attachmentId === attachment.id) setAttachmentPreview(null);
+                        }}
+                      ><X size={13} /></button>
+                    </div>
+                  );
+                })}
               </div>
-              <div className={`message-composer${pendingAttachments.length ? " has-attachments" : ""}`}>
-                {pendingAttachments.length ? (
-                  <div className="message-composer-attachments" role="list" aria-label="Attachments ready to send">
-                    {pendingAttachments.map((entry) => {
-                      const attachment = entry.attachment;
-                      return (
-                        <div className="message-composer-attachment" role="listitem" key={attachment.id}>
-                          <button
-                            className="message-composer-attachment-preview"
-                            type="button"
-                            title={`Preview ${attachment.fileName}`}
-                            onClick={() => setPreviewAttachmentId(attachment.id)}
-                          >
-                            {attachment.kind === "image"
-                              ? <img src={entry.previewUrl} alt="" />
-                              : <span className={`message-composer-file-kind kind-${attachment.kind}`}><File size={18} /><small>{attachment.kind}</small></span>}
-                            <span className="message-composer-attachment-copy">
-                              <strong>{attachment.fileName}</strong>
-                              <small>{formatAttachmentBytes(attachment.byteSize)}</small>
-                            </span>
-                          </button>
-                          <button
-                            className="message-composer-attachment-remove"
-                            type="button"
-                            title={`Remove ${attachment.fileName}`}
-                            onClick={() => {
-                              void discardPendingAttachment(entry, actor.handle);
-                              setPendingAttachments((current) => current.filter((candidate) => candidate.attachment.id !== attachment.id));
-                              if (previewAttachmentId === attachment.id) setPreviewAttachmentId(null);
-                            }}
-                          ><X size={13} /></button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-                <label className="message-attach-button" title="Attach files">
-                  {uploading ? <LoaderCircle className="spin" size={18} /> : <Paperclip size={18} />}
-                  <input type="file" multiple disabled={uploading || pendingAttachments.length >= 10} onChange={uploadFiles} />
-                </label>
-                <textarea
-                  ref={textareaRef}
-                  rows={1}
-                  maxLength={8000}
-                  value={draft}
-                  placeholder={conversation?.status === "removed" ? "You are no longer in this group" : conversation?.blockedByViewer ? "Unblock this person to send a message" : "Write a message"}
-                  disabled={conversation?.status === "removed" || conversation?.blockedByViewer}
-                  onChange={(event) => {
-                    if (!selectedConversationId) return;
-                    const body = event.target.value;
-                    if (body) window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), body);
-                    else window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
-                    dispatchDraft({ type: "edit", conversationId: selectedConversationId, body });
-                  }}
-                  onBlur={() => {
-                    const current = draftStateRef.current;
-                    if (current.conversationId && current.dirty) {
-                      if (draftSaveTimerRef.current !== null) window.clearTimeout(draftSaveTimerRef.current);
-                      draftSaveTimerRef.current = null;
-                      void persistDraft(current.conversationId, current.body);
-                    }
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void sendCurrent();
-                    }
-                  }}
-                />
-                <button className="send-message-button" type="button" title={sendingCount ? "Send another message" : "Send"} disabled={uploading || (!draft.trim() && !pendingAttachments.length)} onClick={() => void sendCurrent()}>
-                  {sendingCount ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}
-                </button>
-              </div>
-            </>
-          )}
+            ) : null}
+            <label className="message-attach-button" title="Attach files">
+              {uploading ? <LoaderCircle className="spin" size={18} /> : <Paperclip size={18} />}
+              <input type="file" multiple disabled={uploading || pendingAttachments.length >= 10} onChange={uploadFiles} />
+            </label>
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              maxLength={8000}
+              value={draft}
+              placeholder={conversation?.status === "removed" ? "You are no longer in this group" : conversation?.blockedByViewer ? "Unblock this person to send a message" : "Write a message"}
+              disabled={conversation?.status === "removed" || conversation?.blockedByViewer}
+              onChange={(event) => {
+                if (!selectedConversationId) return;
+                const body = event.target.value;
+                if (body) window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), body);
+                else window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
+                dispatchDraft({ type: "edit", conversationId: selectedConversationId, body });
+              }}
+              onBlur={() => {
+                const current = draftStateRef.current;
+                if (current.conversationId && current.dirty) {
+                  if (draftSaveTimerRef.current !== null) window.clearTimeout(draftSaveTimerRef.current);
+                  draftSaveTimerRef.current = null;
+                  void persistDraft(current.conversationId, current.body);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void sendCurrent();
+                }
+              }}
+            />
+            <button className="send-message-button" type="button" title={sendingCount ? "Send another message" : "Send"} disabled={uploading || (!draft.trim() && !pendingAttachments.length)} onClick={() => void sendCurrent()}>
+              {sendingCount ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}
+            </button>
+          </div>
         </main>
       ) : (
         <main className="messages-no-selection"><MessageCircle size={36} /><strong>Select a chat</strong><p>Choose a conversation or start a new one.</p></main>
@@ -1112,7 +1164,7 @@ export function MessagingExperience({
               <div className="message-info-actions">
                 <button type="button" onClick={() => void changePreference({ pinned: !conversation.pinned })}>{conversation.pinned ? <PinOff size={15} /> : <Pin size={15} />}{conversation.pinned ? "Unpin chat" : "Pin chat"}</button>
                 <button type="button" onClick={() => void changePreference({ muted: !conversation.muted })}>{conversation.muted ? <BellRing size={15} /> : <BellOff size={15} />}{conversation.muted ? "Unmute notifications" : "Mute notifications"}</button>
-                {conversation.kind === "group" && ["owner", "admin"].includes(conversation.role) ? <button type="button" onClick={() => void invitePerson()}><UserPlus size={15} />Invite people</button> : null}
+                {conversation.kind === "group" && ["owner", "admin"].includes(conversation.role) ? <button type="button" onClick={() => void addPerson()}><UserPlus size={15} />Add people</button> : null}
               </div>
               {conversation.kind === "group" ? (
                 <div className="message-participants">
@@ -1121,7 +1173,7 @@ export function MessagingExperience({
                     const ownParticipant = cleanHandle(participant.handle) === cleanHandle(actor.handle);
                     const canRemove = !ownParticipant && participant.role !== "owner" && (
                       conversation.role === "owner" || (conversation.role === "admin" && participant.role === "member")
-                    ) && ["active", "invited"].includes(participant.status);
+                    ) && participant.status === "active";
                     return (
                       <div className="message-participant-row" key={participant.handle}>
                         <button type="button" onClick={() => onOpenProfile(participant.handle)}>
@@ -1143,7 +1195,7 @@ export function MessagingExperience({
               <div className="message-media-browser">
                 <strong>Shared in this chat</strong>
                 <div>{mediaKinds.map((kind) => <button type="button" className={mediaKind === kind.id ? "active" : ""} key={kind.id} onClick={() => void loadMedia(kind.id)}>{kind.icon}{kind.label}</button>)}</div>
-                {mediaKind ? <div className="message-media-results">{mediaResults.flatMap((entry) => entry.attachments.length ? entry.attachments.map((attachment) => <AttachmentTile key={`${entry.id}:${attachment.id}`} attachment={attachment} actorHandle={actor.handle} />) : entry.body ? [<button type="button" key={entry.id} onClick={() => document.querySelector(`[data-message-id="${entry.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>{entry.body}</button>] : [])}{!mediaResults.length ? <p>Nothing here yet.</p> : null}</div> : null}
+                {mediaKind ? <div className="message-media-results">{mediaResults.flatMap((entry) => entry.attachments.length ? entry.attachments.map((attachment) => <AttachmentTile key={`${entry.id}:${attachment.id}`} attachment={attachment} actorHandle={actor.handle} onPreview={() => openMessageAttachmentPreview(entry, attachment.id)} />) : entry.body ? [<button type="button" key={entry.id} onClick={() => document.querySelector(`[data-message-id="${entry.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>{entry.body}</button>] : [])}{!mediaResults.length ? <p>Nothing here yet.</p> : null}</div> : null}
               </div>
               <div className="message-danger-actions">
                 <button type="button" onClick={() => void clearChat()}><ArchiveX size={15} />Clear chat</button>
@@ -1155,12 +1207,12 @@ export function MessagingExperience({
         </aside>
       ) : null}
       {error ? <div className="messaging-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError("")}><X size={14} /></button></div> : null}
-      {previewAttachmentId ? (
+      {attachmentPreview ? (
         <AttachmentPreviewModal
-          attachments={pendingPreviewAttachments(pendingAttachments)}
-          contextTitle="Message attachments"
-          attachmentId={previewAttachmentId}
-          onClose={() => setPreviewAttachmentId(null)}
+          attachments={attachmentPreview.attachments}
+          contextTitle={attachmentPreview.contextTitle}
+          attachmentId={attachmentPreview.attachmentId}
+          onClose={() => setAttachmentPreview(null)}
         />
       ) : null}
     </section>

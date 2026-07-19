@@ -1968,6 +1968,20 @@ const migrations: Migration[] = [
     sql: `
       DELETE FROM notifications WHERE kind = 'message';
     `
+  },
+  {
+    id: "0036_immediate_group_membership",
+    sql: `
+      UPDATE conversation_participants
+      SET status = 'active',
+          accepted_at = COALESCE(accepted_at, now()),
+          hidden_at = NULL,
+          removed_at = NULL,
+          removed_through_sequence = NULL
+      WHERE status = 'invited';
+
+      DELETE FROM notifications WHERE kind = 'group_invite';
+    `
   }
 ];
 

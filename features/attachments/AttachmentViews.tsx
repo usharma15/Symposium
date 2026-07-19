@@ -641,7 +641,10 @@ function TextAttachmentPreview({
   mode: AttachmentRenderMode;
   zoom?: number;
 }) {
-  const previewText = metadataString(attachment.metadata, "previewText");
+  const metadataPreviewText = metadataString(attachment.metadata, "previewText");
+  const [loadedPreviewText, setLoadedPreviewText] = useState("");
+  const [loadingPreviewText, setLoadingPreviewText] = useState(false);
+  const previewText = metadataPreviewText || loadedPreviewText;
   const pages = splitPreviewTextIntoPages(previewText);
   const pageCount = attachmentPageCount(attachment, previewText);
   const [page, setPage] = useState(1);
@@ -650,7 +653,28 @@ function TextAttachmentPreview({
 
   useEffect(() => {
     setPage(1);
-  }, [attachment.id]);
+    setLoadedPreviewText("");
+    setLoadingPreviewText(false);
+    if (metadataPreviewText || !attachment.url) return;
+    let cancelled = false;
+    const loadPreviewText = async () => {
+      setLoadingPreviewText(true);
+      try {
+        const response = await fetch(attachment.url!, { cache: "force-cache" });
+        if (!response.ok) throw new Error("Could not load attachment preview.");
+        const blob = await response.blob();
+        const file = new File([blob], attachment.fileName, { type: attachment.contentType });
+        const metadata = await buildPostAttachmentMetadata(file, attachment.contentType);
+        if (!cancelled) setLoadedPreviewText(metadataString(metadata, "previewText"));
+      } catch {
+        if (!cancelled) setLoadedPreviewText("");
+      } finally {
+        if (!cancelled) setLoadingPreviewText(false);
+      }
+    };
+    void loadPreviewText();
+    return () => { cancelled = true; };
+  }, [attachment.contentType, attachment.fileName, attachment.id, attachment.url, metadataPreviewText]);
 
   return (
     <div className={`attachment-document attachment-document-${mode}`}>
@@ -689,7 +713,7 @@ function TextAttachmentPreview({
         <div className="attachment-file-shell">
           {attachmentIcon(attachment)}
           <strong>{attachment.fileName}</strong>
-          <span>{formatAttachmentBytes(attachment.byteSize)}</span>
+          <span>{loadingPreviewText ? "Preparing preview…" : formatAttachmentBytes(attachment.byteSize)}</span>
         </div>
       )}
     </div>
@@ -705,12 +729,15 @@ function DocxAttachmentPreview({
   mode: AttachmentRenderMode;
   zoom?: number;
 }) {
+  const metadataPreviewText = metadataString(attachment.metadata, "previewText");
+  const [loadedPreviewText, setLoadedPreviewText] = useState("");
+  const fallbackText = metadataPreviewText || loadedPreviewText;
   const fallbackBlocks = useMemo(
-    () => plainTextToDocxBlocks(metadataString(attachment.metadata, "previewText")),
-    [attachment.metadata]
+    () => plainTextToDocxBlocks(fallbackText),
+    [fallbackText]
   );
   const fallbackPages = paginateDocxBlocks(fallbackBlocks);
-  const metadataPageCount = attachmentPageCount(attachment, metadataString(attachment.metadata, "previewText"));
+  const metadataPageCount = attachmentPageCount(attachment, fallbackText);
   const renderTargetRef = useRef<HTMLDivElement>(null);
   const [renderedPageCount, setRenderedPageCount] = useState(0);
   const [fitScale, setFitScale] = useState(1);
@@ -736,6 +763,7 @@ function DocxAttachmentPreview({
     setRenderedPageCount(0);
     setFitScale(1);
     setParseFailed(false);
+    setLoadedPreviewText("");
 
     if (!attachment.url || !target) return;
     const attachmentUrl = attachment.url;
@@ -745,6 +773,10 @@ function DocxAttachmentPreview({
         const response = await fetch(attachmentUrl, { cache: "force-cache" });
         if (!response.ok) throw new Error("Could not load document.");
         const bytes = await response.arrayBuffer();
+        if (!metadataPreviewText) {
+          const extracted = await extractDocxMetadata(new File([bytes], attachment.fileName, { type: attachment.contentType }));
+          if (!cancelled) setLoadedPreviewText(metadataString(extracted, "previewText"));
+        }
         const { renderAsync } = await import("docx-preview");
         if (cancelled) return;
 
@@ -798,7 +830,7 @@ function DocxAttachmentPreview({
       resizeObserver?.disconnect();
       target.replaceChildren();
     };
-  }, [attachment.id, attachment.url, mode]);
+  }, [attachment.contentType, attachment.fileName, attachment.id, attachment.url, metadataPreviewText, mode]);
 
   useEffect(() => {
     const target = renderTargetRef.current;
