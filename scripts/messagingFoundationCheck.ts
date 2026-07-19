@@ -317,7 +317,12 @@ const main = async () => {
   assert.match(repository, /SELECT count\(\*\)::int AS "unreadCount"[\s\S]*?viewer\.hidden_at IS NULL[\s\S]*?message\.sender_handle IS DISTINCT FROM \$1/);
   assert.match(unreadButton, /\/api\/conversations\/unread/);
   assert.match(unreadButton, /latestUnreadChangingEventKey/);
+  assert.match(unreadButton, /window\.addEventListener\("focus", refreshWhenActive\)/);
+  assert.match(unreadButton, /window\.addEventListener\("online", refreshWhenActive\)/);
+  assert.match(unreadButton, /document\.addEventListener\("visibilitychange", refreshWhenActive\)/);
+  assert.match(unreadButton, /retryTimerRef\.current = window\.setTimeout/);
   assert.match(unreadButton, /aria-label=\{title\}/);
+  assert.match(unreadButton, /data-unread-state=\{loadState\}/);
   assert.match(shell, /<MessagesUnreadButton/);
   assert.match(styles, /\.quick-messages-button > b\s*\{[^}]*background:\s*#197f88/);
   assert.match(messageAttachmentRoute, /record\.ownerType !== "message"/);

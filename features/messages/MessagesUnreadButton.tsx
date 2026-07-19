@@ -10,6 +10,10 @@ import {
   latestUnreadChangingEventKey
 } from "@/features/messages/messageUnreadState";
 
+type UnreadLoadState = "loading" | "loaded" | "error";
+
+const unreadRetryDelayMs = 2_000;
+
 export function MessagesUnreadButton({
   actorHandle,
   expanded,
@@ -22,12 +26,18 @@ export function MessagesUnreadButton({
   onOpen: () => void;
 }) {
   const [unreadCount, setUnreadCount] = useState(0);
+  const [loadState, setLoadState] = useState<UnreadLoadState>("loading");
   const requestEpochRef = useRef(0);
   const refreshTimerRef = useRef<number | null>(null);
+  const retryTimerRef = useRef<number | null>(null);
   const wasExpandedRef = useRef(expanded);
   const latestEventKey = useMemo(() => latestUnreadChangingEventKey(liveEvents), [liveEvents]);
 
   const loadUnreadCount = useCallback(async () => {
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     const requestEpoch = requestEpochRef.current + 1;
     requestEpochRef.current = requestEpoch;
     const parameters = new URLSearchParams({ actorHandle });
@@ -36,16 +46,42 @@ export function MessagesUnreadButton({
         `/api/conversations/unread?${parameters.toString()}`,
         { cache: "no-store" }
       );
-      if (requestEpoch === requestEpochRef.current) setUnreadCount(result.unreadCount);
+      if (requestEpoch !== requestEpochRef.current) return;
+      setUnreadCount(result.unreadCount);
+      setLoadState("loaded");
     } catch {
-      // Messaging remains usable when the live service is reconnecting. The
-      // next authoritative live event or actor change retries this projection.
+      if (requestEpoch !== requestEpochRef.current) return;
+      setLoadState("error");
+      retryTimerRef.current = window.setTimeout(() => {
+        retryTimerRef.current = null;
+        void loadUnreadCount();
+      }, unreadRetryDelayMs);
     }
   }, [actorHandle]);
 
   useEffect(() => {
     setUnreadCount(0);
+    setLoadState("loading");
     void loadUnreadCount();
+    return () => {
+      requestEpochRef.current += 1;
+      if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    };
+  }, [loadUnreadCount]);
+
+  useEffect(() => {
+    const refreshWhenActive = () => {
+      if (document.visibilityState === "visible") void loadUnreadCount();
+    };
+    window.addEventListener("focus", refreshWhenActive);
+    window.addEventListener("online", refreshWhenActive);
+    document.addEventListener("visibilitychange", refreshWhenActive);
+    return () => {
+      window.removeEventListener("focus", refreshWhenActive);
+      window.removeEventListener("online", refreshWhenActive);
+      document.removeEventListener("visibilitychange", refreshWhenActive);
+    };
   }, [loadUnreadCount]);
 
   useEffect(() => {
@@ -78,6 +114,8 @@ export function MessagesUnreadButton({
       title={title}
       aria-label={title}
       aria-expanded={expanded}
+      data-unread-count={unreadCount}
+      data-unread-state={loadState}
       onClick={onOpen}
     >
       <MessageCircle size={18} />
