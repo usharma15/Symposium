@@ -492,6 +492,7 @@ export const opportunityApplicationSchema = z.object({
   postId: z.string().trim().min(1).max(240),
   applicantHandle: z.string().trim().min(1).max(80),
   applicantName: z.string().trim().min(1).max(160),
+  applicantAvatarUrl: safeExternalUrlSchema.optional(),
   applicantAffiliation: z.string().max(240),
   applicantEmail: z.string().email().optional(),
   statement: z.string().trim().min(1).max(20000),

@@ -24,6 +24,7 @@ type ApplicationRow = {
   postId: string;
   applicantHandle: string;
   applicantName: string;
+  applicantAvatarUrl: string | null;
   applicantAffiliation: string;
   applicantEmail: string | null;
   statement: string;
@@ -48,6 +49,7 @@ const applicationSelect = `SELECT
   application.post_id AS "postId",
   application.applicant_handle AS "applicantHandle",
   profile.name AS "applicantName",
+  profile.avatar_url AS "applicantAvatarUrl",
   profile.location AS "applicantAffiliation",
   profile.email AS "applicantEmail",
   application.statement,
@@ -126,6 +128,7 @@ const hydrate = async (client: PoolClient, rows: ApplicationRow[], actor: string
   const [comments, attachments] = await Promise.all([commentsFor(client, ids), attachmentsFor(client, ids, actor)]);
   return rows.map((row): OpportunityApplicationContract => ({
     ...row,
+    applicantAvatarUrl: row.applicantAvatarUrl || undefined,
     applicantEmail: row.applicantEmail || undefined,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
@@ -193,6 +196,7 @@ export const createOpportunityApplication = async (rawInput: unknown, actor: Act
        ON CONFLICT (post_id, applicant_handle) DO NOTHING
        RETURNING id::text, revision, post_id AS "postId", applicant_handle AS "applicantHandle",
          (SELECT name FROM profiles WHERE handle = applicant_handle) AS "applicantName",
+         (SELECT avatar_url FROM profiles WHERE handle = applicant_handle) AS "applicantAvatarUrl",
          (SELECT location FROM profiles WHERE handle = applicant_handle) AS "applicantAffiliation",
          (SELECT email FROM profiles WHERE handle = applicant_handle) AS "applicantEmail",
          statement, shortlisted, created_at AS "createdAt", updated_at AS "updatedAt"`,

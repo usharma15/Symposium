@@ -9,6 +9,16 @@ import { cleanHandle } from "@/lib/symposiumCore";
 export const activeConversationParticipants = (participants: ConversationParticipantContract[]) =>
   participants.filter((participant) => participant.status === "active");
 
+export const currentConversationParticipant = (
+  participant: ConversationParticipantContract,
+  profiles: Record<string, ResearchProfile>
+): ConversationParticipantContract => {
+  const current = profiles[cleanHandle(participant.handle)];
+  return current
+    ? { ...participant, name: current.name, avatarUrl: current.avatarUrl }
+    : participant;
+};
+
 export const messageSenderProfile = (
   message: MessageContract,
   participants: ConversationParticipantContract[],
@@ -16,8 +26,9 @@ export const messageSenderProfile = (
 ) => {
   if (!message.senderHandle) return undefined;
   const senderHandle = cleanHandle(message.senderHandle);
-  return participants.find((participant) => cleanHandle(participant.handle) === senderHandle)
-    ?? profiles[senderHandle];
+  const current = profiles[senderHandle];
+  if (current) return current;
+  return participants.find((participant) => cleanHandle(participant.handle) === senderHandle);
 };
 
 export const withoutConversationParticipant = (

@@ -516,6 +516,7 @@ export function WorkspaceView({
         <WorkspaceSharingDialog
           target={sharingTarget}
           actorHandle={actorHandle}
+          profiles={profiles}
           onClose={() => setSharingTarget(null)}
           onChanged={async () => {
             await workspace.refresh({ quiet: true });

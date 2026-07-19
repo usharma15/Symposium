@@ -7,6 +7,7 @@ import {
   shouldRetainRetryMutation
 } from "@/features/api/symposiumApiClient";
 import { profileAvatarForPersistence } from "@/features/profiles/profilePersistence";
+import { uploadPreparedAttachmentContent } from "@/features/attachments/attachmentUploadClient";
 
 const jsonResponse = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), {
@@ -101,6 +102,27 @@ const main = async () => {
   assert.equal(new Headers(directRequests[1]?.init?.headers).get("Content-Type"), "application/octet-stream");
   assert.equal(directRequests[1]?.init?.body, attachmentBody);
 
+  const preparedUploads: Array<{ path: string; body: Blob; actorHandle?: string }> = [];
+  await uploadPreparedAttachmentContent({
+    actorHandle: "@ada",
+    contentType: "image/png",
+    file: new Blob(["profile-photo"], { type: "image/png" }) as File,
+    upload: {
+      attachmentId: "00000000-0000-4000-8000-000000000002",
+      uploadUrl: "/api/attachments/00000000-0000-4000-8000-000000000002/content",
+      uploadTransport: "authenticated_api"
+    }
+  }, {
+    uploadBinary: async <T>(path: string, body: Blob, options: { actorHandle?: string; signal?: AbortSignal } = {}) => {
+      preparedUploads.push({ path, body, actorHandle: options.actorHandle });
+      return undefined as T;
+    }
+  });
+  assert.deepEqual(preparedUploads.map(({ path, actorHandle }) => ({ path, actorHandle })), [{
+    path: "/api/attachments/00000000-0000-4000-8000-000000000002/content",
+    actorHandle: "@ada"
+  }]);
+
   const fallbackRequests: string[] = [];
   const fallbackClient = createSymposiumApiClient(async (input) => {
     fallbackRequests.push(String(input));
@@ -147,6 +169,7 @@ const main = async () => {
     "idempotency header propagation",
     "lifecycle keepalive propagation",
     "authenticated binary upload routing",
+    "shared prepared-upload transport for profile photos",
     "structured API errors",
     "retry retention policy",
     "stable retry mutation identities",

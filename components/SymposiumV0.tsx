@@ -116,11 +116,13 @@ import {
 import {
   confirmAttachmentUpload,
   prepareAttachmentUpload,
+  uploadPreparedAttachmentContent,
   uploadConfirmedAttachment,
   uploadConfirmedPostAttachment,
   type AttachmentConfirmResponse,
   type AttachmentUploadResponse
 } from "@/features/attachments/attachmentUploadClient";
+import { inferAttachmentContentType } from "@/lib/attachmentRules";
 import { useDedicatedAttachmentViewer } from "@/features/attachments/useDedicatedAttachmentViewer";
 import { ScribbleLauncher, ScribbleProvider } from "@/features/scribble/ScribbleContext";
 import { ScribbleAttachmentPreview } from "@/features/scribble/ScribbleAttachmentPreview";
@@ -3191,8 +3193,9 @@ function SymposiumExperience({
 
   const uploadProfileAvatar = async (file: File) => {
     const allowedImageTypes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/avif"]);
+    const contentType = inferAttachmentContentType(file.name, file.type);
 
-    if (!allowedImageTypes.has(file.type)) {
+    if (!allowedImageTypes.has(contentType)) {
       throw new Error("Choose a PNG, JPG, JPEG, WEBP, GIF, or AVIF image.");
     }
 
@@ -3204,7 +3207,7 @@ function SymposiumExperience({
     const uploadResponse = await prepareAttachmentUpload({
         actorHandle: currentProfile.handle,
         fileName: file.name,
-        contentType: file.type,
+        contentType,
         byteSize: file.size,
         ownerType: "profile",
         ownerId: currentProfile.handle
@@ -3230,15 +3233,12 @@ function SymposiumExperience({
     }
 
     setSyncStatus("Uploading profile photo");
-    const putResponse = await fetch(upload.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": file.type },
-      body: file
+    await uploadPreparedAttachmentContent({
+      actorHandle: currentProfile.handle,
+      contentType,
+      file,
+      upload
     });
-
-    if (!putResponse.ok) {
-      throw new Error("Could not upload the profile photo.");
-    }
 
     const confirmResponse = await confirmAttachmentUpload({
         actorHandle: currentProfile.handle,
@@ -3247,7 +3247,8 @@ function SymposiumExperience({
     });
 
     if (!confirmResponse.ok) {
-      throw new Error("Could not confirm the profile photo upload.");
+      const error = (await confirmResponse.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(error?.error ?? "Could not confirm the profile photo upload.");
     }
 
     const confirmed = (await confirmResponse.json()) as AttachmentConfirmResponse;
@@ -3286,7 +3287,6 @@ function SymposiumExperience({
       setSelectedProfileName(updatedProfile.handle);
     }
     persistLocalSnapshot(nextItems, nextProfiles, updatedProfile);
-    setSettingsOpen(false);
     setSyncStatus("Saving profile settings");
     const profilePayload = {
       name: updatedProfile.name,
@@ -3327,6 +3327,7 @@ function SymposiumExperience({
       persistLocalSnapshot(committedItems, committedProfiles, committedProfile, {
         broadcastProfileHandles: [committedProfile.handle]
       });
+      setSettingsOpen(false);
       setSyncStatus("Profile settings saved");
     } catch (error) {
       if (!shouldRetainRetryMutation(error)) clearRetryMutationKey(mutation.fingerprintKey);
@@ -3977,7 +3978,13 @@ function SymposiumExperience({
 
     return { titleMatches, contentMatches, profileMatches };
   }, [activeItems, profileList, searchQuery]);
-  const searchResults = remoteSearchResults ?? localSearchResults;
+  const searchResults = useMemo<SearchResults>(() => {
+    const base = remoteSearchResults ?? localSearchResults;
+    return {
+      ...base,
+      profileMatches: base.profileMatches.map((person) => profiles[cleanHandle(person.handle)] ?? person)
+    };
+  }, [localSearchResults, profiles, remoteSearchResults]);
 
   const presentedEntryMode = resolvePresentedEntryMode({
     entryMode,
@@ -4071,7 +4078,9 @@ function SymposiumExperience({
             route={{ kind: "profile", handle: currentProfile.handle }}
             onNavigate={() => openProfile(currentProfile.handle)}
           >
-            <UserRound size={18} />
+            {currentProfile.avatarUrl
+              ? <img className="profile-button-avatar" src={currentProfile.avatarUrl} alt="" />
+              : <UserRound size={18} />}
             <span>{currentProfile.name}</span>
           </CanonicalLink>
         </nav>
@@ -4105,6 +4114,7 @@ function SymposiumExperience({
           <OpportunityApplicationsStage
             item={applicationReviewItem}
             actorHandle={currentProfile.handle}
+            profiles={profiles}
             selectedApplicationId={selectedApplicationId ?? undefined}
             onSelectApplication={(applicationId) => navigateView({ selectedApplicationId: applicationId })}
             onBack={(postId) => navigateView(opportunityPostView(postId))}

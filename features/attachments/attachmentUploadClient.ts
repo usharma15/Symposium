@@ -46,6 +46,25 @@ const responseError = async (response: Response, fallback: string) => {
   return new Error(detail?.error ?? fallback);
 };
 
+export const uploadPreparedAttachmentContent = async (input: {
+  actorHandle: string;
+  contentType: string;
+  file: File;
+  upload: AttachmentUploadResponse;
+}, api: Pick<typeof symposiumApi, "uploadBinary"> = symposiumApi) => {
+  if (!input.upload.uploadUrl) throw new Error("Could not prepare this attachment upload.");
+  if (input.upload.uploadTransport === "authenticated_api") {
+    await api.uploadBinary(input.upload.uploadUrl, input.file, { actorHandle: input.actorHandle });
+    return;
+  }
+  const putResponse = await fetch(input.upload.uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": input.contentType },
+    body: input.file
+  });
+  if (!putResponse.ok) throw await responseError(putResponse, "Could not upload this attachment.");
+};
+
 export const prepareAttachmentUpload = (payload: Record<string, unknown>, idempotencyKey: string) =>
   retryResponse(
     () =>
@@ -108,16 +127,12 @@ export const uploadConfirmedAttachment = async (input: {
   if (!upload.uploadUrl || !upload.attachmentId || (!privateWorkspaceAttachment && !upload.publicUrl)) {
     throw new Error("Could not prepare this attachment upload.");
   }
-  if (upload.uploadTransport === "authenticated_api") {
-    await symposiumApi.uploadBinary(upload.uploadUrl, input.file, { actorHandle: input.actorHandle });
-  } else {
-    const putResponse = await fetch(upload.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": contentType },
-      body: input.file
-    });
-    if (!putResponse.ok) throw new Error("Could not upload this attachment.");
-  }
+  await uploadPreparedAttachmentContent({
+    actorHandle: input.actorHandle,
+    contentType,
+    file: input.file,
+    upload
+  });
 
   const confirmResponse = await confirmAttachmentUpload({
     actorHandle: input.actorHandle,

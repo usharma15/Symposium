@@ -194,11 +194,15 @@ export function CommunityPeopleModal({
         </label>
         <div className="community-people-summary"><span>{total.toLocaleString()} {mode === "requests" ? total === 1 ? "request" : "requests" : total === 1 ? "person" : "people"}</span><small>{mode === "requests" ? "Newest requests first" : "Newest members first"}</small></div>
         <div className="community-people-scroll" ref={scrollRef}>
-          {members.map((member) => (
+          {members.map((member) => {
+            const current = profileForHandle(profiles, member.handle);
+            const name = current?.name ?? member.name;
+            const avatarUrl = current ? current.avatarUrl : member.avatarUrl;
+            return (
             <article className="community-person-row" key={member.handle}>
               <CanonicalLink route={{ kind: "profile", handle: member.handle }} onNavigate={() => { onClose(); onOpenProfile(member.handle); }}>
-                <i>{member.avatarUrl ? <img src={member.avatarUrl} alt="" /> : member.name.slice(0, 1)}</i>
-                <span><strong>{member.name}</strong><small>{member.handle} · {joinedLabel(member.joinedAt, mode === "requests")}</small></span>
+                <i>{avatarUrl ? <img src={avatarUrl} alt="" /> : name.slice(0, 1)}</i>
+                <span><strong>{name}</strong><small>{member.handle} · {joinedLabel(member.joinedAt, mode === "requests")}</small></span>
                 <em>{mode === "requests" ? <UsersRound size={13} /> : member.role === "owner" || member.role === "moderator" ? <ShieldCheck size={13} /> : <UsersRound size={13} />}{mode === "requests" ? "request" : member.role}</em>
               </CanonicalLink>
               {mode === "moderators" && onMessage ? <button type="button" onClick={() => { onClose(); onMessage(member.handle); }}><MessageCircleMore size={15} /> Message</button> : null}
@@ -217,7 +221,8 @@ export function CommunityPeopleModal({
                 </div>
               ) : null}
             </article>
-          ))}
+            );
+          })}
           {!members.length && !loading ? <p className="community-people-empty">{mode === "requests" && !query.trim() ? "No pending join requests." : "No one matches this search."}</p> : null}
           <div ref={sentinelRef} className="community-people-sentinel" aria-hidden="true" />
           {loading || loadingMore ? <p className="community-people-loading">Loading live {mode === "requests" ? "join requests" : "member records"}…</p> : null}

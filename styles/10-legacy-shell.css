@@ -419,6 +419,13 @@
   display: none;
 }
 
+.profile-button-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
 .sync-status {
   position: fixed;
   z-index: 29;

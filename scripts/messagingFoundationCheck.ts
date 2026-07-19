@@ -12,6 +12,7 @@ import {
 } from "@/features/messages/messageDiscoveryState";
 import {
   activeConversationParticipants,
+  currentConversationParticipant,
   messageSenderProfile,
   withoutConversationParticipant
 } from "@/features/messages/messageParticipantState";
@@ -155,6 +156,9 @@ const main = async () => {
   ] as const;
   assert.deepEqual(activeConversationParticipants([...participants]).map((participant) => participant.handle), ["@mira"]);
   assert.equal(messageSenderProfile(firstLiveMessage, [...participants], {})?.name, "Mira");
+  const liveMira = { name: "Mira Current", handle: "@mira", avatarUrl: "https://cdn.example/mira-current.webp" } as ResearchProfile;
+  assert.equal(messageSenderProfile(firstLiveMessage, [...participants], { "@mira": liveMira })?.avatarUrl, liveMira.avatarUrl);
+  assert.equal(currentConversationParticipant(participants[0]!, { "@mira": liveMira }).name, "Mira Current");
   const groupSummary: ConversationSummaryContract = {
     id: validConversationId,
     revision: 2,

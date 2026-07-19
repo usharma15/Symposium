@@ -77,6 +77,7 @@ import {
 } from "@/features/messages/messageDiscoveryState";
 import {
   activeConversationParticipants,
+  currentConversationParticipant,
   messageSenderProfile,
   withoutConversationParticipant
 } from "@/features/messages/messageParticipantState";
@@ -431,15 +432,18 @@ function ConversationListItem({
   active,
   actorHandle,
   conversation,
+  profiles,
   onSelect
 }: {
   active: boolean;
   actorHandle: string;
   conversation: ConversationSummaryContract;
+  profiles: Record<string, ResearchProfile>;
   onSelect: () => void;
 }) {
   const peer = conversationPeer(conversation, actorHandle);
-  const title = conversationName(conversation, actorHandle);
+  const currentPeer = peer ? currentConversationParticipant(peer, profiles) : undefined;
+  const title = conversation.kind === "direct" ? currentPeer?.name ?? conversationName(conversation, actorHandle) : conversationName(conversation, actorHandle);
   const preview = conversation.draftBody
     ? `Draft: ${conversation.draftBody}`
     : conversation.lastMessage?.deletedAt
@@ -447,7 +451,7 @@ function ConversationListItem({
       : conversation.lastMessage?.body || (conversation.lastMessage?.attachments.length ? "Shared an attachment" : "No messages yet");
   return (
     <button className={`conversation-list-item ${active ? "active" : ""}`} type="button" onClick={onSelect}>
-      <Avatar person={peer ?? undefined} name={title} />
+      <Avatar person={currentPeer} name={title} />
       <span className="conversation-list-copy">
         <span>
           <strong>{title}</strong>
@@ -527,9 +531,11 @@ function NewConversationPanel({
   }, [busy, onClose]);
 
   const selectedHandles = new Set(selected.map((person) => cleanHandle(person.handle)));
+  const currentResults = results.map((person) => profiles[cleanHandle(person.handle)] ?? person);
+  const currentSelected = selected.map((person) => profiles[cleanHandle(person.handle)] ?? person);
   const unselectedResults = groupMode
-    ? results.filter((person) => !selectedHandles.has(cleanHandle(person.handle)))
-    : results;
+    ? currentResults.filter((person) => !selectedHandles.has(cleanHandle(person.handle)))
+    : currentResults;
   const toggleSelected = (person: ResearchProfile) => {
     const handle = cleanHandle(person.handle);
     setSelected((current) => current.some((entry) => cleanHandle(entry.handle) === handle)
@@ -572,7 +578,7 @@ function NewConversationPanel({
         {groupMode && selected.length ? (
           <section className="new-conversation-selected" aria-label="People added to this group">
             <strong>Added to group <small>{selected.length}/49</small></strong>
-            {selected.map((person) => (
+            {currentSelected.map((person) => (
               <button className="selected" type="button" key={person.handle} onClick={() => toggleSelected(person)}>
                 <Avatar person={person} name={person.name} />
                 <span><strong>{person.name}</strong><small>{person.handle}</small></span>
@@ -691,6 +697,8 @@ function AddPeopleDialog({
     setAdding(false);
     if (added) onClose();
   };
+  const currentSelected = selected.map((person) => profiles[cleanHandle(person.handle)] ?? person);
+  const currentResults = results.map((person) => profiles[cleanHandle(person.handle)] ?? person);
 
   return (
     <div className="message-add-people-backdrop" role="presentation" onClick={() => { if (!adding) onClose(); }}>
@@ -709,7 +717,7 @@ function AddPeopleDialog({
             </label>
             {selected.length ? (
               <div className="message-add-people-selected" aria-label="Selected people">
-                {selected.map((person) => (
+                {currentSelected.map((person) => (
                   <button type="button" key={person.handle} onClick={() => toggle(person)}>
                     <Avatar person={person} name={person.name} />
                     <span>{person.name}</span>
@@ -719,7 +727,7 @@ function AddPeopleDialog({
               </div>
             ) : null}
             <div className="message-add-people-results" aria-busy={loading}>
-              {results.map((person) => {
+              {currentResults.map((person) => {
                 const chosen = selected.some((entry) => cleanHandle(entry.handle) === cleanHandle(person.handle));
                 return (
                   <button type="button" className={chosen ? "selected" : ""} key={person.handle} onClick={() => toggle(person)}>
@@ -1319,19 +1327,20 @@ export function MessagingExperience({
   };
 
   const peer = conversationPeer(conversation, actor.handle);
+  const currentPeer = peer ? currentConversationParticipant(peer, profiles) : undefined;
   const syntheticHandle = selectedConversationId && !messageIdPattern.test(selectedConversationId)
     ? cleanHandle(selectedConversationId.replace(/^direct:/, ""))
     : null;
   const syntheticProfile = syntheticHandle ? profiles[syntheticHandle] : undefined;
   const selectedTitle = conversation
-    ? conversationName(conversation, actor.handle)
+    ? conversation.kind === "direct" ? currentPeer?.name ?? conversationName(conversation, actor.handle) : conversationName(conversation, actor.handle)
     : syntheticProfile?.name ?? (conversationLoading ? "Loading conversation…" : "Conversation unavailable");
 
   const blockPeer = async () => {
-    const target = peer?.handle ?? syntheticHandle;
+    const target = currentPeer?.handle ?? syntheticHandle;
     if (!target) return;
     const active = !conversation?.blockedByViewer;
-    if (active && !window.confirm(`Block ${peer?.name ?? target}? They will not be able to message you or add you to groups.`)) return;
+    if (active && !window.confirm(`Block ${currentPeer?.name ?? target}? They will not be able to message you or add you to groups.`)) return;
     try {
       await symposiumApi.request("/api/blocks", { method: "POST", body: { actorHandle: actor.handle, targetHandle: target, active } });
       if (conversation) setConversation({ ...conversation, blockedByViewer: active });
@@ -1423,7 +1432,8 @@ export function MessagingExperience({
   };
 
   const compactConversations = quick ? conversations.slice(0, selectedConversationId ? 5 : 8) : conversations;
-  const activeParticipants = activeConversationParticipants(conversation?.participants ?? []);
+  const activeParticipants = activeConversationParticipants(conversation?.participants ?? [])
+    .map((participant) => currentConversationParticipant(participant, profiles));
   const sharedResultCount = mediaKind ? messageMediaResultCount(mediaResults, mediaKind) : 0;
   const jumpToMessage = (messageId: string) => {
     setInfoTab("info");
@@ -1445,7 +1455,7 @@ export function MessagingExperience({
         ) : null}
         <div className="conversation-list" aria-busy={conversationListLoading}>
           {compactConversations.map((entry) => (
-            <ConversationListItem key={entry.id} active={selectedConversationId === entry.id} actorHandle={actor.handle} conversation={entry} onSelect={() => selectConversation(entry.id)} />
+            <ConversationListItem key={entry.id} active={selectedConversationId === entry.id} actorHandle={actor.handle} conversation={entry} profiles={profiles} onSelect={() => selectConversation(entry.id)} />
           ))}
           {!conversationListLoading && !compactConversations.length ? <p className="messages-empty-list">No chats yet. Start one from a profile or the + button.</p> : null}
           {conversationListLoading ? <LoaderCircle className="spin messages-list-loader" size={18} /> : null}
@@ -1462,11 +1472,11 @@ export function MessagingExperience({
         <main className="messages-thread-panel">
           <header>
             <button type="button" className="message-thread-identity" onClick={() => {
-              const handle = peer?.handle ?? syntheticHandle;
+              const handle = currentPeer?.handle ?? syntheticHandle;
               if (handle) onOpenProfile(handle);
             }}>
-              <Avatar person={peer ?? syntheticProfile} name={selectedTitle} />
-              <span><strong>{selectedTitle}</strong><small>{conversation?.kind === "group" ? `${activeParticipants.length} people` : peer?.handle ?? syntheticHandle ?? (conversationLoading ? "Syncing chat…" : "")}</small></span>
+              <Avatar person={currentPeer ?? syntheticProfile} name={selectedTitle} />
+              <span><strong>{selectedTitle}</strong><small>{conversation?.kind === "group" ? `${activeParticipants.length} people` : currentPeer?.handle ?? syntheticHandle ?? (conversationLoading ? "Syncing chat…" : "")}</small></span>
             </button>
             {quick && onOpenFull ? <button type="button" title="Open full messages" onClick={() => onOpenFull(selectedConversationId)}><ExternalLink size={16} /></button> : null}
           </header>
@@ -1585,9 +1595,9 @@ export function MessagingExperience({
       {!quick && selectedConversationId ? (
         <aside className="messages-info-panel">
           <header>
-            <Avatar person={peer ?? syntheticProfile} name={selectedTitle} size="large" />
+            <Avatar person={currentPeer ?? syntheticProfile} name={selectedTitle} size="large" />
             <strong>{selectedTitle}</strong>
-            <small>{conversation?.kind === "group" ? `${activeParticipants.length} people · Private group` : peer?.handle ?? syntheticHandle ?? (conversationLoading ? "Syncing chat…" : "")}</small>
+            <small>{conversation?.kind === "group" ? `${activeParticipants.length} people · Private group` : currentPeer?.handle ?? syntheticHandle ?? (conversationLoading ? "Syncing chat…" : "")}</small>
           </header>
           {conversation ? (
             <>
@@ -1599,7 +1609,7 @@ export function MessagingExperience({
               <div className="message-info-tab-content">
                 {infoTab === "info" ? (
                   <section className="message-info-tab-panel" role="tabpanel">
-                    {conversation.kind === "direct" && peer && profiles[cleanHandle(peer.handle)]?.bio ? <p className="message-peer-bio">{profiles[cleanHandle(peer.handle)]?.bio}</p> : null}
+                    {conversation.kind === "direct" && currentPeer && profiles[cleanHandle(currentPeer.handle)]?.bio ? <p className="message-peer-bio">{profiles[cleanHandle(currentPeer.handle)]?.bio}</p> : null}
                     <form className="message-search-chat" onSubmit={(event) => { event.preventDefault(); void searchChat(); }}>
                       <Search size={14} /><input value={searchQuery} placeholder="Search this chat" onChange={(event) => setSearchQuery(event.target.value)} /><button type="submit">Search</button>
                     </form>

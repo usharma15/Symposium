@@ -5,7 +5,7 @@ import {
   ArrowLeft, BriefcaseBusiness, CalendarDays, Check, ChevronLeft, ChevronRight,
   ExternalLink, FileText, Link2, MapPin, MessageCircle, Paperclip, Star, Trash2, X
 } from "lucide-react";
-import type { InquiryAttachment, InquiryItem } from "@/lib/mockData";
+import type { InquiryAttachment, InquiryItem, ResearchProfile } from "@/lib/mockData";
 import type {
   OpportunityApplicationContract,
   OpportunityKindContract,
@@ -16,6 +16,26 @@ import type { AttachmentUploadHandler } from "@/features/attachments/AttachmentV
 import { createClientMutationId, symposiumApi } from "@/features/api/symposiumApiClient";
 import { useCoalescedRefresh } from "@/features/live-sync/useCoalescedRefresh";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
+import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
+
+function OpportunityApplicantAvatar({
+  application,
+  profiles
+}: {
+  application: OpportunityApplicationContract;
+  profiles: Record<string, ResearchProfile>;
+}) {
+  const person = profileForHandle(profiles, application.applicantHandle);
+  const name = person?.name ?? application.applicantName;
+  const avatarUrl = person ? person.avatarUrl : application.applicantAvatarUrl;
+  return (
+    <div className="opportunity-applicant-avatar">
+      {avatarUrl
+        ? <img src={avatarUrl} alt="" />
+        : profileInitials(name)}
+    </div>
+  );
+}
 
 export type OpportunityDraftFields = {
   kind: OpportunityKindContract;
@@ -226,9 +246,10 @@ function ApplicationDocumentMiniViewer({ application }: { application: Opportuni
   </section>;
 }
 
-export function OpportunityApplicationsView({ item, actorHandle, selectedApplicationId, onSelectApplication, onBack }: {
+export function OpportunityApplicationsView({ item, actorHandle, profiles, selectedApplicationId, onSelectApplication, onBack }: {
   item: InquiryItem;
   actorHandle: string;
+  profiles: Record<string, ResearchProfile>;
   selectedApplicationId?: string;
   onSelectApplication: (applicationId: string | null) => void;
   onBack: () => void;
@@ -298,7 +319,7 @@ export function OpportunityApplicationsView({ item, actorHandle, selectedApplica
     </nav><label><span>Sort</span><select value={sort} onChange={(event) => { setSort(event.target.value as typeof sort); onSelectApplication(null); }}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Applicant name</option></select></label></section></aside> : null}
     {selected ? <main className="opportunity-application-detail">
       <article>
-        <header><div className="opportunity-applicant-avatar">{selected.applicantName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</div><div><span>Application</span><h1>{selected.applicantName}</h1><small>{selected.applicantHandle} · Submitted {applicationDateLabel(selected.createdAt)}</small></div></header>
+        <header><OpportunityApplicantAvatar application={selected} profiles={profiles} /><div><span>Application</span><h1>{profileForHandle(profiles, selected.applicantHandle)?.name ?? selected.applicantName}</h1><small>{selected.applicantHandle} · Submitted {applicationDateLabel(selected.createdAt)}</small></div></header>
         {status ? <p className="opportunity-review-status" aria-live="polite">{status}</p> : null}
         <p className="opportunity-application-statement">{selected.statement}</p>
         {activeAttachment ? <section className="opportunity-document-shuffle"><div role="button" tabIndex={0} onClick={() => setPreview(activeAttachment.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setPreview(activeAttachment.id); }}><FileText size={38} /><strong>{activeAttachment.fileName}</strong><span>Open document viewer</span></div>{selected.attachments.length > 1 ? <footer><button type="button" disabled={attachmentIndex === 0} onClick={() => setAttachmentIndex((index) => index - 1)}><ChevronLeft size={16} /></button><span>{attachmentIndex + 1} / {selected.attachments.length}</span><button type="button" disabled={attachmentIndex === selected.attachments.length - 1} onClick={() => setAttachmentIndex((index) => index + 1)}><ChevronRight size={16} /></button></footer> : null}</section> : <div className="opportunity-no-documents"><Paperclip size={20} />No documents attached</div>}
@@ -310,7 +331,7 @@ export function OpportunityApplicationsView({ item, actorHandle, selectedApplica
         const href = canonicalRouteHref({ kind: "opportunityApplications", postId: item.id, applicationId: application.id });
         return <article key={application.id} className={application.shortlisted ? "shortlisted" : ""}>
           <a className="opportunity-applicant-open" href={href} aria-label={`Open ${application.applicantName}'s application`} onClick={(event) => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); onSelectApplication(application.id); }} />
-          <div className="opportunity-applicant-copy"><header><div className="opportunity-applicant-avatar">{application.applicantName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</div><div><strong>{application.applicantName}</strong><span>{application.applicantAffiliation || "Affiliation not provided"}</span></div></header><p>{application.statement}</p>
+          <div className="opportunity-applicant-copy"><header><OpportunityApplicantAvatar application={application} profiles={profiles} /><div><strong>{profileForHandle(profiles, application.applicantHandle)?.name ?? application.applicantName}</strong><span>{application.applicantAffiliation || "Affiliation not provided"}</span></div></header><p>{application.statement}</p>
             <div className="opportunity-applicant-metrics"><button type="button" title={application.shortlisted ? "Remove from shortlist" : "Shortlist"} aria-pressed={application.shortlisted} className={application.shortlisted ? "active" : ""} disabled={busy} onClick={() => void toggleShortlist(application)}><Star size={15} fill={application.shortlisted ? "currentColor" : "none"} /><span>{application.shortlisted ? "Shortlisted" : "Shortlist"}</span></button><button type="button" title="Permanently delete application" disabled={busy} onClick={() => void remove(application)}><Trash2 size={15} /><span>Delete</span></button><button type="button" title="Private review notes" onClick={() => onSelectApplication(application.id)}><MessageCircle size={15} /><span>{application.comments.length}</span></button><a title="Open application in a new tab" href={href} target="_blank" rel="noreferrer"><Link2 size={15} /></a></div>
           </div>
           <ApplicationDocumentMiniViewer application={application} />

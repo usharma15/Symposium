@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { InquiryItem } from "@/lib/mockData";
+import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
 import { buildPostAttachmentMetadata } from "@/features/attachments/AttachmentViews";
 import { uploadConfirmedAttachment } from "@/features/attachments/attachmentUploadClient";
 import { createClientMutationId } from "@/features/api/symposiumApiClient";
@@ -29,12 +29,14 @@ export const opportunityApplicationsView = (postId: string): Partial<ViewSnapsho
 export const OpportunityApplicationsStage = ({
   item,
   actorHandle,
+  profiles,
   selectedApplicationId,
   onSelectApplication,
   onBack
 }: {
   item: InquiryItem;
   actorHandle: string;
+  profiles: Record<string, ResearchProfile>;
   selectedApplicationId?: string;
   onSelectApplication: (applicationId: string | null) => void;
   onBack: (postId: string) => void;
@@ -42,6 +44,7 @@ export const OpportunityApplicationsStage = ({
   <OpportunityApplicationsView
     item={item}
     actorHandle={actorHandle}
+    profiles={profiles}
     selectedApplicationId={selectedApplicationId}
     onSelectApplication={onSelectApplication}
     onBack={() => onBack(item.id)}

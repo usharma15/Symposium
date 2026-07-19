@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Crown, Search, ShieldCheck, UserPlus, Users, X } from "lucide-react";
 import { profileInitials } from "@/features/identity/profilePresentation";
+import type { ResearchProfile } from "@/lib/mockData";
+import { cleanHandle } from "@/lib/symposiumCore";
 import { useWorkspaceAccess, type WorkspaceAccessTarget } from "@/features/workspace/useWorkspaceAccess";
 import {
   workspaceAccessRoleRank,
@@ -27,6 +29,7 @@ const roleDescription: Record<WorkspaceGrantRoleContract, string> = {
 export function WorkspaceSharingDialog({
   target,
   actorHandle,
+  profiles,
   onClose,
   onChanged,
   onLostAccess,
@@ -34,6 +37,7 @@ export function WorkspaceSharingDialog({
 }: {
   target: WorkspaceAccessTarget;
   actorHandle: string;
+  profiles: Record<string, ResearchProfile>;
   onClose: () => void;
   onChanged: () => void | Promise<void>;
   onLostAccess: () => void;
@@ -47,6 +51,10 @@ export function WorkspaceSharingDialog({
   const [selectedHandle, setSelectedHandle] = useState("");
   const [selectedRole, setSelectedRole] = useState<WorkspaceGrantRoleContract>("viewer");
   const searchRef = useRef<HTMLInputElement>(null);
+  function currentPerson<T extends { handle: string; name: string; avatarUrl?: string }>(person: T): T {
+    const current = profiles[cleanHandle(person.handle)];
+    return current ? { ...person, name: current.name, avatarUrl: current.avatarUrl } : person;
+  }
 
   useEffect(() => {
     const closeForEscape = (event: KeyboardEvent) => {
@@ -176,12 +184,15 @@ export function WorkspaceSharingDialog({
             {selectedHandle ? <small className="workspace-sharing-role-help">{roleDescription[selectedRole]}</small> : null}
             {!selectedHandle && (searching || (query.trim().length > 0 && searchedQuery === query.trim())) ? (
               <div className="workspace-sharing-results" role="listbox" aria-label="Participant results">
-                {searching ? <span>Searching…</span> : availableResults.map((person) => (
+                {searching ? <span>Searching…</span> : availableResults.map((result) => {
+                  const person = currentPerson(result);
+                  return (
                   <button type="button" role="option" key={person.handle} onClick={() => choosePerson(person)}>
                     <i>{person.avatarUrl ? <img src={person.avatarUrl} alt="" /> : profileInitials(person.name)}</i>
                     <span><strong>{person.name}</strong><small>{person.handle} · {person.role}</small></span>
                   </button>
-                ))}
+                  );
+                })}
                 {!searching && !availableResults.length ? <span>No new participants found.</span> : null}
               </div>
             ) : null}
@@ -194,11 +205,12 @@ export function WorkspaceSharingDialog({
           <div className="workspace-sharing-people">
             <header><strong>People with access</strong><span>{access.collaborators.length + 1}</span></header>
             <div className="workspace-sharing-person owner">
-              <i>{access.owner.avatarUrl ? <img src={access.owner.avatarUrl} alt="" /> : profileInitials(access.owner.name)}</i>
-              <span><strong>{access.owner.name}</strong><small>{access.owner.handle}</small></span>
+              <i>{currentPerson(access.owner).avatarUrl ? <img src={currentPerson(access.owner).avatarUrl} alt="" /> : profileInitials(currentPerson(access.owner).name)}</i>
+              <span><strong>{currentPerson(access.owner).name}</strong><small>{access.owner.handle}</small></span>
               <em><Crown size={14} />Owner</em>
             </div>
-            {access.collaborators.map((collaborator) => {
+            {access.collaborators.map((entry) => {
+              const collaborator = currentPerson(entry);
               const direct = collaborator.directGrant;
               const inherited = collaborator.inheritedGrant;
               const isSelf = collaborator.handle === actorHandle;

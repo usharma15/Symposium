@@ -71,7 +71,9 @@ export function SearchModal({
                       route={{ kind: "profile", handle: person.handle }}
                       onNavigate={() => onOpenProfile(person.handle)}
                     >
-                      <span className="avatar small">{initial(person.name)}</span>
+                      <span className="avatar small">
+                        {person.avatarUrl ? <img src={person.avatarUrl} alt="" /> : initial(person.name)}
+                      </span>
                       <span>
                         <strong>{person.name}</strong>
                         <small>{person.role}</small>
