@@ -86,6 +86,20 @@ const main = async () => {
   await directClient.request("/api/posts?limit=24", { cache: "no-store" });
   assert.equal(directRequests[0]?.input, "https://api.example/v1/posts?limit=24");
   assert.equal(new Headers(directRequests[0]?.init?.headers).get("Authorization"), "Bearer token-1");
+  const attachmentBody = new Blob(["bounded attachment"]);
+  await directClient.uploadBinary(
+    "/api/attachments/00000000-0000-4000-8000-000000000001/content",
+    attachmentBody,
+    { actorHandle: "@ada" }
+  );
+  assert.equal(
+    directRequests[1]?.input,
+    "https://api.example/v1/attachments/00000000-0000-4000-8000-000000000001/content"
+  );
+  assert.equal(directRequests[1]?.init?.method, "PUT");
+  assert.equal(new Headers(directRequests[1]?.init?.headers).get("Authorization"), "Bearer token-1");
+  assert.equal(new Headers(directRequests[1]?.init?.headers).get("Content-Type"), "application/octet-stream");
+  assert.equal(directRequests[1]?.init?.body, attachmentBody);
 
   const fallbackRequests: string[] = [];
   const fallbackClient = createSymposiumApiClient(async (input) => {
@@ -132,6 +146,7 @@ const main = async () => {
     "JSON request normalization",
     "idempotency header propagation",
     "lifecycle keepalive propagation",
+    "authenticated binary upload routing",
     "structured API errors",
     "retry retention policy",
     "stable retry mutation identities",

@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import JSZip from "jszip";
+import {
+  AttachmentUploadSizeError,
+  createBoundedAttachmentUploadStream
+} from "@/apps/api/src/services/attachmentUploadStream";
+import { buildApp } from "@/apps/api/src/server";
 import { validateDocxArchive, validateOfficeArchive } from "@/lib/docxSecurity";
 import {
   attachmentKindForContentType,
@@ -135,17 +141,90 @@ assert.equal(
   false
 );
 
+const exactUpload = createBoundedAttachmentUploadStream(Readable.from([Buffer.from("exact")]), 5);
+const exactUploadChunks: Buffer[] = [];
+for await (const chunk of exactUpload) exactUploadChunks.push(Buffer.from(chunk));
+assert.equal(Buffer.concat(exactUploadChunks).toString("utf8"), "exact");
+await assert.rejects(
+  async () => {
+    for await (const _chunk of createBoundedAttachmentUploadStream(Readable.from([Buffer.from("too-long")]), 3)) {
+      // Drain the bounded stream so its size guard executes.
+    }
+  },
+  AttachmentUploadSizeError
+);
+await assert.rejects(
+  async () => {
+    for await (const _chunk of createBoundedAttachmentUploadStream(Readable.from([Buffer.from("short")]), 8)) {
+      // Drain the bounded stream so its flush guard executes.
+    }
+  },
+  AttachmentUploadSizeError
+);
+
+const app = await buildApp({ logger: false });
+try {
+  const malformedUpload = await app.inject({
+    method: "PUT",
+    url: "/v1/attachments/not-a-uuid/content",
+    headers: {
+      "content-type": "application/octet-stream",
+      "x-symposium-handle": "@boundary"
+    },
+    payload: Buffer.from("bounded")
+  });
+  assert.equal(malformedUpload.statusCode, 400);
+
+  const parsedUploadStream = await app.inject({
+    method: "PUT",
+    url: "/v1/attachments/00000000-0000-4000-8000-000000000001/content",
+    headers: {
+      "content-type": "application/octet-stream",
+      "x-symposium-handle": "@boundary"
+    },
+    payload: Buffer.from("bounded")
+  });
+  assert.equal([404, 412].includes(parsedUploadStream.statusCode), true);
+
+  const uploadPreflight = await app.inject({
+    method: "OPTIONS",
+    url: "/v1/attachments/00000000-0000-4000-8000-000000000001/content",
+    headers: {
+      origin: "http://localhost:3000",
+      "access-control-request-method": "PUT",
+      "access-control-request-headers": "authorization,content-type"
+    }
+  });
+  assert.equal(uploadPreflight.statusCode, 204);
+  assert.equal(uploadPreflight.headers["access-control-allow-origin"], "http://localhost:3000");
+  assert.match(String(uploadPreflight.headers["access-control-allow-methods"]), /PUT/);
+} finally {
+  await app.close();
+}
+
 const root = process.cwd();
-const [viewerSource, storageSource, storageDeletionSource, maintenanceSource] = await Promise.all([
+const [viewerSource, storageSource, storageDeletionSource, maintenanceSource, repositorySource, routeSource, clientSource, serverSource] = await Promise.all([
   readFile(path.join(root, "features/attachments/AttachmentViews.tsx"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/storage.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/storageDeletion.ts"), "utf8"),
-  readFile(path.join(root, "apps/api/src/services/maintenance.ts"), "utf8")
+  readFile(path.join(root, "apps/api/src/services/maintenance.ts"), "utf8"),
+  readFile(path.join(root, "apps/api/src/repository/attachments.ts"), "utf8"),
+  readFile(path.join(root, "apps/api/src/routes/attachmentRoutes.ts"), "utf8"),
+  readFile(path.join(root, "features/attachments/attachmentUploadClient.ts"), "utf8"),
+  readFile(path.join(root, "apps/api/src/server.ts"), "utf8")
 ]);
 assert.match(viewerSource, /renderAltChunks: false/);
 assert.match(viewerSource, /sanitizeRenderedDocx\(target\)/);
 assert.match(storageSource, /ContentLength: byteSize/);
-assert.match(storageSource, /signableHeaders: new Set\(\["content-type"\]\)/);
+assert.match(storageSource, /Body: body/);
+assert.match(repositorySource, /stagingUploadedAt/);
+assert.match(repositorySource, /createBoundedAttachmentUploadStream/);
+assert.match(routeSource, /scope: "attachment-content", limit: 30/);
+assert.match(routeSource, /bodyLimit: 50 \* 1024 \* 1024/);
+assert.match(clientSource, /uploadTransport === "authenticated_api"/);
+assert.match(serverSource, /addContentTypeParser\("application\/octet-stream"/);
+assert.match(serverSource, /"POST", "PUT", "PATCH"/);
+assert.doesNotMatch(storageSource, /PutBucketCorsCommand|GetBucketCorsCommand/);
 assert.match(storageDeletionSource, /storage_deletion_jobs/);
 assert.match(storageDeletionSource, /FOR UPDATE SKIP LOCKED/);
 assert.match(maintenanceSource, /runStorageDeletionMaintenance/);
@@ -171,10 +250,11 @@ console.log(
         "text binary rejection",
         "attachment identifier validation",
         "metadata size bounds",
+        "exact, oversized, and undersized upload stream bounds",
         "DOCX active-content and unsafe-relationship rejection",
         "spreadsheet and presentation archive validation",
         "defense-in-depth DOCX render sanitization",
-        "signed upload size and type binding",
+        "authenticated API upload ownership, rate, and body-size binding",
         "durable and retry-safe R2 object cleanup"
       ]
     },

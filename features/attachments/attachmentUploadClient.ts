@@ -4,10 +4,12 @@ import {
   validatePostAttachmentDetails
 } from "@/lib/attachmentRules";
 import type { InquiryAttachment } from "@/lib/mockData";
+import { symposiumApi } from "@/features/api/symposiumApiClient";
 
 export type AttachmentUploadResponse = {
   attachmentId?: string;
   uploadUrl?: string;
+  uploadTransport?: "authenticated_api";
   publicUrl?: string | null;
 };
 
@@ -106,12 +108,16 @@ export const uploadConfirmedAttachment = async (input: {
   if (!upload.uploadUrl || !upload.attachmentId || (!privateWorkspaceAttachment && !upload.publicUrl)) {
     throw new Error("Could not prepare this attachment upload.");
   }
-  const putResponse = await fetch(upload.uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": contentType },
-    body: input.file
-  });
-  if (!putResponse.ok) throw new Error("Could not upload this attachment.");
+  if (upload.uploadTransport === "authenticated_api") {
+    await symposiumApi.uploadBinary(upload.uploadUrl, input.file, { actorHandle: input.actorHandle });
+  } else {
+    const putResponse = await fetch(upload.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: input.file
+    });
+    if (!putResponse.ok) throw new Error("Could not upload this attachment.");
+  }
 
   const confirmResponse = await confirmAttachmentUpload({
     actorHandle: input.actorHandle,

@@ -64,7 +64,7 @@ assert.match(server, /runWithRequestCost\(cost, done\)/);
 assert.match(server, /request_cost_budget_exceeded/);
 assert.doesNotMatch(events, /getRedis|redis\.publish|symposium:events/);
 assert.doesNotMatch(server, /fastifyTRPCPlugin|attachRealtime|\/trpc\//);
-assert.match(server, /methods: \["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"\]/);
+assert.match(server, /methods: \["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"\]/);
 assert.doesNotMatch(packageJson, /"socket\.io"/);
 assert.match(apiClient, /source\.pathname\.replace/);
 assert.match(apiClient, /Authorization", `Bearer \$\{token\}`/);

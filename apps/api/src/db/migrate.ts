@@ -1962,6 +1962,12 @@ const migrations: Migration[] = [
       END
       $$;
     `
+  },
+  {
+    id: "0035_message_notification_boundary",
+    sql: `
+      DELETE FROM notifications WHERE kind = 'message';
+    `
   }
 ];
 

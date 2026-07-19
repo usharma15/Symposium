@@ -544,15 +544,6 @@ export const sendMessage = async (rawInput: unknown, actor: Actor, mutation?: Mu
     const visibleRecipients = participants.rows.filter((participant) =>
       participant.profileHandle !== sender && participant.status === "active" && !participant.hiddenAt
     );
-    await createNotifications(client, visibleRecipients.filter((recipient) => !recipient.muted).map((recipient) => ({
-        profileHandle: recipient.profileHandle,
-        kind: "message",
-        title: membership.kind === "group" ? membership.title ?? "Group message" : "New message",
-        body: input.body ? input.body.slice(0, 180) : `${input.attachmentIds.length} attachment${input.attachmentIds.length === 1 ? "" : "s"}`,
-        href: `/messages?conversation=${encodeURIComponent(conversationId)}`,
-        dedupeKey: `message:${messageId}`,
-        metadata: { conversationId, messageId, senderHandle: sender }
-      })));
     const audienceHandles = [sender, ...visibleRecipients.map((recipient) => recipient.profileHandle)];
     const event = await stageEvent(client, {
       kind: "message.sent",
@@ -898,14 +889,8 @@ export const markConversationRead = async (conversationId: string, rawInput: unk
        RETURNING profile_handle`,
       [conversationId, handle, bounded]
     );
-    const notificationUpdate = await client.query(
-      `UPDATE notifications SET read_at = now()
-       WHERE profile_handle = $1 AND read_at IS NULL AND metadata->>'conversationId' = $2
-       RETURNING id`,
-      [handle, conversationId]
-    );
     const value = { conversationId, sequence: bounded };
-    if (!readUpdate.rowCount && !notificationUpdate.rowCount) return { value };
+    if (!readUpdate.rowCount) return { value };
     const event = await stageEvent(client, {
       kind: "conversation.read",
       actorHandle: handle,
@@ -969,11 +954,6 @@ export const deleteConversationForViewer = async (conversationId: string, actor:
     await client.query(
       `DELETE FROM message_stars star USING messages message
        WHERE star.message_id = message.id AND star.profile_handle = $1 AND message.conversation_id = $2`,
-      [handle, conversationId]
-    );
-    await client.query(
-      `UPDATE notifications SET read_at = COALESCE(read_at, now())
-       WHERE profile_handle = $1 AND metadata->>'conversationId' = $2`,
       [handle, conversationId]
     );
     const event = await stageEvent(client, {
@@ -1145,7 +1125,6 @@ export const deleteMessage = async (conversationId: string, messageId: string, r
       [messageId, conversationId, handle]
     );
     await client.query(`DELETE FROM message_stars WHERE message_id = $1`, [messageId]);
-    await client.query(`DELETE FROM notifications WHERE metadata->>'messageId' = $1`, [messageId]);
     const participants = await client.query<{ handle: string }>(
       `SELECT profile_handle AS handle FROM conversation_participants WHERE conversation_id = $1 AND hidden_at IS NULL`,
       [conversationId]

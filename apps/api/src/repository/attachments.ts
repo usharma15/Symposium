@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Readable } from "node:stream";
 import { TRPCError } from "@trpc/server";
 import type { PoolClient } from "pg";
 import {
@@ -22,10 +23,14 @@ import { claimMutation, completeMutation, type MutationContext } from "../servic
 import {
   createObjectKey,
   createUploadObjectKey,
-  createUploadUrl,
   inspectUploadedObject,
-  promoteUploadedObject
+  promoteUploadedObject,
+  storeUploadedObject
 } from "../services/storage";
+import {
+  AttachmentUploadSizeError,
+  createBoundedAttachmentUploadStream
+} from "../services/attachmentUploadStream";
 import {
   queueAttachmentRowsForStorageDeletion,
   queueStagingObjectDeletion,
@@ -54,6 +59,7 @@ type AttachmentRow = {
   objectKey: string;
   ownerId: string | null;
   ownerType: string;
+  metadata?: Record<string, unknown>;
   status: "pending" | "verifying" | "uploaded" | "previewed" | "failed";
   uploadObjectKey: string;
 };
@@ -265,14 +271,107 @@ export const createAttachmentUpload = async (
 
   if (expiredAttachmentIds.length) await triggerStorageDeletion(expiredAttachmentIds);
 
-  const uploadUrl = await createUploadUrl(prepared.uploadObjectKey, input.contentType, input.byteSize);
-
   return {
     attachmentId: prepared.attachmentId,
     objectKey: prepared.objectKey,
-    uploadUrl,
+    uploadUrl: `/api/attachments/${encodeURIComponent(prepared.attachmentId)}/content`,
+    uploadTransport: "authenticated_api" as const,
     publicUrl: prepared.publicUrl
   };
+};
+
+const clearAttachmentUploadClaim = async (attachmentId: string, handle: string) => {
+  await getPool().query(
+    `UPDATE attachments
+     SET metadata = metadata - 'uploadingAt', updated_at = now()
+     WHERE id = $1 AND uploader_handle = $2 AND status = 'pending'`,
+    [attachmentId, handle]
+  );
+};
+
+export const uploadAttachmentContent = async (
+  attachmentId: string,
+  body: Readable,
+  declaredByteSize: number | null,
+  actor: Actor
+) => {
+  const handle = actorHandle(actor);
+  requireAttachmentDatabase("message");
+  await ensureLiveData();
+
+  const claimed = await getPool().query<AttachmentRow>(
+    `UPDATE attachments
+     SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{uploadingAt}', to_jsonb(now()::text), true),
+         updated_at = now()
+     WHERE id = $1
+       AND uploader_handle = $2
+       AND status = 'pending'
+       AND metadata->>'stagingUploadedAt' IS NULL
+       AND (
+         metadata->>'uploadingAt' IS NULL
+         OR updated_at < now() - interval '10 minutes'
+       )
+     RETURNING
+       id::text AS "attachmentId",
+       bucket,
+       owner_type AS "ownerType",
+       owner_id AS "ownerId",
+       object_key AS "objectKey",
+       upload_object_key AS "uploadObjectKey",
+       file_name AS "fileName",
+       content_type AS "contentType",
+       byte_size AS "byteSize",
+       metadata,
+       status`,
+    [attachmentId, handle]
+  );
+  const attachment = claimed.rows[0];
+  if (!attachment) {
+    const existing = await selectAttachment(attachmentId, handle);
+    if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Attachment upload not found." });
+    if (existing.status === "pending" && existing.metadata?.stagingUploadedAt) {
+      return { attachmentId, status: "staged" as const };
+    }
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: existing.status === "pending"
+        ? "This attachment is already being uploaded."
+        : "This attachment upload is no longer pending."
+    });
+  }
+
+  if (declaredByteSize !== null && declaredByteSize !== attachment.byteSize) {
+    await clearAttachmentUploadClaim(attachmentId, handle);
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Uploaded attachment size did not match the prepared upload." });
+  }
+
+  try {
+    await storeUploadedObject(
+      attachment.uploadObjectKey,
+      attachment.contentType,
+      attachment.byteSize,
+      createBoundedAttachmentUploadStream(body, attachment.byteSize)
+    );
+  } catch (error) {
+    await clearAttachmentUploadClaim(attachmentId, handle);
+    if (error instanceof AttachmentUploadSizeError) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+    }
+    throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Attachment storage could not receive the upload." });
+  }
+
+  const completed = await getPool().query(
+    `UPDATE attachments
+     SET metadata = (metadata - 'uploadingAt') || jsonb_build_object('stagingUploadedAt', now()::text),
+         updated_at = now()
+     WHERE id = $1 AND uploader_handle = $2 AND status = 'pending'
+     RETURNING id`,
+    [attachmentId, handle]
+  );
+  if (!completed.rowCount) {
+    throw new TRPCError({ code: "CONFLICT", message: "Attachment upload state changed unexpectedly." });
+  }
+  return { attachmentId, status: "staged" as const };
 };
 
 const markVerificationFailed = async (
@@ -317,6 +416,7 @@ const selectAttachment = async (attachmentId: string, handle: string) => {
        file_name AS "fileName",
        content_type AS "contentType",
        byte_size AS "byteSize",
+       metadata,
        status
      FROM attachments
      WHERE id = $1 AND uploader_handle = $2`,

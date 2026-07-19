@@ -1,31 +1,18 @@
 import {
   CopyObjectCommand,
   DeleteObjectCommand,
-  GetBucketCorsCommand,
   GetObjectCommand,
   HeadObjectCommand,
-  PutBucketCorsCommand,
   PutObjectCommand,
-  S3Client,
-  type CORSRule
+  S3Client
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { TRPCError } from "@trpc/server";
 import { randomUUID } from "node:crypto";
-import { env, hasR2Config, webOrigins } from "../config/env";
+import type { Readable } from "node:stream";
+import { env, hasR2Config } from "../config/env";
 
 let s3: S3Client | null = null;
-let uploadCorsStatus: {
-  checkedAt: string | null;
-  configured: boolean;
-  error: string | null;
-  origins: string[];
-} = {
-  checkedAt: null,
-  configured: false,
-  error: null,
-  origins: []
-};
 
 const getS3Client = () => {
   if (!hasR2Config) {
@@ -49,157 +36,6 @@ const getS3Client = () => {
   return s3;
 };
 
-const normalizedWebOrigins = () => Array.from(new Set(webOrigins.flatMap((value) => {
-  try {
-    return [new URL(value).origin];
-  } catch {
-    return [];
-  }
-})));
-
-const normalizedCorsRule = (rule: CORSRule): CORSRule => ({
-  AllowedHeaders: rule.AllowedHeaders,
-  AllowedMethods: rule.AllowedMethods,
-  AllowedOrigins: rule.AllowedOrigins,
-  ExposeHeaders: rule.ExposeHeaders,
-  MaxAgeSeconds: rule.MaxAgeSeconds
-});
-
-const ruleAllowsBrowserUploads = (rule: CORSRule, origins: string[]) => {
-  const methods = new Set((rule.AllowedMethods ?? []).map((value) => value.toUpperCase()));
-  const headers = new Set((rule.AllowedHeaders ?? []).map((value) => value.toLowerCase()));
-  const allowedOrigins = new Set(rule.AllowedOrigins ?? []);
-  return methods.has("PUT") &&
-    (headers.has("*") || headers.has("content-type")) &&
-    origins.every((origin) => allowedOrigins.has(origin));
-};
-
-const corsHeaderValues = (value: string | null) => new Set((value ?? "")
-  .split(",")
-  .map((entry) => entry.trim().toLowerCase())
-  .filter(Boolean));
-
-const verifyBrowserUploadPreflights = async (origins: string[]) => {
-  const probeUrl = await getSignedUrl(
-    getS3Client(),
-    new PutObjectCommand({
-      Bucket: env.R2_BUCKET,
-      Key: `system/cors-probe-${randomUUID()}`,
-      ContentType: "application/octet-stream"
-    }),
-    { expiresIn: 60 }
-  );
-  const missingOrigins: string[] = [];
-
-  for (const origin of origins) {
-    const response = await fetch(probeUrl, {
-      method: "OPTIONS",
-      headers: {
-        Origin: origin,
-        "Access-Control-Request-Method": "PUT",
-        "Access-Control-Request-Headers": "content-type"
-      }
-    });
-    const allowedOrigin = response.headers.get("access-control-allow-origin");
-    const allowedMethods = corsHeaderValues(response.headers.get("access-control-allow-methods"));
-    const allowedHeaders = corsHeaderValues(response.headers.get("access-control-allow-headers"));
-    if (
-      !response.ok ||
-      allowedOrigin !== origin ||
-      !allowedMethods.has("put") ||
-      (!allowedHeaders.has("*") && !allowedHeaders.has("content-type"))
-    ) {
-      missingOrigins.push(origin);
-    }
-  }
-
-  if (missingOrigins.length) {
-    throw new Error(`Missing exact R2 upload CORS for: ${missingOrigins.join(", ")}`);
-  }
-};
-
-export const getR2UploadCorsStatus = () => ({ ...uploadCorsStatus, origins: [...uploadCorsStatus.origins] });
-
-export const ensureR2BrowserUploadCors = async () => {
-  const origins = normalizedWebOrigins();
-  if (!hasR2Config || !env.R2_BUCKET || !origins.length) {
-    uploadCorsStatus = {
-      checkedAt: new Date().toISOString(),
-      configured: false,
-      error: "R2 or deployed web origins are not configured.",
-      origins
-    };
-    return uploadCorsStatus;
-  }
-
-  try {
-    let currentRules: CORSRule[] = [];
-    try {
-      const current = await getS3Client().send(new GetBucketCorsCommand({ Bucket: env.R2_BUCKET }));
-      currentRules = (current.CORSRules ?? []).map(normalizedCorsRule);
-    } catch (error) {
-      const statusCode = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
-      const name = error instanceof Error ? error.name : "";
-      if (statusCode !== 404 && name !== "NoSuchCORSConfiguration") throw error;
-    }
-
-    if (!currentRules.some((rule) => ruleAllowsBrowserUploads(rule, origins))) {
-      const uploadRuleIndex = currentRules.findIndex((rule) =>
-        (rule.AllowedMethods ?? []).some((method) => method.toUpperCase() === "PUT")
-      );
-      const uploadRule: CORSRule = uploadRuleIndex >= 0
-        ? currentRules[uploadRuleIndex]!
-        : { AllowedMethods: [], AllowedOrigins: [] };
-      const nextUploadRule: CORSRule = {
-        AllowedOrigins: Array.from(new Set([...(uploadRule.AllowedOrigins ?? []), ...origins])),
-        AllowedMethods: Array.from(new Set([...(uploadRule.AllowedMethods ?? []), "PUT"])),
-        AllowedHeaders: Array.from(new Set([...(uploadRule.AllowedHeaders ?? []), "Content-Type"])),
-        ExposeHeaders: Array.from(new Set([...(uploadRule.ExposeHeaders ?? []), "ETag"])),
-        MaxAgeSeconds: Math.max(uploadRule.MaxAgeSeconds ?? 0, 3600)
-      };
-      const nextRules = uploadRuleIndex >= 0
-        ? currentRules.map((rule, index) => index === uploadRuleIndex ? nextUploadRule : rule)
-        : [...currentRules, nextUploadRule];
-      await getS3Client().send(new PutBucketCorsCommand({
-        Bucket: env.R2_BUCKET,
-        CORSConfiguration: { CORSRules: nextRules }
-      }));
-    }
-
-    uploadCorsStatus = {
-      checkedAt: new Date().toISOString(),
-      configured: true,
-      error: null,
-      origins
-    };
-    return uploadCorsStatus;
-  } catch (error) {
-    const statusCode = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
-    const name = error instanceof Error ? error.name : "";
-    if (statusCode === 403 || name === "AccessDenied") {
-      try {
-        await verifyBrowserUploadPreflights(origins);
-        uploadCorsStatus = {
-          checkedAt: new Date().toISOString(),
-          configured: true,
-          error: null,
-          origins
-        };
-        return uploadCorsStatus;
-      } catch (preflightError) {
-        error = preflightError;
-      }
-    }
-    uploadCorsStatus = {
-      checkedAt: new Date().toISOString(),
-      configured: false,
-      error: error instanceof Error ? error.message : "R2 CORS verification failed.",
-      origins
-    };
-    throw error;
-  }
-};
-
 export const createObjectKey = (ownerType: string, fileName: string) => {
   const safeName = fileName.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return `${ownerType}/${new Date().toISOString().slice(0, 10)}/${randomUUID()}-${safeName || "upload"}`;
@@ -207,19 +43,18 @@ export const createObjectKey = (ownerType: string, fileName: string) => {
 
 export const createUploadObjectKey = (attachmentId: string) => `pending/${attachmentId}`;
 
-export const createUploadUrl = async (objectKey: string, contentType: string, byteSize: number) => {
-  const command = new PutObjectCommand({
-    Bucket: env.R2_BUCKET!,
-    Key: objectKey,
-    ContentType: contentType,
-    ContentLength: byteSize
-  });
-
-  return getSignedUrl(getS3Client(), command, {
-    expiresIn: 60 * 5,
-    signableHeaders: new Set(["content-type"])
-  });
-};
+export const storeUploadedObject = async (
+  objectKey: string,
+  contentType: string,
+  byteSize: number,
+  body: Readable
+) => getS3Client().send(new PutObjectCommand({
+  Bucket: env.R2_BUCKET!,
+  Key: objectKey,
+  ContentType: contentType,
+  ContentLength: byteSize,
+  Body: body
+}));
 
 export const createPrivateDownloadUrl = async (objectKey: string) =>
   getSignedUrl(

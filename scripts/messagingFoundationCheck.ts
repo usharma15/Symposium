@@ -91,14 +91,14 @@ const main = async () => {
   const routes = readFileSync("apps/api/src/routes/messageRoutes.ts", "utf8");
   const workspaceRoutes = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
   const server = readFileSync("apps/api/src/server.ts", "utf8");
-  const storage = readFileSync("apps/api/src/services/storage.ts", "utf8");
-  const readiness = readFileSync("apps/api/src/config/readiness.ts", "utf8");
+  const attachmentRoutes = readFileSync("apps/api/src/routes/attachmentRoutes.ts", "utf8");
+  const attachmentClient = readFileSync("features/attachments/attachmentUploadClient.ts", "utf8");
   const client = readFileSync("features/messages/MessagesSection.tsx", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
   const messageAttachmentRoute = readFileSync("app/api/message-attachments/[attachmentId]/route.ts", "utf8");
 
   assert.match(server, /registerMessageRoutes\(app\)/);
-  assert.match(server, /ensureR2BrowserUploadCors/);
+  assert.match(server, /methods: \["GET", "HEAD", "POST", "PUT"/);
   assert.doesNotMatch(workspaceRoutes, /\/v1\/(?:conversations|messages|notifications)/);
   assert.match(routes, /shared: true, scope: "message-send", limit: 60/);
   assert.match(routes, /uuidParam\(request\.params\.id\)/);
@@ -115,13 +115,19 @@ const main = async () => {
   assert.match(repository, /Date\.now\(\) - new Date\(message\.createdAt\)\.getTime\(\) > messageEditWindowMs/);
   assert.match(repository, /draft_body IS DISTINCT FROM/);
   assert.match(repository, /last_read_sequence < \$3/);
-  assert.match(repository, /createNotifications\(client, visibleRecipients/);
+  assert.doesNotMatch(repository, /createNotifications\(client, visibleRecipients/);
+  assert.match(repository, /kind: "group_invite"/);
+  assert.match(repository, /kind: "group_removed"/);
   assert.match(notifications, /jsonb_to_recordset/);
+  assert.match(notifications, /input\.kind !== "message"/);
+  assert.match(notifications, /kind <> 'message'/);
   assert.match(notifications, /ON CONFLICT \(profile_handle, dedupe_key\)/);
   assert.match(migration, /0034_messaging_foundation/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS message_stars/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS message_hidden_for/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS profile_blocks/);
+  assert.match(migration, /0035_message_notification_boundary/);
+  assert.match(migration, /DELETE FROM notifications WHERE kind = 'message'/);
   assert.match(client, /Math\.min\(textarea\.scrollHeight, 288\)/);
   assert.match(client, /symposium:message-draft/);
   assert.match(client, /document\.activeElement === textareaRef\.current/);
@@ -133,17 +139,14 @@ const main = async () => {
   assert.match(client, /IntersectionObserver/);
   assert.match(shell, /data-view=\{messagesOpen \? "messages"/);
   assert.match(shell, /onMessage=\{/);
+  assert.match(shell, /notificationRevision/);
+  assert.match(shell, /event\.kind === "conversation\.invited"/);
+  assert.match(shell, /event\.kind === "note\.access\.granted"/);
   assert.match(messageAttachmentRoute, /record\.ownerType !== "message"/);
   assert.match(messageAttachmentRoute, /Cache-Control": "private, no-store"/);
-  assert.match(storage, /GetBucketCorsCommand/);
-  assert.match(storage, /PutBucketCorsCommand/);
-  assert.match(storage, /origins\.every\(\(origin\) => allowedOrigins\.has\(origin\)\)/);
-  assert.match(storage, /AllowedMethods:[\s\S]*"PUT"/);
-  assert.match(storage, /AllowedHeaders:[\s\S]*"Content-Type"/);
-  assert.match(storage, /"Access-Control-Request-Method": "PUT"/);
-  assert.match(storage, /allowedOrigin !== origin/);
-  assert.match(storage, /statusCode === 403 \|\| name === "AccessDenied"/);
-  assert.match(readiness, /key: "r2_upload_cors"/);
+  assert.match(attachmentRoutes, /\/v1\/attachments\/:attachmentId\/content/);
+  assert.match(attachmentRoutes, /scope: "attachment-content", limit: 30/);
+  assert.match(attachmentClient, /uploadTransport === "authenticated_api"/);
 
   const app = await buildApp({ logger: false });
   try {

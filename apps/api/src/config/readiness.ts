@@ -7,7 +7,6 @@ import {
   type MigrationStatus
 } from "../db/migrate";
 import { getMaintenanceStatus } from "../services/maintenance";
-import { getR2UploadCorsStatus } from "../services/storage";
 import {
   databaseUrl,
   env,
@@ -64,7 +63,6 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
   const issues = [...deploymentEnvIssues()];
   const warnings = deploymentEnvWarnings();
   const maintenance = getMaintenanceStatus();
-  const uploadCors = getR2UploadCorsStatus();
   const checks: RuntimeCheck[] = [];
   let migrations: MigrationStatus = {
     appliedCount: 0,
@@ -154,16 +152,6 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
       strict,
       env.R2_PUBLIC_BASE_URL ? "configured" : "missing"
     ),
-    {
-      key: "r2_upload_cors",
-      label: "R2 browser upload origins",
-      configured: uploadCors.configured,
-      required: strict,
-      ok: !strict || uploadCors.configured,
-      detail: uploadCors.configured
-        ? `${uploadCors.origins.length} exact origin${uploadCors.origins.length === 1 ? "" : "s"} verified`
-        : uploadCors.error ?? "not checked"
-    },
     {
       key: "storage_deletion_worker",
       label: "Durable R2 deletion worker",

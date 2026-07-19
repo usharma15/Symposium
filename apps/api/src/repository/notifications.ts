@@ -55,7 +55,8 @@ type CreateNotificationInput = {
 };
 
 export const createNotifications = async (client: PoolClient, inputs: CreateNotificationInput[]) => {
-  if (!inputs.length) return [];
+  const eligibleInputs = inputs.filter((input) => input.kind !== "message");
+  if (!eligibleInputs.length) return [];
   const result = await client.query<NotificationRow>(
     `INSERT INTO notifications (profile_handle, kind, title, body, href, dedupe_key, metadata)
      SELECT input.profile_handle, input.kind, input.title, input.body, input.href, input.dedupe_key, input.metadata
@@ -64,7 +65,7 @@ export const createNotifications = async (client: PoolClient, inputs: CreateNoti
      )
      ON CONFLICT (profile_handle, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
      RETURNING id::text, kind, title, body, href, read_at AS "readAt", metadata, created_at AS "createdAt"`,
-    [JSON.stringify(inputs.map((input) => ({
+    [JSON.stringify(eligibleInputs.map((input) => ({
       profile_handle: input.profileHandle,
       kind: input.kind,
       title: input.title,
@@ -98,13 +99,16 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
     `SELECT id::text, kind, title, body, href, read_at AS "readAt", metadata, created_at AS "createdAt"
      FROM notifications
      WHERE profile_handle = $1
+       AND kind <> 'message'
        ${cursorCondition}
      ORDER BY created_at DESC, id DESC
      LIMIT $${values.length}`,
     values
   );
   const unread = await getPool().query<{ total: number }>(
-    `SELECT count(*)::int AS total FROM notifications WHERE profile_handle = $1 AND read_at IS NULL`,
+    `SELECT count(*)::int AS total
+     FROM notifications
+     WHERE profile_handle = $1 AND kind <> 'message' AND read_at IS NULL`,
     [handle]
   );
   const hasMore = result.rows.length > query.limit;

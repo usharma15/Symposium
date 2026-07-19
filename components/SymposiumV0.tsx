@@ -577,6 +577,7 @@ function SymposiumExperience({
   const [messagesQuickOpen, setMessagesQuickOpen] = useState(false);
   const [quickConversationId, setQuickConversationId] = useState<string | null>(null);
   const [messagingRevision, setMessagingRevision] = useState(0);
+  const [notificationRevision, setNotificationRevision] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [remoteSearchResults, setRemoteSearchResults] = useState<SearchResults | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -1584,9 +1585,17 @@ function SymposiumExperience({
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
     const payload = event.payload ?? {};
     if (
+      event.kind.startsWith("notification.") ||
+      event.kind === "conversation.invited" ||
+      event.kind === "conversation.participant.removed" ||
+      event.kind === "note.access.granted" ||
+      event.kind === "note.access.revoked"
+    ) {
+      setNotificationRevision((revision) => revision + 1);
+    }
+    if (
       event.kind.startsWith("message.") ||
       event.kind.startsWith("conversation.") ||
-      event.kind.startsWith("notification.") ||
       event.kind === "profile.blocked" ||
       event.kind === "profile.unblocked"
     ) {
@@ -4038,7 +4047,7 @@ function SymposiumExperience({
           </button>
           <NotificationsControl
             actorHandle={currentProfile.handle}
-            liveRevision={messagingRevision}
+            liveRevision={notificationRevision}
             onOpenConversation={(conversationId) => {
               setMessagesQuickOpen(false);
               navigateView({ messagesOpen: true, selectedConversationId: conversationId });

@@ -1,5 +1,5 @@
 export type SymposiumApiRequestOptions = {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   cache?: RequestCache;
   idempotencyKey?: string;
@@ -204,7 +204,42 @@ export const createSymposiumApiClient = (
     return payload as T;
   };
 
-  return { configure, request };
+  const uploadBinary = async <T>(
+    path: string,
+    body: Blob,
+    options: { actorHandle?: string; signal?: AbortSignal } = {}
+  ): Promise<T> => {
+    const resolved = resolveSymposiumApiRequest(path, { method: "PUT" }, runtime.backendUrl);
+    const headers = new Headers({ "Content-Type": "application/octet-stream" });
+    if (resolved.direct) {
+      const token = await runtime.getAccessToken?.().catch(() => null);
+      if (token) headers.set("Authorization", `Bearer ${token}`);
+      else if (options.actorHandle) headers.set("x-symposium-handle", options.actorHandle);
+    }
+
+    let response: Response;
+    try {
+      response = await fetchImpl(resolved.input, {
+        method: "PUT",
+        headers,
+        body,
+        cache: "no-store",
+        signal: options.signal
+      });
+    } catch (cause) {
+      throw new SymposiumApiError("Could not reach attachment storage.", { cause });
+    }
+    const payload = await parseResponseBody(response);
+    if (!response.ok) {
+      throw new SymposiumApiError(errorMessage(payload, `Attachment upload failed (${response.status}).`), {
+        status: response.status,
+        payload
+      });
+    }
+    return payload as T;
+  };
+
+  return { configure, request, uploadBinary };
 };
 
 export const symposiumApi = createSymposiumApiClient();

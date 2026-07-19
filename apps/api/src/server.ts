@@ -16,7 +16,6 @@ import { registerSystemRoutes } from "./routes/systemRoutes";
 import { registerWorkspaceRoutes } from "./routes/workspaceRoutes";
 import { startDatabaseMaintenance, stopDatabaseMaintenance } from "./services/maintenance";
 import { rateLimit } from "./services/rateLimit";
-import { ensureR2BrowserUploadCors } from "./services/storage";
 import {
   completeRequestCost,
   createRequestCostState,
@@ -93,7 +92,11 @@ export const buildApp = async (options: { logger?: boolean } = {}) => {
   await app.register(cors, {
     origin: webOrigins,
     credentials: true,
-    methods: ["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"]
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+  });
+
+  app.addContentTypeParser("application/octet-stream", (_request, payload, done) => {
+    done(null, payload);
   });
 
   app.setErrorHandler((error, _request, reply) => sendError(app, reply, error));
@@ -116,9 +119,6 @@ const start = async () => {
   assertDeploymentEnv();
   const app = await buildApp();
   await ensureDatabase();
-  await ensureR2BrowserUploadCors().catch((error) => {
-    app.log.warn({ error }, "R2 browser-upload CORS reconciliation failed");
-  });
   startDatabaseMaintenance();
   app.addHook("onClose", async () => {
     stopDatabaseMaintenance();
