@@ -552,7 +552,7 @@ export const sendMessage = async (rawInput: unknown, actor: Actor, mutation?: Mu
       subjectId: conversationId,
       visibility: "private",
       audienceHandles,
-      payload: { conversationId, messageId, sequence }
+      payload: { conversationId, messageId, sequence, message: value }
     });
     return { value, events: [event] };
   });
@@ -1074,11 +1074,13 @@ export const editMessage = async (conversationId: string, messageId: string, raw
       `SELECT profile_handle AS handle FROM conversation_participants WHERE conversation_id = $1 AND status = 'active' AND hidden_at IS NULL`,
       [conversationId]
     );
+    const attachments = await loadAttachments([messageId], client);
+    const value = messageContract(updated.rows[0]!, attachments.get(messageId) ?? []);
     const event = await stageEvent(client, {
       kind: "message.edited", actorHandle: handle, subjectType: "conversation", subjectId: conversationId,
-      visibility: "private", audienceHandles: participants.rows.map((row) => row.handle), payload: { conversationId, messageId }
+      visibility: "private", audienceHandles: participants.rows.map((row) => row.handle), payload: { conversationId, messageId, message: value }
     });
-    return { value: messageContract(updated.rows[0]!), events: [event] };
+    return { value, events: [event] };
   });
 };
 
@@ -1088,7 +1090,7 @@ export const deleteMessage = async (conversationId: string, messageId: string, r
   if (!hasDatabase()) return { messageId, mode: input.mode, deleted: true };
   await ensureLiveData();
   let removedAttachmentIds: string[] = [];
-  const value = await runAtomic<{ messageId: string; mode: "self" | "everyone"; deleted: boolean }>(async (client) => {
+  const value = await runAtomic<{ messageId: string; mode: "self" | "everyone"; deleted: boolean; message?: MessageContract }>(async (client) => {
     if (input.mode === "self") {
       await getMembership(client, conversationId, handle, { lock: true });
       const hidden = await client.query(
@@ -1119,9 +1121,11 @@ export const deleteMessage = async (conversationId: string, messageId: string, r
       attachmentIds: [], ownerId: messageId, ownerType: "message", uploaderHandle: handle
     });
     removedAttachmentIds = attachmentResult.removedAttachmentIds;
-    await client.query(
+    const deleted = await client.query<MessageRow>(
       `UPDATE messages SET body = '', deleted_at = now(), deleted_by = $3, revision = revision + 1, updated_at = now()
-       WHERE id = $1 AND conversation_id = $2`,
+       WHERE id = $1 AND conversation_id = $2
+       RETURNING id::text, conversation_id::text AS "conversationId", sequence, revision,
+         sender_handle AS "senderHandle", body, edited_at AS "editedAt", deleted_at AS "deletedAt", created_at AS "createdAt"`,
       [messageId, conversationId, handle]
     );
     await client.query(`DELETE FROM message_stars WHERE message_id = $1`, [messageId]);
@@ -1129,11 +1133,12 @@ export const deleteMessage = async (conversationId: string, messageId: string, r
       `SELECT profile_handle AS handle FROM conversation_participants WHERE conversation_id = $1 AND hidden_at IS NULL`,
       [conversationId]
     );
+    const canonicalMessage = messageContract(deleted.rows[0]!);
     const event = await stageEvent(client, {
       kind: "message.deleted", actorHandle: handle, subjectType: "conversation", subjectId: conversationId,
-      visibility: "private", audienceHandles: participants.rows.map((row) => row.handle), payload: { conversationId, messageId }
+      visibility: "private", audienceHandles: participants.rows.map((row) => row.handle), payload: { conversationId, messageId, message: canonicalMessage }
     });
-    return { value: { messageId, mode: "everyone" as const, deleted: true }, events: [event] };
+    return { value: { messageId, mode: "everyone" as const, deleted: true, message: canonicalMessage }, events: [event] };
   });
   if (removedAttachmentIds.length) await triggerStorageDeletion(removedAttachmentIds);
   return value;
@@ -1229,15 +1234,28 @@ export const assertMessageAttachmentAccess = async (attachmentId: string, actor:
   const result = await getPool().query<{ objectKey: string }>(
     `SELECT attachment.object_key AS "objectKey"
      FROM attachments attachment
-     JOIN messages message ON message.id::text = attachment.owner_id AND attachment.owner_type = 'message'
-     JOIN conversation_participants viewer ON viewer.conversation_id = message.conversation_id AND viewer.profile_handle = $2
-     WHERE attachment.id = $1 AND attachment.status IN ('uploaded', 'previewed')
-       AND viewer.hidden_at IS NULL
-       AND viewer.status IN ('active', 'removed')
-       AND message.deleted_at IS NULL
-       AND message.sequence > viewer.cleared_through_sequence
-       AND (viewer.removed_through_sequence IS NULL OR message.sequence <= viewer.removed_through_sequence)
-       AND NOT EXISTS (SELECT 1 FROM message_hidden_for hidden WHERE hidden.message_id = message.id AND hidden.profile_handle = $2)
+     WHERE attachment.id = $1
+       AND attachment.owner_type = 'message'
+       AND attachment.status IN ('uploaded', 'previewed')
+       AND (
+         (attachment.owner_id IS NULL AND attachment.uploader_handle = $2)
+         OR EXISTS (
+           SELECT 1
+           FROM messages message
+           JOIN conversation_participants viewer
+             ON viewer.conversation_id = message.conversation_id AND viewer.profile_handle = $2
+           WHERE message.id::text = attachment.owner_id
+             AND viewer.hidden_at IS NULL
+             AND viewer.status IN ('active', 'removed')
+             AND message.deleted_at IS NULL
+             AND message.sequence > viewer.cleared_through_sequence
+             AND (viewer.removed_through_sequence IS NULL OR message.sequence <= viewer.removed_through_sequence)
+             AND NOT EXISTS (
+               SELECT 1 FROM message_hidden_for hidden
+               WHERE hidden.message_id = message.id AND hidden.profile_handle = $2
+             )
+         )
+       )
      LIMIT 1`,
     [attachmentId, handle]
   );

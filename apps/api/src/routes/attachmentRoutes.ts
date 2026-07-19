@@ -4,7 +4,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
-import { confirmAttachment, createAttachmentUpload, uploadAttachmentContent } from "../repository/attachments";
+import { confirmAttachment, createAttachmentUpload, discardAttachmentUpload, uploadAttachmentContent } from "../repository/attachments";
 import { mutationContextFromRequest } from "../services/mutations";
 
 type AttachmentParams = { attachmentId: string };
@@ -59,4 +59,14 @@ export const registerAttachmentRoutes = (app: FastifyInstance) => {
       }
     }
   );
+
+  app.delete<{ Params: AttachmentParams }>("/v1/attachments/:attachmentId", async (request, reply) => {
+    try {
+      const attachmentId = z.string().uuid().parse(request.params.attachmentId);
+      const actor = await withWriteActor(request, { shared: true, scope: "attachment", limit: 30 });
+      return reply.send(await discardAttachmentUpload(attachmentId, actor));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
 };

@@ -249,6 +249,7 @@ type AttachmentPreviewTarget = {
 
 type ProfileSyncEntity = ResearchProfile & { id: string };
 type LiveEventPayload = {
+  [key: string]: unknown;
   item?: unknown;
   profile?: unknown;
   follow?: ProfileFollowRecord;
@@ -576,7 +577,7 @@ function SymposiumExperience({
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
   const [messagesQuickOpen, setMessagesQuickOpen] = useState(false);
   const [quickConversationId, setQuickConversationId] = useState<string | null>(null);
-  const [messagingRevision, setMessagingRevision] = useState(0);
+  const [messagingEvents, setMessagingEvents] = useState<SymposiumLiveEvent[]>([]);
   const [notificationRevision, setNotificationRevision] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [remoteSearchResults, setRemoteSearchResults] = useState<SearchResults | null>(null);
@@ -1599,7 +1600,7 @@ function SymposiumExperience({
       event.kind === "profile.blocked" ||
       event.kind === "profile.unblocked"
     ) {
-      setMessagingRevision((revision) => revision + 1);
+      setMessagingEvents((current) => [...current, event].slice(-100));
       return;
     }
     if (payload.action && payload.metrics && !isLiveInquiryItem(payload.item)) {
@@ -4099,7 +4100,7 @@ function SymposiumExperience({
               navigateView({ messagesOpen: true, selectedConversationId: conversationId }, null)
             }
             onOpenProfile={openProfile}
-            liveRevision={messagingRevision}
+            liveEvents={messagingEvents}
           />
         ) : applicationReviewItem ? (
           <OpportunityApplicationsStage
@@ -4376,7 +4377,7 @@ function SymposiumExperience({
             navigateView({ messagesOpen: true, selectedConversationId: conversationId }, null);
           }}
           onClose={() => setMessagesQuickOpen(false)}
-          liveRevision={messagingRevision}
+          liveEvents={messagingEvents}
         />
       ) : null}
 

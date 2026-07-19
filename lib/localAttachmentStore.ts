@@ -215,6 +215,23 @@ export const readLocalAttachment = async (attachmentId: string) => {
   };
 };
 
+export const deleteLocalPendingAttachment = async (attachmentId: string, actorHandle?: string) =>
+  withStoreLock(async () => {
+    const store = await loadStore();
+    const record = store.attachments[attachmentId];
+    if (
+      !record ||
+      record.ownerId ||
+      (record.actorHandle && record.actorHandle !== actorHandle)
+    ) {
+      throw new LocalAttachmentStoreError("Unsent attachment upload not found.", 404);
+    }
+    await unlink(recordFilePath(record)).catch(() => undefined);
+    delete store.attachments[attachmentId];
+    await saveStore(store);
+    return { attachmentId, discarded: true };
+  });
+
 const localRecordToAttachment = (record: LocalAttachmentRecord): InquiryAttachment => ({
   id: record.attachmentId,
   fileName: record.fileName,

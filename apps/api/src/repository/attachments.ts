@@ -576,3 +576,47 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
     status: "uploaded" as const
   };
 };
+
+export const discardAttachmentUpload = async (attachmentId: string, actor: Actor) => {
+  const handle = actorHandle(actor);
+  if (!hasDatabase()) throw new TRPCError({ code: "NOT_FOUND", message: "Attachment upload not found." });
+  await ensureLiveData();
+  let discardedAttachmentIds: string[] = [];
+  const value = await runAtomic(async (client) => {
+    const result = await client.query<AttachmentStorageRow>(
+      `SELECT
+         id::text AS "attachmentId",
+         bucket,
+         object_key AS "objectKey",
+         upload_object_key AS "uploadObjectKey"
+       FROM attachments
+       WHERE id = $1
+         AND uploader_handle = $2
+         AND owner_id IS NULL
+         AND status IN ('pending', 'verifying', 'uploaded', 'previewed')
+       FOR UPDATE`,
+      [attachmentId, handle]
+    );
+    if (!result.rows[0]) {
+      const existing = await client.query<{ ownerId: string | null; status: string }>(
+        `SELECT owner_id AS "ownerId", status FROM attachments WHERE id = $1 AND uploader_handle = $2`,
+        [attachmentId, handle]
+      );
+      if (existing.rows[0]?.status === "failed" && !existing.rows[0].ownerId) {
+        return { value: { attachmentId, discarded: true } };
+      }
+      throw new TRPCError({ code: "NOT_FOUND", message: "Unsent attachment upload not found." });
+    }
+    discardedAttachmentIds = await queueAttachmentRowsForStorageDeletion(client, result.rows, "unsent_attachment_discarded");
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "attachment.discard",
+      subjectType: "attachment",
+      subjectId: attachmentId,
+      metadata: { ownerState: "unassigned" }
+    });
+    return { value: { attachmentId, discarded: true } };
+  });
+  if (discardedAttachmentIds.length) await triggerStorageDeletion(discardedAttachmentIds);
+  return value;
+};

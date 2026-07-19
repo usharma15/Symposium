@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import { buildApp } from "@/apps/api/src/server";
 import { emptyMessageDraftState, reduceMessageDraft } from "@/features/messages/messageDraftState";
 import {
+  canonicalMessageFromLiveEvent,
+  mergeCanonicalMessage,
+  messagingEventRequiresRefresh
+} from "@/features/messages/messageLiveState";
+import {
   conversationListQuerySchema,
   createGroupConversationInputSchema,
   deleteMessageInputSchema,
@@ -85,6 +90,32 @@ const main = async () => {
   });
   assert.equal(nextMessageWhileSending.body, "typed while the prior message sends");
 
+  const firstLiveMessage = {
+    id: "00000000-0000-4000-8000-000000000011",
+    conversationId: validConversationId,
+    sequence: 1,
+    revision: 1,
+    senderHandle: "@mira",
+    body: "first",
+    attachments: [],
+    starred: false,
+    editedAt: null,
+    deletedAt: null,
+    createdAt: "2026-07-18T20:00:00.000Z"
+  };
+  const secondLiveMessage = { ...firstLiveMessage, id: "00000000-0000-4000-8000-000000000012", sequence: 2, body: "second" };
+  assert.deepEqual(mergeCanonicalMessage([secondLiveMessage], firstLiveMessage).map((message) => message.sequence), [1, 2]);
+  assert.equal(mergeCanonicalMessage([{ ...firstLiveMessage, revision: 2, body: "newer" }], firstLiveMessage)[0]?.body, "newer");
+  assert.equal(mergeCanonicalMessage([{ ...firstLiveMessage, starred: true }], { ...firstLiveMessage, revision: 2, body: "edited" })[0]?.starred, true);
+  assert.equal(mergeCanonicalMessage([{ ...firstLiveMessage, starred: true }], { ...firstLiveMessage, revision: 2, body: "", deletedAt: "2026-07-18T20:01:00.000Z" })[0]?.starred, false);
+  assert.equal(canonicalMessageFromLiveEvent({
+    kind: "message.sent",
+    subjectId: validConversationId,
+    payload: { conversationId: validConversationId, message: firstLiveMessage }
+  })?.id, firstLiveMessage.id);
+  assert.equal(messagingEventRequiresRefresh({ kind: "conversation.draft.updated", subjectId: validConversationId }), false);
+  assert.equal(messagingEventRequiresRefresh({ kind: "conversation.participant.updated", subjectId: validConversationId }), true);
+
   const repository = readFileSync("apps/api/src/repository/conversations.ts", "utf8");
   const notifications = readFileSync("apps/api/src/repository/notifications.ts", "utf8");
   const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
@@ -94,8 +125,12 @@ const main = async () => {
   const attachmentRoutes = readFileSync("apps/api/src/routes/attachmentRoutes.ts", "utf8");
   const attachmentClient = readFileSync("features/attachments/attachmentUploadClient.ts", "utf8");
   const client = readFileSync("features/messages/MessagesSection.tsx", "utf8");
+  const eventRoutes = readFileSync("apps/api/src/routes/eventRoutes.ts", "utf8");
+  const events = readFileSync("apps/api/src/services/events.ts", "utf8");
+  const styles = readFileSync("styles/89-messages.css", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
   const messageAttachmentRoute = readFileSync("app/api/message-attachments/[attachmentId]/route.ts", "utf8");
+  const discardAttachmentRoute = readFileSync("app/api/attachments/[attachmentId]/route.ts", "utf8");
 
   assert.match(server, /registerMessageRoutes\(app\)/);
   assert.match(server, /methods: \["GET", "HEAD", "POST", "PUT"/);
@@ -115,6 +150,9 @@ const main = async () => {
   assert.match(repository, /Date\.now\(\) - new Date\(message\.createdAt\)\.getTime\(\) > messageEditWindowMs/);
   assert.match(repository, /draft_body IS DISTINCT FROM/);
   assert.match(repository, /last_read_sequence < \$3/);
+  assert.match(repository, /payload: \{ conversationId, messageId, sequence, message: value \}/);
+  assert.match(repository, /message: canonicalMessage/);
+  assert.match(repository, /attachment\.owner_id IS NULL AND attachment\.uploader_handle = \$2/);
   assert.doesNotMatch(repository, /createNotifications\(client, visibleRecipients/);
   assert.match(repository, /kind: "group_invite"/);
   assert.match(repository, /kind: "group_removed"/);
@@ -134,19 +172,35 @@ const main = async () => {
   assert.match(client, /draftSaveTimerRef/);
   assert.match(client, /conversationLoadEpochRef/);
   assert.match(client, /bodyTypedWhileSending/);
+  assert.match(client, /mergeCanonicalMessage/);
+  assert.match(client, /processedLiveEventKeySetRef/);
+  assert.match(client, /setSendingCount/);
+  assert.doesNotMatch(client, /if \(!selectedConversationId \|\| busy/);
+  assert.match(client, /AttachmentPreviewModal/);
+  assert.match(client, /pendingPreviewAttachments\(pendingAttachments\)/);
+  assert.match(styles, /\.message-composer\.has-attachments/);
+  assert.match(styles, /grid-area: previews/);
   assert.match(client, /ownerType: "message"/);
   assert.match(client, /Open full messages/);
   assert.match(client, /IntersectionObserver/);
   assert.match(shell, /data-view=\{messagesOpen \? "messages"/);
   assert.match(shell, /onMessage=\{/);
   assert.match(shell, /notificationRevision/);
+  assert.match(shell, /setMessagingEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-100\)\)/);
   assert.match(shell, /event\.kind === "conversation\.invited"/);
   assert.match(shell, /event\.kind === "note\.access\.granted"/);
   assert.match(messageAttachmentRoute, /record\.ownerType !== "message"/);
   assert.match(messageAttachmentRoute, /Cache-Control": "private, no-store"/);
   assert.match(attachmentRoutes, /\/v1\/attachments\/:attachmentId\/content/);
+  assert.match(attachmentRoutes, /app\.delete<\{ Params: AttachmentParams \}>\("\/v1\/attachments\/:attachmentId"/);
   assert.match(attachmentRoutes, /scope: "attachment-content", limit: 30/);
   assert.match(attachmentClient, /uploadTransport === "authenticated_api"/);
+  assert.match(client, /discardPendingAttachment/);
+  assert.match(discardAttachmentRoute, /deleteLocalPendingAttachment/);
+  assert.match(discardAttachmentRoute, /method: "DELETE"/);
+  assert.match(events, /pg_notify\('symposium_live_events', id::text\)/);
+  assert.match(eventRoutes, /LISTEN \$\{liveEventNotificationChannel\}/);
+  assert.match(eventRoutes, /activeStreamCount === 0/);
 
   const app = await buildApp({ logger: false });
   try {
@@ -172,6 +226,13 @@ const main = async () => {
       payload: { title: "Too large", inviteeHandles: Array.from({ length: 50 }, (_, index) => `@p${index}`) }
     });
     assert.equal(oversizedGroup.statusCode, 400);
+
+    const malformedAttachmentDiscard = await app.inject({
+      method: "DELETE",
+      url: "/v1/attachments/not-a-uuid",
+      headers: { "x-symposium-handle": "@boundary" }
+    });
+    assert.equal(malformedAttachmentDiscard.statusCode, 400);
   } finally {
     await app.close();
   }

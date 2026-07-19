@@ -31,6 +31,9 @@ type EventRow = {
   createdAt: Date | string;
 };
 
+export const liveEventNotificationChannel = "symposium_live_events";
+const eventIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const eventCursor = (createdAt: Date | string, id: string) => `${new Date(createdAt).toISOString()}::${id}`;
 
 export const parseEventCursor = (cursor?: string | null) => {
@@ -82,7 +85,8 @@ const insertStoredEvent = async (queryable: Pick<PoolClient, "query">, event: Li
        subject_id AS "subjectId",
        visibility,
        payload,
-       created_at AS "createdAt"`,
+       created_at AS "createdAt",
+       pg_notify('symposium_live_events', id::text) AS notified`,
     [
       event.kind,
       event.actorHandle ?? null,
@@ -96,7 +100,8 @@ const insertStoredEvent = async (queryable: Pick<PoolClient, "query">, event: Li
       JSON.stringify(event.payload ?? {})
     ]
   );
-  return rowToEvent(result.rows[0]);
+  const stored = rowToEvent(result.rows[0]);
+  return stored;
 };
 
 export const stageEvent = (client: PoolClient, event: LiveEvent) => insertStoredEvent(client, event);
@@ -109,6 +114,27 @@ export const publishStoredEvent = async (stored: StoredLiveEvent) => {
   }
 
   return stored;
+};
+
+export const getStoredEventById = async (eventId: string): Promise<StoredLiveEvent | null> => {
+  if (!hasDatabase() || !eventIdPattern.test(eventId)) return null;
+  const result = await getPool().query<EventRow>(
+    `SELECT
+       id::text,
+       kind,
+       actor_handle AS "actorHandle",
+       audience_handles AS "audienceHandles",
+       subject_type AS "subjectType",
+       subject_id AS "subjectId",
+       visibility,
+       payload,
+       created_at AS "createdAt"
+     FROM events
+     WHERE id = $1
+     LIMIT 1`,
+    [eventId]
+  );
+  return result.rows[0] ? rowToEvent(result.rows[0]) : null;
 };
 
 export const listEventsSince = async (

@@ -1,8 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import type { OutgoingHttpHeaders } from "node:http";
+import type { PoolClient } from "pg";
+import { getPool, hasDatabase } from "../db/client";
 import { sendError } from "../http/errors";
-import { eventIsAfterCursor, listEventsSince, parseEventCursor, type StoredLiveEvent } from "../services/events";
-import { subscribeLocalLiveEvents } from "../services/liveBus";
+import {
+  eventIsAfterCursor,
+  getStoredEventById,
+  listEventsSince,
+  liveEventNotificationChannel,
+  parseEventCursor,
+  type StoredLiveEvent
+} from "../services/events";
+import { publishLocalLiveEvent, subscribeLocalLiveEvents } from "../services/liveBus";
 import { getActorFromRequest } from "../services/auth";
 import { cleanHandle } from "@/lib/symposiumCore";
 
@@ -20,6 +29,75 @@ const activeStreamsByClient = new Map<string, number>();
 let activeStreamCount = 0;
 const maxStreamsPerClient = 5;
 const maxStreamsPerProcess = 500;
+let databaseBridgeClient: PoolClient | null = null;
+let databaseBridgeStart: Promise<void> | null = null;
+let databaseBridgeRetry: NodeJS.Timeout | null = null;
+let databaseBridgeQueue: Promise<void> = Promise.resolve();
+
+const clearDatabaseBridgeRetry = () => {
+  if (!databaseBridgeRetry) return;
+  clearTimeout(databaseBridgeRetry);
+  databaseBridgeRetry = null;
+};
+
+const stopDatabaseEventBridge = async () => {
+  clearDatabaseBridgeRetry();
+  const client = databaseBridgeClient;
+  databaseBridgeClient = null;
+  if (!client) return;
+  client.removeAllListeners("notification");
+  client.removeAllListeners("error");
+  await client.query(`UNLISTEN ${liveEventNotificationChannel}`).catch(() => undefined);
+  client.release();
+};
+
+const ensureDatabaseEventBridge = (app: FastifyInstance) => {
+  if (!hasDatabase() || activeStreamCount <= 0 || databaseBridgeClient || databaseBridgeStart) return;
+  databaseBridgeStart = (async () => {
+    const client = await getPool().connect();
+    if (activeStreamCount <= 0) {
+      client.release();
+      return;
+    }
+    databaseBridgeClient = client;
+    const reconnect = () => {
+      if (databaseBridgeClient !== client) return;
+      databaseBridgeClient = null;
+      client.removeAllListeners("notification");
+      client.removeAllListeners("error");
+      client.release(true);
+      if (activeStreamCount > 0 && !databaseBridgeRetry) {
+        databaseBridgeRetry = setTimeout(() => {
+          databaseBridgeRetry = null;
+          ensureDatabaseEventBridge(app);
+        }, 2000);
+      }
+    };
+    client.on("notification", (notification) => {
+      if (notification.channel !== liveEventNotificationChannel || !notification.payload) return;
+      databaseBridgeQueue = databaseBridgeQueue.then(async () => {
+        const event = await getStoredEventById(notification.payload!);
+        if (event) publishLocalLiveEvent(event);
+      }).catch((error) => app.log.warn(error, "Could not bridge a committed live event."));
+    });
+    client.on("error", (error) => {
+      app.log.warn(error, "Live event database bridge disconnected.");
+      reconnect();
+    });
+    await client.query(`LISTEN ${liveEventNotificationChannel}`);
+  })().catch(async (error) => {
+    app.log.warn(error, "Could not start the live event database bridge.");
+    await stopDatabaseEventBridge();
+    if (activeStreamCount > 0 && !databaseBridgeRetry) {
+      databaseBridgeRetry = setTimeout(() => {
+        databaseBridgeRetry = null;
+        ensureDatabaseEventBridge(app);
+      }, 2000);
+    }
+  }).finally(() => {
+    databaseBridgeStart = null;
+  });
+};
 
 const acquireStream = (clientKey: string) => {
   const clientCount = activeStreamsByClient.get(clientKey) ?? 0;
@@ -34,9 +112,16 @@ const releaseStream = (clientKey: string) => {
   if (clientCount <= 1) activeStreamsByClient.delete(clientKey);
   else activeStreamsByClient.set(clientKey, clientCount - 1);
   activeStreamCount = Math.max(0, activeStreamCount - 1);
+  if (activeStreamCount === 0) void stopDatabaseEventBridge();
 };
 
 export const registerEventRoutes = (app: FastifyInstance) => {
+  app.addHook("onClose", async () => {
+    activeStreamsByClient.clear();
+    activeStreamCount = 0;
+    await stopDatabaseEventBridge();
+  });
+
   app.get<{ Querystring: EventQuery }>("/v1/events", async (request, reply) => {
     try {
       if (request.query.cursor && !parseEventCursor(request.query.cursor)) {
@@ -63,6 +148,7 @@ export const registerEventRoutes = (app: FastifyInstance) => {
     if (!acquireStream(clientKey)) {
       return reply.status(429).send({ error: "Too many live event streams.", requestId: request.id });
     }
+    ensureDatabaseEventBridge(app);
 
     reply.hijack();
 

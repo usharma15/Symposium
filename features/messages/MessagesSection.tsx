@@ -44,17 +44,27 @@ import type {
   MessagePageContract
 } from "@/packages/contracts/src";
 import type { ResearchProfile } from "@/lib/mockData";
+import { formatAttachmentBytes } from "@/lib/attachmentRules";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { profileInitials } from "@/features/identity/profilePresentation";
 import { createClientMutationId, symposiumApi } from "@/features/api/symposiumApiClient";
+import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
 import { uploadConfirmedAttachment } from "@/features/attachments/attachmentUploadClient";
 import {
   emptyMessageDraftState,
   reduceMessageDraft,
   type MessageDraftState
 } from "@/features/messages/messageDraftState";
+import {
+  canonicalMessageFromLiveEvent,
+  liveEventConversationId,
+  mergeCanonicalMessage,
+  messagingEventRequiresRefresh,
+  type MessagingLiveEvent
+} from "@/features/messages/messageLiveState";
 
 const messageIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const emptyMessagingLiveEvents: MessagingLiveEvent[] = [];
 const mediaKinds: Array<{ id: AttachmentKindContract | "links" | "starred"; label: string; icon: ReactNode }> = [
   { id: "image", label: "Images", icon: <ImageIcon size={14} /> },
   { id: "video", label: "Videos", icon: <ImageIcon size={14} /> },
@@ -95,6 +105,28 @@ const localDraftKey = (actorHandle: string, conversationId: string) =>
   `symposium:message-draft:${cleanHandle(actorHandle)}:${conversationId}`;
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Messaging could not sync.";
+const messagingLiveEventKey = (event: MessagingLiveEvent) =>
+  event.id ?? event.cursor ?? `${event.kind}:${event.subjectId}:${event.createdAt ?? "unknown"}`;
+
+type PendingMessageAttachment = {
+  attachment: InquiryAttachmentContract;
+  previewUrl: string;
+};
+
+const revokePendingAttachment = (entry: PendingMessageAttachment) => {
+  if (entry.previewUrl.startsWith("blob:")) URL.revokeObjectURL(entry.previewUrl);
+};
+
+const discardPendingAttachment = (entry: PendingMessageAttachment, actorHandle: string) => {
+  revokePendingAttachment(entry);
+  return symposiumApi.request(`/api/attachments/${encodeURIComponent(entry.attachment.id)}?actorHandle=${encodeURIComponent(actorHandle)}`, {
+    method: "DELETE",
+    body: { actorHandle }
+  }).catch(() => undefined);
+};
+
+const pendingPreviewAttachments = (entries: PendingMessageAttachment[]) =>
+  entries.map((entry) => ({ ...entry.attachment, url: entry.previewUrl }));
 
 function Avatar({ person, name, size = "small" }: { person?: { avatarUrl?: string; name: string }; name: string; size?: "small" | "large" }) {
   return (
@@ -307,7 +339,7 @@ type MessagingExperienceProps = {
   onOpenProfile: (handle: string) => void;
   onOpenFull?: (conversationId: string | null) => void;
   onClose?: () => void;
-  liveRevision?: number;
+  liveEvents?: MessagingLiveEvent[];
   quick?: boolean;
 };
 
@@ -319,7 +351,7 @@ export function MessagingExperience({
   onOpenProfile,
   onOpenFull,
   onClose,
-  liveRevision = 0,
+  liveEvents = emptyMessagingLiveEvents,
   quick = false
 }: MessagingExperienceProps) {
   const [conversations, setConversations] = useState<ConversationSummaryContract[]>([]);
@@ -329,8 +361,8 @@ export function MessagingExperience({
   const [messageCursor, setMessageCursor] = useState<string | null>(null);
   const [draftState, dispatchDraft] = useReducer(reduceMessageDraft, emptyMessageDraftState);
   const draft = draftState.body;
-  const [pendingAttachments, setPendingAttachments] = useState<InquiryAttachmentContract[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([]);
+  const [sendingCount, setSendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -340,6 +372,7 @@ export function MessagingExperience({
   const [searchResults, setSearchResults] = useState<MessageContract[] | null>(null);
   const [mediaKind, setMediaKind] = useState<AttachmentKindContract | "links" | "starred" | null>(null);
   const [mediaResults, setMediaResults] = useState<MessageContract[]>([]);
+  const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -347,11 +380,22 @@ export function MessagingExperience({
   const draftStateRef = useRef<MessageDraftState>(draftState);
   const draftSaveTimerRef = useRef<number | null>(null);
   const liveRefreshTimerRef = useRef<number | null>(null);
+  const readReceiptTimerRef = useRef<number | null>(null);
+  const latestReadSequenceRef = useRef(0);
   const conversationListEpochRef = useRef(0);
   const conversationLoadEpochRef = useRef(0);
+  const mountedRef = useRef(true);
+  const pendingAttachmentsRef = useRef<PendingMessageAttachment[]>(pendingAttachments);
+  const conversationsRef = useRef<ConversationSummaryContract[]>(conversations);
+  const messagesRef = useRef<MessageContract[]>(messages);
+  const processedLiveEventKeysRef = useRef<string[]>(liveEvents.map(messagingLiveEventKey));
+  const processedLiveEventKeySetRef = useRef(new Set(processedLiveEventKeysRef.current));
   const selectedRef = useRef(selectedConversationId);
   selectedRef.current = selectedConversationId;
   draftStateRef.current = draftState;
+  pendingAttachmentsRef.current = pendingAttachments;
+  conversationsRef.current = conversations;
+  messagesRef.current = messages;
 
   const loadConversations = useCallback(async (append = false) => {
     const requestEpoch = append ? conversationListEpochRef.current : conversationListEpochRef.current + 1;
@@ -438,29 +482,121 @@ export function MessagingExperience({
     void loadConversations(false);
   }, [actor.handle]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (liveRevision <= 0) return;
-    if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
-    liveRefreshTimerRef.current = window.setTimeout(() => {
-      liveRefreshTimerRef.current = null;
-      void loadConversations(false);
-      const activeConversationId = selectedRef.current;
-      if (activeConversationId && messageIdPattern.test(activeConversationId)) {
-        void loadConversation(activeConversationId, { quiet: true });
+  const scheduleReadReceipt = useCallback((conversationId: string, sequence: number) => {
+    latestReadSequenceRef.current = Math.max(latestReadSequenceRef.current, sequence);
+    if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
+    readReceiptTimerRef.current = window.setTimeout(() => {
+      readReceiptTimerRef.current = null;
+      const latestSequence = latestReadSequenceRef.current;
+      latestReadSequenceRef.current = 0;
+      if (selectedRef.current !== conversationId || latestSequence <= 0) return;
+      void symposiumApi.request(`/api/conversations/${encodeURIComponent(conversationId)}/read`, {
+        method: "POST",
+        body: { actorHandle: actor.handle, sequence: latestSequence }
+      }).catch(() => undefined);
+    }, 140);
+  }, [actor.handle]);
+
+  const mergeLiveMessage = useCallback((incoming: MessageContract, kind: string) => {
+    const selected = selectedRef.current === incoming.conversationId;
+    if (selected) {
+      setMessages((current) => kind === "message.sent" || current.some((message) => message.id === incoming.id)
+        ? mergeCanonicalMessage(current, incoming)
+        : current);
+      if (kind === "message.sent" && cleanHandle(incoming.senderHandle ?? "") !== cleanHandle(actor.handle)) {
+        scheduleReadReceipt(incoming.conversationId, incoming.sequence);
       }
-    }, 80);
+      window.requestAnimationFrame(() => {
+        const history = historyRef.current;
+        if (history && shouldStickToBottomRef.current) history.scrollTop = history.scrollHeight;
+      });
+    }
+
+    const mergeSummary = (current: ConversationSummaryContract) => {
+      const alreadyHadMessage = current.lastMessage?.id === incoming.id;
+      const incomingFromAnotherPerson = cleanHandle(incoming.senderHandle ?? "") !== cleanHandle(actor.handle);
+      const shouldReplaceLast = !current.lastMessage || incoming.sequence >= current.lastMessage.sequence;
+      const summaryMessage = alreadyHadMessage && !incoming.deletedAt
+        ? { ...incoming, starred: current.lastMessage!.starred }
+        : incoming;
+      return {
+        ...current,
+        lastMessage: shouldReplaceLast ? summaryMessage : current.lastMessage,
+        unreadCount: selected
+          ? 0
+          : kind === "message.sent" && incomingFromAnotherPerson && !alreadyHadMessage
+            ? current.unreadCount + 1
+            : current.unreadCount,
+        updatedAt: kind === "message.sent" ? incoming.createdAt : current.updatedAt
+      };
+    };
+
+    setConversation((current) => current?.id === incoming.conversationId ? mergeSummary(current) : current);
+    setConversations((current) => current
+      .map((entry) => entry.id === incoming.conversationId ? mergeSummary(entry) : entry)
+      .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.updatedAt.localeCompare(left.updatedAt)));
+  }, [actor.handle, scheduleReadReceipt]);
+
+  useEffect(() => {
+    for (const liveEvent of liveEvents) {
+      const eventKey = messagingLiveEventKey(liveEvent);
+      if (processedLiveEventKeySetRef.current.has(eventKey)) continue;
+      processedLiveEventKeySetRef.current.add(eventKey);
+      processedLiveEventKeysRef.current.push(eventKey);
+      if (processedLiveEventKeysRef.current.length > 500) {
+        const discardedKey = processedLiveEventKeysRef.current.shift();
+        if (discardedKey) processedLiveEventKeySetRef.current.delete(discardedKey);
+      }
+
+      const canonicalMessage = canonicalMessageFromLiveEvent(liveEvent);
+      if (canonicalMessage) {
+        const knownConversation = conversationsRef.current.find((entry) => entry.id === canonicalMessage.conversationId);
+        const activeSequence = selectedRef.current === canonicalMessage.conversationId
+          ? messagesRef.current.at(-1)?.sequence ?? 0
+          : 0;
+        const knownSequence = Math.max(activeSequence, knownConversation?.lastMessage?.sequence ?? 0);
+        const sequenceGap = liveEvent.kind === "message.sent" && knownSequence > 0 && canonicalMessage.sequence > knownSequence + 1;
+        mergeLiveMessage(canonicalMessage, liveEvent.kind);
+        if (!knownConversation || sequenceGap) void loadConversations(false);
+        if (sequenceGap && selectedRef.current === canonicalMessage.conversationId) {
+          void loadConversation(canonicalMessage.conversationId, { quiet: true });
+        }
+        continue;
+      }
+      if (liveEvent.kind === "message.star.updated") {
+        const messageId = liveEvent.payload?.messageId;
+        const active = liveEvent.payload?.active;
+        if (typeof messageId === "string" && typeof active === "boolean") {
+          setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, starred: active } : entry));
+        }
+        continue;
+      }
+      if (!messagingEventRequiresRefresh(liveEvent)) continue;
+      if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
+      liveRefreshTimerRef.current = window.setTimeout(() => {
+        liveRefreshTimerRef.current = null;
+        void loadConversations(false);
+        const eventConversationId = liveEventConversationId(liveEvent);
+        const activeConversationId = selectedRef.current;
+        if (activeConversationId && activeConversationId === eventConversationId && messageIdPattern.test(activeConversationId)) {
+          void loadConversation(activeConversationId, { quiet: true });
+        }
+      }, 80);
+    }
     return () => {
       if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
       liveRefreshTimerRef.current = null;
     };
-  }, [liveRevision]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [liveEvents]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    for (const attachment of pendingAttachmentsRef.current) void discardPendingAttachment(attachment, actor.handle);
     if (!selectedConversationId) {
       setConversation(null);
       setMessages([]);
       dispatchDraft({ type: "select", conversationId: null, localBody: null, serverBody: "", serverUpdatedAt: null });
       setPendingAttachments([]);
+      setPreviewAttachmentId(null);
       return;
     }
     const local = window.localStorage.getItem(localDraftKey(actor.handle, selectedConversationId));
@@ -473,11 +609,28 @@ export function MessagingExperience({
       serverUpdatedAt: summary?.draftUpdatedAt ?? null
     });
     setPendingAttachments([]);
+    setPreviewAttachmentId(null);
     shouldStickToBottomRef.current = true;
     setSearchResults(null);
     setMediaKind(null);
     void loadConversation(selectedConversationId);
   }, [actor.handle, selectedConversationId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!selectedConversationId || messageIdPattern.test(selectedConversationId)) return;
+    const recipientHandle = cleanHandle(selectedConversationId.replace(/^direct:/, ""));
+    if (!profiles[recipientHandle]) return;
+    setError((current) => current === "This profile is not available." ? "" : current);
+  }, [profiles, selectedConversationId]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      for (const attachment of pendingAttachmentsRef.current) void discardPendingAttachment(attachment, actor.handle);
+      if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
+    };
+  }, [actor.handle]);
 
   useEffect(() => {
     if (!selectedConversationId) return;
@@ -563,14 +716,15 @@ export function MessagingExperience({
   };
 
   const sendCurrent = async () => {
-    if (!selectedConversationId || busy || (!draft.trim() && !pendingAttachments.length)) return;
-    setBusy(true);
+    if (!selectedConversationId || (!draft.trim() && !pendingAttachments.length)) return;
+    setSendingCount((current) => current + 1);
     shouldStickToBottomRef.current = true;
     const originalDraft = draft;
     const originalAttachments = pendingAttachments;
-    const attachmentIds = pendingAttachments.map((attachment) => attachment.id);
+    const attachmentIds = pendingAttachments.map((entry) => entry.attachment.id);
     dispatchDraft({ type: "clear", conversationId: selectedConversationId });
     setPendingAttachments([]);
+    setPreviewAttachmentId(null);
     window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
     try {
       const directRecipient = !messageIdPattern.test(selectedConversationId)
@@ -587,11 +741,8 @@ export function MessagingExperience({
         }
       });
       if (data.message.conversationId !== selectedConversationId) selectConversation(data.message.conversationId);
-      else {
-        setMessages((current) => [...current.filter((entry) => entry.id !== data.message.id), data.message]);
-        await loadConversation(selectedConversationId, { quiet: true });
-      }
-      await loadConversations(false);
+      else mergeLiveMessage(data.message, "message.sent");
+      for (const attachment of originalAttachments) revokePendingAttachment(attachment);
     } catch (sendError) {
       const activeDraft = draftStateRef.current;
       if (activeDraft.conversationId === selectedConversationId) {
@@ -604,47 +755,59 @@ export function MessagingExperience({
       }
       setPendingAttachments((current) => [
         ...originalAttachments,
-        ...current.filter((entry) => !originalAttachments.some((original) => original.id === entry.id))
+        ...current.filter((entry) => !originalAttachments.some((original) => original.attachment.id === entry.attachment.id))
       ].slice(0, 10));
       setError(errorText(sendError));
     } finally {
-      setBusy(false);
+      setSendingCount((current) => Math.max(0, current - 1));
     }
   };
 
   const uploadFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const uploadConversationId = selectedConversationId;
     const files = Array.from(event.target.files ?? []).slice(0, Math.max(0, 10 - pendingAttachments.length));
     event.target.value = "";
-    if (!files.length) return;
+    if (!uploadConversationId || !files.length) return;
     setUploading(true);
     try {
-      const uploaded: InquiryAttachmentContract[] = [];
-      for (const file of files) {
-        uploaded.push(await uploadConfirmedAttachment({
+      const results = await Promise.allSettled(files.map(async (file) => ({
+        attachment: await uploadConfirmedAttachment({
           actorHandle: actor.handle,
           file,
           idempotencyKey: createClientMutationId("message-attachment"),
           metadata: { surface: "message" },
           ownerType: "message"
-        }));
+        }),
+        previewUrl: URL.createObjectURL(file)
+      })));
+      const uploaded = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      if (!mountedRef.current || selectedRef.current !== uploadConversationId) {
+        for (const attachment of uploaded) void discardPendingAttachment(attachment, actor.handle);
+      } else {
+        setPendingAttachments((current) => [
+          ...current,
+          ...uploaded
+        ].slice(0, 10));
       }
-      setPendingAttachments((current) => [...current, ...uploaded].slice(0, 10));
-    } catch (uploadError) {
-      setError(errorText(uploadError));
+      const failures = results.filter((result) => result.status === "rejected");
+      if (failures.length && selectedRef.current === uploadConversationId) {
+        const firstError = failures[0] as PromiseRejectedResult;
+        setError(failures.length === 1 ? errorText(firstError.reason) : `${failures.length} attachments could not be uploaded. ${errorText(firstError.reason)}`);
+      }
     } finally {
       setUploading(false);
     }
   };
 
   const updateMessage = (incoming: MessageContract) =>
-    setMessages((current) => current.map((entry) => entry.id === incoming.id ? incoming : entry));
+    setMessages((current) => mergeCanonicalMessage(current, incoming));
 
   const star = async (message: MessageContract) => {
     try {
       await symposiumApi.request(`/api/conversations/${message.conversationId}/messages/${message.id}/star`, {
         method: "POST", body: { actorHandle: actor.handle, active: !message.starred }
       });
-      updateMessage({ ...message, starred: !message.starred });
+      setMessages((current) => current.map((entry) => entry.id === message.id ? { ...entry, starred: !message.starred } : entry));
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
@@ -662,11 +825,11 @@ export function MessagingExperience({
   const removeMessage = async (message: MessageContract, mode: "self" | "everyone") => {
     if (!window.confirm(mode === "everyone" ? "Unsend this message for everyone?" : "Delete this message for you?")) return;
     try {
-      await symposiumApi.request(`/api/conversations/${message.conversationId}/messages/${message.id}`, {
+      const data = await symposiumApi.request<{ message?: MessageContract }>(`/api/conversations/${message.conversationId}/messages/${message.id}`, {
         method: "DELETE", body: { actorHandle: actor.handle, mode, expectedRevision: mode === "everyone" ? message.revision : undefined }
       });
       if (mode === "self") setMessages((current) => current.filter((entry) => entry.id !== message.id));
-      else updateMessage({ ...message, body: "", attachments: [], deletedAt: new Date().toISOString(), revision: message.revision + 1 });
+      else updateMessage(data.message ?? { ...message, body: "", attachments: [], deletedAt: new Date().toISOString(), revision: message.revision + 1 });
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
@@ -850,12 +1013,42 @@ export function MessagingExperience({
                 {!loading && !messages.length ? <div className="empty-message-thread"><MessageCircle size={30} /><strong>{syntheticProfile ? `Start a conversation with ${syntheticProfile.name}` : "No messages here yet"}</strong><p>Messages and attachments will appear here.</p></div> : null}
                 {messages.map((message) => <MessageBubble key={message.id} actorHandle={actor.handle} message={message} profiles={profiles} onEdit={edit} onDelete={removeMessage} onStar={star} />)}
               </div>
-              {pendingAttachments.length ? (
-                <div className="pending-message-attachments">
-                  {pendingAttachments.map((attachment) => <span key={attachment.id}><File size={13} />{attachment.fileName}<button type="button" onClick={() => setPendingAttachments((current) => current.filter((entry) => entry.id !== attachment.id))}><X size={12} /></button></span>)}
-                </div>
-              ) : null}
-              <div className="message-composer">
+              <div className={`message-composer${pendingAttachments.length ? " has-attachments" : ""}`}>
+                {pendingAttachments.length ? (
+                  <div className="message-composer-attachments" role="list" aria-label="Attachments ready to send">
+                    {pendingAttachments.map((entry) => {
+                      const attachment = entry.attachment;
+                      return (
+                        <div className="message-composer-attachment" role="listitem" key={attachment.id}>
+                          <button
+                            className="message-composer-attachment-preview"
+                            type="button"
+                            title={`Preview ${attachment.fileName}`}
+                            onClick={() => setPreviewAttachmentId(attachment.id)}
+                          >
+                            {attachment.kind === "image"
+                              ? <img src={entry.previewUrl} alt="" />
+                              : <span className={`message-composer-file-kind kind-${attachment.kind}`}><File size={18} /><small>{attachment.kind}</small></span>}
+                            <span className="message-composer-attachment-copy">
+                              <strong>{attachment.fileName}</strong>
+                              <small>{formatAttachmentBytes(attachment.byteSize)}</small>
+                            </span>
+                          </button>
+                          <button
+                            className="message-composer-attachment-remove"
+                            type="button"
+                            title={`Remove ${attachment.fileName}`}
+                            onClick={() => {
+                              void discardPendingAttachment(entry, actor.handle);
+                              setPendingAttachments((current) => current.filter((candidate) => candidate.attachment.id !== attachment.id));
+                              if (previewAttachmentId === attachment.id) setPreviewAttachmentId(null);
+                            }}
+                          ><X size={13} /></button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
                 <label className="message-attach-button" title="Attach files">
                   {uploading ? <LoaderCircle className="spin" size={18} /> : <Paperclip size={18} />}
                   <input type="file" multiple disabled={uploading || pendingAttachments.length >= 10} onChange={uploadFiles} />
@@ -889,8 +1082,8 @@ export function MessagingExperience({
                     }
                   }}
                 />
-                <button className="send-message-button" type="button" title="Send" disabled={busy || uploading || (!draft.trim() && !pendingAttachments.length)} onClick={() => void sendCurrent()}>
-                  {busy ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}
+                <button className="send-message-button" type="button" title={sendingCount ? "Send another message" : "Send"} disabled={uploading || (!draft.trim() && !pendingAttachments.length)} onClick={() => void sendCurrent()}>
+                  {sendingCount ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}
                 </button>
               </div>
             </>
@@ -962,6 +1155,14 @@ export function MessagingExperience({
         </aside>
       ) : null}
       {error ? <div className="messaging-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError("")}><X size={14} /></button></div> : null}
+      {previewAttachmentId ? (
+        <AttachmentPreviewModal
+          attachments={pendingPreviewAttachments(pendingAttachments)}
+          contextTitle="Message attachments"
+          attachmentId={previewAttachmentId}
+          onClose={() => setPreviewAttachmentId(null)}
+        />
+      ) : null}
     </section>
   );
 }
