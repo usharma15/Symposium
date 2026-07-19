@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildApp } from "@/apps/api/src/server";
 import { compactAttachmentFileName } from "@/lib/attachmentRules";
+import type { ResearchProfile } from "@/lib/mockData";
 import { emptyMessageDraftState, reduceMessageDraft } from "@/features/messages/messageDraftState";
+import {
+  attachmentMatchesMessageMediaKind,
+  messageBodyLinks,
+  messageMediaResultCount,
+  rankMessagePeople
+} from "@/features/messages/messageDiscoveryState";
 import {
   activeConversationParticipants,
   messageSenderProfile,
@@ -47,6 +54,19 @@ const main = async () => {
   assert.equal(compactAttachmentFileName("short-name.jpg"), "short-name.jpg");
   assert.equal(compactAttachmentFileName("an-ultra-long-research-attachment-name.mp4"), "an-ultra-long-rese….mp4");
   assert.equal(compactAttachmentFileName("deep/path/to/a-ridiculously-long-script-name.py", 10), "a-ridiculo….py");
+
+  const rankedPeople = rankMessagePeople([
+    { name: "Mira Stone", handle: "@miriam" },
+    { name: "Mira Sato", handle: "@mira_sato" },
+    { name: "Another Mira", handle: "@another_mira" },
+    { name: "Viewer", handle: "@viewer" }
+  ] as ResearchProfile[], "mira", "@viewer");
+  assert.deepEqual(rankedPeople.map((person) => person.handle), ["@mira_sato", "@miriam", "@another_mira"]);
+  assert.deepEqual(rankMessagePeople(rankedPeople, "", "@viewer"), []);
+  const documentAttachment = { id: validConversationId, kind: "pdf", fileName: "paper.pdf" } as const;
+  assert.equal(attachmentMatchesMessageMediaKind(documentAttachment as never, "document"), true);
+  assert.deepEqual(messageBodyLinks("Read https://example.com/paper.pdf, then https://example.com/paper.pdf."), ["https://example.com/paper.pdf"]);
+  assert.equal(messageMediaResultCount([{ attachments: [documentAttachment] } as never], "document"), 1);
 
   const selectedDraft = reduceMessageDraft(emptyMessageDraftState, {
     type: "select",
@@ -169,6 +189,7 @@ const main = async () => {
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
   const messageAttachmentRoute = readFileSync("app/api/message-attachments/[attachmentId]/route.ts", "utf8");
   const discardAttachmentRoute = readFileSync("app/api/attachments/[attachmentId]/route.ts", "utf8");
+  const profileRoute = readFileSync("app/api/profiles/route.ts", "utf8");
 
   assert.match(server, /registerMessageRoutes\(app\)/);
   assert.match(server, /methods: \["GET", "HEAD", "POST", "PUT"/);
@@ -197,6 +218,7 @@ const main = async () => {
   assert.match(repository, /kind: "conversation\.created"/);
   assert.match(repository, /kind: "conversation\.participants\.added"/);
   assert.match(repository, /participant\.status = 'active'/);
+  assert.match(repository, /attachment\.file_name ~\* '\\\\.\(txt\|md\|doc\|docx\|odt\|rtf\|pdf\)\$'/);
   assert.match(repository, /maxGroupParticipants = 50/);
   assert.match(repository, /kind: "group_removed"/);
   assert.match(notifications, /jsonb_to_recordset/);
@@ -232,6 +254,13 @@ const main = async () => {
   assert.match(client, /function AddPeopleDialog/);
   assert.match(client, /className="message-inline-edit"/);
   assert.match(client, /title="Message options"/);
+  assert.match(client, /className="message-info-tabs"/);
+  assert.match(client, /className="message-people-tab-panel"/);
+  assert.match(client, /className="message-shared-tab-panel"/);
+  assert.match(client, /rankMessagePeople/);
+  assert.match(client, /conversationListLoading/);
+  assert.match(client, /conversationLoading/);
+  assert.doesNotMatch(client, /const people = Object\.values\(profiles\)/);
   assert.match(styles, /\.message-bubble-actions\.open/);
   assert.match(client, /messageSenderProfile\(message, conversation\?\.participants/);
   assert.doesNotMatch(client, /window\.prompt/);
@@ -256,6 +285,8 @@ const main = async () => {
   assert.match(client, /discardPendingAttachment/);
   assert.match(discardAttachmentRoute, /deleteLocalPendingAttachment/);
   assert.match(discardAttachmentRoute, /method: "DELETE"/);
+  assert.match(profileRoute, /parameters\.get\("q"\)/);
+  assert.match(profileRoute, /slice\(0, limit\)/);
   assert.match(events, /pg_notify\('symposium_live_events', id::text\)/);
   assert.match(eventRoutes, /LISTEN \$\{liveEventNotificationChannel\}/);
   assert.match(eventRoutes, /activeStreamCount === 0/);

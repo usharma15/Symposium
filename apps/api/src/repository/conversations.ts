@@ -1176,10 +1176,17 @@ export const searchConversation = async (conversationId: string, rawInput: unkno
     const kindCondition: Record<string, string> = {
       image: `attachment.content_type LIKE 'image/%'`, video: `attachment.content_type LIKE 'video/%'`,
       pdf: `attachment.content_type = 'application/pdf'`, text: `attachment.content_type LIKE 'text/%'`,
-      code: `attachment.file_name ~* '\\.(js|jsx|ts|tsx|py|rb|rs|go|java|c|cc|cpp|h|hpp|css|html|sql|sh|json|ya?ml)$'`,
+      code: `attachment.file_name ~* '\\.(asm|bash|c|cc|conf|cpp|cxx|cs|css|dart|erl|ex|exs|fish|fs|fsx|go|gradle|graphql|groovy|h|hpp|hs|html|ini|ipynb|java|js|jsx|json|kt|kts|lua|m|mm|php|pl|ps1|py|r|rb|rs|s|scala|sh|sql|swift|tex|toml|ts|tsx|vb|vue|xml|ya?ml|zsh)$'`,
       spreadsheet: `attachment.file_name ~* '\\.(csv|xls|xlsx|ods)$'`,
       presentation: `attachment.file_name ~* '\\.(ppt|pptx|odp)$'`,
-      document: `attachment.content_type NOT LIKE 'image/%' AND attachment.content_type NOT LIKE 'video/%' AND attachment.content_type <> 'application/pdf'`
+      document: `(attachment.content_type = 'application/pdf'
+        OR attachment.file_name ~* '\\.(txt|md|doc|docx|odt|rtf|pdf)$'
+        OR attachment.content_type IN (
+          'application/msword',
+          'application/rtf',
+          'application/vnd.oasis.opendocument.text',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        ))`
     };
     conditions.push(`EXISTS (SELECT 1 FROM attachments attachment WHERE attachment.owner_type = 'message' AND attachment.owner_id = message.id::text AND attachment.status IN ('uploaded', 'previewed') AND ${kindCondition[input.kind]})`);
   }

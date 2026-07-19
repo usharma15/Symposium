@@ -9,6 +9,7 @@ import {
   ExternalLink,
   File,
   Image as ImageIcon,
+  Info,
   Link2,
   LoaderCircle,
   MessageCircle,
@@ -37,7 +38,6 @@ import {
   type ReactNode
 } from "react";
 import type {
-  AttachmentKindContract,
   ConversationParticipantContract,
   ConversationPageContract,
   ConversationSummaryContract,
@@ -69,6 +69,13 @@ import {
   type MessageDraftState
 } from "@/features/messages/messageDraftState";
 import {
+  attachmentMatchesMessageMediaKind,
+  messageBodyLinks,
+  messageMediaResultCount,
+  rankMessagePeople,
+  type MessageMediaKind
+} from "@/features/messages/messageDiscoveryState";
+import {
   activeConversationParticipants,
   messageSenderProfile,
   withoutConversationParticipant
@@ -83,7 +90,7 @@ import {
 
 const messageIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const emptyMessagingLiveEvents: MessagingLiveEvent[] = [];
-const mediaKinds: Array<{ id: AttachmentKindContract | "links" | "starred"; label: string; icon: ReactNode }> = [
+const mediaKinds: Array<{ id: MessageMediaKind; label: string; icon: ReactNode }> = [
   { id: "image", label: "Images", icon: <ImageIcon size={14} /> },
   { id: "video", label: "Videos", icon: <ImageIcon size={14} /> },
   { id: "document", label: "Docs", icon: <File size={14} /> },
@@ -106,6 +113,14 @@ const displayTime = (value: string) => {
   return date.toDateString() === today.toDateString()
     ? date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
     : date.toLocaleDateString([], { month: "short", day: "numeric" });
+};
+
+const displayLinkHost = (value: string) => {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return value;
+  }
 };
 
 const conversationPeer = (conversation: ConversationSummaryContract | null, actorHandle: string) =>
@@ -203,6 +218,63 @@ function AttachmentTile({
       <small>{formatAttachmentBytes(attachment.byteSize)}</small>
     </button>
   );
+}
+
+function SharedMessageResults({
+  actorHandle,
+  kind,
+  messages,
+  onPreviewAttachment,
+  onJumpToMessage
+}: {
+  actorHandle: string;
+  kind: MessageMediaKind;
+  messages: MessageContract[];
+  onPreviewAttachment: (message: MessageContract, attachmentId: string) => void;
+  onJumpToMessage: (messageId: string) => void;
+}) {
+  if (kind === "links") {
+    return messages.flatMap((message) => messageBodyLinks(message.body).map((url) => (
+      <a className="message-shared-link" href={url} target="_blank" rel="noreferrer" key={`${message.id}:${url}`}>
+        <Link2 size={14} />
+        <span><strong>{displayLinkHost(url)}</strong><small>{url}</small></span>
+        <ExternalLink size={12} />
+      </a>
+    )));
+  }
+  if (kind === "starred") {
+    return messages.map((message) => (
+      <div className="message-shared-starred" key={message.id}>
+        <button type="button" onClick={() => onJumpToMessage(message.id)}>
+          <Star size={13} fill="currentColor" />
+          <span>{message.body || (message.attachments.length ? "Shared attachments" : "Starred message")}</span>
+          <small>{displayTime(message.createdAt)}</small>
+        </button>
+        {message.attachments.length ? (
+          <div className="message-shared-starred-attachments">
+            {message.attachments.map((attachment) => (
+              <AttachmentTile
+                key={`${message.id}:${attachment.id}`}
+                attachment={attachment}
+                actorHandle={actorHandle}
+                onPreview={() => onPreviewAttachment(message, attachment.id)}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    ));
+  }
+  return messages.flatMap((message) => message.attachments
+    .filter((attachment) => attachmentMatchesMessageMediaKind(attachment, kind))
+    .map((attachment) => (
+      <AttachmentTile
+        key={`${message.id}:${attachment.id}`}
+        attachment={attachment}
+        actorHandle={actorHandle}
+        onPreview={() => onPreviewAttachment(message, attachment.id)}
+      />
+    )));
 }
 
 function MessageBubble({
@@ -406,17 +478,70 @@ function NewConversationPanel({
   const [groupMode, setGroupMode] = useState(false);
   const [query, setQuery] = useState("");
   const [title, setTitle] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
+  const [results, setResults] = useState<ResearchProfile[]>([]);
+  const [selected, setSelected] = useState<ResearchProfile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [busy, setBusy] = useState(false);
-  const people = Object.values(profiles)
-    .filter((person) => cleanHandle(person.handle) !== cleanHandle(actorHandle))
-    .filter((person) => !query.trim() || `${person.name} ${person.handle}`.toLowerCase().includes(query.trim().toLowerCase()))
-    .slice(0, 40);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (!term) {
+      setResults([]);
+      setLoading(false);
+      setSearchError("");
+      return;
+    }
+    let cancelled = false;
+    setResults([]);
+    setLoading(true);
+    const timer = window.setTimeout(() => {
+      const parameters = new URLSearchParams({ q: term, limit: "40" });
+      void symposiumApi.request<{ profiles: Record<string, ResearchProfile> }>(`/api/profiles?${parameters.toString()}`, { cache: "no-store" })
+        .then((data) => {
+          if (cancelled) return;
+          setResults(rankMessagePeople(Object.values(data.profiles), term, actorHandle));
+          setSearchError("");
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setResults(rankMessagePeople(Object.values(profiles), term, actorHandle));
+          setSearchError("Live search is temporarily unavailable. Showing loaded people.");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [actorHandle, profiles, query]);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [busy, onClose]);
+
+  const selectedHandles = new Set(selected.map((person) => cleanHandle(person.handle)));
+  const unselectedResults = groupMode
+    ? results.filter((person) => !selectedHandles.has(cleanHandle(person.handle)))
+    : results;
+  const toggleSelected = (person: ResearchProfile) => {
+    const handle = cleanHandle(person.handle);
+    setSelected((current) => current.some((entry) => cleanHandle(entry.handle) === handle)
+      ? current.filter((entry) => cleanHandle(entry.handle) !== handle)
+      : current.length < 49 ? [...current, person] : current);
+  };
+
   return (
-    <section className="new-conversation-panel" aria-label={groupMode ? "Create group" : "Start a chat"}>
+    <section className="new-conversation-panel" role="dialog" aria-modal="false" aria-label={groupMode ? "Create group" : "Start a chat"}>
       <header>
-        <button type="button" className={!groupMode ? "active" : ""} onClick={() => setGroupMode(false)}>New chat</button>
-        <button type="button" className={groupMode ? "active" : ""} onClick={() => setGroupMode(true)}>New group</button>
+        <button type="button" className={!groupMode ? "active" : ""} onClick={() => { setGroupMode(false); setQuery(""); }}>New chat</button>
+        <button type="button" className={groupMode ? "active" : ""} onClick={() => { setGroupMode(true); setQuery(""); }}>New group</button>
         <button type="button" title="Close" onClick={onClose}><X size={15} /></button>
       </header>
       {groupMode ? (
@@ -424,28 +549,45 @@ function NewConversationPanel({
       ) : null}
       <label className="message-person-search">
         <Search size={14} />
-        <input value={query} placeholder="Search people" onChange={(event) => setQuery(event.target.value)} />
+        <input value={query} autoFocus placeholder="Search by name or username" onChange={(event) => setQuery(event.target.value)} />
+        {loading ? <LoaderCircle className="spin" size={14} /> : null}
       </label>
-      <div className="new-conversation-people">
-        {people.map((person) => {
-          const chosen = selected.includes(person.handle);
-          return (
+      <div className={`new-conversation-people${query.trim() ? " has-query" : " selection-only"}`} aria-busy={loading}>
+        {query.trim() ? (
+          <div className="new-conversation-results">
+            {unselectedResults.map((person) => (
             <button
               key={person.handle}
               type="button"
-              className={chosen ? "selected" : ""}
-              onClick={() => groupMode
-                ? setSelected((current) => chosen ? current.filter((handle) => handle !== person.handle) : [...current, person.handle])
-                : onDirect(person.handle)}
+              onClick={() => groupMode ? toggleSelected(person) : onDirect(person.handle)}
             >
               <Avatar person={person} name={person.name} />
               <span><strong>{person.name}</strong><small>{person.handle}</small></span>
-              {groupMode && chosen ? <Check size={15} /> : null}
+              {groupMode ? <Plus size={15} /> : null}
             </button>
-          );
-        })}
-        {!people.length ? <p>No people found.</p> : null}
+            ))}
+            {!loading && !unselectedResults.length ? <p>{groupMode && selected.length ? "No more people found." : "No people found."}</p> : null}
+          </div>
+        ) : null}
+        {groupMode && selected.length ? (
+          <section className="new-conversation-selected" aria-label="People added to this group">
+            <strong>Added to group <small>{selected.length}/49</small></strong>
+            {selected.map((person) => (
+              <button className="selected" type="button" key={person.handle} onClick={() => toggleSelected(person)}>
+                <Avatar person={person} name={person.name} />
+                <span><strong>{person.name}</strong><small>{person.handle}</small></span>
+                <Check size={15} />
+              </button>
+            ))}
+          </section>
+        ) : null}
+        {!query.trim() && !selected.length ? (
+          <p className="new-conversation-guidance">{groupMode
+            ? "Search for people to add. Your selected members will stay here while you build the group."
+            : "Search for someone by name or username to start a chat."}</p>
+        ) : null}
       </div>
+      {searchError ? <small className="new-conversation-search-error">{searchError}</small> : null}
       {groupMode ? (
         <button
           className="create-message-group"
@@ -453,11 +595,11 @@ function NewConversationPanel({
           disabled={busy || !title.trim() || !selected.length}
           onClick={() => {
             setBusy(true);
-            void onGroup(title.trim(), selected).finally(() => setBusy(false));
+            void onGroup(title.trim(), selected.map((person) => person.handle)).finally(() => setBusy(false));
           }}
         >
           {busy ? <LoaderCircle className="spin" size={15} /> : <Users size={15} />}
-          Create private group
+          Create group{selected.length ? ` with ${selected.length}` : ""}
         </button>
       ) : null}
     </section>
@@ -506,19 +648,15 @@ function AddPeopleDialog({
     const timer = window.setTimeout(() => {
       setLoading(true);
       const parameters = new URLSearchParams({ q: term, limit: "40", actorHandle });
-      void symposiumApi.request<{ profiles: ResearchProfile[] }>(`/api/search?${parameters.toString()}`, { cache: "no-store" })
+      void symposiumApi.request<{ profiles: Record<string, ResearchProfile> }>(`/api/profiles?${parameters.toString()}`, { cache: "no-store" })
         .then((data) => {
           if (cancelled) return;
-          setResults(data.profiles.filter(eligible));
+          setResults(rankMessagePeople(Object.values(data.profiles).filter(eligible), term, actorHandle));
           setSearchError("");
         })
         .catch(() => {
           if (cancelled) return;
-          const normalized = term.toLowerCase();
-          setResults(Object.values(profiles)
-            .filter(eligible)
-            .filter((person) => `${person.name} ${person.handle}`.toLowerCase().includes(normalized))
-            .slice(0, 30));
+          setResults(rankMessagePeople(Object.values(profiles).filter(eligible), term, actorHandle, 30));
           setSearchError("Live search is temporarily unavailable. Showing loaded people.");
         })
         .finally(() => {
@@ -643,16 +781,20 @@ export function MessagingExperience({
   const draft = draftState.body;
   const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([]);
   const [sendingCount, setSendingCount] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [conversationListLoading, setConversationListLoading] = useState(true);
+  const [conversationLoading, setConversationLoading] = useState(Boolean(selectedConversationId));
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [newConversationOpen, setNewConversationOpen] = useState(false);
   const [addPeopleOpen, setAddPeopleOpen] = useState(false);
+  const [infoTab, setInfoTab] = useState<"info" | "people" | "shared">("info");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<MessageContract[] | null>(null);
-  const [mediaKind, setMediaKind] = useState<AttachmentKindContract | "links" | "starred" | null>(null);
+  const [mediaKind, setMediaKind] = useState<MessageMediaKind | null>(null);
   const [mediaResults, setMediaResults] = useState<MessageContract[]>([]);
+  const [mediaCursor, setMediaCursor] = useState<string | null>(null);
+  const [mediaLoading, setMediaLoading] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<MessageAttachmentPreview | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
@@ -665,6 +807,7 @@ export function MessagingExperience({
   const latestReadSequenceRef = useRef(0);
   const conversationListEpochRef = useRef(0);
   const conversationLoadEpochRef = useRef(0);
+  const mediaLoadEpochRef = useRef(0);
   const mountedRef = useRef(true);
   const pendingAttachmentsRef = useRef<PendingMessageAttachment[]>(pendingAttachments);
   const conversationsRef = useRef<ConversationSummaryContract[]>(conversations);
@@ -698,7 +841,7 @@ export function MessagingExperience({
     } catch (loadError) {
       setError(errorText(loadError));
     } finally {
-      setLoading(false);
+      if (requestEpoch === conversationListEpochRef.current) setConversationListLoading(false);
     }
   }, [actor.handle, conversationCursor, quick]);
 
@@ -711,13 +854,13 @@ export function MessagingExperience({
       setConversation(null);
       setMessages([]);
       setMessageCursor(null);
-      if (!options.quiet) setLoading(false);
+      if (!options.quiet) setConversationLoading(false);
       if (!recipient) setError("This profile is not available.");
       return;
     }
     if (options.older && !messageCursor) return;
     if (options.older) setLoadingOlder(true);
-    else if (!options.quiet) setLoading(true);
+    else if (!options.quiet) setConversationLoading(true);
     const parameters = new URLSearchParams({ limit: quick ? "30" : "50" });
     if (options.older && messageCursor) parameters.set("cursor", messageCursor);
     const priorScrollHeight = options.older ? historyRef.current?.scrollHeight ?? 0 : 0;
@@ -754,12 +897,15 @@ export function MessagingExperience({
     } catch (loadError) {
       setError(errorText(loadError));
     } finally {
-      setLoading(false);
-      setLoadingOlder(false);
+      if (requestEpoch === conversationLoadEpochRef.current && selectedRef.current === conversationId) {
+        if (!options.quiet) setConversationLoading(false);
+        setLoadingOlder(false);
+      }
     }
   }, [actor.handle, messageCursor, profiles, quick]);
 
   useEffect(() => {
+    setConversationListLoading(true);
     void loadConversations(false);
   }, [actor.handle]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -875,6 +1021,8 @@ export function MessagingExperience({
     if (!selectedConversationId) {
       setConversation(null);
       setMessages([]);
+      setMessageCursor(null);
+      setConversationLoading(false);
       dispatchDraft({ type: "select", conversationId: null, localBody: null, serverBody: "", serverUpdatedAt: null });
       setPendingAttachments([]);
       setAttachmentPreview(null);
@@ -882,6 +1030,10 @@ export function MessagingExperience({
     }
     const local = window.localStorage.getItem(localDraftKey(actor.handle, selectedConversationId));
     const summary = conversations.find((entry) => entry.id === selectedConversationId);
+    setConversation(summary ?? null);
+    setMessages([]);
+    setMessageCursor(null);
+    setConversationLoading(messageIdPattern.test(selectedConversationId));
     dispatchDraft({
       type: "select",
       conversationId: selectedConversationId,
@@ -892,11 +1044,22 @@ export function MessagingExperience({
     setPendingAttachments([]);
     setAttachmentPreview(null);
     setAddPeopleOpen(false);
+    setInfoTab("info");
     shouldStickToBottomRef.current = true;
     setSearchResults(null);
     setMediaKind(null);
+    setMediaResults([]);
+    setMediaCursor(null);
+    setMediaLoading(false);
     void loadConversation(selectedConversationId);
   }, [actor.handle, selectedConversationId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!selectedConversationId || !messageIdPattern.test(selectedConversationId)) return;
+    const summary = conversations.find((entry) => entry.id === selectedConversationId);
+    if (!summary) return;
+    setConversation((current) => current?.id === selectedConversationId ? current : summary);
+  }, [conversations, selectedConversationId]);
 
   useEffect(() => {
     if (!selectedConversationId || messageIdPattern.test(selectedConversationId)) return;
@@ -1160,7 +1323,9 @@ export function MessagingExperience({
     ? cleanHandle(selectedConversationId.replace(/^direct:/, ""))
     : null;
   const syntheticProfile = syntheticHandle ? profiles[syntheticHandle] : undefined;
-  const selectedTitle = conversation ? conversationName(conversation, actor.handle) : syntheticProfile?.name ?? "New message";
+  const selectedTitle = conversation
+    ? conversationName(conversation, actor.handle)
+    : syntheticProfile?.name ?? (conversationLoading ? "Loading conversation…" : "Conversation unavailable");
 
   const blockPeer = async () => {
     const target = peer?.handle ?? syntheticHandle;
@@ -1182,16 +1347,34 @@ export function MessagingExperience({
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
-  const loadMedia = async (kind: AttachmentKindContract | "links" | "starred") => {
+  const loadMedia = async (kind: MessageMediaKind, append = false) => {
     if (!conversation) return;
+    const conversationId = conversation.id;
+    const requestEpoch = mediaLoadEpochRef.current + 1;
+    mediaLoadEpochRef.current = requestEpoch;
     setMediaKind(kind);
+    setMediaLoading(true);
+    if (!append) {
+      setMediaResults([]);
+      setMediaCursor(null);
+    }
     try {
+      const cursor = append && mediaKind === kind ? mediaCursor : null;
+      const parameters = new URLSearchParams({ limit: "24" });
+      if (cursor) parameters.set("cursor", cursor);
       const endpoint = kind === "starred"
-        ? `/api/conversations/${conversation.id}/starred?limit=24`
-        : `/api/conversations/${conversation.id}/search?kind=${encodeURIComponent(kind)}&limit=24`;
-      const result = await symposiumApi.request<{ messages: MessageContract[] }>(withActor(endpoint, actor.handle), { cache: "no-store" });
-      setMediaResults(result.messages);
+        ? `/api/conversations/${conversationId}/starred?${parameters.toString()}`
+        : `/api/conversations/${conversationId}/search?kind=${encodeURIComponent(kind)}&${parameters.toString()}`;
+      const result = await symposiumApi.request<{ messages: MessageContract[]; nextCursor: string | null }>(withActor(endpoint, actor.handle), { cache: "no-store" });
+      if (requestEpoch !== mediaLoadEpochRef.current || selectedRef.current !== conversationId) return;
+      setMediaResults((current) => append
+        ? [...current, ...result.messages.filter((message) => !current.some((entry) => entry.id === message.id))]
+        : result.messages);
+      setMediaCursor(result.nextCursor);
     } catch (actionError) { setError(errorText(actionError)); }
+    finally {
+      if (requestEpoch === mediaLoadEpochRef.current) setMediaLoading(false);
+    }
   };
 
   const addPeople = async (handles: string[]) => {
@@ -1241,6 +1424,11 @@ export function MessagingExperience({
 
   const compactConversations = quick ? conversations.slice(0, selectedConversationId ? 5 : 8) : conversations;
   const activeParticipants = activeConversationParticipants(conversation?.participants ?? []);
+  const sharedResultCount = mediaKind ? messageMediaResultCount(mediaResults, mediaKind) : 0;
+  const jumpToMessage = (messageId: string) => {
+    setInfoTab("info");
+    window.requestAnimationFrame(() => document.querySelector(`[data-message-id="${messageId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  };
 
   return (
     <section className={`messaging-experience ${quick ? "quick" : "full"}`} aria-label={quick ? "Quick messages" : "Messages"}>
@@ -1255,12 +1443,12 @@ export function MessagingExperience({
         {newConversationOpen ? (
           <NewConversationPanel actorHandle={actor.handle} profiles={profiles} onClose={() => setNewConversationOpen(false)} onDirect={(handle) => selectConversation(`direct:${cleanHandle(handle)}`)} onGroup={createGroup} />
         ) : null}
-        <div className="conversation-list" aria-busy={loading}>
+        <div className="conversation-list" aria-busy={conversationListLoading}>
           {compactConversations.map((entry) => (
             <ConversationListItem key={entry.id} active={selectedConversationId === entry.id} actorHandle={actor.handle} conversation={entry} onSelect={() => selectConversation(entry.id)} />
           ))}
-          {!loading && !compactConversations.length ? <p className="messages-empty-list">No chats yet. Start one from a profile or the + button.</p> : null}
-          {loading ? <LoaderCircle className="spin messages-list-loader" size={18} /> : null}
+          {!conversationListLoading && !compactConversations.length ? <p className="messages-empty-list">No chats yet. Start one from a profile or the + button.</p> : null}
+          {conversationListLoading ? <LoaderCircle className="spin messages-list-loader" size={18} /> : null}
           <div ref={conversationSentinelRef} className="conversation-scroll-sentinel" />
         </div>
         {quick && onOpenFull ? (
@@ -1278,7 +1466,7 @@ export function MessagingExperience({
               if (handle) onOpenProfile(handle);
             }}>
               <Avatar person={peer ?? syntheticProfile} name={selectedTitle} />
-              <span><strong>{selectedTitle}</strong><small>{conversation?.kind === "group" ? `${activeParticipants.length} people` : peer?.handle ?? syntheticHandle}</small></span>
+              <span><strong>{selectedTitle}</strong><small>{conversation?.kind === "group" ? `${activeParticipants.length} people` : peer?.handle ?? syntheticHandle ?? (conversationLoading ? "Syncing chat…" : "")}</small></span>
             </button>
             {quick && onOpenFull ? <button type="button" title="Open full messages" onClick={() => onOpenFull(selectedConversationId)}><ExternalLink size={16} /></button> : null}
           </header>
@@ -1286,13 +1474,15 @@ export function MessagingExperience({
             className="message-history"
             ref={historyRef}
             aria-live="polite"
+            aria-busy={conversationLoading}
             onScroll={(event) => {
               const target = event.currentTarget;
               shouldStickToBottomRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 90;
             }}
           >
             {messageCursor ? <button className="load-older-messages" type="button" disabled={loadingOlder} onClick={() => selectedConversationId && void loadConversation(selectedConversationId, { older: true })}>{loadingOlder ? "Loading…" : "Load older messages"}</button> : null}
-            {!loading && !messages.length ? <div className="empty-message-thread"><MessageCircle size={30} /><strong>{syntheticProfile ? `Start a conversation with ${syntheticProfile.name}` : "No messages here yet"}</strong><p>Messages and attachments will appear here.</p></div> : null}
+            {conversationLoading && !messages.length ? <div className="message-thread-loading"><LoaderCircle className="spin" size={22} /><span>Syncing this chat…</span></div> : null}
+            {!conversationLoading && !messages.length ? <div className="empty-message-thread"><MessageCircle size={30} /><strong>{syntheticProfile ? `Start a conversation with ${syntheticProfile.name}` : "No messages here yet"}</strong><p>Messages and attachments will appear here.</p></div> : null}
             {messages.map((message) => {
               const sender = messageSenderProfile(message, conversation?.participants ?? [], profiles);
               return (
@@ -1397,57 +1587,80 @@ export function MessagingExperience({
           <header>
             <Avatar person={peer ?? syntheticProfile} name={selectedTitle} size="large" />
             <strong>{selectedTitle}</strong>
-            <small>{conversation?.kind === "group" ? "Private group" : peer?.handle ?? syntheticHandle}</small>
-            {conversation?.kind === "direct" && peer ? <p>{profiles[peer.handle]?.bio}</p> : null}
+            <small>{conversation?.kind === "group" ? `${activeParticipants.length} people · Private group` : peer?.handle ?? syntheticHandle ?? (conversationLoading ? "Syncing chat…" : "")}</small>
           </header>
           {conversation ? (
             <>
-              <form className="message-search-chat" onSubmit={(event) => { event.preventDefault(); void searchChat(); }}>
-                <Search size={14} /><input value={searchQuery} placeholder="Search this chat" onChange={(event) => setSearchQuery(event.target.value)} /><button type="submit">Search</button>
-              </form>
-              {searchResults ? (
-                <div className="message-info-results"><strong>{searchResults.length} result{searchResults.length === 1 ? "" : "s"}</strong>{searchResults.map((entry) => <button type="button" key={entry.id} onClick={() => document.querySelector(`[data-message-id="${entry.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>{entry.body || "Attachment"}<small>{displayTime(entry.createdAt)}</small></button>)}</div>
-              ) : null}
-              <div className="message-info-actions">
-                <button type="button" onClick={() => void changePreference({ pinned: !conversation.pinned })}>{conversation.pinned ? <PinOff size={15} /> : <Pin size={15} />}{conversation.pinned ? "Unpin chat" : "Pin chat"}</button>
-                <button type="button" onClick={() => void changePreference({ muted: !conversation.muted })}>{conversation.muted ? <BellRing size={15} /> : <BellOff size={15} />}{conversation.muted ? "Unmute notifications" : "Mute notifications"}</button>
-                {conversation.kind === "group" && ["owner", "admin"].includes(conversation.role) ? <button type="button" onClick={() => setAddPeopleOpen(true)}><UserPlus size={15} />Add people</button> : null}
-              </div>
-              {conversation.kind === "group" ? (
-                <div className="message-participants">
-                  <strong>People</strong>
-                  {activeParticipants.map((participant) => {
-                    const ownParticipant = cleanHandle(participant.handle) === cleanHandle(actor.handle);
-                    const canRemove = !ownParticipant && participant.role !== "owner" && (
-                      conversation.role === "owner" || (conversation.role === "admin" && participant.role === "member")
-                    ) && participant.status === "active";
-                    return (
-                      <div className="message-participant-row" key={participant.handle}>
-                        <button type="button" onClick={() => onOpenProfile(participant.handle)}>
-                          <Avatar person={participant} name={participant.name} />
-                          <span>{participant.name}<small>{participant.role} · {participant.status}</small></span>
-                        </button>
-                        {conversation.role === "owner" && !ownParticipant && participant.role !== "owner" && participant.status === "active" ? (
-                          <select value={participant.role} aria-label={`Role for ${participant.name}`} onChange={(event) => void updateParticipantRole(participant.handle, event.target.value as "admin" | "member")}>
-                            <option value="member">Member</option>
-                            <option value="admin">Admin</option>
-                          </select>
-                        ) : null}
-                        {canRemove ? <button className="remove-message-participant" type="button" title={`Remove ${participant.name}`} onClick={() => void removeParticipant(participant.handle, participant.name)}><X size={13} /></button> : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-              <div className="message-media-browser">
-                <strong>Shared in this chat</strong>
-                <div>{mediaKinds.map((kind) => <button type="button" className={mediaKind === kind.id ? "active" : ""} key={kind.id} onClick={() => void loadMedia(kind.id)}>{kind.icon}{kind.label}</button>)}</div>
-                {mediaKind ? <div className="message-media-results">{mediaResults.flatMap((entry) => entry.attachments.length ? entry.attachments.map((attachment) => <AttachmentTile key={`${entry.id}:${attachment.id}`} attachment={attachment} actorHandle={actor.handle} onPreview={() => openMessageAttachmentPreview(entry, attachment.id)} />) : entry.body ? [<button type="button" key={entry.id} onClick={() => document.querySelector(`[data-message-id="${entry.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>{entry.body}</button>] : [])}{!mediaResults.length ? <p>Nothing here yet.</p> : null}</div> : null}
-              </div>
-              <div className="message-danger-actions">
-                <button type="button" onClick={() => void clearChat()}><ArchiveX size={15} />Clear chat</button>
-                <button type="button" onClick={() => void deleteChat()}><Trash2 size={15} />Delete chat</button>
-                {conversation.kind === "direct" ? <button type="button" onClick={() => void blockPeer()}><Ban size={15} />{conversation.blockedByViewer ? "Unblock user" : "Block user"}</button> : null}
+              <nav className="message-info-tabs" role="tablist" aria-label="Chat details">
+                <button type="button" role="tab" aria-selected={infoTab === "info"} className={infoTab === "info" ? "active" : ""} onClick={() => setInfoTab("info")}><Info size={14} />Info</button>
+                {conversation.kind === "group" ? <button type="button" role="tab" aria-selected={infoTab === "people"} className={infoTab === "people" ? "active" : ""} onClick={() => setInfoTab("people")}><Users size={14} />People</button> : null}
+                <button type="button" role="tab" aria-selected={infoTab === "shared"} className={infoTab === "shared" ? "active" : ""} onClick={() => { setInfoTab("shared"); if (!mediaKind) void loadMedia("image"); }}><File size={14} />Shared</button>
+              </nav>
+              <div className="message-info-tab-content">
+                {infoTab === "info" ? (
+                  <section className="message-info-tab-panel" role="tabpanel">
+                    {conversation.kind === "direct" && peer && profiles[cleanHandle(peer.handle)]?.bio ? <p className="message-peer-bio">{profiles[cleanHandle(peer.handle)]?.bio}</p> : null}
+                    <form className="message-search-chat" onSubmit={(event) => { event.preventDefault(); void searchChat(); }}>
+                      <Search size={14} /><input value={searchQuery} placeholder="Search this chat" onChange={(event) => setSearchQuery(event.target.value)} /><button type="submit">Search</button>
+                    </form>
+                    {searchResults ? (
+                      <div className="message-info-results"><strong>{searchResults.length} result{searchResults.length === 1 ? "" : "s"}</strong>{searchResults.map((entry) => <button type="button" key={entry.id} onClick={() => jumpToMessage(entry.id)}>{entry.body || "Attachment"}<small>{displayTime(entry.createdAt)}</small></button>)}</div>
+                    ) : null}
+                    <div className="message-info-actions">
+                      <button type="button" onClick={() => void changePreference({ pinned: !conversation.pinned })}>{conversation.pinned ? <PinOff size={15} /> : <Pin size={15} />}{conversation.pinned ? "Unpin chat" : "Pin chat"}</button>
+                      <button type="button" onClick={() => void changePreference({ muted: !conversation.muted })}>{conversation.muted ? <BellRing size={15} /> : <BellOff size={15} />}{conversation.muted ? "Unmute notifications" : "Mute notifications"}</button>
+                      {conversation.kind === "group" ? <button type="button" onClick={() => setInfoTab("people")}><Users size={15} />View {activeParticipants.length} people</button> : null}
+                    </div>
+                    <div className="message-danger-actions">
+                      <button type="button" onClick={() => void clearChat()}><ArchiveX size={15} />Clear chat</button>
+                      <button type="button" onClick={() => void deleteChat()}><Trash2 size={15} />Delete chat</button>
+                      {conversation.kind === "direct" ? <button type="button" onClick={() => void blockPeer()}><Ban size={15} />{conversation.blockedByViewer ? "Unblock user" : "Block user"}</button> : null}
+                    </div>
+                  </section>
+                ) : null}
+                {infoTab === "people" && conversation.kind === "group" ? (
+                  <section className="message-people-tab-panel" role="tabpanel">
+                    <header>
+                      <span><strong>People</strong><small>{activeParticipants.length} active</small></span>
+                      {["owner", "admin"].includes(conversation.role) ? <button type="button" onClick={() => setAddPeopleOpen(true)}><UserPlus size={14} />Add people</button> : null}
+                    </header>
+                    <div className="message-participants">
+                      {activeParticipants.map((participant) => {
+                        const ownParticipant = cleanHandle(participant.handle) === cleanHandle(actor.handle);
+                        const canRemove = !ownParticipant && participant.role !== "owner" && (
+                          conversation.role === "owner" || (conversation.role === "admin" && participant.role === "member")
+                        ) && participant.status === "active";
+                        return (
+                          <div className="message-participant-row" key={participant.handle}>
+                            <button type="button" onClick={() => onOpenProfile(participant.handle)}>
+                              <Avatar person={participant} name={participant.name} />
+                              <span>{participant.name}<small>{participant.role}</small></span>
+                            </button>
+                            {conversation.role === "owner" && !ownParticipant && participant.role !== "owner" && participant.status === "active" ? (
+                              <select value={participant.role} aria-label={`Role for ${participant.name}`} onChange={(event) => void updateParticipantRole(participant.handle, event.target.value as "admin" | "member")}>
+                                <option value="member">Member</option>
+                                <option value="admin">Admin</option>
+                              </select>
+                            ) : null}
+                            {canRemove ? <button className="remove-message-participant" type="button" title={`Remove ${participant.name}`} onClick={() => void removeParticipant(participant.handle, participant.name)}><X size={13} /></button> : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ) : null}
+                {infoTab === "shared" ? (
+                  <section className="message-shared-tab-panel" role="tabpanel">
+                    <header><span><strong>Shared in this chat</strong><small>{mediaKind ? `${sharedResultCount} loaded` : "Choose a type"}</small></span></header>
+                    <div className="message-media-filters">{mediaKinds.map((kind) => <button type="button" className={mediaKind === kind.id ? "active" : ""} key={kind.id} onClick={() => void loadMedia(kind.id)}>{kind.icon}<span>{kind.label}</span></button>)}</div>
+                    <div className="message-media-results" aria-busy={mediaLoading}>
+                      {mediaKind ? <SharedMessageResults actorHandle={actor.handle} kind={mediaKind} messages={mediaResults} onPreviewAttachment={openMessageAttachmentPreview} onJumpToMessage={jumpToMessage} /> : null}
+                      {mediaLoading && !mediaResults.length ? <p className="message-media-loading"><LoaderCircle className="spin" size={17} />Loading shared items…</p> : null}
+                      {!mediaLoading && mediaKind && !sharedResultCount ? <p>Nothing shared here yet.</p> : null}
+                      {mediaCursor && !mediaLoading && mediaKind ? <button className="message-media-more" type="button" onClick={() => void loadMedia(mediaKind, true)}>Load more</button> : null}
+                    </div>
+                  </section>
+                ) : null}
               </div>
             </>
           ) : null}

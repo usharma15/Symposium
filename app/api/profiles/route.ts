@@ -2,6 +2,7 @@ import { getSnapshot, upsertProfile, type CreateProfileInput } from "@/lib/dataS
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { publicResearchProfile } from "@/lib/publicProfile";
+import { cleanHandle } from "@/lib/symposiumCore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,13 +19,38 @@ const asOptionalString = (value: unknown) => {
   return trimmed || undefined;
 };
 
-export async function GET() {
-  const live = await proxyLiveBackend("/v1/profiles");
+export async function GET(request: Request) {
+  const parameters = new URL(request.url).searchParams;
+  const query = parameters.get("q")?.trim().slice(0, 120) ?? "";
+  const limit = Math.max(1, Math.min(Number(parameters.get("limit")) || 50, 50));
+  const liveQuery = new URLSearchParams({ limit: String(limit) });
+  if (query) liveQuery.set("q", query);
+  const live = await proxyLiveBackend(`/v1/profiles?${liveQuery.toString()}`);
   if (live) return live;
 
   const snapshot = await getSnapshot();
+  const normalizedQuery = query.toLocaleLowerCase().replace(/^@/, "");
   return Response.json({
-    profiles: Object.fromEntries(Object.entries(snapshot.profiles).slice(0, 50)
+    profiles: Object.fromEntries(Object.entries(snapshot.profiles)
+      .filter(([handle, person]) => !normalizedQuery
+        || cleanHandle(handle).toLocaleLowerCase().includes(normalizedQuery)
+        || person.name.toLocaleLowerCase().includes(normalizedQuery))
+      .sort(([leftHandle, left], [rightHandle, right]) => {
+        if (!normalizedQuery) return 0;
+        const leftCleanHandle = cleanHandle(leftHandle).toLocaleLowerCase();
+        const rightCleanHandle = cleanHandle(rightHandle).toLocaleLowerCase();
+        const leftName = left.name.toLocaleLowerCase();
+        const rightName = right.name.toLocaleLowerCase();
+        const score = (handle: string, name: string) => handle === normalizedQuery ? 0
+          : name === normalizedQuery ? 1
+            : handle.startsWith(normalizedQuery) ? 2
+              : name.startsWith(normalizedQuery) ? 3
+                : 4;
+        return score(leftCleanHandle, leftName) - score(rightCleanHandle, rightName)
+          || left.name.localeCompare(right.name)
+          || leftCleanHandle.localeCompare(rightCleanHandle);
+      })
+      .slice(0, limit)
       .map(([handle, person]) => [handle, publicResearchProfile(person)]))
   });
 }

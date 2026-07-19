@@ -35,9 +35,9 @@ export const registerProfileRoutes = (app: FastifyInstance) => {
     }
   });
 
-  app.get<{ Querystring: { limit?: string } }>("/v1/profiles", async (request, reply) => {
+  app.get<{ Querystring: { limit?: string; q?: string } }>("/v1/profiles", async (request, reply) => {
     try {
-      return reply.send({ profiles: await listPublicProfiles(request.query.limit) });
+      return reply.send({ profiles: await listPublicProfiles(request.query.limit, request.query.q) });
     } catch (error) {
       return sendError(app, reply, error);
     }

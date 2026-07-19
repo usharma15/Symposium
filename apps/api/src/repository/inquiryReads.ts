@@ -528,14 +528,39 @@ export const listPostPage = async (
   };
 };
 
-export const listPublicProfiles = async (rawLimit: unknown = 50) => {
+export const listPublicProfiles = async (rawLimit: unknown = 50, rawQuery: unknown = "") => {
   const numericLimit = typeof rawLimit === "string" ? Number(rawLimit) : rawLimit;
   const limit = Number.isInteger(numericLimit) ? Math.max(1, Math.min(Number(numericLimit), 50)) : 50;
+  const query = typeof rawQuery === "string" ? rawQuery.trim().slice(0, 120) : "";
   if (!hasDatabase()) {
-    return Object.fromEntries(Object.entries(seedSnapshot().profiles).slice(0, limit)
+    const normalizedQuery = query.toLocaleLowerCase().replace(/^@/, "");
+    return Object.fromEntries(Object.entries(seedSnapshot().profiles)
+      .filter(([handle, person]) => !normalizedQuery
+        || cleanHandle(handle).toLocaleLowerCase().includes(normalizedQuery)
+        || person.name.toLocaleLowerCase().includes(normalizedQuery))
+      .sort(([leftHandle, left], [rightHandle, right]) => {
+        if (!normalizedQuery) return 0;
+        const leftCleanHandle = cleanHandle(leftHandle).toLocaleLowerCase();
+        const rightCleanHandle = cleanHandle(rightHandle).toLocaleLowerCase();
+        const leftName = left.name.toLocaleLowerCase();
+        const rightName = right.name.toLocaleLowerCase();
+        const score = (handle: string, name: string) => handle === normalizedQuery ? 0
+          : name === normalizedQuery ? 1
+            : handle.startsWith(normalizedQuery) ? 2
+              : name.startsWith(normalizedQuery) ? 3
+                : 4;
+        return score(leftCleanHandle, leftName) - score(rightCleanHandle, rightName)
+          || left.name.localeCompare(right.name)
+          || leftCleanHandle.localeCompare(rightCleanHandle);
+      })
+      .slice(0, limit)
       .map(([handle, person]) => [handle, publicProfile(person)]));
   }
   await ensureLiveData();
+  const normalizedQuery = query.replace(/^@/, "");
+  const escapedQuery = normalizedQuery.replace(/[\\%_]/g, "\\$&");
+  const pattern = `%${escapedQuery}%`;
+  const prefix = `${escapedQuery}%`;
   const result = await getPool().query<ResearchProfileContract & { avatarUrl: string | null }>(
     `SELECT
        handle,
@@ -549,9 +574,22 @@ export const listPublicProfiles = async (rawLimit: unknown = 50) => {
        fields,
        revision
      FROM profiles
-     ORDER BY updated_at DESC, handle ASC
+     WHERE $2::text = ''
+        OR name ILIKE $3 ESCAPE '\\'
+        OR handle ILIKE $3 ESCAPE '\\'
+     ORDER BY
+       CASE
+         WHEN $2::text <> '' AND lower(handle) = lower($2) THEN 0
+         WHEN $2::text <> '' AND lower(name) = lower($2) THEN 1
+         WHEN $2::text <> '' AND handle ILIKE $4 ESCAPE '\\' THEN 2
+         WHEN $2::text <> '' AND name ILIKE $4 ESCAPE '\\' THEN 3
+         ELSE 4
+       END,
+       CASE WHEN $2::text = '' THEN updated_at END DESC,
+       name ASC,
+       handle ASC
      LIMIT $1`,
-    [limit]
+    [limit, normalizedQuery, pattern, prefix]
   );
   return Object.fromEntries(result.rows.map((person) => [person.handle, publicProfile({
     ...person,
