@@ -929,14 +929,8 @@ export function ProfileSettingsModal({
   const [resharesPublic, setResharesPublic] = useState(inferredResharesPublic(currentProfile));
   const [avatarUploadStatus, setAvatarUploadStatus] = useState("");
 
-  useEffect(() => {
-    setAvatarUrl(currentProfile.avatarUrl ?? "");
-    setName(currentProfile.name);
-    setBio(currentProfile.bio.slice(0, 200));
-    setLikesPublic(inferredLikesPublic(currentProfile));
-    setResharesPublic(inferredResharesPublic(currentProfile));
-    setAvatarUploadStatus("");
-  }, [currentProfile]);
+  // This modal is mounted afresh each time it opens. Incoming profile events
+  // must not overwrite a photo or text draft while the user is still editing.
 
   const submitProfile = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
