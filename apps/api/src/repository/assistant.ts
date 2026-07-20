@@ -12,9 +12,11 @@ import type { Actor } from "../services/auth";
 import { stageEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import {
+  assistantProviderFailure,
   assistantInstructions,
   assistantPrompt,
   callAssistantModel,
+  type AssistantProviderFailure,
   type AssistantModelResult
 } from "../services/openaiResponses";
 import { runAtomic } from "../services/transactions";
@@ -179,10 +181,11 @@ const prepareAssistant = async (
 const finalizeAssistant = async (
   prepared: PreparedAssistant,
   result: AssistantModelResult | null,
+  failure: AssistantProviderFailure | null,
   mutation?: MutationContext
 ): Promise<AssistantResponseContract> => runAtomic(async (client) => {
   const providerError = !result;
-  const body = result?.body ?? "The AI provider could not complete this answer. This attempt still counts against the deliberately tiny beta limit so retries cannot create surprise costs.";
+  const body = result?.body ?? failure?.body ?? "The AI provider could not complete this answer. This failed beta attempt still uses one daily answer so repeated retries cannot create surprise costs.";
   const actualMicros = result
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, result.inputTokens, result.outputTokens)
     : prepared.reservedCostMicros;
@@ -199,7 +202,8 @@ const finalizeAssistant = async (
     [prepared.conversationId, body, JSON.stringify({
       model: result?.model ?? env.SYMPOSIUM_AI_MODEL,
       providerResponseId: result?.providerResponseId ?? null,
-      providerError
+      providerError,
+      providerErrorCode: failure?.code ?? null
     })]
   );
   await client.query(
@@ -223,7 +227,7 @@ const finalizeAssistant = async (
       result?.cacheWriteTokens ?? 0,
       result?.outputTokens ?? 0,
       result?.providerResponseId ?? null,
-      providerError ? "provider_error" : null,
+      providerError ? failure?.code ?? "provider_error" : null,
       prepared.owner
     ]
   );
@@ -288,6 +292,7 @@ export const askAssistant = async (
   if ("replayed" in prepared) return prepared.replayed;
 
   let result: AssistantModelResult | null = null;
+  let failure: AssistantProviderFailure | null = null;
   try {
     result = await callAssistantModel({
       ownerHandle: owner,
@@ -296,7 +301,8 @@ export const askAssistant = async (
       message: input.message
     });
   } catch (error) {
+    failure = assistantProviderFailure(error);
     console.error("SYMPOSIUM AI provider request failed.", error);
   }
-  return finalizeAssistant(prepared, result, mutation);
+  return finalizeAssistant(prepared, result, failure, mutation);
 };

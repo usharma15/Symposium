@@ -44,7 +44,7 @@ const main = async () => {
   assert.equal(postLinkQuote.selection.sourceType, "post");
   const commentLinkQuote = resolveQuoteLink(
     inquiryItems,
-    `https://symposium-flax.vercel.app/posts/${encodeURIComponent(post.id)}?comment=${encodeURIComponent(comment.id as string)}`
+    `https://www.symposiumsci.com/posts/${encodeURIComponent(post.id)}?comment=${encodeURIComponent(comment.id as string)}`
   );
   assert.equal(commentLinkQuote.selection.sourceType, "comment");
   assert.equal(commentLinkQuote.selection.sourcePostId, post.id);

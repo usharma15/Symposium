@@ -21,7 +21,81 @@ type OpenAIResponsePayload = {
     content?: Array<{ type?: string; text?: string }>;
   }>;
   usage?: OpenAIUsage;
-  error?: { message?: string };
+  error?: { message?: string; type?: string; code?: string; param?: string };
+};
+
+export type AssistantProviderFailure = {
+  code: string;
+  body: string;
+};
+
+class OpenAIProviderError extends Error {
+  constructor(
+    readonly status: number,
+    readonly providerCode: string
+  ) {
+    super(`OpenAI request failed (${status}, ${providerCode}).`);
+    this.name = "OpenAIProviderError";
+  }
+}
+
+const normalizedProviderCode = (status: number, payload: OpenAIResponsePayload) => {
+  const reported = payload.error?.code?.trim() || payload.error?.type?.trim();
+  if (reported) return reported.slice(0, 120);
+  if (status === 401) return "invalid_api_key";
+  if (status === 403) return "permission_denied";
+  if (status === 404) return "model_not_found";
+  if (status === 429) return "rate_limit_exceeded";
+  return `http_${status}`;
+};
+
+export const assistantProviderFailure = (error: unknown): AssistantProviderFailure => {
+  const code = error instanceof OpenAIProviderError
+    ? error.providerCode
+    : error instanceof DOMException && error.name === "TimeoutError"
+      ? "provider_timeout"
+      : "provider_error";
+  const normalized = code.toLowerCase();
+  if (normalized.includes("insufficient_quota") || normalized.includes("billing")) {
+    return {
+      code,
+      body: "The Symposium OpenAI project has no available API credit. Add API billing or credits to that project, then try again. This failed beta attempt still uses one daily answer so repeated retries cannot create surprise costs."
+    };
+  }
+  if (normalized.includes("invalid_api_key") || normalized.includes("authentication")) {
+    return {
+      code,
+      body: "OpenAI rejected the Symposium API key. Replace OPENAI_API_KEY on the live backend with an active key from the Symposium project. This failed beta attempt still uses one daily answer."
+    };
+  }
+  if (normalized.includes("permission") || normalized.includes("forbidden")) {
+    return {
+      code,
+      body: "The Symposium OpenAI key is not permitted to create model responses. Give the key Responses write access, then try again. This failed beta attempt still uses one daily answer."
+    };
+  }
+  if (normalized.includes("model_not_found") || normalized.includes("model_not_available")) {
+    return {
+      code,
+      body: "The configured OpenAI model is not available to the Symposium project. Check the project’s model access before trying again. This failed beta attempt still uses one daily answer."
+    };
+  }
+  if (normalized.includes("rate_limit")) {
+    return {
+      code,
+      body: "OpenAI temporarily rate-limited the Symposium project. Wait before trying again. This failed beta attempt still uses one daily answer."
+    };
+  }
+  if (normalized === "provider_timeout") {
+    return {
+      code,
+      body: "OpenAI did not finish within the tablet’s 45-second safety timeout. This failed beta attempt still uses one daily answer so repeated retries cannot create surprise costs."
+    };
+  }
+  return {
+    code,
+    body: "The AI provider could not complete this answer. This failed beta attempt still uses one daily answer so repeated retries cannot create surprise costs."
+  };
 };
 
 export type AssistantModelResult = {
@@ -97,7 +171,7 @@ export const callAssistantModel = async (input: {
 
   const payload = await response.json().catch(() => ({})) as OpenAIResponsePayload;
   if (!response.ok) {
-    throw new Error(payload.error?.message || `OpenAI request failed (${response.status}).`);
+    throw new OpenAIProviderError(response.status, normalizedProviderCode(response.status, payload));
   }
   const body = responseText(payload);
   if (!body) throw new Error("OpenAI returned no answer text.");
@@ -111,4 +185,3 @@ export const callAssistantModel = async (input: {
     outputTokens: Math.max(0, payload.usage?.output_tokens ?? 0)
   };
 };
-

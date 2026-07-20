@@ -9,7 +9,7 @@ The existing Next API routes remain in place for local preview, Clerk profile sy
 
 Current production endpoints:
 
-- Web: `https://symposium-flax.vercel.app`
+- Web: `https://www.symposiumsci.com`
 - API: `https://symposium-api-ue3p.onrender.com`
 - Liveness: `https://symposium-api-ue3p.onrender.com/healthz`
 - Readiness: `https://symposium-api-ue3p.onrender.com/readyz`

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { actualCostMicros, conservativeInputTokenCeiling, reserveCostMicros, usdToMicros } from "@/apps/api/src/services/aiBudget";
-import { assistantInstructions, assistantPrompt } from "@/apps/api/src/services/openaiResponses";
+import { assistantInstructions, assistantPrompt, assistantProviderFailure } from "@/apps/api/src/services/openaiResponses";
 import { assistantMessageInputSchema, assistantResponseSchema } from "@/packages/contracts/src";
 
 const validInput = {
@@ -30,6 +30,7 @@ assert.equal(conservativeInputTokenCeiling("abc"), 3);
 assert.equal(reserveCostMicros("gpt-5.6-terra", "a", 700), 10_504);
 assert.equal(actualCostMicros("gpt-5.6-terra", 1000, 100), 4_625);
 assert.equal(usdToMicros(40), 40_000_000);
+assert.match(assistantProviderFailure(new DOMException("timed out", "TimeoutError")).body, /45-second safety timeout/);
 
 assert.equal(assistantResponseSchema.safeParse({
   conversationId: "conversation",
@@ -52,6 +53,8 @@ assert.match(provider, /store: false/);
 assert.match(provider, /service_tier: "default"/);
 assert.match(provider, /max_output_tokens: env\.SYMPOSIUM_AI_MAX_OUTPUT_TOKENS/);
 assert.match(provider, /prompt_cache_key: "symposium-contextual-tablet-v1"/);
+assert.match(provider, /insufficient_quota/);
+assert.match(repository, /providerErrorCode/);
 assert.match(repository, /pg_advisory_xact_lock\(hashtextextended\('symposium:ai-budget'/);
 assert.match(repository, /current\.userMinute >= 2/);
 assert.match(repository, /current\.inFlight >= 1/);
