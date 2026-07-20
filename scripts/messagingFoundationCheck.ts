@@ -336,9 +336,10 @@ const main = async () => {
   assert.match(discardAttachmentRoute, /method: "DELETE"/);
   assert.match(profileRoute, /parameters\.get\("q"\)/);
   assert.match(profileRoute, /slice\(0, limit\)/);
-  assert.match(events, /pg_notify\('symposium_live_events', id::text\)/);
-  assert.match(eventRoutes, /LISTEN \$\{liveEventNotificationChannel\}/);
-  assert.match(eventRoutes, /activeStreamCount === 0/);
+  assert.doesNotMatch(events, /pg_notify\('symposium_live_events', id::text\)/);
+  assert.match(events, /publishLocalLiveEvent\(stored\)/);
+  assert.doesNotMatch(eventRoutes, /LISTEN|databaseBridge|getPool\(\)\.connect\(\)/);
+  assert.match(eventRoutes, /subscribeLocalLiveEvents/);
 
   const app = await buildApp({ logger: false });
   try {

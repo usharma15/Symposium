@@ -72,8 +72,9 @@ assert.match(clientTransport, /consumeLiveEventStream/);
 assert.match(clientTransport, /document\.hidden/);
 assert.match(clientTransport, /directBackendUrl \? `\$\{directBackendUrl\}\/v1\/events`/);
 assert.doesNotMatch(apiStreamRoute, /setInterval\(\(\) => \{\s+void flushMissedEvents/);
-assert.match(apiStreamRoute, /LISTEN \$\{liveEventNotificationChannel\}/);
-assert.match(apiStreamRoute, /if \(activeStreamCount === 0\) void stopDatabaseEventBridge\(\)/);
+assert.doesNotMatch(apiStreamRoute, /LISTEN|databaseBridge|getPool\(\)\.connect\(\)/);
+assert.match(apiStreamRoute, /subscribeLocalLiveEvents/);
+assert.match(apiStreamRoute, /await flushMissedEvents\(\)/);
 assert.match(nextStreamRoute, /status: 307/);
 assert.match(nextStreamRoute, /Location: directUrl/);
 assert.doesNotMatch(nextStreamRoute, /proxyLiveBackendStream/);
@@ -92,7 +93,7 @@ console.log(JSON.stringify({ ok: true, checked: [
   "legacy Vercel stream redirect without a long-lived function",
   "background-tab transport suspension",
   "connect-only durable event replay",
-  "active-stream-only cross-instance event bridge",
+  "database-idle-safe single-process event stream",
   "idle-safe database maintenance",
   "metric-only live action convergence",
   "passive views without full-bootstrap refresh",
