@@ -397,6 +397,35 @@ const findCommentPathById = (comments: InquiryComment[], id: string): InquiryCom
   return null;
 };
 
+const tabletItemLine = (item: InquiryItem) =>
+  [
+    `${item.kind}: ${item.title}`,
+    `By ${item.author}${item.affiliation ? ` · ${item.affiliation}` : ""}`,
+    item.excerpt || item.body
+  ].filter(Boolean).join("\n");
+
+const tabletDiscussionText = (
+  comments: InquiryComment[],
+  selectedCommentId: string | null,
+  depth = 0,
+  lines: string[] = []
+) => {
+  for (const comment of comments) {
+    if (lines.length >= 40) break;
+    if (!isDeletedComment(comment)) {
+      const selected = comment.id && comment.id === selectedCommentId ? " [SELECTED]" : "";
+      const attachments = (comment.attachments ?? []).map((attachment) => attachment.fileName).filter(Boolean);
+      lines.push([
+        `${"  ".repeat(Math.min(depth, 4))}${comment.author} · ${comment.stance}${selected}`,
+        comment.body,
+        attachments.length ? `Attachments: ${attachments.join(", ")}` : ""
+      ].filter(Boolean).join("\n"));
+    }
+    tabletDiscussionText(comment.replies ?? [], selectedCommentId, depth + 1, lines);
+  }
+  return lines;
+};
+
 const isLiveInquiryItem = (value: unknown): value is InquiryItem =>
   typeof value === "object" &&
   value !== null &&
@@ -3982,13 +4011,57 @@ function SymposiumExperience({
       };
     }
     if (searchOpen) {
+      const term = normalizeSearchPhrase(searchQuery);
+      const searchableItems = activeItems.filter(communityPostIsExternallyDiscoverable);
+      const localTitleMatches = term
+        ? sortByPublishedRecency(searchableItems.filter((item) => normalizeSearchPhrase(item.title).includes(term)))
+        : [];
+      const localTitleIds = new Set(localTitleMatches.map((item) => item.id));
+      const localContentMatches = term
+        ? sortByPublishedRecency(searchableItems.filter((item) =>
+            !localTitleIds.has(item.id) && normalizeSearchPhrase(searchableContentText(item)).includes(term)
+          ))
+        : [];
+      const localProfileMatches = term
+        ? profileList.filter((person) =>
+            normalizeSearchPhrase([person.name, person.handle, person.role, person.location, person.bio, ...person.fields].join(" ")).includes(term)
+          ).slice(0, 8)
+        : [];
+      const visibleSearchResults = remoteSearchResults ?? {
+        titleMatches: localTitleMatches,
+        contentMatches: localContentMatches,
+        profileMatches: localProfileMatches
+      };
       return {
         surface: "search",
         route: "/search",
         title: searchQuery.trim() ? `Search: ${searchQuery.trim()}` : "Search",
         summary: "The global Symposium search overlay is open.",
-        content: searchQuery.trim() ? `Current search query: ${searchQuery.trim()}` : "No search query has been entered yet.",
-        metadata: { query: searchQuery.trim() }
+        content: trimContent([
+          searchQuery.trim() ? `Current search query: ${searchQuery.trim()}` : "No search query has been entered yet.",
+          visibleSearchResults.titleMatches.length || visibleSearchResults.contentMatches.length
+            ? [
+                "Visible post results:",
+                ...[...visibleSearchResults.titleMatches, ...visibleSearchResults.contentMatches]
+                  .slice(0, 16)
+                  .map(tabletItemLine)
+              ].join("\n\n")
+            : "No post results are currently visible.",
+          visibleSearchResults.profileMatches.length
+            ? [
+                "Visible researcher results:",
+                ...visibleSearchResults.profileMatches.slice(0, 8).map((person) =>
+                  `${person.name} (${person.handle}) · ${person.role}\n${person.bio}`
+                )
+              ].join("\n\n")
+            : "No researcher results are currently visible."
+        ].join("\n\n")),
+        metadata: {
+          query: searchQuery.trim(),
+          postResultCount: visibleSearchResults.titleMatches.length + visibleSearchResults.contentMatches.length,
+          profileResultCount: visibleSearchResults.profileMatches.length,
+          loading: searchLoading
+        }
       };
     }
     if (messagesOpen) {
@@ -4028,6 +4101,7 @@ function SymposiumExperience({
       };
     }
     if (selectedItem) {
+      const discussion = tabletDiscussionText(selectedItem.comments, selectedCommentId);
       return {
         surface: "post",
         route: `/posts/${selectedItem.id}`,
@@ -4038,11 +4112,21 @@ function SymposiumExperience({
           selectedItem.claims.length ? `Claims:\n- ${selectedItem.claims.join("\n- ")}` : "",
           selectedItem.evidence.length ? `Evidence:\n- ${selectedItem.evidence.join("\n- ")}` : "",
           selectedItem.objections.length ? `Objections:\n- ${selectedItem.objections.join("\n- ")}` : "",
-          selectedItem.tests.length ? `Tests:\n- ${selectedItem.tests.join("\n- ")}` : ""
+          selectedItem.tests.length ? `Tests:\n- ${selectedItem.tests.join("\n- ")}` : "",
+          discussion.length ? `Visible discussion:\n\n${discussion.join("\n\n")}` : "No discussion is currently visible.",
+          selectedItem.attachments?.length
+            ? `Post attachments:\n- ${selectedItem.attachments.map((attachment) => `${attachment.fileName} (${attachment.contentType})`).join("\n- ")}`
+            : ""
         ].filter(Boolean).join("\n\n")),
         entityType: "post",
         entityId: selectedItem.id,
-        metadata: { kind: selectedItem.kind, status: selectedItem.status, selectedCommentId: selectedCommentId ?? "" }
+        metadata: {
+          kind: selectedItem.kind,
+          status: selectedItem.status,
+          selectedCommentId: selectedCommentId ?? "",
+          visibleCommentCount: discussion.length,
+          attachmentCount: selectedItem.attachments?.length ?? 0
+        }
       };
     }
     if (selectedCommunity) {
@@ -4075,15 +4159,24 @@ function SymposiumExperience({
         metadata: { section: workspaceView.section, editing: workspaceView.editSelected }
       };
     }
+    const visibleFeedContext = visibleItems.slice(0, 12).map(tabletItemLine);
     return {
       surface: activeRoom === "hall" ? "hall" : "room",
       route: activeRoom === "hall" ? "/" : `/rooms/${activeRoom}`,
       title: activeRoomData.name,
       summary: activeRoomData.description,
-      content: `${activeRoomData.title}\n\nFeed: ${activeRoomData.feedLabel}\nLocation: ${activeRoomData.location}\nAmbient: ${activeRoomData.ambient}`,
+      content: trimContent([
+        activeRoomData.title,
+        `Feed: ${activeRoomData.feedLabel}`,
+        `Location: ${activeRoomData.location}`,
+        `Ambient: ${activeRoomData.ambient}`,
+        visibleFeedContext.length
+          ? `Visible feed items:\n\n${visibleFeedContext.join("\n\n")}`
+          : "No feed items are currently visible."
+      ].join("\n\n")),
       entityType: "room",
       entityId: activeRoom,
-      metadata: { feedScope, officeMode }
+      metadata: { feedScope, officeMode, visibleItemCount: visibleFeedContext.length }
     };
   })();
 

@@ -1492,18 +1492,27 @@ export const assistantMessageSchema = z.object({
   createdAt: z.string().optional()
 });
 
+export const assistantQuotaSchema = z.object({
+  dailyLimit: z.number().int().positive(),
+  remainingToday: z.number().int().nonnegative(),
+  monthlyBudgetUsd: z.number().positive(),
+  extremelyLimited: z.literal(true)
+});
+
+export const assistantQuotaStatusSchema = z.object({
+  enabled: z.boolean(),
+  providerConfigured: z.boolean(),
+  model: z.string(),
+  quota: assistantQuotaSchema
+});
+
 export const assistantResponseSchema = z.object({
   conversationId: z.string(),
   message: assistantMessageSchema,
   providerConfigured: z.boolean(),
   status: z.enum(["answered", "provider_not_configured", "disabled", "provider_error"]),
   model: z.string().optional(),
-  quota: z.object({
-    dailyLimit: z.number().int().positive(),
-    remainingToday: z.number().int().nonnegative(),
-    monthlyBudgetUsd: z.number().positive(),
-    extremelyLimited: z.literal(true)
-  }).optional()
+  quota: assistantQuotaSchema.optional()
 });
 
 export const bootstrapResponseSchema = z.object({
@@ -1637,6 +1646,7 @@ export type DiscardScribbleInputContract = z.infer<typeof discardScribbleInputSc
 export type RestoreScribbleInputContract = z.infer<typeof restoreScribbleInputSchema>;
 export type PublishNoteInputContract = z.infer<typeof publishNoteInputSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
+export type AssistantQuotaStatusContract = z.infer<typeof assistantQuotaStatusSchema>;
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;
 
 export const procedureNames = [

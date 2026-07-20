@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import {
   assistantMessageInputSchema,
+  type AssistantQuotaStatusContract,
   type AssistantResponseContract
 } from "../../../../packages/contracts/src";
 import { env } from "../config/env";
-import { hasDatabase } from "../db/client";
+import { getPool, hasDatabase } from "../db/client";
 import { actualCostMicros, reserveCostMicros, usdToMicros } from "../services/aiBudget";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import type { Actor } from "../services/auth";
@@ -61,6 +62,31 @@ const unavailableResponse = (
       body,
       createdAt: new Date().toISOString()
     }
+  };
+};
+
+export const getAssistantQuota = async (actor: Actor): Promise<AssistantQuotaStatusContract> => {
+  if (!hasDatabase()) {
+    return {
+      enabled: false,
+      providerConfigured: Boolean(env.OPENAI_API_KEY),
+      model: env.SYMPOSIUM_AI_MODEL,
+      quota: quota(0)
+    };
+  }
+  const owner = await ensureProfileHandle(actorHandle(actor));
+  await ensureLiveData();
+  const usage = await getPool().query<{ usedToday: number }>(
+    `SELECT count(*)::int AS "usedToday"
+     FROM ai_usage
+     WHERE owner_handle = $1 AND created_at >= date_trunc('day', now())`,
+    [owner]
+  );
+  return {
+    enabled: env.SYMPOSIUM_AI_ENABLED,
+    providerConfigured: Boolean(env.OPENAI_API_KEY),
+    model: env.SYMPOSIUM_AI_MODEL,
+    quota: quota(env.SYMPOSIUM_AI_USER_DAILY_LIMIT - (usage.rows[0]?.usedToday ?? 0))
   };
 };
 

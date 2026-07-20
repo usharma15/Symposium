@@ -2,6 +2,9 @@ import type { FastifyRequest } from "fastify";
 import { getActorFromRequest, requireActor } from "../services/auth";
 import { rateLimit } from "../services/rateLimit";
 
+export const withReadActor = async (request: FastifyRequest) =>
+  requireActor(await getActorFromRequest(request));
+
 export const withWriteActor = async (
   request: FastifyRequest,
   options: { shared?: boolean; scope?: string; limit?: number; windowSeconds?: number } = {}

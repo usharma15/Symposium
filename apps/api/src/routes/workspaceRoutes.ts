@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { withWriteActor } from "../http/actors";
+import { withReadActor, withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
 import { mutationContextFromRequest } from "../services/mutations";
-import { askAssistant } from "../repository/assistant";
+import { askAssistant, getAssistantQuota } from "../repository/assistant";
 import { createOpportunity, listOpportunities } from "../repository/opportunities";
 import { saveNoteBlock } from "../repository/workspace";
 import {
@@ -451,6 +451,14 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
         mutationContextFromRequest(request, "note.publish", request.body)
       );
       return reply.send(publication);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/assistant/quota", async (request, reply) => {
+    try {
+      return reply.send(await getAssistantQuota(await withReadActor(request)));
     } catch (error) {
       return sendError(app, reply, error);
     }

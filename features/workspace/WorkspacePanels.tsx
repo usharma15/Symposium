@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AlertTriangle, BrainCircuit, Send, Sparkles, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
-import type { AssistantMessageInputContract, AssistantResponseContract } from "@/packages/contracts/src";
+import type {
+  AssistantMessageInputContract,
+  AssistantQuotaStatusContract,
+  AssistantResponseContract
+} from "@/packages/contracts/src";
 
 type TabletContext = AssistantMessageInputContract["context"];
 type TabletMessage = { id: string; role: "user" | "assistant"; body: string };
@@ -37,7 +41,33 @@ export function TabletPanel({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [remainingToday, setRemainingToday] = useState(3);
+  const [quotaLoading, setQuotaLoading] = useState(true);
+  const [dailyLimit, setDailyLimit] = useState(3);
+  const [remainingToday, setRemainingToday] = useState(0);
+  const [monthlyBudgetUsd, setMonthlyBudgetUsd] = useState(40);
+
+  useEffect(() => {
+    let cancelled = false;
+    setQuotaLoading(true);
+    setError("");
+    void symposiumApi.request<AssistantQuotaStatusContract>("/api/assistant/quota", { cache: "no-store" })
+      .then((status) => {
+        if (cancelled) return;
+        setDailyLimit(status.quota.dailyLimit);
+        setRemainingToday(status.quota.remainingToday);
+        setMonthlyBudgetUsd(status.quota.monthlyBudgetUsd);
+        if (!status.enabled) setError("The AI Tablet is currently switched off.");
+        else if (!status.providerConfigured) setError("The AI Tablet model provider is not configured.");
+      })
+      .catch((caught) => {
+        if (cancelled) return;
+        setError(caught instanceof SymposiumApiError ? caught.message : "The current AI allowance could not be loaded.");
+      })
+      .finally(() => {
+        if (!cancelled) setQuotaLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     setConversationId(undefined);
@@ -62,7 +92,7 @@ export function TabletPanel({
   const submit = async (event?: FormEvent, suggestedPrompt?: string) => {
     event?.preventDefault();
     const message = (suggestedPrompt ?? draft).trim();
-    if (!message || busy || remainingToday <= 0) return;
+    if (!message || busy || quotaLoading || remainingToday <= 0) return;
     const userMessage: TabletMessage = { id: createClientMutationId("assistant-user"), role: "user", body: message };
     setMessages((current) => [...current, userMessage]);
     setDraft("");
@@ -112,7 +142,7 @@ export function TabletPanel({
         <AlertTriangle size={15} />
         <div>
           <strong>Extremely limited beta</strong>
-          <span>Only {remainingToday} of 3 answers left today. Capacity is shared and AI stops at the daily or $40 monthly app cap.</span>
+          <span>{quotaLoading ? "Loading today’s tiny AI allowance…" : `Only ${remainingToday} of ${dailyLimit} answers left today. Capacity is shared and AI stops at the daily or $${monthlyBudgetUsd} monthly app cap.`}</span>
           <small>Opening and browsing cost nothing. Only Send shares this view with the model and uses an answer.</small>
         </div>
       </section>
@@ -135,7 +165,7 @@ export function TabletPanel({
 
       {messages.length === 1 ? <div className="tablet-prompts">
         {prompts.map((prompt) => (
-          <button type="button" key={prompt} disabled={busy || remainingToday <= 0} onClick={() => void submit(undefined, prompt)}>
+          <button type="button" key={prompt} disabled={busy || quotaLoading || remainingToday <= 0} onClick={() => void submit(undefined, prompt)}>
             <Sparkles size={13} />{prompt}
           </button>
         ))}
@@ -154,10 +184,10 @@ export function TabletPanel({
           }}
           maxLength={2000}
           rows={2}
-          placeholder={remainingToday > 0 ? "Ask about this exact view" : "Daily AI limit reached"}
-          disabled={busy || remainingToday <= 0}
+          placeholder={quotaLoading ? "Loading AI allowance" : remainingToday > 0 ? "Ask about this exact view" : "Daily AI limit reached"}
+          disabled={busy || quotaLoading || remainingToday <= 0}
         />
-        <button type="submit" className="primary" disabled={busy || !draft.trim() || remainingToday <= 0} title="Send one limited AI request">
+        <button type="submit" className="primary" disabled={busy || quotaLoading || !draft.trim() || remainingToday <= 0} title="Send one limited AI request">
           <Send size={15} /><span>Send · uses 1</span>
         </button>
       </form>
