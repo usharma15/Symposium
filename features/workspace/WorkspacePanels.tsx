@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, Languages, LoaderCircle, Save, Send, Sparkles, X } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, Languages, LoaderCircle, Save, Send, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import type {
   AssistantQuickNoteResultContract,
@@ -148,8 +148,6 @@ export function TabletPanel({
   const [dailyLimit, setDailyLimit] = useState(3);
   const [remainingToday, setRemainingToday] = useState(0);
   const [monthlyBudgetUsd, setMonthlyBudgetUsd] = useState(40);
-  const [translationLanguage, setTranslationLanguage] = useState<AssistantTranslationLanguageContract>("spanish");
-  const [pendingIntent, setPendingIntent] = useState<"answer" | "translate" | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -190,42 +188,19 @@ export function TabletPanel({
     return () => window.cancelAnimationFrame(frame);
   }, [busy, messages.length]);
 
-  const prompts = useMemo(() => {
-    if (context.surface === "post" || context.surface === "opportunity") {
-      return ["What is the strongest unresolved objection?", "What should I verify next?", "Explain the core claim plainly."];
-    }
-    if (context.surface === "workspace") {
-      return ["What is unclear in this draft?", "Find the weakest inference.", "What is the smallest useful next revision?"];
-    }
-    if (context.surface === "profile") {
-      return ["Summarize this researcher’s focus.", "What work here is most relevant?", "What could I ask them?"];
-    }
-    return ["Summarize what I’m looking at.", "What deserves attention first?", "What is missing from this view?"];
-  }, [context.surface]);
-
-  const submit = async (
-    event?: FormEvent,
-    suggestedPrompt?: string,
-    options: {
-      intent?: "answer" | "translate";
-      targetLanguage?: AssistantTranslationLanguageContract;
-      displayMessage?: string;
-    } = {}
-  ) => {
+  const submit = async (event?: FormEvent) => {
     event?.preventDefault();
-    const message = (suggestedPrompt ?? draft).trim();
+    const message = draft.trim();
     if (!message || busy || quotaLoading || remainingToday <= 0) return;
-    const intent = options.intent ?? "answer";
     const userMessage: TabletMessage = {
       id: createClientMutationId("assistant-user"),
       role: "user",
-      body: options.displayMessage ?? message
+      body: message
     };
     setMessages((current) => [...current, userMessage]);
     setDraft("");
     setError("");
     setBusy(true);
-    setPendingIntent(intent);
     try {
       const response = await symposiumApi.request<AssistantResponseContract>("/api/assistant/messages", {
         method: "POST",
@@ -234,8 +209,6 @@ export function TabletPanel({
           actorHandle,
           conversationId,
           message,
-          intent,
-          ...(intent === "translate" && options.targetLanguage ? { targetLanguage: options.targetLanguage } : {}),
           contextType: contextType(context.surface),
           contextId: context.entityId,
           context
@@ -257,18 +230,7 @@ export function TabletPanel({
       setError(message);
     } finally {
       setBusy(false);
-      setPendingIntent(null);
     }
-  };
-
-  const translate = () => {
-    const instruction = draft.trim() || "Translate the exact source currently shown. If several sources are present, prioritize the selected or visibly active material.";
-    const language = translationLanguageLabels[translationLanguage];
-    void submit(undefined, instruction, {
-      intent: "translate",
-      targetLanguage: translationLanguage,
-      displayMessage: draft.trim() ? `Translate into ${language}: ${draft.trim()}` : `Translate this view into ${language}.`
-    });
   };
 
   return (
@@ -286,28 +248,7 @@ export function TabletPanel({
         <div>
           <strong>Extremely limited beta</strong>
           <span>{quotaLoading ? "Loading today’s tiny AI allowance…" : `Only ${remainingToday} of ${dailyLimit} answers left today. Capacity is shared and AI stops at the daily or $${monthlyBudgetUsd} monthly app cap.`}</span>
-          <small>Opening and browsing cost nothing. Send and Translate each use one answer; saving an approved note uses no AI.</small>
         </div>
-      </section>
-
-      <section className="tablet-context-card">
-        <span>Looking at now · {context.surface}</span>
-        <strong>{context.title}</strong>
-        {context.summary ? <p>{context.summary}</p> : null}
-      </section>
-
-      <section className="tablet-translation-controls" aria-label="Translate current view">
-        <label>
-          <Languages size={14} />
-          <span>Translate to</span>
-          <select value={translationLanguage} disabled={busy || quotaLoading} onChange={(event) => setTranslationLanguage(event.target.value as AssistantTranslationLanguageContract)}>
-            {Object.entries(translationLanguageLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <button type="button" disabled={busy || quotaLoading || remainingToday <= 0} onClick={translate}>
-          <Languages size={13} />Translate · uses 1
-        </button>
-        <small>Selection first. Otherwise describe the post or attachment in the box below, or leave it blank for the current view.</small>
       </section>
 
       <div className="tablet-transcript" aria-live="polite" ref={transcriptRef}>
@@ -325,16 +266,8 @@ export function TabletPanel({
             ) : null}
           </article>
         ))}
-        {busy ? <article className="tablet-message assistant pending"><span>Tablet</span><p>{pendingIntent === "translate" ? `Translating the bounded source into ${translationLanguageLabels[translationLanguage]}…` : "Reading this view and thinking…"}</p></article> : null}
+        {busy ? <article className="tablet-message assistant pending"><span>Tablet</span><p>Reading this view and thinking…</p></article> : null}
       </div>
-
-      {messages.length === 1 ? <div className="tablet-prompts">
-        {prompts.map((prompt) => (
-          <button type="button" key={prompt} disabled={busy || quotaLoading || remainingToday <= 0} onClick={() => void submit(undefined, prompt)}>
-            <Sparkles size={13} />{prompt}
-          </button>
-        ))}
-      </div> : null}
 
       {error ? <div className="tablet-error" role="alert">{error}</div> : null}
       <form className="tablet-composer" onSubmit={(event) => void submit(event)}>
@@ -349,7 +282,7 @@ export function TabletPanel({
           }}
           maxLength={2000}
           rows={2}
-          placeholder={quotaLoading ? "Loading AI allowance" : remainingToday > 0 ? "Ask, or name exactly what to translate" : "Daily AI limit reached"}
+          placeholder={quotaLoading ? "Loading AI allowance" : remainingToday > 0 ? "Ask about this view" : "Daily AI limit reached"}
           disabled={busy || quotaLoading || remainingToday <= 0}
         />
         <button type="submit" className="primary" disabled={busy || quotaLoading || !draft.trim() || remainingToday <= 0} title="Send one limited AI request">
