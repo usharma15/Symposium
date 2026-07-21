@@ -132,25 +132,44 @@ for (const asset of allHistoricalAssets) {
   assert.equal(statSync(path).size, asset.byteSize, `Byte-size drift for ${asset.fileName}`);
   assert.ok(!/strategy.*2032/i.test(asset.fileName));
 }
-for (const fileName of [
+const normalizedPaperFileNames = [
   "plato-ion.pdf",
   "meitner-frisch-disintegration-uranium.pdf",
-  "watson-crick-molecular-structure-nucleic-acids.pdf"
-]) {
+  "watson-crick-molecular-structure-nucleic-acids.pdf",
+  "heisenberg-quantum-theoretical-kinematics.pdf",
+  "feynman-space-time-approach-qm.pdf",
+  "godel-incompleteness.pdf",
+  "nash-equilibrium-points-n-person-games.pdf"
+] as const;
+for (const fileName of normalizedPaperFileNames) {
   const asset = allHistoricalAssets.find((entry) => entry.fileName === fileName);
   assert.ok(asset, `Missing normalized paper asset: ${fileName}`);
   const editionNote = asset.metadata?.editionNote;
   if (typeof editionNote !== "string") throw new Error(`Missing edition note for normalized paper: ${fileName}`);
   assert.match(editionNote, /clean reading edition|browser-compatible RGB reproduction/i);
 }
-assert.equal(
-  allHistoricalAssets.find((asset) => asset.fileName === "meitner-frisch-disintegration-uranium.pdf")?.metadata?.searchableEdition,
-  false
+for (const fileName of normalizedPaperFileNames.filter((name) => name !== "plato-ion.pdf")) {
+  assert.equal(
+    allHistoricalAssets.find((asset) => asset.fileName === fileName)?.metadata?.searchableEdition,
+    false,
+    `${fileName} must disclose that its compatibility reproduction is image-based.`
+  );
+}
+const normalizationSource = readFileSync(join(process.cwd(), "scripts/normalizeHistoricalPapers.py"), "utf8");
+for (const requiredCompatibilityGuard of [
+  "COMPATIBILITY_PAPERS",
+  "MINIMUM_PAGE_INK_RATIO",
+  "page_ink_ratio",
+  "validate_compatibility_pdf",
+  "/DCTDecode",
+  "/DeviceRGB"
+]) assert.ok(
+  normalizationSource.includes(requiredCompatibilityGuard),
+  `Missing historical PDF compatibility guard: ${requiredCompatibilityGuard}`
 );
-assert.equal(
-  allHistoricalAssets.find((asset) => asset.fileName === "watson-crick-molecular-structure-nucleic-acids.pdf")?.metadata?.searchableEdition,
-  false
-);
+for (const fileName of normalizedPaperFileNames.filter((name) => name !== "plato-ion.pdf")) {
+  assert.ok(normalizationSource.includes(fileName), `${fileName} is not covered by the reproducible PDF compatibility pass.`);
+}
 assert.ok(!existsSync(join(process.cwd(), "public/historical-world/images/71baeb5b116f780a78c3edf795671b5e.jpg")));
 
 const fixtureSource = readFileSync(join(process.cwd(), "apps/api/src/repository/historicalWorldFixtures.ts"), "utf8");
@@ -168,6 +187,9 @@ for (const requiredBoundary of [
 ]) assert.ok(fixtureSource.includes(requiredBoundary), `Missing replacement safety boundary: ${requiredBoundary}`);
 assert.match(fixtureSource, /historical-world-v2-casual-activity/);
 assert.match(localStoreSource, /historical-world-v2-casual-activity/);
+assert.match(fixtureSource, /historical-world-assets-v1-pdfjs-compatibility/);
+assert.match(fixtureSource, /syncHistoricalWorldAssetFixtures/);
+assert.match(fixtureSource, /await upsertHistoricalAttachments\(client\)/);
 assert.match(fixtureSource, /INSERT INTO comment_actions/);
 assert.match(fixtureSource, /ON CONFLICT \(id\) DO UPDATE SET[\s\S]+author_handle = EXCLUDED\.author_handle/);
 

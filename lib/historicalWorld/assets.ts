@@ -50,18 +50,18 @@ export const historicalPapers = {
   bell: paper(1, "bell-on-the-einstein-podolsky-rosen-paradox.pdf", 435350, "On the Einstein Podolsky Rosen Paradox", "John S. Bell", "1964", "https://doi.org/10.1103/PhysicsPhysiqueFizika.1.195"),
   aristotleDreams: paper(2, "aristotle-on-dreams.pdf", 189522, "On Dreams", "Aristotle", "4th century BCE", "https://classics.mit.edu/Aristotle/dreams.html"),
   einstein: paper(3, "einstein-electrodynamics-moving-bodies.pdf", 248064, "On the Electrodynamics of Moving Bodies", "Albert Einstein", "1905", "https://einsteinpapers.press.princeton.edu/vol2-trans/154"),
-  feynman: paper(4, "feynman-space-time-approach-qm.pdf", 1896566, "Space-Time Approach to Non-Relativistic Quantum Mechanics", "Richard P. Feynman", "1948", "https://doi.org/10.1103/RevModPhys.20.367"),
-  godel: paper(5, "godel-incompleteness.pdf", 1456134, "On Formally Undecidable Propositions", "Kurt Gödel", "1931", "https://doi.org/10.1007/BF01700692"),
-  heisenberg: paper(6, "heisenberg-quantum-theoretical-kinematics.pdf", 666828, "Quantum-Theoretical Re-Interpretation of Kinematic and Mechanical Relations", "Werner Heisenberg", "1925", "https://doi.org/10.1007/BF01328377"),
+  feynman: paper(4, "feynman-space-time-approach-qm.pdf", 11538227, "Space-Time Approach to Non-Relativistic Quantum Mechanics", "Richard P. Feynman", "1948", "https://doi.org/10.1103/RevModPhys.20.367", "Browser-compatible RGB reproduction of the supplied 21-page journal scan.", false),
+  godel: paper(5, "godel-incompleteness.pdf", 9184479, "On Formally Undecidable Propositions", "Kurt Gödel", "1931", "https://doi.org/10.1007/BF01700692", "Browser-compatible RGB reproduction of the supplied 26-page journal scan.", false),
+  heisenberg: paper(6, "heisenberg-quantum-theoretical-kinematics.pdf", 4117975, "Quantum-Theoretical Re-Interpretation of Kinematic and Mechanical Relations", "Werner Heisenberg", "1925", "https://doi.org/10.1007/BF01328377", "Browser-compatible RGB reproduction of the supplied 15-page journal scan.", false),
   platoIon: paper(7, "plato-ion.pdf", 25085, "Ion", "Plato", "c. 4th century BCE", "https://www.gutenberg.org/ebooks/1635", "Clean reading edition typeset from the supplied Benjamin Jowett text; captured browser markup and print footers removed."),
   aristotleLongevity: paper(8, "aristotle-length-shortness-life.pdf", 158589, "On Length and Shortness of Life", "Aristotle", "4th century BCE", "https://classics.mit.edu/Aristotle/life_short.html"),
-  meitnerFrisch: paper(9, "meitner-frisch-disintegration-uranium.pdf", 2851487, "Disintegration of Uranium by Neutrons: a New Type of Nuclear Reaction", "Lise Meitner and O. R. Frisch", "1939", "https://doi.org/10.1038/143239a0", "Browser-compatible RGB reproduction of the supplied two-page Nature scan.", false),
+  meitnerFrisch: paper(9, "meitner-frisch-disintegration-uranium.pdf", 1416659, "Disintegration of Uranium by Neutrons: a New Type of Nuclear Reaction", "Lise Meitner and O. R. Frisch", "1939", "https://doi.org/10.1038/143239a0", "Browser-compatible RGB reproduction of the supplied two-page Nature scan.", false),
   aristotleMemory: paper(10, "aristotle-memory-reminiscence.pdf", 192381, "On Memory and Reminiscence", "Aristotle", "4th century BCE", "https://classics.mit.edu/Aristotle/memory.html"),
-  nash: paper(11, "nash-equilibrium-points-n-person-games.pdf", 262598, "Equilibrium Points in N-Person Games", "John F. Nash Jr.", "1950", "https://doi.org/10.1073/pnas.36.1.48"),
+  nash: paper(11, "nash-equilibrium-points-n-person-games.pdf", 776710, "Equilibrium Points in N-Person Games", "John F. Nash Jr.", "1950", "https://doi.org/10.1073/pnas.36.1.48", "Browser-compatible RGB reproduction of the supplied two-page journal scan.", false),
   platoApology: paper(12, "plato-apology.pdf", 69704, "Apology", "Plato", "c. 399 BCE", "https://www.gutenberg.org/ebooks/1656"),
   aristotleDivination: paper(13, "aristotle-divination-sleep.pdf", 156732, "On Divination in Sleep", "Aristotle", "4th century BCE", "https://classics.mit.edu/Aristotle/divination.html"),
   platoSymposium: paper(14, "plato-symposium.pdf", 661764, "Symposium", "Plato", "c. 385–370 BCE", "https://www.gutenberg.org/ebooks/1600"),
-  watsonCrick: paper(15, "watson-crick-molecular-structure-nucleic-acids.pdf", 2908849, "Molecular Structure of Nucleic Acids", "J. D. Watson and F. H. C. Crick", "1953", "https://doi.org/10.1038/171737a0", "Browser-compatible RGB reproduction of the supplied two-page Nature scan.", false)
+  watsonCrick: paper(15, "watson-crick-molecular-structure-nucleic-acids.pdf", 1452289, "Molecular Structure of Nucleic Acids", "J. D. Watson and F. H. C. Crick", "1953", "https://doi.org/10.1038/171737a0", "Browser-compatible RGB reproduction of the supplied two-page Nature scan.", false)
 } as const;
 
 const image = (sequence: number, fileName: string, byteSize: number, caption: string) => asset({

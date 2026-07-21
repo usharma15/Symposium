@@ -6,6 +6,7 @@ import { historicalInquiryItems, historicalWorldCounts } from "@/lib/historicalW
 import type { HistoricalAsset } from "@/lib/historicalWorld/assets";
 
 export const historicalWorldFixtureRevision = "historical-world-v2-casual-activity";
+export const historicalWorldAssetFixtureRevision = "historical-world-assets-v1-pdfjs-compatibility";
 
 type FlatComment = InquiryCommentContract & { postId: string; parentId: string | null };
 
@@ -633,7 +634,7 @@ const insertPosts = async (client: PoolClient) => {
   );
 };
 
-const insertAttachmentsAndActions = async (client: PoolClient) => {
+const historicalAttachmentRows = () => {
   const attachmentRows: Array<{ asset: HistoricalAsset; ownerType: "post" | "comment"; ownerId: string; uploaderHandle: string }> = [];
   for (const entry of historicalInquiryItems) {
     for (const asset of entry.attachments ?? []) attachmentRows.push({ asset: asset as HistoricalAsset, ownerType: "post", ownerId: entry.id, uploaderHandle: entry.authorHandle! });
@@ -641,6 +642,11 @@ const insertAttachmentsAndActions = async (client: PoolClient) => {
   for (const entry of allComments) {
     for (const asset of entry.attachments ?? []) attachmentRows.push({ asset: asset as HistoricalAsset, ownerType: "comment", ownerId: entry.id!, uploaderHandle: entry.authorHandle! });
   }
+  return attachmentRows;
+};
+
+const upsertHistoricalAttachments = async (client: PoolClient) => {
+  const attachmentRows = historicalAttachmentRows();
   await client.query(
     `INSERT INTO attachments (
        id, owner_type, owner_id, uploader_handle, bucket, object_key, upload_object_key,
@@ -671,6 +677,10 @@ const insertAttachmentsAndActions = async (client: PoolClient) => {
       created_at: asset.createdAt
     })))]
   );
+};
+
+const insertAttachmentsAndActions = async (client: PoolClient) => {
+  await upsertHistoricalAttachments(client);
 
   const actionRows = historicalInquiryItems.flatMap((entry) => ([
     ["save", entry.savedBy ?? []],
@@ -801,4 +811,14 @@ export const syncHistoricalWorldFixtures = async (client: PoolClient) => {
   await client.query("INSERT INTO fixture_revisions (id) VALUES ($1)", [historicalWorldFixtureRevision]);
 
   return { applied: true as const, revision: historicalWorldFixtureRevision, manifest };
+};
+
+export const syncHistoricalWorldAssetFixtures = async (client: PoolClient) => {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [historicalWorldAssetFixtureRevision]);
+  const applied = await client.query("SELECT 1 FROM fixture_revisions WHERE id = $1", [historicalWorldAssetFixtureRevision]);
+  if (applied.rowCount) return { applied: false as const, revision: historicalWorldAssetFixtureRevision };
+
+  await upsertHistoricalAttachments(client);
+  await client.query("INSERT INTO fixture_revisions (id) VALUES ($1)", [historicalWorldAssetFixtureRevision]);
+  return { applied: true as const, revision: historicalWorldAssetFixtureRevision };
 };

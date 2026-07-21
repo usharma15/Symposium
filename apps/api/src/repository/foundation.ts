@@ -23,7 +23,7 @@ import {
 } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { seededCommunityCallMap } from "@/lib/communityFixtures";
-import { syncHistoricalWorldFixtures } from "./historicalWorldFixtures";
+import { syncHistoricalWorldAssetFixtures, syncHistoricalWorldFixtures } from "./historicalWorldFixtures";
 import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
 import { activeCommunityAnnouncements } from "@/lib/communityAnnouncements";
 import { postTypeForItem } from "@/lib/postSemantics";
@@ -903,11 +903,17 @@ const seedDatabase = async () => {
   try {
     await client.query("BEGIN");
     const result = await syncHistoricalWorldFixtures(client);
+    const assetResult = await syncHistoricalWorldAssetFixtures(client);
     await client.query("COMMIT");
     if (result.applied) {
       console.info("Historical world fixture replacement applied.", {
         revision: result.revision,
         manifest: result.manifest
+      });
+    }
+    if (assetResult.applied) {
+      console.info("Historical world attachment metadata refresh applied.", {
+        revision: assetResult.revision
       });
     }
   } catch (error) {

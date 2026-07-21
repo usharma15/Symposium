@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Build browser-compatible reading editions for problematic historical PDFs.
+"""Build and validate browser-compatible editions of historical PDFs.
 
-The supplied Nature scans use an image encoding that Poppler renders correctly but
-PDF.js does not display in Symposium. The supplied Ion PDF is a print-to-PDF of an
-old cached HTML page. This script keeps the Nature page images intact in appearance
-while re-encoding them as ordinary RGB JPEG pages, and typesets a clean Ion reading
-edition from the text already present in the supplied file.
+Several supplied journal scans render in desktop PDF readers and Poppler but lose
+their principal page layer in PDF.js. The compatibility set below is deliberately
+declarative: every affected scan is rendered to an ordinary baseline RGB JPEG per
+page, wrapped in a deterministic PDF, and rejected if any page has no meaningful
+ink or does not use the expected PDF.js-safe image encoding.
+
+The supplied Ion PDF is a separate case: a print-to-PDF of an old cached HTML page.
+It is typeset as a clean, searchable reading edition from its embedded dialogue.
 """
 
 from __future__ import annotations
@@ -34,6 +37,47 @@ from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE_DIRECTORY = Path.home() / "Downloads" / "Characters and their papers"
 OUTPUT_DIRECTORY = REPO_ROOT / "public" / "historical-world" / "papers"
+COMPATIBILITY_PAPERS = (
+    (
+        "Meitner and Frisch.pdf",
+        "meitner-frisch-disintegration-uranium.pdf",
+        "Disintegration of Uranium by Neutrons: a New Type of Nuclear Reaction",
+        "Lise Meitner and O. R. Frisch",
+    ),
+    (
+        "Watson and Crick.pdf",
+        "watson-crick-molecular-structure-nucleic-acids.pdf",
+        "Molecular Structure of Nucleic Acids",
+        "J. D. Watson and F. H. C. Crick",
+    ),
+    (
+        "Heisenberg.pdf",
+        "heisenberg-quantum-theoretical-kinematics.pdf",
+        "Quantum-Theoretical Re-Interpretation of Kinematic and Mechanical Relations",
+        "Werner Heisenberg",
+    ),
+    (
+        "Feynman.pdf",
+        "feynman-space-time-approach-qm.pdf",
+        "Space-Time Approach to Non-Relativistic Quantum Mechanics",
+        "Richard P. Feynman",
+    ),
+    (
+        "Godel.pdf",
+        "godel-incompleteness.pdf",
+        "On Formally Undecidable Propositions",
+        "Kurt Gödel",
+    ),
+    (
+        "Nash.pdf",
+        "nash-equilibrium-points-n-person-games.pdf",
+        "Equilibrium Points in N-Person Games",
+        "John F. Nash Jr.",
+    ),
+)
+RENDER_DPI = 160
+JPEG_QUALITY = 86
+MINIMUM_PAGE_INK_RATIO = 0.002
 
 
 def pdftoppm_binary() -> str:
@@ -44,14 +88,54 @@ def pdftoppm_binary() -> str:
     return discovered
 
 
-def compatibility_scan(source: Path, destination: Path, title: str, author: str) -> None:
+def page_ink_ratio(image: Image.Image) -> float:
+    """Return the fraction of pixels carrying visible content rather than paper."""
+
+    grayscale = image.convert("L")
+    histogram = grayscale.histogram()
+    ink_pixels = sum(histogram[:245])
+    return ink_pixels / (grayscale.width * grayscale.height)
+
+
+def validate_compatibility_pdf(path: Path, expected_pages: int) -> None:
+    """Assert that every output page is a single baseline RGB JPEG image."""
+
+    reader = PdfReader(str(path))
+    if len(reader.pages) != expected_pages:
+        raise RuntimeError(f"Generated {len(reader.pages)} pages for {path.name}; expected {expected_pages}")
+    for page_number, page in enumerate(reader.pages, start=1):
+        resources = page.get("/Resources") or {}
+        xobjects = resources.get("/XObject") or {}
+        images = [entry.get_object() for entry in xobjects.values() if entry.get_object().get("/Subtype") == "/Image"]
+        if len(images) != 1:
+            raise RuntimeError(f"{path.name} page {page_number} has {len(images)} image layers; expected one")
+        image = images[0]
+        filters = image.get("/Filter")
+        filter_names = {str(value) for value in filters} if isinstance(filters, list) else {str(filters)}
+        if "/DCTDecode" not in filter_names or image.get("/ColorSpace") != "/DeviceRGB":
+            raise RuntimeError(
+                f"{path.name} page {page_number} is not a baseline RGB JPEG "
+                f"({image.get('/Filter')}, {image.get('/ColorSpace')})"
+            )
+
+
+def compatibility_scan(source: Path, destination: Path, title: str, author: str) -> list[float]:
     """Re-encode scanned pages as baseline RGB JPEGs understood by PDF.js."""
 
     reader = PdfReader(str(source))
     with tempfile.TemporaryDirectory(prefix="historical-paper-") as temp_directory:
         prefix = Path(temp_directory) / "page"
         subprocess.run(
-            [pdftoppm_binary(), "-jpeg", "-jpegopt", "quality=93", "-r", "220", str(source), str(prefix)],
+            [
+                pdftoppm_binary(),
+                "-jpeg",
+                "-jpegopt",
+                f"quality={JPEG_QUALITY},progressive=n,optimize=y",
+                "-r",
+                str(RENDER_DPI),
+                str(source),
+                str(prefix),
+            ],
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -60,6 +144,7 @@ def compatibility_scan(source: Path, destination: Path, title: str, author: str)
         if len(rendered_pages) != len(reader.pages):
             raise RuntimeError(f"Rendered {len(rendered_pages)} pages for {source.name}; expected {len(reader.pages)}")
 
+        ink_ratios: list[float] = []
         temporary_output = Path(temp_directory) / destination.name
         pdf = canvas.Canvas(str(temporary_output), pageCompression=1, invariant=1)
         pdf.setTitle(title)
@@ -73,8 +158,15 @@ def compatibility_scan(source: Path, destination: Path, title: str, author: str)
             with Image.open(rendered_page) as image:
                 if image.mode != "RGB":
                     image = image.convert("RGB")
+                ink_ratio = page_ink_ratio(image)
+                if ink_ratio < MINIMUM_PAGE_INK_RATIO:
+                    raise RuntimeError(
+                        f"{source.name} page {page_number} has only {ink_ratio:.3%} visible ink; "
+                        "refusing to publish a blank compatibility page"
+                    )
+                ink_ratios.append(ink_ratio)
                 normalized = io.BytesIO()
-                image.save(normalized, "JPEG", quality=93, optimize=True, progressive=False)
+                image.save(normalized, "JPEG", quality=JPEG_QUALITY, optimize=True, progressive=False)
                 normalized.seek(0)
                 pdf.drawImage(
                     ImageReader(normalized),
@@ -88,6 +180,8 @@ def compatibility_scan(source: Path, destination: Path, title: str, author: str)
             pdf.showPage()
         pdf.save()
         destination.write_bytes(temporary_output.read_bytes())
+    validate_compatibility_pdf(destination, len(reader.pages))
+    return ink_ratios
 
 
 def ion_dialogue(source: Path) -> list[tuple[str | None, str]]:
@@ -241,26 +335,14 @@ def main() -> None:
     OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
     clean_ion_edition(source_directory / "ION, Plato.pdf", OUTPUT_DIRECTORY / "plato-ion.pdf")
-    compatibility_scan(
-        source_directory / "Meitner and Frisch.pdf",
-        OUTPUT_DIRECTORY / "meitner-frisch-disintegration-uranium.pdf",
-        "Disintegration of Uranium by Neutrons: a New Type of Nuclear Reaction",
-        "Lise Meitner and O. R. Frisch",
-    )
-    compatibility_scan(
-        source_directory / "Watson and Crick.pdf",
-        OUTPUT_DIRECTORY / "watson-crick-molecular-structure-nucleic-acids.pdf",
-        "Molecular Structure of Nucleic Acids",
-        "J. D. Watson and F. H. C. Crick",
-    )
-
-    for name in (
-        "plato-ion.pdf",
-        "meitner-frisch-disintegration-uranium.pdf",
-        "watson-crick-molecular-structure-nucleic-acids.pdf",
-    ):
-        path = OUTPUT_DIRECTORY / name
-        print(f"{name}: {path.stat().st_size} bytes")
+    print(f"plato-ion.pdf: {(OUTPUT_DIRECTORY / 'plato-ion.pdf').stat().st_size} bytes (searchable clean edition)")
+    for source_name, output_name, title, author in COMPATIBILITY_PAPERS:
+        output = OUTPUT_DIRECTORY / output_name
+        ink_ratios = compatibility_scan(source_directory / source_name, output, title, author)
+        print(
+            f"{output_name}: {output.stat().st_size} bytes, {len(ink_ratios)} pages, "
+            f"minimum ink {min(ink_ratios):.2%}"
+        )
 
 
 if __name__ == "__main__":
