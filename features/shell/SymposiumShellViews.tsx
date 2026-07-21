@@ -225,23 +225,27 @@ export function HallView({ onEnter }: { onEnter: (roomId: RoomId) => void }) {
 
           return (
 
-            <CanonicalLink
+            <div key={room.id} className={`hall-door-target hall-door-${room.id}`}>
 
-              key={room.id}
+              <CanonicalLink
 
-              className={`hall-door hall-door-${room.id}`}
+                className="hall-door"
 
-              aria-label={`Enter ${room.name}`}
+                aria-label={`Enter ${room.name}`}
 
-              route={canonicalRouteForRoom(room.id)}
+                route={canonicalRouteForRoom(room.id)}
 
-              onNavigate={() => onEnter(room.id)}
+                onNavigate={() => onEnter(room.id)}
 
-            >
+              >
+
+                <span aria-hidden="true" />
+
+              </CanonicalLink>
 
               <span className="hall-hover-label">{room.name}</span>
 
-            </CanonicalLink>
+            </div>
 
           );
 
