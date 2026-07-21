@@ -328,10 +328,14 @@ assert.match(repository, /assistantQuota\(prepared\.dailyLimit, prepared\.remain
 assert.match(usageService, /SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT/);
 assert.match(usageService, /SYMPOSIUM_AI_DAILY_BUDGET_USD/);
 assert.match(usageService, /SYMPOSIUM_AI_MONTHLY_BUDGET_USD/);
+assert.match(usageService, /created_at >= quota_reset\.reset_at/);
+assert.match(usageService, /monthlyCostMicros/);
 assert.match(migration, /0037_ai_usage_budget_ledger/);
 assert.match(migration, /reserved_cost_micros BIGINT NOT NULL/);
 assert.match(migration, /0038_document_translation_cache/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS document_translations/);
+assert.match(migration, /0040_owner_daily_ai_quota_reset/);
+assert.match(migration, /INSERT INTO ai_daily_quota_resets[\s\S]*SELECT 'udayan', current_date, now\(\)/);
 assert.match(route, /shared: true, scope: "assistant", limit: 10/);
 assert.match(route, /\/v1\/assistant\/document-translations/);
 assert.match(route, /\/v1\/assistant\/quick-notes/);

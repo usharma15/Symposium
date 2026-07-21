@@ -38,9 +38,14 @@ export const reserveAssistantUsage = async (
     monthlyCostMicros: string;
     usageDay: string;
   }>(
-    `SELECT
+    `WITH quota_reset AS (
+       SELECT COALESCE(max(reset_at), date_trunc('day', now())) AS reset_at
+       FROM ai_daily_quota_resets
+       WHERE owner_handle = $1 AND usage_day = current_date
+     )
+     SELECT
        count(*) FILTER (WHERE owner_handle = $1 AND created_at >= now() - interval '60 seconds')::int AS "userMinute",
-       count(*) FILTER (WHERE owner_handle = $1 AND created_at >= date_trunc('day', now()))::int AS "userDaily",
+       count(*) FILTER (WHERE owner_handle = $1 AND created_at >= quota_reset.reset_at)::int AS "userDaily",
        count(*) FILTER (WHERE created_at >= date_trunc('day', now()))::int AS "globalDaily",
        count(*) FILTER (WHERE owner_handle = $1 AND status = 'reserved' AND created_at >= now() - interval '2 minutes')::int AS "inFlight",
        COALESCE(sum(CASE WHEN status = 'completed' THEN actual_cost_micros ELSE reserved_cost_micros END)
@@ -48,7 +53,7 @@ export const reserveAssistantUsage = async (
        COALESCE(sum(CASE WHEN status = 'completed' THEN actual_cost_micros ELSE reserved_cost_micros END)
          FILTER (WHERE created_at >= date_trunc('month', now())), 0)::text AS "monthlyCostMicros",
        current_date::text AS "usageDay"
-     FROM ai_usage`,
+     FROM ai_usage CROSS JOIN quota_reset`,
     [input.owner]
   );
   const current = usage.rows[0]!;

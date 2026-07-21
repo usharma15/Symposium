@@ -91,9 +91,14 @@ export const documentTranslationFingerprint = (input: DocumentTranslationInputCo
 
 const currentQuota = async (owner: string) => {
   const usage = await getPool().query<{ usedToday: number }>(
-    `SELECT count(*)::int AS "usedToday"
-     FROM ai_usage
-     WHERE owner_handle = $1 AND created_at >= date_trunc('day', now())`,
+    `WITH quota_reset AS (
+       SELECT COALESCE(max(reset_at), date_trunc('day', now())) AS reset_at
+       FROM ai_daily_quota_resets
+       WHERE owner_handle = $1 AND usage_day = current_date
+     )
+     SELECT count(*)::int AS "usedToday"
+     FROM ai_usage CROSS JOIN quota_reset
+     WHERE owner_handle = $1 AND created_at >= quota_reset.reset_at`,
     [owner]
   );
   return assistantQuota(

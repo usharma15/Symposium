@@ -821,6 +821,21 @@ export const aiUsage = pgTable(
   ]
 );
 
+export const aiDailyQuotaResets = pgTable(
+  "ai_daily_quota_resets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerHandle: text("owner_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    usageDay: date("usage_day").notNull(),
+    resetAt: timestamp("reset_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: createdAtColumn()
+  },
+  (table) => [
+    uniqueIndex("ai_daily_quota_resets_owner_day_unique_idx").on(table.ownerHandle, table.usageDay),
+    index("ai_daily_quota_resets_day_idx").on(table.usageDay)
+  ]
+);
+
 export const documentTranslations = pgTable(
   "document_translations",
   {

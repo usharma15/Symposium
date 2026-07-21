@@ -2076,6 +2076,29 @@ const migrations: Migration[] = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
     `
+  },
+  {
+    id: "0040_owner_daily_ai_quota_reset",
+    sql: `
+      CREATE TABLE IF NOT EXISTS ai_daily_quota_resets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        usage_day DATE NOT NULL,
+        reset_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ai_daily_quota_resets_owner_day_unique_idx
+        ON ai_daily_quota_resets (owner_handle, usage_day);
+      CREATE INDEX IF NOT EXISTS ai_daily_quota_resets_day_idx
+        ON ai_daily_quota_resets (usage_day);
+
+      INSERT INTO ai_daily_quota_resets (owner_handle, usage_day, reset_at)
+      SELECT 'udayan', current_date, now()
+      WHERE EXISTS (SELECT 1 FROM profiles WHERE handle = 'udayan')
+      ON CONFLICT (owner_handle, usage_day)
+      DO UPDATE SET reset_at = EXCLUDED.reset_at;
+    `
   }
 ];
 
