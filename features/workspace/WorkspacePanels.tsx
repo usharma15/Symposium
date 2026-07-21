@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, Folder, Languages, LoaderCircle, Save, Send, X } from "lucide-react";
+import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, Folder, FolderPlus, Languages, LoaderCircle, Save, Send, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import type {
   AssistantQuickNoteResultContract,
@@ -63,6 +63,8 @@ function QuickNoteDraftCard({
   const [notebooks, setNotebooks] = useState<ScribbleSnapshot["notebooks"]>([]);
   const [notebookId, setNotebookId] = useState("");
   const [notebooksLoading, setNotebooksLoading] = useState(true);
+  const [newNotebookName, setNewNotebookName] = useState("");
+  const [creatingNotebook, setCreatingNotebook] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState<AssistantQuickNoteResultContract | null>(null);
@@ -83,6 +85,28 @@ function QuickNoteDraftCard({
     });
     return () => { cancelled = true; };
   }, [actorHandle]);
+
+  const createNotebook = async () => {
+    const name = newNotebookName.trim();
+    if (!name || creatingNotebook || saved) return;
+    setCreatingNotebook(true);
+    setError("");
+    try {
+      const result = await symposiumApi.request<{ notebook: ScribbleSnapshot["notebooks"][number] }>("/api/workspace/notebooks", {
+        method: "POST",
+        idempotencyKey: createClientMutationId("assistant-notebook"),
+        body: { actorHandle, name }
+      });
+      setNotebooks((current) => [result.notebook, ...current.filter((notebook) => notebook.id !== result.notebook.id)]);
+      setNotebookId(result.notebook.id);
+      setNewNotebookName("");
+      window.dispatchEvent(new Event("symposium-workspace-change"));
+    } catch (caught) {
+      setError(caught instanceof SymposiumApiError ? caught.message : "The Office notebook could not be created.");
+    } finally {
+      setCreatingNotebook(false);
+    }
+  };
 
   const saveQuickNote = async () => {
     const normalizedTitle = title.trim();
@@ -136,6 +160,26 @@ function QuickNoteDraftCard({
             {notebooks.map((notebook) => <option value={notebook.id} key={notebook.id}>{notebook.name}</option>)}
           </select>
         </label>
+        <div className="tablet-new-notebook">
+          <input
+            value={newNotebookName}
+            maxLength={120}
+            disabled={Boolean(saved) || creatingNotebook}
+            onChange={(event) => setNewNotebookName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void createNotebook();
+              }
+            }}
+            placeholder="New notebook name"
+            aria-label="New notebook name"
+          />
+          <button type="button" disabled={Boolean(saved) || creatingNotebook || !newNotebookName.trim()} onClick={() => void createNotebook()}>
+            {creatingNotebook ? <LoaderCircle className="spin" size={13} /> : <FolderPlus size={13} />}
+            {creatingNotebook ? "Creating…" : "Create & select"}
+          </button>
+        </div>
         {error ? <p className="tablet-action-error" role="alert">{error}</p> : null}
         {saved ? (
           <a className="tablet-note-saved" href={saved.href}>

@@ -89,6 +89,8 @@
 .tablet-quick-note-draft select { background: var(--document-control-solid); border: 1px solid var(--line); color: var(--ink); font: inherit; font-size: 0.67rem; line-height: 1.4; padding: 0.38rem 0.42rem; width: 100%; }
 .tablet-quick-note-draft textarea { max-height: 10rem; min-height: 5.2rem; resize: vertical; }
 .tablet-quick-note-draft button { align-items: center; display: flex; font-size: 0.64rem; gap: 0.3rem; justify-content: center; min-height: 2rem; width: 100%; }
+.tablet-new-notebook { display: grid; gap: 0.3rem; grid-template-columns: minmax(0, 1fr) auto; }
+.tablet-new-notebook button { min-width: 7.1rem; width: auto; }
 .tablet-action-error { color: #a83d47; font-size: 0.61rem; line-height: 1.35; margin: 0; }
 .tablet-note-saved { align-items: center; background: color-mix(in srgb, #2d7b55 12%, var(--document-control-solid)); border: 1px solid color-mix(in srgb, #2d7b55 35%, var(--line)); border-radius: 0.42rem; color: var(--ink); display: flex; font-size: 0.63rem; font-weight: 800; gap: 0.28rem; justify-content: center; min-height: 2.1rem; padding: 0.35rem 0.45rem; text-decoration: none; }
 .tablet-note-saved svg:last-child { margin-left: auto; }

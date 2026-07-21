@@ -346,6 +346,7 @@ assert.match(tablet, /Ask about this view/);
 assert.match(tablet, /Confirm & save Quick Note/);
 assert.match(tablet, /Office destination/);
 assert.match(tablet, /All · Quick Notes/);
+assert.match(tablet, /Create & select/);
 assert.match(provider, /shouldOfferQuickNote/);
 assert.doesNotMatch(tablet, /Opening and browsing cost nothing/);
 assert.doesNotMatch(tablet, /tablet-context-card/);
