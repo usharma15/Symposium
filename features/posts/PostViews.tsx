@@ -789,7 +789,7 @@ function PostAuthor({
         {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
       </span>
       <span>
-        <strong>{authorName}{communityRole ? <em className="community-role-badge">{communityRole}</em> : null}</strong>
+        <strong>{authorName}{authorProfile?.actorKind === "historical_simulation" ? <em className="historical-inline-badge" title="Historical simulation">simulation</em> : null}{communityRole ? <em className="community-role-badge">{communityRole}</em> : null}</strong>
         <small>{relativeTimeLabel(item.createdAt, item.date)}</small>
       </span>
     </CanonicalLink>
@@ -1024,7 +1024,7 @@ export function DetailView({
               {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
             </span>
             <span>
-              <strong>{authorName}{communityRole ? <em className="community-role-badge">{communityRole}</em> : null}</strong>
+              <strong>{authorName}{authorProfile?.actorKind === "historical_simulation" ? <em className="historical-inline-badge" title="Historical simulation">simulation</em> : null}{communityRole ? <em className="community-role-badge">{communityRole}</em> : null}</strong>
               <small>{relativeTimeLabel(item.createdAt, item.date)}</small>
             </span>
           </CanonicalLink>

@@ -534,15 +534,23 @@ export function ProfileView({
                 <UserRound size={17} />
                 <span>{isFollowing ? "Following" : "Follow"}</span>
               </button>
-              <button className="profile-message-button" type="button" onClick={() => onMessage(person.handle)}>
-                <MessageCircle size={17} />
-                <span>Message</span>
-              </button>
+              {person.actorKind !== "historical_simulation" ? (
+                <button className="profile-message-button" type="button" onClick={() => onMessage(person.handle)}>
+                  <MessageCircle size={17} />
+                  <span>Message</span>
+                </button>
+              ) : null}
             </div>
           )}
-          <h1>{person.name}</h1>
+          <div className="profile-name-line">
+            <h1>{person.name}</h1>
+            {person.actorKind === "historical_simulation" ? <span className="historical-simulation-badge">Historical simulation</span> : null}
+          </div>
           <p className="profile-handle">{person.handle}</p>
-          <p className="profile-bio">{person.bio.slice(0, 200)}</p>
+          {person.lifeDates || person.era ? <p className="profile-era">{[person.lifeDates, person.era].filter(Boolean).join(" · ")}</p> : null}
+          <p className="profile-bio">{person.bio}</p>
+          {person.disclosure ? <p className="profile-disclosure">{person.disclosure}</p> : null}
+          {person.sourceUrl ? <a className="profile-source-link" href={person.sourceUrl} target="_blank" rel="noopener noreferrer nofollow">Profile sources</a> : null}
           <div className="profile-social-counts" aria-label={`${person.name} social graph`}>
             <CanonicalLink
               route={{ kind: "profile", handle: person.handle, social: "following" }}

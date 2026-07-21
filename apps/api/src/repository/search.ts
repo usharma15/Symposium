@@ -156,6 +156,11 @@ export const search = async (
          profile.location,
          profile.bio,
          profile.fields,
+         profile.actor_kind AS "actorKind",
+         profile.era,
+         profile.life_dates AS "lifeDates",
+         profile.disclosure,
+         profile.source_url AS "sourceUrl",
          profile.revision
        FROM profiles profile
        CROSS JOIN query

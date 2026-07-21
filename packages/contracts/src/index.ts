@@ -354,8 +354,9 @@ export const workspaceRoleWithinCeiling = (
 
 export const documentFitsReducedEditor = (document: z.infer<typeof versionedDocumentSchema>) =>
   document.nodes.every((node) => {
-    if (!["paragraph", "equation", "attachment", "quote", "reference", "citation"].includes(node.type)) return false;
-    if (node.type !== "paragraph" && node.type !== "quote") return true;
+    if (!["paragraph", "heading", "equation", "attachment", "quote", "reference", "citation"].includes(node.type)) return false;
+    if (node.type !== "paragraph" && node.type !== "heading" && node.type !== "quote") return true;
+    if (node.type === "heading" && (node.level < 2 || node.level > 3)) return false;
     return node.content.every((run) => !run.font && !run.size && !run.color && !run.marks?.includes("code") && !run.marks?.includes("strikethrough"));
   });
 
@@ -414,6 +415,11 @@ export const researchProfileSchema = z.object({
   location: z.string().min(1),
   bio: z.string(),
   fields: z.array(z.string()).default([]),
+  actorKind: z.enum(["person", "historical_simulation", "editorial"]).optional(),
+  era: z.string().max(160).optional(),
+  lifeDates: z.string().max(120).optional(),
+  disclosure: z.string().max(600).optional(),
+  sourceUrl: safeExternalUrlSchema.optional(),
   revision: z.number().int().positive().optional()
 });
 

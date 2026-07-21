@@ -89,13 +89,13 @@ const main = async () => {
       assert.ok(Object.values(detail.profiles).every((person: any) => person.email === undefined));
     }
 
-    const profileResponse = await app.inject({ method: "GET", url: "/v1/profiles/@salma_idris", headers });
+    const profileResponse = await app.inject({ method: "GET", url: "/v1/profiles/@plato", headers });
     assert.equal(profileResponse.statusCode, 200);
     assert.equal(profileResponse.json().profile.email, undefined);
 
     const activityPageResponse = await app.inject({
       method: "GET",
-      url: "/v1/profiles/@salma_idris/activity?limit=2&actions=signal&includeComments=false&includeSummary=false",
+      url: "/v1/profiles/@plato/activity?limit=2&actions=signal&includeComments=false&includeSummary=false",
       headers
     });
     assert.equal(activityPageResponse.statusCode, 200);

@@ -65,6 +65,11 @@ export const profiles = pgTable(
     location: text("location").notNull(),
     bio: text("bio").notNull(),
     fields: jsonb("fields").$type<string[]>().default(jsonArray).notNull(),
+    actorKind: text("actor_kind").default("person").notNull(),
+    era: text("era"),
+    lifeDates: text("life_dates"),
+    disclosure: text("disclosure"),
+    sourceUrl: text("source_url"),
     preferences: jsonb("preferences").$type<Record<string, unknown>>().default(jsonObject).notNull(),
     revision: integer("revision").default(1).notNull(),
     createdAt: createdAtColumn(),
@@ -73,6 +78,8 @@ export const profiles = pgTable(
   (table) => [
     index("profiles_user_id_idx").on(table.userId),
     index("profiles_name_idx").on(table.name),
+    index("profiles_actor_kind_idx").on(table.actorKind, table.handle),
+    check("profiles_actor_kind_check", sql`${table.actorKind} IN ('person', 'historical_simulation', 'editorial')`),
     index("profiles_search_document_idx").using("gin", sql`to_tsvector('english',
       coalesce(${table.name}, '') || ' ' || coalesce(${table.handle}, '') || ' ' || coalesce(${table.role}, '') || ' ' ||
       coalesce(${table.location}, '') || ' ' || coalesce(${table.bio}, '') || ' ' || coalesce(${table.fields}::text, '')

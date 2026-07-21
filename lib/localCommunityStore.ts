@@ -29,7 +29,7 @@ type StoredMembership = {
 };
 
 type LocalCommunityState = {
-  version: 5;
+  version: 6;
   communities: ResearchCommunity[];
   memberships: Record<string, Record<string, StoredMembership>>;
   calls: CommunityCallContract[];
@@ -38,6 +38,9 @@ type LocalCommunityState = {
 const storagePath = process.env.VERCEL
   ? path.join("/tmp", "symposium-communities.json")
   : path.join(process.cwd(), ".data", "symposium-communities.json");
+const historicalCommunitySnapshotPath = process.env.VERCEL
+  ? path.join("/tmp", "historical-world-v1-communities.snapshot.json")
+  : path.join(process.cwd(), ".data", "snapshots", "historical-world-v1-communities.json");
 
 let queue: Promise<void> = Promise.resolve();
 const withLock = <T>(operation: () => Promise<T>) => {
@@ -47,7 +50,7 @@ const withLock = <T>(operation: () => Promise<T>) => {
 };
 
 const seedState = (): LocalCommunityState => ({
-  version: 5,
+  version: 6,
   communities: researchCommunities,
   memberships: Object.fromEntries(researchCommunities.map((community, communityIndex) => [
     community.id,
@@ -72,12 +75,22 @@ const readState = async (): Promise<LocalCommunityState> => {
     const parsed = JSON.parse(await readFile(storagePath, "utf8")) as Omit<Partial<LocalCommunityState>, "version"> & { version?: number };
     if (!Array.isArray(parsed.communities) || !parsed.memberships || !Array.isArray(parsed.calls)) return seedState();
     const seeded = seedState();
+    if (parsed.version !== 6) {
+      await mkdir(path.dirname(historicalCommunitySnapshotPath), { recursive: true });
+      try {
+        await writeFile(historicalCommunitySnapshotPath, `${JSON.stringify(parsed, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      } catch (error) {
+        if (!(error && typeof error === "object" && "code" in error && error.code === "EEXIST")) throw error;
+      }
+      await writeState(seeded);
+      return seeded;
+    }
     const storedById = new Map(parsed.communities.map((community) => [community.id, community]));
     const seededIds = new Set(seeded.communities.map((community) => community.id));
     const seededCommunities = seeded.communities.map((community) => {
       const stored = storedById.get(community.id);
       if (!stored) return community;
-      if (parsed.version === 4 || parsed.version === 5) return { ...community, ...stored };
+      if (parsed.version === 6) return { ...community, ...stored };
       return {
         ...stored,
         memberHandles: Array.from(new Set([...community.memberHandles, ...stored.memberHandles])),
@@ -93,8 +106,8 @@ const readState = async (): Promise<LocalCommunityState> => {
       const merged = { ...(seeded.memberships[community.id] ?? {}), ...(parsed.memberships?.[community.id] ?? {}) };
       return [community.id, Object.fromEntries(Object.entries(merged).map(([handle, membership]) => [handle, {
         ...membership,
-        role: parsed.version === 4 || parsed.version === 5 ? membership.role : seeded.memberships[community.id]?.[handle]?.role ?? membership.role,
-        joinedAt: parsed.version === 4 || parsed.version === 5
+        role: parsed.version === 6 ? membership.role : seeded.memberships[community.id]?.[handle]?.role ?? membership.role,
+        joinedAt: parsed.version === 6
           ? membership.joinedAt ?? membership.lastAccessedAt ?? new Date(0).toISOString()
           : seeded.memberships[community.id]?.[handle]?.joinedAt ?? membership.joinedAt ?? membership.lastAccessedAt ?? new Date(0).toISOString()
       }]))];
@@ -102,7 +115,7 @@ const readState = async (): Promise<LocalCommunityState> => {
     const seededCallById = new Map(seeded.calls.map((call) => [call.id, call]));
     for (const call of parsed.calls) seededCallById.set(call.id, call);
     return {
-      version: 5,
+      version: 6,
       communities,
       memberships,
       calls: [...seededCallById.values()]

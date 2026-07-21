@@ -11,10 +11,9 @@ import {
   clerkContentSecurityPolicyDirectives,
   createLocalContentSecurityPolicy
 } from "@/lib/contentSecurityPolicy";
-import { joinOrRequestCommunity } from "@/apps/api/src/repository/communities";
 import { upsertProfile } from "@/apps/api/src/repository/identity";
 import { search } from "@/apps/api/src/repository/search";
-import { getPublicInitialState } from "@/apps/api/src/repository/foundation";
+import { getPublicInitialState, publicCommunity } from "@/apps/api/src/repository/foundation";
 import { readJson } from "@/lib/api";
 import { isCrossSiteMutation } from "@/lib/requestSecurity";
 
@@ -64,14 +63,14 @@ const main = async () => {
       .filter((community) => community.visibility === "private")
       .every((community) => community.memberHandles.length === 0)
   );
-  const privateCommunity = publicState.communities?.find((community) => community.visibility === "private");
-  assert.ok(privateCommunity);
-  const privateRequest = await joinOrRequestCommunity(
-    { communityId: privateCommunity.id },
-    { handle: "@boundary_requester", isAuthenticated: true, source: "dev" }
-  );
-  assert.equal(privateRequest.status, "requested");
-  assert.deepEqual(privateRequest.community.memberHandles, []);
+  const privateProjection = publicCommunity({
+    ...publicState.communities![0]!,
+    id: "security-private-projection",
+    visibility: "private",
+    memberHandles: ["@private_member"]
+  }, "requested");
+  assert.equal(privateProjection.membershipStatus, "requested");
+  assert.deepEqual(privateProjection.memberHandles, []);
 
   assert.equal(
     actorHandle({ handle: "@verified", isAuthenticated: true, source: "clerk" }, "@attacker"),

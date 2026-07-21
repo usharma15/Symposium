@@ -232,6 +232,11 @@ export const listProfilesByHandles = async (rawHandles: string[]) => {
        location,
        bio,
        fields,
+       actor_kind AS "actorKind",
+       era,
+       life_dates AS "lifeDates",
+       disclosure,
+       source_url AS "sourceUrl",
        revision
      FROM profiles
      WHERE handle = ANY($1::text[])
@@ -572,6 +577,11 @@ export const listPublicProfiles = async (rawLimit: unknown = 50, rawQuery: unkno
        location,
        bio,
        fields,
+       actor_kind AS "actorKind",
+       era,
+       life_dates AS "lifeDates",
+       disclosure,
+       source_url AS "sourceUrl",
        revision
      FROM profiles
      WHERE $2::text = ''

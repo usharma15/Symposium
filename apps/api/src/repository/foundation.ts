@@ -23,10 +23,11 @@ import {
 } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { seededCommunityCallMap } from "@/lib/communityFixtures";
+import { syncHistoricalWorldFixtures } from "./historicalWorldFixtures";
 import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
 import { activeCommunityAnnouncements } from "@/lib/communityAnnouncements";
 import { postTypeForItem } from "@/lib/postSemantics";
-import { env } from "../config/env";
+import { env, webOrigins } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { ensureDatabase } from "../db/migrate";
 import type { Actor } from "../services/auth";
@@ -184,6 +185,11 @@ export const getProfileByHandle = async (handle: string) => {
        location,
        bio,
        fields,
+       actor_kind AS "actorKind",
+       era,
+       life_dates AS "lifeDates",
+       disclosure,
+       source_url AS "sourceUrl",
        revision
      FROM profiles
      WHERE handle = $1
@@ -341,9 +347,10 @@ export const insertProfile = async (
 ) => {
   const result = await client.query<{ revision: number }>(
     `INSERT INTO profiles (
-      handle, user_id, email, name, avatar_url, likes_public, reshares_public, role, location, bio, fields
+      handle, user_id, email, name, avatar_url, likes_public, reshares_public, role, location, bio, fields,
+      actor_kind, era, life_dates, disclosure, source_url
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     ON CONFLICT (handle) DO UPDATE SET
       user_id = COALESCE(EXCLUDED.user_id, profiles.user_id),
       email = EXCLUDED.email,
@@ -355,6 +362,11 @@ export const insertProfile = async (
       location = EXCLUDED.location,
       bio = EXCLUDED.bio,
       fields = EXCLUDED.fields,
+      actor_kind = EXCLUDED.actor_kind,
+      era = EXCLUDED.era,
+      life_dates = EXCLUDED.life_dates,
+      disclosure = EXCLUDED.disclosure,
+      source_url = EXCLUDED.source_url,
       revision = CASE WHEN (
         profiles.user_id,
         profiles.email,
@@ -365,7 +377,12 @@ export const insertProfile = async (
         profiles.role,
         profiles.location,
         profiles.bio,
-        profiles.fields
+        profiles.fields,
+        profiles.actor_kind,
+        profiles.era,
+        profiles.life_dates,
+        profiles.disclosure,
+        profiles.source_url
       ) IS DISTINCT FROM (
         COALESCE(EXCLUDED.user_id, profiles.user_id),
         EXCLUDED.email,
@@ -376,7 +393,12 @@ export const insertProfile = async (
         EXCLUDED.role,
         EXCLUDED.location,
         EXCLUDED.bio,
-        EXCLUDED.fields
+        EXCLUDED.fields,
+        EXCLUDED.actor_kind,
+        EXCLUDED.era,
+        EXCLUDED.life_dates,
+        EXCLUDED.disclosure,
+        EXCLUDED.source_url
       ) THEN profiles.revision + 1 ELSE profiles.revision END,
       updated_at = now()
     RETURNING revision`,
@@ -391,7 +413,12 @@ export const insertProfile = async (
       person.role,
       person.location,
       person.bio,
-      JSON.stringify(person.fields)
+      JSON.stringify(person.fields),
+      person.actorKind ?? "person",
+      person.era ?? null,
+      person.lifeDates ?? null,
+      person.disclosure ?? null,
+      person.sourceUrl ?? null
     ]
   );
   return { ...person, revision: result.rows[0].revision };
@@ -698,7 +725,7 @@ const syncCommunityContentFixtures = async (client: PoolClient) => {
   await client.query("INSERT INTO fixture_revisions (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", [communityContentFixtureRevision]);
 };
 
-const seedDatabase = async () => {
+const legacySeedDatabase = async () => {
   if (!hasDatabase() || env.SYMPOSIUM_SEED_ON_BOOT === false) return;
   await ensureDatabase();
 
@@ -869,6 +896,28 @@ const seedDatabase = async () => {
   }
 };
 
+const seedDatabase = async () => {
+  if (!hasDatabase() || env.SYMPOSIUM_SEED_ON_BOOT === false) return;
+  await ensureDatabase();
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await syncHistoricalWorldFixtures(client);
+    await client.query("COMMIT");
+    if (result.applied) {
+      console.info("Historical world fixture replacement applied.", {
+        revision: result.revision,
+        manifest: result.manifest
+      });
+    }
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
 export const ensureLiveData = async () => {
   if (!hasDatabase()) return;
   await ensureDatabase();
@@ -914,8 +963,17 @@ export const commentTreesFromRows = (
   return new Map([...byPostAndParent.entries()].map(([postId, byParent]) => [postId, buildTree(byParent)]));
 };
 
-const attachmentPublicUrl = (row: Pick<AttachmentRow, "objectKey">) =>
-  env.R2_PUBLIC_BASE_URL ? `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${row.objectKey}` : undefined;
+const attachmentPublicUrl = (row: Pick<AttachmentRow, "objectKey" | "metadata">) => {
+  const metadata = json<Record<string, unknown>>(row.metadata, {});
+  const staticPublicPath = typeof metadata.staticPublicPath === "string" && metadata.staticPublicPath.startsWith("/historical-world/")
+    ? metadata.staticPublicPath
+    : null;
+  if (staticPublicPath) {
+    const publicWebOrigin = webOrigins.find((origin) => origin.startsWith("https://")) ?? webOrigins[0];
+    return publicWebOrigin ? `${publicWebOrigin.replace(/\/$/, "")}${staticPublicPath}` : undefined;
+  }
+  return env.R2_PUBLIC_BASE_URL ? `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${row.objectKey}` : undefined;
+};
 
 export const rowToAttachment = (row: AttachmentRow): InquiryAttachmentContract => ({
   id: row.id,
@@ -1095,6 +1153,11 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           location,
           bio,
           fields,
+          actor_kind AS "actorKind",
+          era,
+          life_dates AS "lifeDates",
+          disclosure,
+          source_url AS "sourceUrl",
           revision
          FROM profiles
          ORDER BY created_at ASC`

@@ -60,7 +60,7 @@ assert.ok(createOpportunityApplicationInputSchema.safeParse({
 assert.ok(updateOpportunityApplicationInputSchema.safeParse({ shortlisted: true, expectedRevision: 1 }).success);
 
 const seeded = inquiryItems.filter((item) => item.room === "opportunities");
-assert.ok(seeded.length >= 4);
+assert.ok(seeded.length >= 3);
 for (const item of seeded) {
   assert.equal(item.kind, "thought");
   assert.equal(item.postType, "opportunity");

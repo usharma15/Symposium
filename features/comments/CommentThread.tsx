@@ -589,7 +589,7 @@ function CommentNode({
               {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
             </span>
             <span>
-              <strong>{authorName}{communityRole ? <em className="community-role-badge">{communityRole}</em> : null}</strong>
+              <strong>{authorName}{authorProfile?.actorKind === "historical_simulation" ? <em className="historical-inline-badge" title="Historical simulation">simulation</em> : null}{communityRole ? <em className="community-role-badge">{communityRole}</em> : null}</strong>
               {comment.createdAt ? <small>{relativeTimeLabel(comment.createdAt)}</small> : null}
             </span>
           </button>

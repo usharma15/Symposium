@@ -55,11 +55,17 @@ import { invalidateQuotedSource } from "@/lib/contentQuotes";
 import { postTypeForItem } from "@/lib/postSemantics";
 
 type AppData = {
+  fixtureRevision?: string;
   profiles: Record<string, ResearchProfile>;
   items: InquiryItem[];
   viewDedupe: Record<string, string>;
   actionLedger: Record<string, CanonicalActionActivityContract>;
 };
+
+const historicalWorldFixtureRevision = "historical-world-v1";
+const localHistoricalWorldSnapshotPath = process.env.VERCEL
+  ? path.join("/tmp", `${historicalWorldFixtureRevision}-symposium.snapshot.json`)
+  : path.join(process.cwd(), ".data", "snapshots", `${historicalWorldFixtureRevision}-symposium.json`);
 
 export type CreateProfileInput = {
   name: string;
@@ -388,6 +394,7 @@ const normalizeData = (data: AppData): AppData => {
     Object.values(data.actionLedger ?? {})
   );
   return {
+    fixtureRevision: data.fixtureRevision,
     profiles: data.profiles,
     items: projectCanonicalActionLedger(normalizedItems, entries),
     viewDedupe: pruneViewDedupe(data.viewDedupe),
@@ -408,6 +415,7 @@ const mergeSeedData = (data: AppData): AppData => {
   );
 
   return {
+    fixtureRevision: data.fixtureRevision,
     profiles: { ...seed.profiles, ...data.profiles },
     items: projectCanonicalActionLedger(normalizedItems, ledger),
     viewDedupe: pruneViewDedupe(data.viewDedupe),
@@ -426,10 +434,54 @@ const seedData = (): AppData => {
     comments: normalizeComments(item.comments, item.id, itemIndex)
   }));
   return {
+    fixtureRevision: historicalWorldFixtureRevision,
     profiles,
     viewDedupe: {},
     items,
     actionLedger: activityRecord(buildLegacyActionLedger(items))
+  };
+};
+
+const retainProtectedLocalComments = (comments: InquiryComment[]): InquiryComment[] => comments.flatMap((comment) => {
+  const replies = retainProtectedLocalComments(comment.replies ?? []);
+  if (cleanHandle(comment.authorHandle ?? comment.author) !== defaultProfile.handle) return replies.map((reply) => ({ ...reply, parentId: null }));
+  return [{ ...comment, parentId: null, replies }];
+});
+
+const migrateLocalHistoricalWorld = (data: AppData): AppData => {
+  const seed = seedData();
+  const preservedItems = data.items
+    .filter((item) => cleanHandle(item.authorHandle ?? item.author) === defaultProfile.handle)
+    .map((item) => ({ ...normalizeItem(item), comments: retainProtectedLocalComments(item.comments) }));
+  const seedIds = new Set(seed.items.map((item) => item.id));
+  const retainedItems = preservedItems.filter((item) => !seedIds.has(item.id));
+  const retainedIds = new Set(retainedItems.map((item) => item.id));
+  const retainedCommentIds = new Set<string>();
+  for (const item of retainedItems) {
+    const visit = (comments: InquiryComment[]) => comments.forEach((comment) => {
+      if (comment.id) retainedCommentIds.add(comment.id);
+      visit(comment.replies ?? []);
+    });
+    visit(item.comments);
+  }
+  const retainedActivities = Object.values(data.actionLedger ?? {}).filter((activity) =>
+    cleanHandle(activity.actorHandle) === defaultProfile.handle
+    && (activity.subjectType === "post" ? retainedIds.has(activity.subjectId) : retainedCommentIds.has(activity.subjectId))
+  );
+  const items = [...seed.items, ...retainedItems];
+  const actionLedger = mergeCanonicalActivities(
+    Object.values(seed.actionLedger),
+    retainedActivities
+  );
+  return {
+    fixtureRevision: historicalWorldFixtureRevision,
+    profiles: {
+      ...seed.profiles,
+      [defaultProfile.handle]: data.profiles[defaultProfile.handle] ?? seed.profiles[defaultProfile.handle]!
+    },
+    items: projectCanonicalActionLedger(items, actionLedger),
+    viewDedupe: {},
+    actionLedger: activityRecord(actionLedger)
   };
 };
 
@@ -784,7 +836,19 @@ const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => 
 const readLocal = async (): Promise<AppData> => {
   try {
     const raw = await readFile(localDataPath, "utf8");
-    return mergeSeedData(normalizeData(JSON.parse(raw) as AppData));
+    const parsed = JSON.parse(raw) as AppData;
+    if (parsed.fixtureRevision !== historicalWorldFixtureRevision) {
+      await mkdir(path.dirname(localHistoricalWorldSnapshotPath), { recursive: true });
+      try {
+        await writeFile(localHistoricalWorldSnapshotPath, raw, { encoding: "utf8", flag: "wx" });
+      } catch (error) {
+        if (!(error && typeof error === "object" && "code" in error && error.code === "EEXIST")) throw error;
+      }
+      const migrated = migrateLocalHistoricalWorld(parsed);
+      await writeLocal(migrated);
+      return migrated;
+    }
+    return mergeSeedData(normalizeData(parsed));
   } catch {
     const seed = seedData();
     await writeLocal(seed);

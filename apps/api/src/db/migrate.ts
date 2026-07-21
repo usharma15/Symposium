@@ -2041,6 +2041,41 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS document_translations_created_idx
         ON document_translations (created_at DESC);
     `
+  },
+  {
+    id: "0039_historical_world_profiles",
+    sql: `
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS actor_kind TEXT NOT NULL DEFAULT 'person';
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS era TEXT;
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS life_dates TEXT;
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS disclosure TEXT;
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS source_url TEXT;
+
+      UPDATE profiles SET actor_kind = 'person'
+      WHERE actor_kind NOT IN ('person', 'historical_simulation', 'editorial');
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'profiles_actor_kind_check'
+        ) THEN
+          ALTER TABLE profiles
+            ADD CONSTRAINT profiles_actor_kind_check
+            CHECK (actor_kind IN ('person', 'historical_simulation', 'editorial'));
+        END IF;
+      END
+      $$;
+
+      CREATE INDEX IF NOT EXISTS profiles_actor_kind_idx ON profiles (actor_kind, handle);
+
+      CREATE TABLE IF NOT EXISTS historical_world_snapshots (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        fixture_revision TEXT NOT NULL UNIQUE,
+        manifest JSONB NOT NULL,
+        payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+    `
   }
 ];
 

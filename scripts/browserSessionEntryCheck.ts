@@ -122,7 +122,7 @@ const main = async () => {
     viewerHandle: "@viewer",
     targetHandle: cachedProfile.handle,
     scope: "all"
-  }, 10_001), activityResponse);
+  }, 10_001), JSON.parse(JSON.stringify(activityResponse)));
   assert.equal(readCachedProfileActivity(profileCacheStorage, {
     viewerHandle: "@another-viewer",
     targetHandle: cachedProfile.handle,

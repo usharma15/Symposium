@@ -219,7 +219,19 @@ export const tiptapToSymposiumDocument = (
 ): SymposiumDocument => {
   const nodes = (json.content ?? []).flatMap<SymposiumDocumentNode>((node) => {
     if (node.type === "paragraph") return [{ id: blockId(node), type: "paragraph", content: inlineJSONToRuns(node.content, capability), align: capability === "paper" && isOneOf(node.attrs?.textAlign, ["left", "center", "right"] as const) ? node.attrs.textAlign : "left", indent: capability === "paper" ? Math.max(0, Math.min(8, Number(node.attrs?.indent) || 0)) : 0 }];
-    if (node.type === "heading") return capability === "paper" ? [{ id: blockId(node), type: "heading", level: Math.max(1, Math.min(4, Number(node.attrs?.level) || 2)), content: inlineJSONToRuns(node.content, capability), align: isOneOf(node.attrs?.textAlign, ["left", "center", "right"] as const) ? node.attrs.textAlign : "left" }] : [{ id: blockId(node), type: "paragraph", content: inlineJSONToRuns(node.content, capability), align: "left", indent: 0 }];
+    if (node.type === "heading") return capability === "scribble"
+      ? [{ id: blockId(node), type: "paragraph", content: inlineJSONToRuns(node.content, capability), align: "left", indent: 0 }]
+      : [{
+          id: blockId(node),
+          type: "heading",
+          level: capability === "paper"
+            ? Math.max(1, Math.min(4, Number(node.attrs?.level) || 2))
+            : Math.max(2, Math.min(3, Number(node.attrs?.level) || 2)),
+          content: inlineJSONToRuns(node.content, capability),
+          align: capability === "paper" && isOneOf(node.attrs?.textAlign, ["left", "center", "right"] as const)
+            ? node.attrs.textAlign
+            : "left"
+        }];
     if (node.type === "blockquote") {
       const content = node.content?.flatMap((child) => inlineJSONToRuns(child.content, capability)) ?? [];
       return [{ id: blockId(node, "quote"), type: "quote", content, ...(node.attrs?.source ? { source: node.attrs.source } : {}) }];
@@ -570,7 +582,7 @@ const SymposiumCitation = Node.create({
 
 const editorExtensions = (placeholder: string, capability: EditorCapability) => [
   StarterKit.configure({
-    heading: capability === "paper" ? { levels: [1, 2, 3, 4] } : false,
+    heading: capability === "paper" ? { levels: [1, 2, 3, 4] } : capability === "reduced" ? { levels: [2, 3] } : false,
     bulletList: capability === "paper" ? { keepMarks: true, keepAttributes: true } : false,
     orderedList: capability === "paper" ? { keepMarks: true, keepAttributes: true } : false,
     listItem: capability === "paper" ? {} : false,
@@ -789,6 +801,10 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
         {capability !== "scribble" ? <ToolbarButton title="Italic" active={preferredMarks.italic} onClick={() => toggleInlineMark("italic")}><Italic size={16} /></ToolbarButton> : null}
         {capability !== "scribble" ? <ToolbarButton title="Underline" active={preferredMarks.underline} onClick={() => toggleInlineMark("underline")}><Underline size={16} /></ToolbarButton> : null}
       </div>
+      {capability === "reduced" ? <div>
+        <ToolbarButton title="Paragraph" active={preferredBlock === "paragraph"} onClick={() => setBlock("paragraph")}><Pilcrow size={16} /></ToolbarButton>
+        <ToolbarButton title="Section heading" active={preferredBlock === "heading2"} onClick={() => setBlock("heading2")}><Heading2 size={16} /></ToolbarButton>
+      </div> : null}
       {capability === "paper" ? <>
         <div>
           <ToolbarButton title="Paragraph" active={preferredBlock === "paragraph" && !state.bulletList && !state.orderedList} onClick={() => setBlock("paragraph")}><Pilcrow size={16} /></ToolbarButton>

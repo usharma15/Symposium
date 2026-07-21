@@ -84,7 +84,10 @@ for (const item of seededProposals) {
   assert.equal(item.kind, "paper");
   assert.equal(item.postType, "proposal");
   assert.ok(item.patronage, `${item.id} must expose proposal funding metadata`);
-  assert.equal(item.patronage?.raisedMinorUnits, item.patronage?.topSupporters.reduce((sum, row) => sum + row.amountMinorUnits, 0));
+  assert.ok(
+    item.patronage!.raisedMinorUnits >= item.patronage!.topSupporters.reduce((sum, row) => sum + row.amountMinorUnits, 0),
+    "Raised totals may include supporters outside the bounded top-supporter preview."
+  );
   assert.ok(item.patronage!.topSupporters.length <= 10);
   assert.equal(item.tags.some((tag) => tag === "civic" || tag === "private"), false);
 }

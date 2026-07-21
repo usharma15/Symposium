@@ -198,7 +198,9 @@ export const attachmentRenderKind = (attachment: InquiryAttachment) =>
 
 const attachmentForRendering = (attachment: InquiryAttachment): InquiryAttachment => {
   const kind = attachmentRenderKind(attachment);
-  return kind === attachment.kind ? attachment : { ...attachment, kind };
+  const staticPublicPath = metadataString(attachment.metadata, "staticPublicPath");
+  const url = attachment.url ?? (staticPublicPath?.startsWith("/historical-world/") ? staticPublicPath : undefined);
+  return kind === attachment.kind && url === attachment.url ? attachment : { ...attachment, kind, url };
 };
 
 const decodeXmlText = (value: string) =>
@@ -468,20 +470,21 @@ export function AttachmentComposerField({
 }
 
 export const startAttachmentDrag = (attachment: InquiryAttachment) => (event: React.DragEvent<HTMLElement>) => {
-  if (!attachment.url) return;
-  const url = new URL(attachment.url, window.location.href).toString();
+  const renderable = attachmentForRendering(attachment);
+  if (!renderable.url) return;
+  const url = new URL(renderable.url, window.location.href).toString();
   event.dataTransfer.effectAllowed = "copy";
   event.dataTransfer.setData("DownloadURL", `${attachment.contentType}:${attachment.fileName}:${url}`);
 };
 export function postPreviewAttachments(item: InquiryItem) {
   if (isDeletedPost(item)) return [];
   return feedPreviewAttachments(item.document, item.attachments ?? [])
-    .filter((attachment) => attachment.url)
-    .map(attachmentForRendering);
+    .map(attachmentForRendering)
+    .filter((attachment) => attachment.url);
 }
 
 export const visibleAttachments = (attachments: InquiryAttachment[]) =>
-  attachments.filter((attachment) => attachment.url).map(attachmentForRendering);
+  attachments.map(attachmentForRendering).filter((attachment) => attachment.url);
 
 export function AttachmentCarousel({ attachments: sourceAttachments, label = "Attachments", onOpenPreview, variant = "feed", onAddToScribble, onViewContextChange }: {
   attachments: InquiryAttachment[];

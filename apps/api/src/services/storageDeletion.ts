@@ -38,7 +38,7 @@ export const storageDeletionRetryDelayMs = (attempts: number) =>
 
 const deletionRequestsForRows = (rows: AttachmentStorageRow[], reason: string): StorageDeletionRequest[] =>
   rows.flatMap((row) =>
-    attachmentStorageObjectKeys(row).map((objectKey) => ({
+    attachmentStorageObjectKeys(row).filter((objectKey) => !objectKey.startsWith("historical-world/")).map((objectKey) => ({
       attachmentId: row.attachmentId,
       bucket: row.bucket,
       objectKey,
