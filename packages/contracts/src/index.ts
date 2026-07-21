@@ -1263,6 +1263,29 @@ export const assistantTranslationSchema = assistantTranslationDraftSchema.extend
   source: assistantActionSourceSchema
 });
 
+export const assistantQuickNoteDraftSchema = z.object({
+  title: z.string().trim().min(1).max(240),
+  body: z.string().trim().min(1).max(8000)
+});
+
+export const assistantQuickNoteSchema = assistantQuickNoteDraftSchema.extend({
+  source: assistantActionSourceSchema
+});
+
+export const assistantAnswerDraftSchema = z.object({
+  body: z.string().trim().min(1).max(16000),
+  shouldOfferQuickNote: z.boolean(),
+  quickNoteTitle: z.string().trim().max(240),
+  quickNoteBody: z.string().trim().max(8000)
+}).superRefine((answer, context) => {
+  if (answer.shouldOfferQuickNote && (!answer.quickNoteTitle || !answer.quickNoteBody)) {
+    context.addIssue({ code: "custom", message: "A proposed Quick Note requires a title and body." });
+  }
+  if (!answer.shouldOfferQuickNote && (answer.quickNoteTitle || answer.quickNoteBody)) {
+    context.addIssue({ code: "custom", message: "An ordinary answer cannot contain a hidden Quick Note draft." });
+  }
+});
+
 export const assistantMessageInputSchema = z.object({
   conversationId: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(2000),
@@ -1349,8 +1372,9 @@ export const saveAssistantQuickNoteInputSchema = z.object({
   conversationId: z.string().uuid(),
   title: z.string().trim().min(1).max(240),
   body: z.string().trim().min(1).max(8000),
-  targetLanguage: assistantTranslationLanguageSchema,
-  source: assistantActionSourceSchema
+  notebookId: z.string().uuid().nullable().default(null),
+  targetLanguage: assistantTranslationLanguageSchema.optional(),
+  source: assistantActionSourceSchema.optional()
 });
 
 export const assistantQuickNoteResultSchema = z.object({
@@ -1358,6 +1382,8 @@ export const assistantQuickNoteResultSchema = z.object({
   title: z.string(),
   revision: z.number().int().positive(),
   createdAt: z.string(),
+  notebookId: z.string().uuid().nullable(),
+  notebookName: z.string().nullable(),
   href: z.string().startsWith("/workspace?")
 });
 
@@ -1623,7 +1649,8 @@ export const assistantResponseSchema = z.object({
   status: z.enum(["answered", "provider_not_configured", "disabled", "provider_error"]),
   model: z.string().optional(),
   quota: assistantQuotaSchema.optional(),
-  translation: assistantTranslationSchema.optional()
+  translation: assistantTranslationSchema.optional(),
+  quickNote: assistantQuickNoteSchema.optional()
 });
 
 export const documentTranslationResultSchema = z.object({
@@ -1785,6 +1812,9 @@ export type AssistantRequestIntentContract = z.infer<typeof assistantRequestInte
 export type AssistantActionSourceContract = z.infer<typeof assistantActionSourceSchema>;
 export type AssistantTranslationDraftContract = z.infer<typeof assistantTranslationDraftSchema>;
 export type AssistantTranslationContract = z.infer<typeof assistantTranslationSchema>;
+export type AssistantQuickNoteDraftContract = z.infer<typeof assistantQuickNoteDraftSchema>;
+export type AssistantQuickNoteContract = z.infer<typeof assistantQuickNoteSchema>;
+export type AssistantAnswerDraftContract = z.infer<typeof assistantAnswerDraftSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
 export type AssistantQuotaStatusContract = z.infer<typeof assistantQuotaStatusSchema>;
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;

@@ -176,6 +176,18 @@ const finalizeAssistant = async (
         }
       }
     : undefined;
+  const quickNote = result?.quickNote
+    ? {
+        ...result.quickNote,
+        source: {
+          surface: prepared.input.context.surface,
+          route: prepared.input.context.route.startsWith("/") ? prepared.input.context.route : "/",
+          title: prepared.input.context.title.trim() || "Current view",
+          ...(prepared.input.context.entityType ? { entityType: prepared.input.context.entityType } : {}),
+          ...(prepared.input.context.entityId ? { entityId: prepared.input.context.entityId } : {})
+        }
+      }
+    : undefined;
   const actualMicros = result
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, result.inputTokens, result.outputTokens)
     : prepared.reservedCostMicros;
@@ -194,7 +206,8 @@ const finalizeAssistant = async (
       providerResponseId: result?.providerResponseId ?? null,
       providerError,
       providerErrorCode: failure?.code ?? null,
-      translation: translation ?? null
+      translation: translation ?? null,
+      quickNote: quickNote ?? null
     })]
   );
   await completeAssistantUsage(client, {
@@ -221,7 +234,8 @@ const finalizeAssistant = async (
     model: result?.model ?? env.SYMPOSIUM_AI_MODEL,
     quota: assistantQuota(prepared.dailyLimit, prepared.remainingToday),
     message: { ...row, createdAt: new Date(row.createdAt).toISOString() },
-    ...(translation ? { translation } : {})
+    ...(translation ? { translation } : {}),
+    ...(quickNote ? { quickNote } : {})
   };
   await stageAuditLog(client, {
     actorHandle: prepared.owner,

@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import {
+  assistantAnswerDraftSchema,
   assistantTranslationDraftSchema,
   documentTranslationModelOutputSchema,
+  type AssistantQuickNoteDraftContract,
   type AssistantRequestIntentContract,
   type AssistantTranslationDraftContract,
   type AssistantTranslationLanguageContract,
@@ -110,6 +112,7 @@ export const assistantProviderFailure = (error: unknown): AssistantProviderFailu
 export type AssistantModelResult = {
   body: string;
   translation?: AssistantTranslationDraftContract;
+  quickNote?: AssistantQuickNoteDraftContract;
   model: string;
   providerResponseId?: string;
   inputTokens: number;
@@ -136,7 +139,9 @@ export const assistantInstructions = [
   "If the visible context is insufficient, say exactly what is missing and ask for the smallest useful next input.",
   "If the user asks for a translation, translate only the source material available in CURRENT VIEW into the requested language while preserving scientific terminology, quantities, citations, structure, and uncertainty.",
   "When reviewing scientific work, identify uncertainty, counterevidence, and the strongest next test where relevant.",
-  "Never claim you changed, saved, published, messaged, or searched anything. This first version is read-only."
+  "When the user explicitly asks to make, capture, or save a Quick Note, set shouldOfferQuickNote to true and draft a concise title and body grounded in CURRENT VIEW. Do not refuse: the interface will let the user review it, choose an Office notebook, and confirm the authenticated save.",
+  "Otherwise set shouldOfferQuickNote to false and return empty quickNoteTitle and quickNoteBody strings.",
+  "Never claim you already changed, saved, published, messaged, or searched anything. A Quick Note is only saved after the user confirms the separate interface action."
 ].join("\n");
 
 const translationLanguageLabels: Record<AssistantTranslationLanguageContract, string> = {
@@ -213,6 +218,23 @@ const translationResponseFormat = {
       quickNoteBody: { type: "string" }
     },
     required: ["translatedTitle", "translatedBody", "quickNoteTitle", "quickNoteBody"],
+    additionalProperties: false
+  }
+} as const;
+
+const answerResponseFormat = {
+  type: "json_schema",
+  name: "symposium_contextual_answer",
+  strict: true,
+  schema: {
+    type: "object",
+    properties: {
+      body: { type: "string" },
+      shouldOfferQuickNote: { type: "boolean" },
+      quickNoteTitle: { type: "string" },
+      quickNoteBody: { type: "string" }
+    },
+    required: ["body", "shouldOfferQuickNote", "quickNoteTitle", "quickNoteBody"],
     additionalProperties: false
   }
 } as const;
@@ -347,8 +369,8 @@ export const callAssistantModel = async (input: {
         ...(translating ? [] : input.history.map((entry) => ({ role: entry.role, content: entry.body }))),
         { role: "user", content: prompt }
       ],
-      ...(translating ? { text: { format: translationResponseFormat } } : {}),
-      prompt_cache_key: translating ? "symposium-translation-v1" : "symposium-contextual-tablet-v1",
+      text: { format: translating ? translationResponseFormat : answerResponseFormat },
+      prompt_cache_key: translating ? "symposium-translation-v1" : "symposium-contextual-tablet-v2",
       safety_identifier: createHash("sha256").update(input.ownerHandle).digest("hex").slice(0, 64)
     }),
     signal: AbortSignal.timeout(45_000)
@@ -360,14 +382,17 @@ export const callAssistantModel = async (input: {
   }
   const output = responseText(payload);
   if (!output) throw new Error("OpenAI returned no answer text.");
-  const translation = translating
-    ? assistantTranslationDraftSchema.parse(JSON.parse(output))
+  const translation = translating ? assistantTranslationDraftSchema.parse(JSON.parse(output)) : undefined;
+  const answer = translating ? undefined : assistantAnswerDraftSchema.parse(JSON.parse(output));
+  const quickNote = answer?.shouldOfferQuickNote
+    ? { title: answer.quickNoteTitle, body: answer.quickNoteBody }
     : undefined;
   return {
     body: translation
       ? `${translationLanguageLabels[input.targetLanguage!]} translation ready. Review the translated text and the private Quick Note before saving.`
-      : output,
+      : answer!.body,
     ...(translation ? { translation } : {}),
+    ...(quickNote ? { quickNote } : {}),
     model: payload.model ?? env.SYMPOSIUM_AI_MODEL,
     providerResponseId: payload.id,
     inputTokens: Math.max(0, payload.usage?.input_tokens ?? 0),

@@ -4125,10 +4125,14 @@ function SymposiumExperience({
         : null;
       const activePdfView = activeAttachment ? postAttachmentViewContext : null;
       return {
-        surface: "post",
-        route: `/posts/${selectedItem.id}`,
-        title: selectedItem.title,
-        summary: selectedItem.gatheringReason,
+        surface: activeAttachment ? "attachment" : "post",
+        route: activeAttachment
+          ? `/posts/${selectedItem.id}?attachment=${encodeURIComponent(activeAttachment.id)}`
+          : `/posts/${selectedItem.id}`,
+        title: activeAttachment?.fileName ?? selectedItem.title,
+        summary: activeAttachment && activePdfView
+          ? `PDF page ${activePdfView.page} of ${activePdfView.pageCount} open inside “${selectedItem.title}”.`
+          : selectedItem.gatheringReason,
         content: trimContent([
           activeAttachment && activePdfView
             ? `Currently visible attachment:\n\n${buildTabletAttachmentContext(activeAttachment, activePdfView)}`
@@ -4146,12 +4150,13 @@ function SymposiumExperience({
                 .join("\n\n")}`
             : ""
         ].filter(Boolean).join("\n\n")),
-        entityType: "post",
-        entityId: selectedItem.id,
+        entityType: activeAttachment ? "attachment" : "post",
+        entityId: activeAttachment?.id ?? selectedItem.id,
         selection: activePdfView?.selectedText,
         metadata: {
           kind: selectedItem.kind,
           status: selectedItem.status,
+          postId: selectedItem.id,
           selectedCommentId: selectedCommentId ?? "",
           visibleCommentCount: discussion.length,
           attachmentCount: selectedItem.attachments?.length ?? 0,

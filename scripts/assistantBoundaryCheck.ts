@@ -240,6 +240,18 @@ assert.equal(assistantResponseSchema.safeParse({
   quota: { dailyLimit: 3, remainingToday: 2, monthlyBudgetUsd: 40, extremelyLimited: true },
   message: { id: "message", conversationId: "conversation", role: "assistant", body: "Answer" }
 }).success, true);
+const quickNote = {
+  title: "Strategy 2032 argument",
+  body: "The visible page argues for independent youth labs and a metascience group.",
+  source: { surface: "attachment" as const, route: "/posts/paper-1?attachment=attachment-1", title: "Strategy 2032.pdf", entityType: "attachment", entityId: "attachment-1" }
+};
+assert.equal(assistantResponseSchema.safeParse({
+  conversationId: "4de47155-28c2-4e19-8628-d15f339ce71b",
+  providerConfigured: true,
+  status: "answered",
+  message: { id: "c6f055c0-b137-4713-9f5f-c2ee0b78ab32", conversationId: "4de47155-28c2-4e19-8628-d15f339ce71b", role: "assistant", body: "Quick Note ready." },
+  quickNote
+}).success, true);
 const translation = {
   translatedTitle: "Un argumento acotado",
   translatedBody: "Afirmación, evidencia, objeción y prueba propuesta.",
@@ -271,6 +283,8 @@ assert.equal(assistantQuickNoteResultSchema.safeParse({
   title: translation.quickNoteTitle,
   revision: 1,
   createdAt: new Date().toISOString(),
+  notebookId: null,
+  notebookName: null,
   href: "/workspace?view=notes&note=df44a21f-e540-48ea-9f40-7e6b4c3bd753"
 }).success, true);
 
@@ -299,7 +313,7 @@ assert.match(provider, /max_output_tokens: assistantMaxOutputTokens\(input\.inte
 assert.match(provider, /type: "json_schema"/);
 assert.match(provider, /strict: true/);
 assert.match(provider, /symposium-translation-v1/);
-assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v1"/);
+assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v2"/);
 assert.match(provider, /reasoning: \{ effort: "none" \}/);
 assert.match(provider, /symposium-document-page-translation-v3/);
 assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
@@ -324,12 +338,15 @@ assert.match(route, /\/v1\/assistant\/quick-notes/);
 assert.match(route, /scope: "assistant-action", limit: 30/);
 assert.match(scribbles, /conversation\.owner_handle = \$3/);
 assert.match(scribbles, /assistant\.quick_note\.create/);
-assert.match(scribbles, /source: "assistant_translation"/);
+assert.match(scribbles, /assistant_quick_note/);
 assert.match(tablet, /Extremely limited beta/);
 assert.match(tablet, /Loading today’s tiny AI allowance/);
 assert.match(tablet, /Send · uses 1/);
 assert.match(tablet, /Ask about this view/);
 assert.match(tablet, /Confirm & save Quick Note/);
+assert.match(tablet, /Office destination/);
+assert.match(tablet, /All · Quick Notes/);
+assert.match(provider, /shouldOfferQuickNote/);
 assert.doesNotMatch(tablet, /Opening and browsing cost nothing/);
 assert.doesNotMatch(tablet, /tablet-context-card/);
 assert.doesNotMatch(tablet, /tablet-translation-controls/);

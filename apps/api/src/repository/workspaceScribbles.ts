@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import type { PoolClient } from "pg";
 import {
+  assistantActionSourceSchema,
   discardScribbleInputSchema,
   fileScribbleInputSchema,
   restoreScribbleInputSchema,
@@ -406,28 +407,35 @@ export const createAssistantQuickNote = async (rawInput: unknown, actor: Actor, 
   return runAtomic(async (client) => {
     const claim = await claimMutation<Record<string, unknown>>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
-    const assistantMessage = await client.query(
-      `SELECT message.id
+    const assistantMessage = await client.query<{ id: string; metadata: Record<string, unknown> }>(
+      `SELECT message.id, message.metadata
        FROM ai_messages message
        JOIN ai_conversations conversation ON conversation.id = message.conversation_id
        WHERE message.id = $1
          AND message.conversation_id = $2
          AND message.role = 'assistant'
          AND conversation.owner_handle = $3
-         AND message.metadata -> 'translation' IS NOT NULL
-         AND message.metadata -> 'translation' <> 'null'::jsonb
+         AND (
+           (message.metadata -> 'translation' IS NOT NULL AND message.metadata -> 'translation' <> 'null'::jsonb)
+           OR (message.metadata -> 'quickNote' IS NOT NULL AND message.metadata -> 'quickNote' <> 'null'::jsonb)
+         )
        FOR SHARE OF message, conversation`,
       [input.assistantMessageId, input.conversationId, handle]
     );
-    if (!assistantMessage.rowCount) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "That translation is not available to save." });
+    const actionMessage = assistantMessage.rows[0];
+    if (!actionMessage) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "That Quick Note draft is not available to save." });
     }
+    const quickNoteMetadata = actionMessage.metadata.quickNote as { source?: unknown } | null | undefined;
+    const translationMetadata = actionMessage.metadata.translation as { source?: unknown } | null | undefined;
+    const source = assistantActionSourceSchema.parse(quickNoteMetadata?.source ?? translationMetadata?.source);
     const workspace = await ensureWorkspace(client, handle);
-    const document = assistantQuickNoteDocument(input.body, input.source);
+    const notebook = await ensureNotebook(client, workspace.id, handle, input.notebookId);
+    const document = assistantQuickNoteDocument(input.body, source);
     const note = await insertQuickNote(client, {
       workspaceId: workspace.id,
       handle,
-      notebookId: null,
+      notebookId: notebook?.id ?? null,
       title: input.title,
       body: input.body,
       document
@@ -437,6 +445,8 @@ export const createAssistantQuickNote = async (rawInput: unknown, actor: Actor, 
       title: input.title,
       revision: note.revision,
       createdAt: iso(note.createdAt),
+      notebookId: notebook?.id ?? null,
+      notebookName: notebook?.name ?? null,
       href: `/workspace?view=notes&note=${encodeURIComponent(note.id)}`
     };
     await stageAuditLog(client, {
@@ -448,8 +458,9 @@ export const createAssistantQuickNote = async (rawInput: unknown, actor: Actor, 
         assistantMessageId: input.assistantMessageId,
         conversationId: input.conversationId,
         targetLanguage: input.targetLanguage,
-        sourceSurface: input.source.surface,
-        sourceId: input.source.entityId ?? null
+        sourceSurface: source.surface,
+        sourceId: source.entityId ?? null,
+        notebookId: notebook?.id ?? null
       })
     });
     await completeMutation(client, handle, mutation, value);
@@ -463,9 +474,9 @@ export const createAssistantQuickNote = async (rawInput: unknown, actor: Actor, 
       payload: {
         noteId: note.id,
         revision: note.revision,
-        notebookId: null,
+        notebookId: notebook?.id ?? null,
         kind: "quick",
-        source: "assistant_translation"
+        source: input.targetLanguage ? "assistant_translation" : "assistant_quick_note"
       }
     });
     return { value, events: [event] };

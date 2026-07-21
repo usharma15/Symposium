@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, Languages, LoaderCircle, Save, Send, X } from "lucide-react";
+import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, Folder, Languages, LoaderCircle, Save, Send, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import type {
   AssistantQuickNoteResultContract,
+  AssistantQuickNoteContract,
   AssistantMessageInputContract,
   AssistantQuotaStatusContract,
   AssistantResponseContract,
   AssistantTranslationContract,
   AssistantTranslationLanguageContract
 } from "@/packages/contracts/src";
+import type { ScribbleSnapshot } from "@/lib/workspaceTypes";
 
 type TabletContext = AssistantMessageInputContract["context"];
 type TabletMessage = {
@@ -19,6 +21,7 @@ type TabletMessage = {
   body: string;
   conversationId?: string;
   translation?: AssistantTranslationContract;
+  quickNote?: AssistantQuickNoteContract;
 };
 
 const translationLanguageLabels: Record<AssistantTranslationLanguageContract, string> = {
@@ -42,29 +45,50 @@ const contextType = (surface: TabletContext["surface"]): AssistantMessageInputCo
   return "general";
 };
 
-function TranslationCard({
+function QuickNoteDraftCard({
   actorHandle,
   conversationId,
   messageId,
-  translation
+  quickNote,
+  targetLanguage
 }: {
   actorHandle: string;
   conversationId: string;
   messageId: string;
-  translation: AssistantTranslationContract;
+  quickNote: AssistantQuickNoteContract;
+  targetLanguage?: AssistantTranslationLanguageContract;
 }) {
-  const [title, setTitle] = useState(translation.quickNoteTitle);
-  const [body, setBody] = useState(translation.quickNoteBody);
+  const [title, setTitle] = useState(quickNote.title);
+  const [body, setBody] = useState(quickNote.body);
+  const [notebooks, setNotebooks] = useState<ScribbleSnapshot["notebooks"]>([]);
+  const [notebookId, setNotebookId] = useState("");
+  const [notebooksLoading, setNotebooksLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState<AssistantQuickNoteResultContract | null>(null);
   const retryRef = useRef<{ fingerprint: string; key: string } | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    setNotebooksLoading(true);
+    void symposiumApi.request<ScribbleSnapshot>(
+      `/api/workspace/scribble?actorHandle=${encodeURIComponent(actorHandle)}`,
+      { cache: "no-store" }
+    ).then((snapshot) => {
+      if (!cancelled) setNotebooks(snapshot.notebooks);
+    }).catch((caught) => {
+      if (!cancelled) setError(caught instanceof SymposiumApiError ? caught.message : "Your Office notebooks could not be loaded.");
+    }).finally(() => {
+      if (!cancelled) setNotebooksLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [actorHandle]);
+
   const saveQuickNote = async () => {
     const normalizedTitle = title.trim();
     const normalizedBody = body.trim();
     if (!normalizedTitle || !normalizedBody || saving || saved) return;
-    const fingerprint = `${normalizedTitle}\n${normalizedBody}`;
+    const fingerprint = `${notebookId}\n${normalizedTitle}\n${normalizedBody}`;
     if (retryRef.current?.fingerprint !== fingerprint) {
       retryRef.current = { fingerprint, key: createClientMutationId("assistant-quick-note") };
     }
@@ -80,8 +104,9 @@ function TranslationCard({
           conversationId,
           title: normalizedTitle,
           body: normalizedBody,
-          targetLanguage: translation.targetLanguage,
-          source: translation.source
+          notebookId: notebookId || null,
+          ...(targetLanguage ? { targetLanguage } : {}),
+          source: quickNote.source
         }
       });
       setSaved(result);
@@ -94,6 +119,50 @@ function TranslationCard({
   };
 
   return (
+    <div className="tablet-quick-note-draft" aria-label="Quick Note draft">
+        <span>Private Quick Note · review, choose a notebook, then save</span>
+        <label>
+          <small>Title</small>
+          <input value={title} maxLength={240} disabled={Boolean(saved)} onChange={(event) => setTitle(event.target.value)} />
+        </label>
+        <label>
+          <small>Note</small>
+          <textarea value={body} maxLength={8000} rows={5} disabled={Boolean(saved)} onChange={(event) => setBody(event.target.value)} />
+        </label>
+        <label>
+          <small><Folder size={12} />Office destination</small>
+          <select value={notebookId} disabled={Boolean(saved) || notebooksLoading} onChange={(event) => setNotebookId(event.target.value)}>
+            <option value="">All · Quick Notes</option>
+            {notebooks.map((notebook) => <option value={notebook.id} key={notebook.id}>{notebook.name}</option>)}
+          </select>
+        </label>
+        {error ? <p className="tablet-action-error" role="alert">{error}</p> : null}
+        {saved ? (
+          <a className="tablet-note-saved" href={saved.href}>
+            <CheckCircle2 size={14} />Saved to {saved.notebookName ?? "All · Quick Notes"}<ExternalLink size={13} />
+          </a>
+        ) : (
+          <button type="button" className="primary" disabled={saving || !title.trim() || !body.trim()} onClick={() => void saveQuickNote()}>
+            {saving ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}
+            {saving ? "Saving private note…" : "Confirm & save Quick Note"}
+          </button>
+        )}
+    </div>
+  );
+}
+
+function TranslationCard({
+  actorHandle,
+  conversationId,
+  messageId,
+  translation
+}: {
+  actorHandle: string;
+  conversationId: string;
+  messageId: string;
+  translation: AssistantTranslationContract;
+}) {
+  return (
     <section className="tablet-translation-card" aria-label={`${translationLanguageLabels[translation.targetLanguage]} translation`}>
       <header>
         <span><Languages size={14} />{translationLanguageLabels[translation.targetLanguage]} translation</span>
@@ -103,28 +172,13 @@ function TranslationCard({
         <strong>{translation.translatedTitle}</strong>
         <p>{translation.translatedBody}</p>
       </div>
-      <div className="tablet-quick-note-draft">
-        <span>Private Quick Note · review before saving</span>
-        <label>
-          <small>Title</small>
-          <input value={title} maxLength={240} disabled={Boolean(saved)} onChange={(event) => setTitle(event.target.value)} />
-        </label>
-        <label>
-          <small>Note</small>
-          <textarea value={body} maxLength={8000} rows={5} disabled={Boolean(saved)} onChange={(event) => setBody(event.target.value)} />
-        </label>
-        {error ? <p className="tablet-action-error" role="alert">{error}</p> : null}
-        {saved ? (
-          <a className="tablet-note-saved" href={saved.href}>
-            <CheckCircle2 size={14} />Saved as “{saved.title}”<ExternalLink size={13} />
-          </a>
-        ) : (
-          <button type="button" className="primary" disabled={saving || !title.trim() || !body.trim()} onClick={() => void saveQuickNote()}>
-            {saving ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}
-            {saving ? "Saving private note…" : "Confirm & save Quick Note"}
-          </button>
-        )}
-      </div>
+      <QuickNoteDraftCard
+        actorHandle={actorHandle}
+        conversationId={conversationId}
+        messageId={messageId}
+        quickNote={{ title: translation.quickNoteTitle, body: translation.quickNoteBody, source: translation.source }}
+        targetLanguage={translation.targetLanguage}
+      />
     </section>
   );
 }
@@ -236,7 +290,8 @@ export function TabletPanel({
         role: "assistant",
         body: response.message.body,
         conversationId: response.conversationId,
-        translation: response.translation
+        translation: response.translation,
+        quickNote: response.quickNote
       }]);
     } catch (caught) {
       const message = caught instanceof SymposiumApiError
@@ -277,6 +332,14 @@ export function TabletPanel({
                 conversationId={message.conversationId}
                 messageId={message.id}
                 translation={message.translation}
+              />
+            ) : null}
+            {message.role === "assistant" && message.quickNote && message.conversationId ? (
+              <QuickNoteDraftCard
+                actorHandle={actorHandle}
+                conversationId={message.conversationId}
+                messageId={message.id}
+                quickNote={message.quickNote}
               />
             ) : null}
           </article>
