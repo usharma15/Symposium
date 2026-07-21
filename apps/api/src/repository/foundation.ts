@@ -897,7 +897,7 @@ const legacySeedDatabase = async () => {
 };
 
 const seedDatabase = async () => {
-  if (!hasDatabase() || env.SYMPOSIUM_SEED_ON_BOOT === false) return;
+  if (!hasDatabase()) return;
   await ensureDatabase();
   const client = await getPool().connect();
   try {

@@ -42,6 +42,11 @@ assert.match(
   /era:\s*person\.era\s*\?\?\s*undefined[\s\S]+lifeDates:\s*person\.lifeDates\s*\?\?\s*undefined/,
   "Nullable database metadata must be omitted from non-historical profile payloads."
 );
+assert.match(
+  foundationSource,
+  /const seedDatabase = async \(\) => \{\s*if \(!hasDatabase\(\)\) return;/,
+  "The approved one-time historical replacement must not be disabled by the legacy seed flag."
+);
 assert.ok(historicalInquiryItems.every((entry) => Number.isFinite(Date.parse(entry.createdAt ?? ""))));
 assert.ok(historicalInquiryItems.every((entry) => !/strategy\s*2032/i.test(`${entry.title} ${entry.body}`)));
 
