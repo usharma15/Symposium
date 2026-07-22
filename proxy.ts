@@ -7,6 +7,10 @@ import {
 import { isCrossSiteMutation } from "@/lib/requestSecurity";
 
 const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
+const clerkAuthorizedParties =
+  process.env.NODE_ENV === "production"
+    ? ["https://symposiumsci.com", "https://www.symposiumsci.com"]
+    : ["http://localhost:3000", "http://127.0.0.1:3000"];
 
 const crossSiteMutationResponse = (request: NextRequest) =>
   isCrossSiteMutation({
@@ -32,6 +36,7 @@ export default clerkEnabled
   ? clerkMiddleware(
       (_auth, request) => crossSiteMutationResponse(request) ?? undefined,
       {
+        authorizedParties: clerkAuthorizedParties,
         contentSecurityPolicy: {
           strict: false,
           directives: clerkContentSecurityPolicyDirectives
