@@ -12,6 +12,7 @@ import {
   Info,
   Link2,
   LoaderCircle,
+  LogOut,
   MessageCircle,
   MoreHorizontal,
   Paperclip,
@@ -83,6 +84,11 @@ import {
   withoutConversationParticipant
 } from "@/features/messages/messageParticipantState";
 import {
+  messageReadAcknowledgesSummary,
+  messageReadFollowUpNeeded,
+  messageReadViewportActive
+} from "@/features/messages/messageReadState";
+import {
   canonicalMessageFromLiveEvent,
   liveEventConversationId,
   mergeCanonicalMessage,
@@ -147,6 +153,8 @@ type PendingMessageAttachment = {
   attachment: InquiryAttachmentContract;
   previewUrl: string;
 };
+
+type MessageDraftSyncState = "idle" | "saving" | "saved" | "local";
 
 const revokePendingAttachment = (entry: PendingMessageAttachment) => {
   if (entry.previewUrl.startsWith("blob:")) URL.revokeObjectURL(entry.previewUrl);
@@ -799,6 +807,7 @@ export function MessagingExperience({
   const [messageCursor, setMessageCursor] = useState<string | null>(null);
   const [draftState, dispatchDraft] = useReducer(reduceMessageDraft, emptyMessageDraftState);
   const draft = draftState.body;
+  const [draftSyncState, setDraftSyncState] = useState<MessageDraftSyncState>("idle");
   const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([]);
   const [sendingCount, setSendingCount] = useState(0);
   const [conversationListLoading, setConversationListLoading] = useState(true);
@@ -811,6 +820,8 @@ export function MessagingExperience({
   const [infoTab, setInfoTab] = useState<"info" | "people" | "shared">("info");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<MessageContract[] | null>(null);
+  const [searchCursor, setSearchCursor] = useState<string | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [mediaKind, setMediaKind] = useState<MessageMediaKind | null>(null);
   const [mediaResults, setMediaResults] = useState<MessageContract[]>([]);
   const [mediaCursor, setMediaCursor] = useState<string | null>(null);
@@ -824,10 +835,14 @@ export function MessagingExperience({
   const draftSaveTimerRef = useRef<number | null>(null);
   const liveRefreshTimerRef = useRef<number | null>(null);
   const readReceiptTimerRef = useRef<number | null>(null);
+  const readReceiptConversationRef = useRef<string | null>(null);
+  const readReceiptInFlightRef = useRef(false);
+  const flushReadReceiptRef = useRef<() => void>(() => undefined);
   const latestReadSequenceRef = useRef(0);
   const conversationListEpochRef = useRef(0);
   const conversationLoadEpochRef = useRef(0);
   const mediaLoadEpochRef = useRef(0);
+  const searchLoadEpochRef = useRef(0);
   const mountedRef = useRef(true);
   const pendingAttachmentsRef = useRef<PendingMessageAttachment[]>(pendingAttachments);
   const conversationsRef = useRef<ConversationSummaryContract[]>(conversations);
@@ -840,6 +855,75 @@ export function MessagingExperience({
   pendingAttachmentsRef.current = pendingAttachments;
   conversationsRef.current = conversations;
   messagesRef.current = messages;
+
+  const flushReadReceipt = useCallback(() => {
+    const conversationId = readReceiptConversationRef.current;
+    const sequence = latestReadSequenceRef.current;
+    if (
+      !conversationId ||
+      selectedRef.current !== conversationId ||
+      sequence <= 0 ||
+      readReceiptInFlightRef.current ||
+      !messageReadViewportActive({
+        documentVisible: document.visibilityState === "visible",
+        windowFocused: document.hasFocus(),
+        nearLatestMessage: shouldStickToBottomRef.current
+      })
+    ) return;
+    readReceiptInFlightRef.current = true;
+    void symposiumApi.request(`/api/conversations/${encodeURIComponent(conversationId)}/read`, {
+      method: "POST",
+      body: { actorHandle: actor.handle, sequence }
+    }).then(() => {
+      if (readReceiptConversationRef.current === conversationId && latestReadSequenceRef.current <= sequence) {
+        latestReadSequenceRef.current = 0;
+      }
+      setConversation((current) => current?.id === conversationId && messageReadAcknowledgesSummary(current.lastMessage?.sequence ?? 0, sequence)
+        ? { ...current, unreadCount: 0 }
+        : current);
+      setConversations((current) => current.map((entry) => entry.id === conversationId && messageReadAcknowledgesSummary(entry.lastMessage?.sequence ?? 0, sequence)
+        ? { ...entry, unreadCount: 0 }
+        : entry));
+    }).catch(() => {
+      // Keep the pending sequence so focus, visibility, scroll, or a later live
+      // event can retry without falsely presenting the conversation as read.
+      if (readReceiptTimerRef.current === null) {
+        readReceiptTimerRef.current = window.setTimeout(() => {
+          readReceiptTimerRef.current = null;
+          flushReadReceiptRef.current();
+        }, 2_000);
+      }
+    }).finally(() => {
+      readReceiptInFlightRef.current = false;
+      const pendingConversationId = readReceiptConversationRef.current;
+      if (messageReadFollowUpNeeded({
+        pendingConversationId,
+        pendingSequence: latestReadSequenceRef.current,
+        acknowledgedConversationId: conversationId,
+        acknowledgedSequence: sequence
+      })) {
+        if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
+        readReceiptTimerRef.current = window.setTimeout(() => {
+          readReceiptTimerRef.current = null;
+          flushReadReceiptRef.current();
+        }, 0);
+      }
+    });
+  }, [actor.handle]);
+  flushReadReceiptRef.current = flushReadReceipt;
+
+  const scheduleReadReceipt = useCallback((conversationId: string, sequence: number) => {
+    if (readReceiptConversationRef.current !== conversationId) {
+      readReceiptConversationRef.current = conversationId;
+      latestReadSequenceRef.current = 0;
+    }
+    latestReadSequenceRef.current = Math.max(latestReadSequenceRef.current, sequence);
+    if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
+    readReceiptTimerRef.current = window.setTimeout(() => {
+      readReceiptTimerRef.current = null;
+      flushReadReceiptRef.current();
+    }, 140);
+  }, []);
 
   useEffect(() => {
     if (!onTabletContextChange) return;
@@ -915,12 +999,7 @@ export function MessagingExperience({
       setConversations((current) => current.map((entry) => entry.id === page.conversation.id ? page.conversation : entry));
       if (!options.older && page.conversation.status === "active") {
         const latest = page.messages.at(-1)?.sequence ?? page.conversation.lastMessage?.sequence ?? 0;
-        if (latest > 0) {
-          void symposiumApi.request(`/api/conversations/${encodeURIComponent(conversationId)}/read`, {
-            method: "POST",
-            body: { actorHandle: actor.handle, sequence: latest }
-          }).catch(() => undefined);
-        }
+        if (latest > 0) scheduleReadReceipt(conversationId, latest);
       }
       setError("");
       window.requestAnimationFrame(() => {
@@ -939,27 +1018,24 @@ export function MessagingExperience({
         setLoadingOlder(false);
       }
     }
-  }, [actor.handle, messageCursor, profiles, quick]);
+  }, [actor.handle, messageCursor, profiles, quick, scheduleReadReceipt]);
 
   useEffect(() => {
     setConversationListLoading(true);
     void loadConversations(false);
   }, [actor.handle]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const scheduleReadReceipt = useCallback((conversationId: string, sequence: number) => {
-    latestReadSequenceRef.current = Math.max(latestReadSequenceRef.current, sequence);
-    if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
-    readReceiptTimerRef.current = window.setTimeout(() => {
-      readReceiptTimerRef.current = null;
-      const latestSequence = latestReadSequenceRef.current;
-      latestReadSequenceRef.current = 0;
-      if (selectedRef.current !== conversationId || latestSequence <= 0) return;
-      void symposiumApi.request(`/api/conversations/${encodeURIComponent(conversationId)}/read`, {
-        method: "POST",
-        body: { actorHandle: actor.handle, sequence: latestSequence }
-      }).catch(() => undefined);
-    }, 140);
-  }, [actor.handle]);
+  useEffect(() => {
+    const flushWhenActive = () => flushReadReceiptRef.current();
+    window.addEventListener("focus", flushWhenActive);
+    window.addEventListener("online", flushWhenActive);
+    document.addEventListener("visibilitychange", flushWhenActive);
+    return () => {
+      window.removeEventListener("focus", flushWhenActive);
+      window.removeEventListener("online", flushWhenActive);
+      document.removeEventListener("visibilitychange", flushWhenActive);
+    };
+  }, []);
 
   const mergeLiveMessage = useCallback((incoming: MessageContract, kind: string) => {
     const selected = selectedRef.current === incoming.conversationId;
@@ -986,9 +1062,7 @@ export function MessagingExperience({
       return {
         ...current,
         lastMessage: shouldReplaceLast ? summaryMessage : current.lastMessage,
-        unreadCount: selected
-          ? 0
-          : kind === "message.sent" && incomingFromAnotherPerson && !alreadyHadMessage
+        unreadCount: kind === "message.sent" && incomingFromAnotherPerson && !alreadyHadMessage
             ? current.unreadCount + 1
             : current.unreadCount,
         updatedAt: kind === "message.sent" ? incoming.createdAt : current.updatedAt
@@ -1031,8 +1105,24 @@ export function MessagingExperience({
         const messageId = liveEvent.payload?.messageId;
         const active = liveEvent.payload?.active;
         if (typeof messageId === "string" && typeof active === "boolean") {
-          setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, starred: active } : entry));
+          const updateStar = (entry: MessageContract) => entry.id === messageId ? { ...entry, starred: active } : entry;
+          setMessages((current) => current.map(updateStar));
+          setMediaResults((current) => current.map(updateStar));
+          setConversation((current) => current?.lastMessage?.id === messageId
+            ? { ...current, lastMessage: updateStar(current.lastMessage) }
+            : current);
+          setConversations((current) => current.map((entry) => entry.lastMessage?.id === messageId
+            ? { ...entry, lastMessage: updateStar(entry.lastMessage) }
+            : entry));
         }
+        continue;
+      }
+      if (liveEvent.kind === "conversation.draft.updated" || liveEvent.kind === "conversation.read") {
+        if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
+        liveRefreshTimerRef.current = window.setTimeout(() => {
+          liveRefreshTimerRef.current = null;
+          void loadConversations(false);
+        }, 80);
         continue;
       }
       if (!messagingEventRequiresRefresh(liveEvent)) continue;
@@ -1056,16 +1146,23 @@ export function MessagingExperience({
   useEffect(() => {
     for (const attachment of pendingAttachmentsRef.current) void discardPendingAttachment(attachment, actor.handle);
     if (!selectedConversationId) {
+      readReceiptConversationRef.current = null;
+      latestReadSequenceRef.current = 0;
+      if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
+      readReceiptTimerRef.current = null;
       setConversation(null);
       setMessages([]);
       setMessageCursor(null);
       setConversationLoading(false);
       dispatchDraft({ type: "select", conversationId: null, localBody: null, serverBody: "", serverUpdatedAt: null });
+      setDraftSyncState("idle");
       setPendingAttachments([]);
       setAttachmentPreview(null);
       return;
     }
     const local = window.localStorage.getItem(localDraftKey(actor.handle, selectedConversationId));
+    if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
+    readReceiptTimerRef.current = null;
     const summary = conversations.find((entry) => entry.id === selectedConversationId);
     setConversation(summary ?? null);
     setMessages([]);
@@ -1078,12 +1175,17 @@ export function MessagingExperience({
       serverBody: summary?.draftBody ?? "",
       serverUpdatedAt: summary?.draftUpdatedAt ?? null
     });
+    setDraftSyncState(local !== null && local !== (summary?.draftBody ?? "") ? "local" : "idle");
     setPendingAttachments([]);
     setAttachmentPreview(null);
     setAddPeopleOpen(false);
     setInfoTab("info");
     shouldStickToBottomRef.current = true;
+    readReceiptConversationRef.current = selectedConversationId;
+    latestReadSequenceRef.current = 0;
     setSearchResults(null);
+    setSearchCursor(null);
+    setSearchLoading(false);
     setMediaKind(null);
     setMediaResults([]);
     setMediaCursor(null);
@@ -1129,23 +1231,29 @@ export function MessagingExperience({
 
   const persistDraft = useCallback(async (conversationId: string, body: string) => {
     if (!messageIdPattern.test(conversationId)) return;
+    if (selectedRef.current === conversationId) setDraftSyncState("saving");
     try {
       const saved = await symposiumApi.request<{ body: string; updatedAt: string | null }>(`/api/conversations/${encodeURIComponent(conversationId)}/draft`, {
         method: "PATCH",
         body: { actorHandle: actor.handle, body }
       });
       dispatchDraft({ type: "saved", conversationId, body: saved.body, updatedAt: saved.updatedAt });
+      if (selectedRef.current === conversationId) {
+        setDraftSyncState(draftStateRef.current.body === saved.body ? "saved" : "local");
+      }
     } catch {
-      // The immediately persisted local draft remains authoritative and will retry
-      // on the next edit or blur without interrupting typing.
+      if (selectedRef.current === conversationId) setDraftSyncState("local");
     }
   }, [actor.handle]);
 
   useEffect(() => {
     if (!selectedConversationId || draftState.conversationId !== selectedConversationId) return;
     if (draftSaveTimerRef.current !== null) window.clearTimeout(draftSaveTimerRef.current);
-    if (draftState.body) window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), draftState.body);
-    else window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
+    if (draftState.body || draftState.dirty) {
+      window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), draftState.body);
+    } else {
+      window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
+    }
     if (draftState.dirty && messageIdPattern.test(selectedConversationId)) {
       const body = draftState.body;
       draftSaveTimerRef.current = window.setTimeout(() => {
@@ -1198,13 +1306,14 @@ export function MessagingExperience({
   };
 
   const sendCurrent = async () => {
-    if (!selectedConversationId || (!draft.trim() && !pendingAttachments.length)) return;
+    if (!selectedConversationId || conversation?.status === "removed" || conversation?.blockedByViewer || (!draft.trim() && !pendingAttachments.length)) return;
     setSendingCount((current) => current + 1);
     shouldStickToBottomRef.current = true;
     const originalDraft = draft;
     const originalAttachments = pendingAttachments;
     const attachmentIds = pendingAttachments.map((entry) => entry.attachment.id);
     dispatchDraft({ type: "clear", conversationId: selectedConversationId });
+    setDraftSyncState("idle");
     setPendingAttachments([]);
     setAttachmentPreview(null);
     window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
@@ -1233,6 +1342,7 @@ export function MessagingExperience({
           ? `${originalDraft}${originalDraft ? "\n" : ""}${bodyTypedWhileSending}`
           : originalDraft;
         dispatchDraft({ type: "edit", conversationId: selectedConversationId, body: restoredBody });
+        setDraftSyncState(restoredBody ? "local" : "idle");
         if (restoredBody) window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), restoredBody);
       }
       setPendingAttachments((current) => [
@@ -1249,7 +1359,7 @@ export function MessagingExperience({
     const uploadConversationId = selectedConversationId;
     const files = Array.from(event.target.files ?? []).slice(0, Math.max(0, 10 - pendingAttachments.length));
     event.target.value = "";
-    if (!uploadConversationId || !files.length) return;
+    if (!uploadConversationId || !files.length || conversation?.status === "removed" || conversation?.blockedByViewer) return;
     setUploading(true);
     try {
       const results = await Promise.allSettled(files.map(async (file) => {
@@ -1330,7 +1440,9 @@ export function MessagingExperience({
       });
       const updated = { ...conversation, ...preference };
       setConversation(updated);
-      setConversations((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
+      setConversations((current) => current
+        .map((entry) => entry.id === updated.id ? updated : entry)
+        .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.updatedAt.localeCompare(left.updatedAt)));
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
@@ -1368,20 +1480,36 @@ export function MessagingExperience({
     const target = currentPeer?.handle ?? syntheticHandle;
     if (!target) return;
     const active = !conversation?.blockedByViewer;
-    if (active && !window.confirm(`Block ${currentPeer?.name ?? target}? They will not be able to message you or add you to groups.`)) return;
+    if (active && !window.confirm(`Block ${currentPeer?.name ?? target}? They will not be able to message you directly or add you to groups. Messages in groups you already share will remain visible.`)) return;
     try {
       await symposiumApi.request("/api/blocks", { method: "POST", body: { actorHandle: actor.handle, targetHandle: target, active } });
       if (conversation) setConversation({ ...conversation, blockedByViewer: active });
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
-  const searchChat = async () => {
-    if (!conversation || !searchQuery.trim()) return setSearchResults(null);
+  const searchChat = async (append = false) => {
+    if (!conversation || !searchQuery.trim()) {
+      setSearchResults(null);
+      setSearchCursor(null);
+      return;
+    }
+    const conversationId = conversation.id;
+    const requestEpoch = searchLoadEpochRef.current + 1;
+    searchLoadEpochRef.current = requestEpoch;
+    setSearchLoading(true);
     try {
       const parameters = new URLSearchParams({ query: searchQuery.trim(), limit: "24" });
-      const result = await symposiumApi.request<{ messages: MessageContract[] }>(withActor(`/api/conversations/${conversation.id}/search?${parameters}`, actor.handle), { cache: "no-store" });
-      setSearchResults(result.messages);
+      if (append && searchCursor) parameters.set("cursor", searchCursor);
+      const result = await symposiumApi.request<{ messages: MessageContract[]; nextCursor: string | null }>(withActor(`/api/conversations/${conversationId}/search?${parameters}`, actor.handle), { cache: "no-store" });
+      if (requestEpoch !== searchLoadEpochRef.current || selectedRef.current !== conversationId) return;
+      setSearchResults((current) => append && current
+        ? [...current, ...result.messages.filter((message) => !current.some((entry) => entry.id === message.id))]
+        : result.messages);
+      setSearchCursor(result.nextCursor);
     } catch (actionError) { setError(errorText(actionError)); }
+    finally {
+      if (requestEpoch === searchLoadEpochRef.current) setSearchLoading(false);
+    }
   };
 
   const loadMedia = async (kind: MessageMediaKind, append = false) => {
@@ -1437,8 +1565,9 @@ export function MessagingExperience({
     });
   };
 
-  const updateParticipantRole = async (handle: string, role: "admin" | "member") => {
+  const updateParticipantRole = async (handle: string, role: "owner" | "admin" | "member") => {
     if (!conversation) return;
+    if (role === "owner" && !window.confirm(`Transfer ownership of ${conversationName(conversation, actor.handle)} to ${handle}? You will remain an administrator.`)) return;
     try {
       await symposiumApi.request(`/api/conversations/${conversation.id}/participants/${encodeURIComponent(handle)}`, {
         method: "PATCH", body: { actorHandle: actor.handle, role }
@@ -1459,13 +1588,50 @@ export function MessagingExperience({
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
+  const leaveGroup = async () => {
+    if (!conversation || conversation.kind !== "group" || conversation.role === "owner") return;
+    if (!window.confirm(`Leave ${conversationName(conversation, actor.handle)}? You will need to be added again to rejoin.`)) return;
+    try {
+      await symposiumApi.request(`/api/conversations/${conversation.id}/leave`, {
+        method: "POST",
+        body: { actorHandle: actor.handle }
+      });
+      window.localStorage.removeItem(localDraftKey(actor.handle, conversation.id));
+      selectConversation(null);
+      await loadConversations(false);
+    } catch (actionError) { setError(errorText(actionError)); }
+  };
+
   const compactConversations = quick ? conversations.slice(0, selectedConversationId ? 5 : 8) : conversations;
   const activeParticipants = activeConversationParticipants(conversation?.participants ?? [])
     .map((participant) => currentConversationParticipant(participant, profiles));
   const sharedResultCount = mediaKind ? messageMediaResultCount(mediaResults, mediaKind) : 0;
-  const jumpToMessage = (messageId: string) => {
+  const jumpToMessage = async (messageId: string) => {
     setInfoTab("info");
-    window.requestAnimationFrame(() => document.querySelector(`[data-message-id="${messageId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    const scrollToTarget = () => document.querySelector(`[data-message-id="${messageId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (document.querySelector(`[data-message-id="${messageId}"]`)) {
+      window.requestAnimationFrame(scrollToTarget);
+      return;
+    }
+    if (!conversation) return;
+    const conversationId = conversation.id;
+    shouldStickToBottomRef.current = false;
+    setConversationLoading(true);
+    try {
+      const page = await symposiumApi.request<MessagePageContract>(
+        withActor(`/api/conversations/${conversationId}/messages/${messageId}/context`, actor.handle),
+        { cache: "no-store" }
+      );
+      if (selectedRef.current !== conversationId) return;
+      setConversation(page.conversation);
+      setMessages(page.messages);
+      setMessageCursor(page.nextCursor);
+      window.requestAnimationFrame(() => window.requestAnimationFrame(scrollToTarget));
+    } catch (actionError) {
+      setError(errorText(actionError));
+    } finally {
+      if (selectedRef.current === conversationId) setConversationLoading(false);
+    }
   };
 
   return (
@@ -1516,6 +1682,7 @@ export function MessagingExperience({
             onScroll={(event) => {
               const target = event.currentTarget;
               shouldStickToBottomRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 90;
+              if (shouldStickToBottomRef.current) flushReadReceiptRef.current();
             }}
           >
             {messageCursor ? <button className="load-older-messages" type="button" disabled={loadingOlder} onClick={() => selectedConversationId && void loadConversation(selectedConversationId, { older: true })}>{loadingOlder ? "Loading…" : "Load older messages"}</button> : null}
@@ -1538,7 +1705,7 @@ export function MessagingExperience({
               );
             })}
           </div>
-          <div className={`message-composer${pendingAttachments.length ? " has-attachments" : ""}`}>
+          <div className={`message-composer${pendingAttachments.length ? " has-attachments" : ""}${draftSyncState !== "idle" ? " has-status" : ""}`}>
             {pendingAttachments.length ? (
               <div className="message-composer-attachments" role="list" aria-label="Attachments ready to send">
                 {pendingAttachments.map((entry) => {
@@ -1580,7 +1747,7 @@ export function MessagingExperience({
             ) : null}
             <label className="message-attach-button" title="Attach files">
               {uploading ? <LoaderCircle className="spin" size={18} /> : <Paperclip size={18} />}
-              <input type="file" multiple disabled={uploading || pendingAttachments.length >= 10} onChange={uploadFiles} />
+              <input type="file" multiple disabled={uploading || pendingAttachments.length >= 10 || conversation?.status === "removed" || conversation?.blockedByViewer} onChange={uploadFiles} />
             </label>
             <textarea
               ref={textareaRef}
@@ -1595,6 +1762,7 @@ export function MessagingExperience({
                 if (body) window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), body);
                 else window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
                 dispatchDraft({ type: "edit", conversationId: selectedConversationId, body });
+                setDraftSyncState(body !== draftStateRef.current.serverBody ? "local" : "idle");
               }}
               onBlur={() => {
                 const current = draftStateRef.current;
@@ -1611,7 +1779,12 @@ export function MessagingExperience({
                 }
               }}
             />
-            <button className="send-message-button" type="button" title={sendingCount ? "Send another message" : "Send"} disabled={uploading || (!draft.trim() && !pendingAttachments.length)} onClick={() => void sendCurrent()}>
+            {draftSyncState !== "idle" ? (
+              <small className={`message-draft-sync ${draftSyncState}`} aria-live="polite">
+                {draftSyncState === "saving" ? "Saving draft…" : draftSyncState === "saved" ? "Draft saved" : "Saved on this device · cloud sync pending"}
+              </small>
+            ) : null}
+            <button className="send-message-button" type="button" title={sendingCount ? "Send another message" : "Send"} disabled={uploading || conversation?.status === "removed" || conversation?.blockedByViewer || (!draft.trim() && !pendingAttachments.length)} onClick={() => void sendCurrent()}>
               {sendingCount ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}
             </button>
           </div>
@@ -1639,20 +1812,27 @@ export function MessagingExperience({
                   <section className="message-info-tab-panel" role="tabpanel">
                     {conversation.kind === "direct" && currentPeer && profiles[cleanHandle(currentPeer.handle)]?.bio ? <p className="message-peer-bio">{profiles[cleanHandle(currentPeer.handle)]?.bio}</p> : null}
                     <form className="message-search-chat" onSubmit={(event) => { event.preventDefault(); void searchChat(); }}>
-                      <Search size={14} /><input value={searchQuery} placeholder="Search this chat" onChange={(event) => setSearchQuery(event.target.value)} /><button type="submit">Search</button>
+                      <Search size={14} /><input value={searchQuery} placeholder="Search this chat" onChange={(event) => { searchLoadEpochRef.current += 1; setSearchLoading(false); setSearchQuery(event.target.value); setSearchResults(null); setSearchCursor(null); }} /><button type="submit" disabled={searchLoading}>{searchLoading ? "Searching…" : "Search"}</button>
                     </form>
                     {searchResults ? (
-                      <div className="message-info-results"><strong>{searchResults.length} result{searchResults.length === 1 ? "" : "s"}</strong>{searchResults.map((entry) => <button type="button" key={entry.id} onClick={() => jumpToMessage(entry.id)}>{entry.body || "Attachment"}<small>{displayTime(entry.createdAt)}</small></button>)}</div>
+                      <div className="message-info-results"><strong>{searchResults.length} result{searchResults.length === 1 ? "" : "s"} loaded</strong>{searchResults.map((entry) => <button type="button" key={entry.id} onClick={() => void jumpToMessage(entry.id)}>{entry.body || "Attachment"}<small>{displayTime(entry.createdAt)}</small></button>)}{searchCursor ? <button className="message-media-more" type="button" disabled={searchLoading} onClick={() => void searchChat(true)}>{searchLoading ? "Loading…" : "Load more results"}</button> : null}</div>
                     ) : null}
                     <div className="message-info-actions">
                       <button type="button" onClick={() => void changePreference({ pinned: !conversation.pinned })}>{conversation.pinned ? <PinOff size={15} /> : <Pin size={15} />}{conversation.pinned ? "Unpin chat" : "Pin chat"}</button>
-                      <button type="button" onClick={() => void changePreference({ muted: !conversation.muted })}>{conversation.muted ? <BellRing size={15} /> : <BellOff size={15} />}{conversation.muted ? "Unmute notifications" : "Mute notifications"}</button>
+                      <button type="button" title="Muted chats remain unread in Messages but do not contribute to the top unread badge" onClick={() => void changePreference({ muted: !conversation.muted })}>{conversation.muted ? <BellRing size={15} /> : <BellOff size={15} />}{conversation.muted ? "Unmute notifications" : "Mute notifications"}</button>
                       {conversation.kind === "group" ? <button type="button" onClick={() => setInfoTab("people")}><Users size={15} />View {activeParticipants.length} people</button> : null}
                     </div>
                     <div className="message-danger-actions">
                       <button type="button" onClick={() => void clearChat()}><ArchiveX size={15} />Clear chat</button>
-                      <button type="button" onClick={() => void deleteChat()}><Trash2 size={15} />Delete chat</button>
+                      {conversation.kind === "group" && conversation.status === "active" && conversation.role !== "owner"
+                        ? <button type="button" onClick={() => void leaveGroup()}><LogOut size={15} />Leave group</button>
+                        : conversation.kind !== "group" || conversation.status !== "active"
+                          ? <button type="button" onClick={() => void deleteChat()}><Trash2 size={15} />Delete chat</button>
+                          : null}
                       {conversation.kind === "direct" ? <button type="button" onClick={() => void blockPeer()}><Ban size={15} />{conversation.blockedByViewer ? "Unblock user" : "Block user"}</button> : null}
+                      {conversation.kind === "group" && conversation.status === "active" && conversation.role === "owner"
+                        ? <small>Transfer ownership from the People tab before leaving this group.</small>
+                        : null}
                     </div>
                   </section>
                 ) : null}
@@ -1675,9 +1855,10 @@ export function MessagingExperience({
                               <span>{participant.name}<small>{participant.role}</small></span>
                             </button>
                             {conversation.role === "owner" && !ownParticipant && participant.role !== "owner" && participant.status === "active" ? (
-                              <select value={participant.role} aria-label={`Role for ${participant.name}`} onChange={(event) => void updateParticipantRole(participant.handle, event.target.value as "admin" | "member")}>
+                              <select value={participant.role} aria-label={`Role for ${participant.name}`} onChange={(event) => void updateParticipantRole(participant.handle, event.target.value as "owner" | "admin" | "member")}>
                                 <option value="member">Member</option>
                                 <option value="admin">Admin</option>
+                                <option value="owner">Transfer ownership</option>
                               </select>
                             ) : null}
                             {canRemove ? <button className="remove-message-participant" type="button" title={`Remove ${participant.name}`} onClick={() => void removeParticipant(participant.handle, participant.name)}><X size={13} /></button> : null}

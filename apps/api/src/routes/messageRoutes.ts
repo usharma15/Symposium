@@ -11,8 +11,10 @@ import {
   deleteMessage,
   editMessage,
   getConversation,
+  getMessageContext,
   getUnreadMessageCount,
   inviteConversationParticipants,
+  leaveConversation,
   listConversations,
   listMessages,
   listStarredMessages,
@@ -67,6 +69,18 @@ export const registerMessageRoutes = (app: FastifyInstance) => {
   app.get<{ Params: RouteParams; Querystring: Query }>("/v1/conversations/:id/messages", async (request, reply) => {
     try {
       return reply.send(await listMessages(uuidParam(request.params.id), request.query, await withWriteActor(request, { scope: "message-read", limit: 180 })));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: MessageParams }>("/v1/conversations/:id/messages/:messageId/context", async (request, reply) => {
+    try {
+      return reply.send(await getMessageContext(
+        uuidParam(request.params.id),
+        uuidParam(request.params.messageId),
+        await withWriteActor(request, { scope: "message-read", limit: 180 })
+      ));
     } catch (error) {
       return sendError(app, reply, error);
     }
@@ -149,6 +163,14 @@ export const registerMessageRoutes = (app: FastifyInstance) => {
   app.post<{ Params: RouteParams }>("/v1/conversations/:id/read", async (request, reply) => {
     try {
       return reply.send(await markConversationRead(uuidParam(request.params.id), request.body, await withWriteActor(request, { scope: "message-read-receipt", limit: 120 })));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post<{ Params: RouteParams }>("/v1/conversations/:id/leave", async (request, reply) => {
+    try {
+      return reply.send(await leaveConversation(uuidParam(request.params.id), await withWriteActor(request)));
     } catch (error) {
       return sendError(app, reply, error);
     }

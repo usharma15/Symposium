@@ -18,6 +18,11 @@ import {
   withoutConversationParticipant
 } from "@/features/messages/messageParticipantState";
 import {
+  messageReadAcknowledgesSummary,
+  messageReadFollowUpNeeded,
+  messageReadViewportActive
+} from "@/features/messages/messageReadState";
+import {
   canonicalMessageFromLiveEvent,
   mergeCanonicalMessage,
   messagingEventRequiresRefresh
@@ -37,6 +42,7 @@ import {
   notificationListQuerySchema,
   saveConversationDraftInputSchema,
   sendMessageInputSchema,
+  updateConversationParticipantInputSchema,
   type ConversationSummaryContract
 } from "@/packages/contracts/src";
 
@@ -45,6 +51,7 @@ const validConversationId = "00000000-0000-4000-8000-000000000001";
 const main = async () => {
   assert.equal(sendMessageInputSchema.safeParse({ recipientHandle: "@mira", body: "hello" }).success, true);
   assert.equal(sendMessageInputSchema.safeParse({ conversationId: validConversationId, attachmentIds: [validConversationId] }).success, true);
+  assert.equal(sendMessageInputSchema.safeParse({ conversationId: validConversationId, recipientHandle: "@mira", body: "ambiguous" }).success, false);
   assert.equal(sendMessageInputSchema.safeParse({ body: "" }).success, false);
   assert.equal(sendMessageInputSchema.safeParse({ recipientHandle: "@mira", body: "x".repeat(8001) }).success, false);
   assert.equal(createGroupConversationInputSchema.safeParse({ title: "Lab", inviteeHandles: [] }).success, false);
@@ -56,6 +63,7 @@ const main = async () => {
   assert.equal(notificationListQuerySchema.safeParse({ limit: 51 }).success, false);
   assert.equal(saveConversationDraftInputSchema.safeParse({ body: "x".repeat(8001) }).success, false);
   assert.equal(markConversationReadInputSchema.safeParse({ sequence: -1 }).success, false);
+  assert.equal(updateConversationParticipantInputSchema.safeParse({ role: "owner" }).success, true);
   assert.equal(editMessageInputSchema.safeParse({ body: "revised", expectedRevision: 1 }).success, true);
   assert.equal(deleteMessageInputSchema.safeParse({ mode: "everyone" }).success, true);
   assert.equal(compactAttachmentFileName("short-name.jpg"), "short-name.jpg");
@@ -160,6 +168,17 @@ const main = async () => {
   assert.equal(messagingEventCanChangeUnread({ kind: "conversation.read", subjectId: validConversationId }), true);
   assert.equal(compactMessageUnreadCount(7), "7");
   assert.equal(compactMessageUnreadCount(100), "99+");
+  assert.equal(messageReadViewportActive({ documentVisible: true, windowFocused: true, nearLatestMessage: true }), true);
+  assert.equal(messageReadViewportActive({ documentVisible: false, windowFocused: true, nearLatestMessage: true }), false);
+  assert.equal(messageReadViewportActive({ documentVisible: true, windowFocused: false, nearLatestMessage: true }), false);
+  assert.equal(messageReadViewportActive({ documentVisible: true, windowFocused: true, nearLatestMessage: false }), false);
+  assert.equal(messageReadAcknowledgesSummary(8, 8), true);
+  assert.equal(messageReadAcknowledgesSummary(9, 8), false);
+  assert.equal(messageReadFollowUpNeeded({ pendingConversationId: "conversation-b", pendingSequence: 3, acknowledgedConversationId: "conversation-a", acknowledgedSequence: 100 }), true);
+  assert.equal(messageReadFollowUpNeeded({ pendingConversationId: "conversation-a", pendingSequence: 101, acknowledgedConversationId: "conversation-a", acknowledgedSequence: 100 }), true);
+  assert.equal(messageReadFollowUpNeeded({ pendingConversationId: "conversation-a", pendingSequence: 100, acknowledgedConversationId: "conversation-a", acknowledgedSequence: 100 }), false);
+  assert.equal(messagingEventCanChangeUnread({ kind: "conversation.preferences.updated", subjectId: validConversationId }), true);
+  assert.equal(messagingEventCanChangeUnread({ kind: "conversation.participant.left", subjectId: validConversationId }), true);
   assert.equal(latestUnreadChangingEventKey([
     { id: "older", kind: "message.sent", subjectId: validConversationId },
     { id: "irrelevant", kind: "conversation.draft.updated", subjectId: validConversationId },
@@ -244,6 +263,12 @@ const main = async () => {
   assert.match(repository, /kind: "conversation\.created"/);
   assert.match(repository, /kind: "conversation\.participants\.added"/);
   assert.match(repository, /participant\.status = 'active'/);
+  assert.match(repository, /conversation\.kind = 'direct' OR participant\.hidden_at IS NULL/);
+  assert.match(repository, /viewer\.muted = false/);
+  assert.match(repository, /export const getMessageContext/);
+  assert.match(repository, /export const leaveConversation/);
+  assert.match(repository, /conversation\.ownership\.transfer/);
+  assert.match(repository, /conversation\.participant\.left/);
   assert.match(repository, /attachment\.file_name ~\* '\\\\.\(txt\|md\|doc\|docx\|odt\|rtf\|pdf\)\$'/);
   assert.match(repository, /maxGroupParticipants = 50/);
   assert.match(repository, /kind: "group_removed"/);
@@ -266,6 +291,13 @@ const main = async () => {
   assert.match(client, /draftSaveTimerRef/);
   assert.match(client, /conversationLoadEpochRef/);
   assert.match(client, /bodyTypedWhileSending/);
+  assert.match(client, /messageReadViewportActive/);
+  assert.match(client, /cloud sync pending/);
+  assert.match(client, /draftState\.body \|\| draftState\.dirty/);
+  assert.match(client, /liveEvent\.kind === "conversation\.draft\.updated" \|\| liveEvent\.kind === "conversation\.read"/);
+  assert.match(client, /Transfer ownership/);
+  assert.match(client, /Leave group/);
+  assert.match(client, /messages\/\$\{messageId\}\/context/);
   assert.match(client, /mergeCanonicalMessage/);
   assert.match(client, /processedLiveEventKeySetRef/);
   assert.match(client, /setSendingCount/);
@@ -313,6 +345,8 @@ const main = async () => {
   assert.doesNotMatch(shell, /event\.kind === "conversation\.invited"/);
   assert.match(shell, /event\.kind === "note\.access\.granted"/);
   assert.match(routes, /\/v1\/conversations\/:id\/participants/);
+  assert.match(routes, /\/v1\/conversations\/:id\/leave/);
+  assert.match(routes, /\/v1\/conversations\/:id\/messages\/:messageId\/context/);
   assert.match(routes, /\/v1\/conversations\/unread/);
   assert.match(repository, /SELECT count\(\*\)::int AS "unreadCount"[\s\S]*?viewer\.hidden_at IS NULL[\s\S]*?message\.sender_handle IS DISTINCT FROM \$1/);
   assert.match(unreadButton, /\/api\/conversations\/unread/);

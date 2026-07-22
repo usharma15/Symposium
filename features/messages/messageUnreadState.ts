@@ -6,6 +6,8 @@ const unreadChangingEventKinds = new Set([
   "conversation.created",
   "conversation.participants.added",
   "conversation.participant.removed",
+  "conversation.participant.left",
+  "conversation.preferences.updated",
   "conversation.read",
   "conversation.cleared",
   "conversation.deleted_for_viewer"

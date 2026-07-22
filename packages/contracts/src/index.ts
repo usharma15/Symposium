@@ -1462,6 +1462,9 @@ export const sendMessageInputSchema = z.object({
   body: z.string().trim().max(8000).default(""),
   attachmentIds: z.array(z.string().uuid()).max(10).default([])
 }).superRefine((input, context) => {
+  if (input.conversationId && input.recipientHandle) {
+    context.addIssue({ code: "custom", message: "Choose either a conversation or a recipient, not both." });
+  }
   if (!input.conversationId && !input.recipientHandle) {
     context.addIssue({ code: "custom", message: "Choose a recipient or conversation." });
   }
@@ -1482,7 +1485,7 @@ export const inviteConversationParticipantsInputSchema = z.object({
 });
 
 export const updateConversationParticipantInputSchema = z.object({
-  role: z.enum(["admin", "member"])
+  role: conversationParticipantRoleSchema
 });
 
 export const resolveConversationInviteInputSchema = z.object({

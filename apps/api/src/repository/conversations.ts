@@ -203,9 +203,11 @@ const participantRows = async (conversationIds: string[]) => {
     `SELECT participant.conversation_id::text AS "conversationId", participant.profile_handle AS handle,
        profile.name, profile.avatar_url AS "avatarUrl", participant.role, participant.status
      FROM conversation_participants participant
+     JOIN conversations conversation ON conversation.id = participant.conversation_id
      JOIN profiles profile ON profile.handle = participant.profile_handle
      WHERE participant.conversation_id = ANY($1::uuid[])
        AND participant.status = 'active'
+       AND (conversation.kind = 'direct' OR participant.hidden_at IS NULL)
      ORDER BY participant.created_at ASC, participant.profile_handle ASC`,
     [conversationIds]
   );
@@ -342,6 +344,7 @@ export const getUnreadMessageCount = async (actor: Actor): Promise<MessageUnread
       AND viewer.profile_handle = $1
      WHERE viewer.hidden_at IS NULL
        AND viewer.status <> 'invited'
+       AND viewer.muted = false
        AND message.sequence > GREATEST(viewer.last_read_sequence, viewer.cleared_through_sequence)
        AND (viewer.removed_through_sequence IS NULL OR message.sequence <= viewer.removed_through_sequence)
        AND message.sender_handle IS DISTINCT FROM $1
@@ -412,6 +415,72 @@ export const listMessages = async (
     conversation,
     messages: rows.reverse().map((row) => messageContract(row, attachments.get(row.id) ?? [])),
     nextCursor: hasMore && oldest ? encodeMessageCursor(numberValue(oldest.sequence)) : null
+  };
+};
+
+export const getMessageContext = async (
+  conversationId: string,
+  messageId: string,
+  actor: Actor
+): Promise<MessagePageContract> => {
+  const handle = actorHandle(actor);
+  if (!hasDatabase()) throw new TRPCError({ code: "NOT_FOUND", message: "Message not found." });
+  await ensureLiveData();
+  const membership = await getMembership(getPool(), conversationId, handle);
+  if (membership.status === "invited") {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Join this conversation before opening message history." });
+  }
+  const conversation = (await summariesForMemberships([membership], handle))[0]!;
+  const baseValues: unknown[] = [conversationId, handle, numberValue(membership.clearedThroughSequence)];
+  const visibleConditions = [
+    `message.conversation_id = $1`,
+    `message.sequence > $3`,
+    `NOT EXISTS (SELECT 1 FROM message_hidden_for hidden WHERE hidden.message_id = message.id AND hidden.profile_handle = $2)`
+  ];
+  if (membership.removedThroughSequence !== null) {
+    baseValues.push(numberValue(membership.removedThroughSequence));
+    visibleConditions.push(`message.sequence <= $${baseValues.length}`);
+  }
+  const targetValues = [...baseValues, messageId];
+  const target = await getPool().query<{ sequence: number | string }>(
+    `SELECT message.sequence
+     FROM messages message
+     WHERE ${visibleConditions.join(" AND ")} AND message.id = $${targetValues.length}
+     LIMIT 1`,
+    targetValues
+  );
+  if (!target.rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Message not found." });
+  const targetSequence = numberValue(target.rows[0].sequence);
+  const selectMessage = `SELECT message.id::text, message.conversation_id::text AS "conversationId", message.sequence,
+    message.revision, message.sender_handle AS "senderHandle", message.body,
+    message.edited_at AS "editedAt", message.deleted_at AS "deletedAt", message.created_at AS "createdAt",
+    EXISTS (SELECT 1 FROM message_stars star WHERE star.message_id = message.id AND star.profile_handle = $2) AS starred
+    FROM messages message`;
+  const beforeValues = [...baseValues, targetSequence, 26];
+  const before = await getPool().query<MessageRow>(
+    `${selectMessage}
+     WHERE ${visibleConditions.join(" AND ")} AND message.sequence <= $${baseValues.length + 1}
+     ORDER BY message.sequence DESC
+     LIMIT $${beforeValues.length}`,
+    beforeValues
+  );
+  const hasOlder = before.rows.length > 25;
+  const earlier = before.rows.slice(0, 25).reverse();
+  const afterValues = [...baseValues, targetSequence, 25];
+  const after = await getPool().query<MessageRow>(
+    `${selectMessage}
+     WHERE ${visibleConditions.join(" AND ")} AND message.sequence > $${baseValues.length + 1}
+     ORDER BY message.sequence ASC
+     LIMIT $${afterValues.length}`,
+    afterValues
+  );
+  const rows = [...earlier, ...after.rows];
+  const attachments = await loadAttachments(rows.filter((row) => !row.deletedAt).map((row) => row.id));
+  const oldest = rows[0];
+  return {
+    conversation,
+    messages: rows.map((row) => messageContract(row, attachments.get(row.id) ?? [])),
+    nextCursor: hasOlder && oldest ? encodeMessageCursor(numberValue(oldest.sequence)) : null
   };
 };
 
@@ -746,12 +815,52 @@ export const updateConversationParticipant = async (
   const target = await ensureProfileHandle(targetHandle);
   if (!hasDatabase()) return { conversationId, handle: target, role: input.role };
   await ensureLiveData();
-  return runAtomic(async (client) => {
+  return runAtomic<{ conversationId: string; handle: string; role: "owner" | "admin" | "member" }>(async (client) => {
     const membership = await getMembership(client, conversationId, actorProfile, { lock: true });
     if (membership.kind !== "group" || membership.status !== "active" || membership.role !== "owner") {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the group owner can change participant roles." });
     }
     if (target === actorProfile) throw new TRPCError({ code: "BAD_REQUEST", message: "The owner role cannot be changed here." });
+    if (input.role === "owner") {
+      const transferred = await client.query(
+        `UPDATE conversation_participants SET role = 'owner'
+         WHERE conversation_id = $1 AND profile_handle = $2 AND status = 'active' AND hidden_at IS NULL AND role <> 'owner'
+         RETURNING profile_handle`,
+        [conversationId, target]
+      );
+      if (!transferred.rowCount) throw new TRPCError({ code: "NOT_FOUND", message: "Participant not found." });
+      await client.query(
+        `UPDATE conversation_participants SET role = 'admin'
+         WHERE conversation_id = $1 AND profile_handle = $2`,
+        [conversationId, actorProfile]
+      );
+      await client.query(
+        `UPDATE conversations SET owner_handle = $2, revision = revision + 1, updated_at = now() WHERE id = $1`,
+        [conversationId, target]
+      );
+      const audience = await client.query<{ handle: string }>(
+        `SELECT profile_handle AS handle FROM conversation_participants
+         WHERE conversation_id = $1 AND status = 'active' AND hidden_at IS NULL`,
+        [conversationId]
+      );
+      await stageAuditLog(client, {
+        actorHandle: actorProfile,
+        action: "conversation.ownership.transfer",
+        subjectType: "conversation",
+        subjectId: conversationId,
+        metadata: { targetHandle: target }
+      });
+      const event = await stageEvent(client, {
+        kind: "conversation.ownership.transferred",
+        actorHandle: actorProfile,
+        subjectType: "conversation",
+        subjectId: conversationId,
+        visibility: "private",
+        audienceHandles: audience.rows.map((row) => row.handle),
+        payload: { conversationId, previousOwnerHandle: actorProfile, ownerHandle: target }
+      });
+      return { value: { conversationId, handle: target, role: input.role }, events: [event] };
+    }
     const updated = await client.query(
       `UPDATE conversation_participants SET role = $3
        WHERE conversation_id = $1 AND profile_handle = $2 AND status = 'active' AND role <> 'owner'
@@ -970,12 +1079,71 @@ export const clearConversation = async (conversationId: string, actor: Actor) =>
   });
 };
 
+const leaveGroupMembership = async (client: PoolClient, membership: MembershipRow, handle: string) => {
+  if (membership.kind !== "group" || membership.status !== "active") {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only active group participants can leave a group." });
+  }
+  if (membership.role === "owner") {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Transfer group ownership before leaving." });
+  }
+  const through = numberValue(membership.nextMessageSequence);
+  await client.query(
+    `UPDATE conversation_participants
+     SET status = 'removed', removed_at = now(), removed_through_sequence = $3,
+         hidden_at = now(), muted = true, pinned = false, draft_body = '', draft_updated_at = now()
+     WHERE conversation_id = $1 AND profile_handle = $2`,
+    [membership.conversationId, handle, through]
+  );
+  await client.query(`UPDATE conversations SET revision = revision + 1, updated_at = now() WHERE id = $1`, [membership.conversationId]);
+  await client.query(
+    `DELETE FROM message_stars star USING messages message
+     WHERE star.message_id = message.id AND star.profile_handle = $1 AND message.conversation_id = $2`,
+    [handle, membership.conversationId]
+  );
+  const audience = await client.query<{ handle: string }>(
+    `SELECT profile_handle AS handle FROM conversation_participants
+     WHERE conversation_id = $1 AND status = 'active' AND hidden_at IS NULL`,
+    [membership.conversationId]
+  );
+  await stageAuditLog(client, {
+    actorHandle: handle,
+    action: "conversation.participant.leave",
+    subjectType: "conversation",
+    subjectId: membership.conversationId,
+    metadata: { through }
+  });
+  const event = await stageEvent(client, {
+    kind: "conversation.participant.left",
+    actorHandle: handle,
+    subjectType: "conversation",
+    subjectId: membership.conversationId,
+    visibility: "private",
+    audienceHandles: Array.from(new Set([handle, ...audience.rows.map((row) => row.handle)])),
+    payload: { conversationId: membership.conversationId, handle, through }
+  });
+  return { value: { conversationId: membership.conversationId, left: true }, events: [event] };
+};
+
+export const leaveConversation = async (conversationId: string, actor: Actor) => {
+  const handle = actorHandle(actor);
+  if (!hasDatabase()) return { conversationId, left: true };
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const membership = await getMembership(client, conversationId, handle, { lock: true });
+    return leaveGroupMembership(client, membership, handle);
+  });
+};
+
 export const deleteConversationForViewer = async (conversationId: string, actor: Actor) => {
   const handle = actorHandle(actor);
   if (!hasDatabase()) return { conversationId, deleted: true };
   await ensureLiveData();
-  return runAtomic(async (client) => {
+  return runAtomic<{ conversationId: string; deleted: boolean; left?: boolean }>(async (client) => {
     const membership = await getMembership(client, conversationId, handle, { lock: true });
+    if (membership.kind === "group" && membership.status === "active") {
+      const left = await leaveGroupMembership(client, membership, handle);
+      return { ...left, value: { conversationId, deleted: true, left: true } };
+    }
     const through = numberValue(membership.nextMessageSequence);
     await client.query(
       `UPDATE conversation_participants
@@ -1104,7 +1272,7 @@ export const editMessage = async (conversationId: string, messageId: string, raw
       [messageId, conversationId, input.body]
     );
     const participants = await client.query<{ handle: string }>(
-      `SELECT profile_handle AS handle FROM conversation_participants WHERE conversation_id = $1 AND status = 'active' AND hidden_at IS NULL`,
+      `SELECT profile_handle AS handle FROM conversation_participants WHERE conversation_id = $1 AND status IN ('active', 'removed') AND hidden_at IS NULL`,
       [conversationId]
     );
     const attachments = await loadAttachments([messageId], client);
