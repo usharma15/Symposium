@@ -23,6 +23,11 @@ import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../service
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { markQuotedPostUnavailable, resolveContentQuote } from "../services/contentQuotes";
 import {
+  contentMentionNotificationInputs,
+  quoteNotificationInput,
+  sameQuoteSource
+} from "../services/contentNotifications";
+import {
   createPatronageProjection,
   insertPatronageProposal,
   patronagePostStatus,
@@ -249,6 +254,42 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       audienceHandles: item.room === "office" || item.kind === "draft" ? [handle] : eventScope.audienceHandles,
       payload: { item, room: item.room, kind: item.kind, title: item.title }
     }));
+    if (item.room !== "office" && item.kind !== "draft") {
+      const mentionNotifications = await contentMentionNotificationInputs(client, {
+        sourceType: "post",
+        sourceId: item.id,
+        postId: item.id,
+        communityId: item.communityId,
+        actorHandle: handle,
+        actorName: author.name,
+        body: item.title,
+        href: `/posts/${encodeURIComponent(item.id)}`,
+        next: { body: item.body, document: item.document },
+        audienceHandles: eventScope.visibility === "community"
+          ? eventScope.audienceHandles
+          : undefined
+      });
+      const quoteRecipient = item.quote?.authorHandle
+        ? cleanHandle(item.quote.authorHandle)
+        : null;
+      const quoteNotification = quoteNotificationInput({
+        quote: item.quote,
+        quoteOwnerType: "post",
+        quoteOwnerId: item.id,
+        quoteOwnerPostId: item.id,
+        actorHandle: handle,
+        actorName: author.name,
+        body: item.title,
+        communityId: item.communityId,
+        recipientCanRead: eventScope.visibility !== "community"
+          || Boolean(quoteRecipient && eventScope.audienceHandles?.includes(quoteRecipient))
+      });
+      const createdNotifications = await createNotifications(client, [
+        ...mentionNotifications.inputs,
+        ...(quoteNotification ? [quoteNotification] : [])
+      ]);
+      stagedEvents.push(...createdNotifications.events);
+    }
     await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
     await client.query("COMMIT");
   } catch (error) {
@@ -734,6 +775,66 @@ export const updatePost = async (
           ? { item: updated }
           : { itemId: postId }
     }));
+    if (updated.room !== "office" && updated.kind !== "draft") {
+      const mentionNotifications = await contentMentionNotificationInputs(client, {
+        sourceType: "post",
+        sourceId: postId,
+        postId,
+        communityId: updated.communityId,
+        actorHandle: handle,
+        actorName: row.authorName,
+        body: updated.title,
+        href: `/posts/${encodeURIComponent(postId)}`,
+        current: { body: row.body, document: row.document ?? undefined },
+        next: { body: updated.body, document: updated.document },
+        audienceHandles: eventScope.visibility === "community"
+          ? eventScope.audienceHandles
+          : undefined
+      });
+      if (mentionNotifications.removedHandles.length) {
+        const resolvedMentions = await resolveNotifications(client, {
+          kinds: ["post_mention"],
+          metadataMatches: [{ mentionSourceType: "post", mentionSourceId: postId }],
+          profileHandles: mentionNotifications.removedHandles,
+          reason: "mention_removed"
+        });
+        stagedEvents.push(...resolvedMentions.events);
+      }
+      const quoteChanged = !sameQuoteSource(row.quote, quote);
+      if (quoteChanged && row.quote) {
+        const resolvedQuote = await resolveNotifications(client, {
+          kinds: [row.quote.sourceType === "post" ? "post_quote" : "comment_quote"],
+          metadataMatches: [{
+            quoteOwnerType: "post",
+            quoteOwnerId: postId,
+            sourceType: row.quote.sourceType,
+            sourceId: row.quote.sourceId
+          }],
+          reason: "quote_removed_or_changed"
+        });
+        stagedEvents.push(...resolvedQuote.events);
+      }
+      const quoteRecipient = quote?.authorHandle ? cleanHandle(quote.authorHandle) : null;
+      const quoteNotification = quoteChanged
+        ? quoteNotificationInput({
+            quote,
+            quoteOwnerType: "post",
+            quoteOwnerId: postId,
+            quoteOwnerPostId: postId,
+            actorHandle: handle,
+            actorName: row.authorName,
+            body: updated.title,
+            communityId: updated.communityId,
+            recipientCanRead: eventScope.visibility !== "community"
+              || Boolean(quoteRecipient && eventScope.audienceHandles?.includes(quoteRecipient))
+          })
+        : null;
+      const createdNotifications = await createNotifications(client, [
+        ...mentionNotifications.inputs,
+        ...(quoteNotification ? [quoteNotification] : [])
+      ]);
+      stagedEvents.push(...createdNotifications.events);
+    }
     await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
     await client.query("COMMIT");
   } catch (error) {
@@ -934,7 +1035,11 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
       if (applicationIds.length) await client.query(`DELETE FROM opportunity_applications WHERE post_id = $1`, [postId]);
       const resolvedNotifications = await resolveNotifications(client, {
         kinds: [
+          "comment_mention",
+          "comment_quote",
           "post_signal",
+          "post_mention",
+          "post_quote",
           "post_reshare",
           "post_comment",
           "comment_reply",
@@ -942,7 +1047,13 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
           "comment_reshare",
           "opportunity_application_received"
         ],
-        metadataMatches: [{ postId }],
+        metadataMatches: [
+          { postId },
+          { sourceType: "post", sourceId: postId },
+          { sourcePostId: postId },
+          { quoteOwnerType: "post", quoteOwnerId: postId },
+          { quoteOwnerType: "comment", quoteOwnerPostId: postId }
+        ],
         reason: "source_post_deleted"
       });
       stagedEvents.push(...resolvedNotifications.events);

@@ -30,6 +30,7 @@ import {
   updateConversationPreferences
 } from "../repository/conversations";
 import {
+  archiveNotifications,
   getNotificationPreferences,
   getUnreadNotificationCount,
   listNotifications,
@@ -290,6 +291,17 @@ export const registerMessageRoutes = (app: FastifyInstance) => {
   app.post("/v1/notifications/read", async (request, reply) => {
     try {
       return reply.send(await markNotificationRead(request.body, await withWriteActor(request, { scope: "notification-update", limit: 120 })));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/notifications/archive", async (request, reply) => {
+    try {
+      return reply.send(await archiveNotifications(
+        request.body,
+        await withWriteActor(request, { scope: "notification-update", limit: 120 })
+      ));
     } catch (error) {
       return sendError(app, reply, error);
     }

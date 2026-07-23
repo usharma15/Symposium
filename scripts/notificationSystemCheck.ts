@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildApp } from "@/apps/api/src/server";
 import {
+  archiveNotificationInputSchema,
   markNotificationInputSchema,
   notificationListQuerySchema,
   notificationPreferencesSchema,
@@ -12,13 +13,22 @@ import {
 } from "@/packages/contracts/src";
 import {
   applyNotificationLiveEvent,
+  archiveNotificationGroup,
+  archiveReadNotifications,
   compactNotificationLimit,
   compactNotificationCount,
   latestNotificationEventKey,
   mergeNotificationPage,
+  notificationCanArchive,
   notificationAttentionRank,
   partitionNotificationInbox
 } from "@/features/notifications/notificationState";
+import {
+  contentMentionHandles,
+  mentionHandleChanges,
+  quoteNotificationInput,
+  sameQuoteSource
+} from "@/apps/api/src/services/contentNotifications";
 import {
   defaultNotificationPreferences,
   notificationAllowedByPreferences,
@@ -126,6 +136,8 @@ const main = async () => {
     resolvedAt: "2026-07-23T00:00:00.000Z"
   }), null);
   const notificationKindMatrix = [
+    ["comment_mention", "activity", "View mention"],
+    ["comment_quote", "activity", "View quotes"],
     ["comment_reply", "activity", "View reply"],
     ["comment_reshare", "activity", "View reshares"],
     ["comment_signal", "activity", "View likes"],
@@ -142,6 +154,8 @@ const main = async () => {
     ["opportunity_application_shortlisted", "important", "View opportunity"],
     ["opportunity_application_status", "important", "View opportunity"],
     ["post_comment", "activity", "View comments"],
+    ["post_mention", "activity", "View mention"],
+    ["post_quote", "activity", "View quotes"],
     ["post_reshare", "activity", "View reshares"],
     ["post_signal", "activity", "View likes"],
     ["profile_followed", "activity", "View followers"],
@@ -150,12 +164,81 @@ const main = async () => {
     ["workspace_access_updated", "important", "Open workspace"],
     ["workspace_comment", "activity", "Open comment"],
     ["workspace_comment_reply", "activity", "View reply"],
-    ["workspace_comment_signal", "activity", "View likes"]
+    ["workspace_comment_signal", "activity", "View likes"],
+    ["workspace_mention", "activity", "View mention"]
   ] as const;
   for (const [kind, expectedPriority, expectedAction] of notificationKindMatrix) {
     assert.equal(notificationPriority(kind), expectedPriority, `${kind} priority`);
     assert.equal(notificationActionLabel(kind, "/destination"), expectedAction, `${kind} action`);
   }
+  assert.equal(notificationPreferenceCategory("post_quote"), "reshares");
+  assert.equal(notificationPreferenceCategory("comment_quote"), "reshares");
+  assert.equal(notificationPreferenceCategory("post_mention"), "commentsAndReplies");
+  assert.equal(notificationPreferenceCategory("comment_mention"), "commentsAndReplies");
+  assert.equal(notificationPreferenceCategory("workspace_mention"), "workspaceActivity");
+
+  const mentionDocument = {
+    version: 1 as const,
+    nodes: [{
+      id: "paragraph-1",
+      type: "paragraph" as const,
+      content: [
+        { text: "@Grace", mentionHandle: "@Grace" },
+        { text: " and @linus" }
+      ],
+      align: "left" as const,
+      indent: 0
+    }]
+  };
+  assert.deepEqual(
+    contentMentionHandles({
+      body: "Ask @Ada, @q and @ada, but not researcher@example.com.",
+      document: mentionDocument
+    }),
+    ["@ada", "@grace", "@linus", "@q"]
+  );
+  assert.deepEqual(
+    mentionHandleChanges(
+      { body: "@ada @grace" },
+      { body: "@grace @linus" }
+    ),
+    { added: ["@linus"], removed: ["@ada"] }
+  );
+  const quote = {
+    sourceType: "post" as const,
+    sourceId: "source-post",
+    sourcePostId: "source-post",
+    available: true,
+    author: "Source owner",
+    authorHandle: "@source",
+    attachmentCount: 0
+  };
+  assert.equal(sameQuoteSource(quote, { ...quote, sourceRevision: 2 }), true);
+  assert.equal(sameQuoteSource(quote, { ...quote, sourceId: "other" }), false);
+  const quoteInput = quoteNotificationInput({
+    quote,
+    quoteOwnerType: "comment",
+    quoteOwnerId: "quote-comment",
+    quoteOwnerPostId: "quote-post",
+    actorHandle: "@actor",
+    actorName: "Actor",
+    body: "Host post",
+    recipientCanRead: true
+  });
+  assert.equal(quoteInput?.kind, "post_quote");
+  assert.equal(quoteInput?.profileHandle, "@source");
+  assert.equal(quoteInput?.href, "/posts/source-post?analytics=quotes");
+  assert.equal(quoteInput?.metadata?.analyticsView, "quotes");
+  assert.equal(quoteNotificationInput({
+    quote,
+    quoteOwnerType: "post",
+    quoteOwnerId: "quote-post",
+    quoteOwnerPostId: "quote-post",
+    actorHandle: "@actor",
+    actorName: "Actor",
+    body: "Private host",
+    recipientCanRead: false
+  }), null);
   const relationshipHandles = Array.from({ length: 64 }, (_, index) => `@person-${index}`);
   const relationshipKeys = new Set<string>();
   for (const left of relationshipHandles) {
@@ -449,6 +532,46 @@ const main = async () => {
   };
   assert.equal(partitionNotificationInbox([resolvedAction], true).needsAttention.length, 0);
   assert.equal(partitionNotificationInbox([resolvedAction], true).recent.length, 1);
+  assert.equal(notificationCanArchive(readAction), false);
+  assert.equal(notificationCanArchive(resolvedAction), true);
+  assert.equal(notificationCanArchive(older), true);
+  const archivedUnread = archiveNotificationGroup(
+    { notifications: [older, newer], unreadCount: 2 },
+    older.groupKey
+  );
+  assert.deepEqual(archivedUnread.notifications, [newer]);
+  assert.equal(archivedUnread.unreadCount, 1);
+  assert.deepEqual(
+    archiveNotificationGroup(
+      { notifications: [readAction], unreadCount: 0 },
+      readAction.groupKey
+    ).notifications,
+    [readAction],
+    "Open requests cannot be archived."
+  );
+  const readActivity = { ...older, readAt: lifecycleTimestamp };
+  const clearableResolvedAction = { ...resolvedAction, groupKey: "resolved-action" };
+  const clearedRead = archiveReadNotifications({
+    notifications: [readActivity, newer, readAction, clearableResolvedAction],
+    unreadCount: 1
+  });
+  assert.deepEqual(
+    clearedRead.notifications.map((entry) => entry.groupKey),
+    [newer.groupKey, readAction.groupKey]
+  );
+  assert.equal(clearedRead.unreadCount, 1);
+  assert.deepEqual(
+    applyNotificationLiveEvent(
+      { notifications: [older, newer], unreadCount: 2 },
+      {
+        id: "event-archive",
+        kind: "notification.archived",
+        subjectId: older.id,
+        payload: { groupKey: older.groupKey }
+      }
+    ).notifications,
+    [newer]
+  );
 
   const resolutionSource = {
     ...notification(
@@ -501,7 +624,7 @@ const main = async () => {
     const groupIndex = nextRandom() % 96;
     const groupKey = `${matrixEntry[0]}:state-machine:${groupIndex}`;
     const existing = lifecycleExpected.get(groupKey);
-    const operation = nextRandom() % 7;
+    const operation = nextRandom() % 9;
     if (!existing || operation <= 2) {
       lifecycleId += 1;
       const createdAt = new Date(Date.UTC(2026, 6, 23, 12, 0, 0) + step).toISOString();
@@ -536,7 +659,7 @@ const main = async () => {
         payload: { groupKey }
       });
       lifecycleExpected.set(groupKey, existing.readAt ? existing : { ...existing, readAt });
-    } else {
+    } else if (operation <= 6) {
       const resolvedAt = new Date(Date.UTC(2026, 6, 23, 14, 0, 0) + step).toISOString();
       const canonical = {
         ...existing,
@@ -553,6 +676,28 @@ const main = async () => {
         payload: { notification: canonical }
       });
       lifecycleExpected.set(groupKey, canonical);
+    } else if (operation === 7) {
+      lifecycleState = applyNotificationLiveEvent(lifecycleState, {
+        id: `state-archived-${step}`,
+        kind: "notification.archived",
+        subjectId: existing.id,
+        createdAt: new Date(Date.UTC(2026, 6, 23, 15, 0, 0) + step).toISOString(),
+        payload: { groupKey }
+      });
+      if (notificationCanArchive(existing)) lifecycleExpected.delete(groupKey);
+    } else {
+      lifecycleState = applyNotificationLiveEvent(lifecycleState, {
+        id: `state-clear-read-${step}`,
+        kind: "notification.archived",
+        subjectId: "@viewer",
+        createdAt: new Date(Date.UTC(2026, 6, 23, 16, 0, 0) + step).toISOString(),
+        payload: { clearRead: true }
+      });
+      for (const [candidateGroupKey, candidate] of lifecycleExpected) {
+        if (candidate.readAt && notificationCanArchive(candidate)) {
+          lifecycleExpected.delete(candidateGroupKey);
+        }
+      }
     }
     if (step % 97 === 0) {
       assert.equal(
@@ -601,6 +746,13 @@ const main = async () => {
   assert.equal(notificationListQuerySchema.safeParse({ limit: 51 }).success, false);
   assert.equal(markNotificationInputSchema.safeParse({}).success, false);
   assert.equal(markNotificationInputSchema.safeParse({ all: true }).success, true);
+  assert.equal(archiveNotificationInputSchema.safeParse({}).success, false);
+  assert.equal(archiveNotificationInputSchema.safeParse({ clearRead: true }).success, true);
+  assert.equal(archiveNotificationInputSchema.safeParse({ groupKey: "post:1" }).success, true);
+  assert.equal(archiveNotificationInputSchema.safeParse({
+    groupKey: "post:1",
+    clearRead: true
+  }).success, false);
 
   const repository = readFileSync("apps/api/src/repository/notifications.ts", "utf8");
   const delivery = readFileSync("apps/api/src/services/notificationDelivery.ts", "utf8");
@@ -615,6 +767,11 @@ const main = async () => {
   const communities = readFileSync("apps/api/src/repository/communities.ts", "utf8");
   const communityRequests = readFileSync("apps/api/src/repository/communityRequests.ts", "utf8");
   const opportunityApplications = readFileSync("apps/api/src/repository/opportunityApplications.ts", "utf8");
+  const contentNotifications = readFileSync("apps/api/src/services/contentNotifications.ts", "utf8");
+  const maintenance = readFileSync("apps/api/src/services/maintenance.ts", "utf8");
+  const messageRoutes = readFileSync("apps/api/src/routes/messageRoutes.ts", "utf8");
+  const posts = readFileSync("apps/api/src/repository/posts.ts", "utf8");
+  const workspaceComments = readFileSync("apps/api/src/repository/workspaceComments.ts", "utf8");
   const notificationProducerSources = [
     workspaceAccess,
     conversations,
@@ -623,8 +780,8 @@ const main = async () => {
     communities,
     communityRequests,
     opportunityApplications,
-    readFileSync("apps/api/src/repository/posts.ts", "utf8"),
-    readFileSync("apps/api/src/repository/workspaceComments.ts", "utf8")
+    posts,
+    workspaceComments
   ].join("\n");
   const knownKinds = new Set(notificationKindMatrix.map(([kind]) => kind));
   const staticNotificationKinds = [...notificationProducerSources.matchAll(/kind:\s*"([a-z]+(?:_[a-z]+)+)"/g)]
@@ -641,6 +798,8 @@ const main = async () => {
   assert.match(delivery, /notificationAllowedByPreferences/);
   assert.match(delivery, /kind: "notification\.created"/);
   assert.match(delivery, /kind: "notification\.resolved"/);
+  assert.match(delivery, /"post_quote"/);
+  assert.match(delivery, /"workspace_mention"/);
   assert.match(delivery, /audienceHandles: \[row\.profileHandle\]/);
   assert.match(delivery, /FROM profile_blocks/);
   assert.match(delivery, /jsonb_array_elements/);
@@ -658,6 +817,10 @@ const main = async () => {
   assert.match(repository, /groupKey/);
   assert.match(repository, /export const getNotificationPreferences/);
   assert.match(repository, /export const updateNotificationPreferences/);
+  assert.match(repository, /export const archiveNotifications/);
+  assert.match(repository, /archived_at IS NULL/);
+  assert.match(repository, /Resolve this request before archiving it/);
+  assert.match(repository, /kind: "notification\.archived"/);
   assert.match(repository, /pg_advisory_xact_lock/);
   assert.match(repository, /kind: "notification\.preferences\.updated"/);
   assert.match(repository, /audienceHandles: \[handle\]/);
@@ -676,6 +839,18 @@ const main = async () => {
   assert.match(opportunityApplications, /kind: "opportunity_application_received"/);
   assert.match(opportunityApplications, /reason: "opportunity_application_reviewed"/);
   assert.match(conversations, /reason: "profile_relationship_blocked"/);
+  assert.match(contentNotifications, /contentMentionNotificationInputs/);
+  assert.match(contentNotifications, /quoteNotificationInput/);
+  assert.match(contentNotifications, /recipientCanRead/);
+  assert.match(contentNotifications, /dedupeKey: `mention:/);
+  assert.match(contentNotifications, /dedupeKey: `quote:/);
+  assert.match(posts, /kind[s]?: \["post_mention"\]/);
+  assert.match(posts, /quoteNotificationInput/);
+  assert.match(comments, /kind[s]?: \["comment_mention"\]/);
+  assert.match(comments, /quoteNotificationInput/);
+  assert.match(workspaceComments, /kind[s]?: \["workspace_mention"\]/);
+  assert.match(workspaceAccess, /reason: "workspace_access_revoked"/);
+  assert.match(communities, /reason: "community_access_removed"/);
 
   assert.match(panel, /requestEpochRef/);
   assert.match(panel, /retryTimerRef/);
@@ -693,6 +868,9 @@ const main = async () => {
   assert.match(panel, /Important and actionable alerts/);
   assert.match(panel, /role="switch"/);
   assert.match(panel, /notificationPreferencesFromLiveEvent/);
+  assert.match(panel, /Clear read notifications/);
+  assert.match(panel, /Archive notification/);
+  assert.match(panel, /notificationCanArchive/);
   assert.doesNotMatch(panel, /window\.location\.assign/);
   assert.match(shell, /setNotificationEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);
   assert.match(shell, /parseCanonicalRoute\(url\.pathname, url\.search\)/);
@@ -705,6 +883,8 @@ const main = async () => {
   assert.match(migration, /0043_notification_aggregation/);
   assert.match(migration, /0044_notification_preferences/);
   assert.match(migration, /0045_notification_resolution/);
+  assert.match(migration, /0046_notification_inbox_hygiene/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS archived_at/);
   assert.match(migration, /migrated_source_inactive/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS notification_preferences/);
   assert.match(migration, /notifications_profile_page_idx/);
@@ -714,7 +894,12 @@ const main = async () => {
   assert.match(schema, /notifications_profile_aggregation_idx/);
   assert.match(schema, /notifications_profile_open_action_idx/);
   assert.match(schema, /resolvedAt: timestamp\("resolved_at"/);
+  assert.match(schema, /archivedAt: timestamp\("archived_at"/);
+  assert.match(schema, /notifications_archived_retention_idx/);
   assert.match(schema, /export const notificationPreferences/);
+  assert.match(maintenance, /archived_at < now\(\) - interval '30 days'/);
+  assert.match(maintenance, /kind IN \('community_join_request', 'opportunity_application_received'\)/);
+  assert.match(messageRoutes, /\/v1\/notifications\/archive/);
 
   const app = await buildApp({ logger: false });
   try {
@@ -809,6 +994,34 @@ const main = async () => {
     });
     assert.equal(markAll.statusCode, 200);
     assert.deepEqual(markAll.json(), { notificationId: null, all: true, read: true });
+
+    const invalidArchive = await app.inject({
+      method: "POST",
+      url: "/v1/notifications/archive",
+      headers: {
+        "content-type": "application/json",
+        "x-symposium-handle": "@notification-boundary"
+      },
+      payload: {}
+    });
+    assert.equal(invalidArchive.statusCode, 400);
+
+    const clearRead = await app.inject({
+      method: "POST",
+      url: "/v1/notifications/archive",
+      headers: {
+        "content-type": "application/json",
+        "x-symposium-handle": "@notification-boundary"
+      },
+      payload: { clearRead: true }
+    });
+    assert.equal(clearRead.statusCode, 200);
+    assert.deepEqual(clearRead.json(), {
+      notificationId: null,
+      groupKey: null,
+      clearRead: true,
+      archivedCount: 0
+    });
   } finally {
     await app.close();
   }

@@ -116,9 +116,30 @@ export const runDatabaseMaintenance = async () => {
       `DELETE FROM notifications
        WHERE id IN (
          SELECT id FROM notifications
-         WHERE (read_at IS NOT NULL AND created_at < now() - interval '90 days')
-            OR created_at < now() - interval '365 days'
-         ORDER BY created_at ASC
+         WHERE (
+           archived_at IS NOT NULL
+           AND archived_at < now() - interval '30 days'
+           AND NOT (
+             kind IN ('community_join_request', 'opportunity_application_received')
+             AND resolved_at IS NULL
+           )
+         )
+           OR (
+             read_at IS NOT NULL
+             AND created_at < now() - interval '90 days'
+             AND NOT (
+               kind IN ('community_join_request', 'opportunity_application_received')
+               AND resolved_at IS NULL
+             )
+           )
+           OR (
+             created_at < now() - interval '365 days'
+             AND NOT (
+               kind IN ('community_join_request', 'opportunity_application_received')
+               AND resolved_at IS NULL
+             )
+           )
+         ORDER BY COALESCE(archived_at, created_at) ASC
          LIMIT 5000
        )`
     );

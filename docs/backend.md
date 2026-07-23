@@ -52,6 +52,7 @@ Useful endpoints:
 - `GET /v1/notifications`
 - `GET /v1/notifications/unread`
 - `POST /v1/notifications/read`
+- `POST /v1/notifications/archive`
 - `GET /v1/workspace`
 - `POST /v1/notes/blocks`
 - `POST /v1/notes/publish`
@@ -194,7 +195,7 @@ The current guarantees are:
 - Action rows are the canonical save/signal/fork ledger. The denormalized post/comment arrays and metrics are reconciled inside the same locked transaction for fast reads.
 - Bootstrap reads profiles, posts, comments, attachments, communities, and action ledgers from one repeatable-read snapshot, so a refresh cannot mix rows from different mutation moments.
 - Follow, membership, call, notification, message, note, opportunity, assistant, and upload-prepare writes use atomic transactions and no-op-aware state transitions.
-- Directed notifications are created in the same transaction as the follow, comment/reply, signal/reshare, community decision, workspace-access/comment, group-membership/role, or opportunity-application action that caused them. Stable per-recipient dedupe keys make mutation retries safe, and every inserted notification stages a private `notification.created` event for immediate multi-tab delivery. Read and read-all writes stage the matching private convergence event.
+- Directed notifications are created in the same transaction as the follow, comment/reply/mention, signal/reshare/quote, community decision, workspace-access/comment, group-membership/role, or opportunity-application action that caused them. Stable per-recipient dedupe keys make mutation retries safe, and every inserted notification stages a private `notification.created` event for immediate multi-tab delivery. Read, resolution, archive, clear-read, and preference writes stage matching private convergence events. Unresolved requests cannot be archived or aged out; old archived and non-action history is pruned in bounded maintenance batches.
 - The closed notification bell uses the scalar unread projection instead of loading the notification page. Opening the panel performs one snapshot-consistent page-and-count query; cursor pagination and unread counts use recipient-scoped partial indexes. Focus, visibility, online, stream replay, and bounded backoff recover missed delivery without continuous polling.
 - Direct-message creation uses a transaction-scoped advisory lock so simultaneous first messages cannot produce duplicate direct conversations.
 - Note publishing is a recoverable two-stage idempotent promotion: a retry reuses the same post, moves the draft discussion and its public attachment copies into the destination, soft-removes the source from workspace projections, and then completes the publication record.

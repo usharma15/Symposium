@@ -2346,6 +2346,39 @@ const migrations: Migration[] = [
         AND profile_handle IS NOT NULL
         AND href IS DISTINCT FROM '/profiles/' || regexp_replace(profile_handle, '^@', '') || '/followers';
     `
+  },
+  {
+    id: "0046_notification_inbox_hygiene",
+    sql: `
+      ALTER TABLE notifications
+        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+
+      DROP INDEX IF EXISTS notifications_profile_page_idx;
+      CREATE INDEX notifications_profile_page_idx
+        ON notifications (profile_handle, created_at DESC, id DESC)
+        WHERE kind <> 'message' AND archived_at IS NULL;
+
+      DROP INDEX IF EXISTS notifications_profile_unread_idx;
+      CREATE INDEX notifications_profile_unread_idx
+        ON notifications (profile_handle, created_at DESC, id DESC)
+        WHERE kind <> 'message' AND archived_at IS NULL AND read_at IS NULL;
+
+      DROP INDEX IF EXISTS notifications_profile_aggregation_idx;
+      CREATE INDEX notifications_profile_aggregation_idx
+        ON notifications (profile_handle, aggregation_key, created_at DESC, id DESC)
+        WHERE kind <> 'message' AND archived_at IS NULL AND aggregation_key IS NOT NULL;
+
+      DROP INDEX IF EXISTS notifications_profile_open_action_idx;
+      CREATE INDEX notifications_profile_open_action_idx
+        ON notifications (profile_handle, kind, created_at DESC, id DESC)
+        WHERE kind IN ('community_join_request', 'opportunity_application_received')
+          AND archived_at IS NULL
+          AND resolved_at IS NULL;
+
+      CREATE INDEX IF NOT EXISTS notifications_archived_retention_idx
+        ON notifications (archived_at)
+        WHERE archived_at IS NOT NULL;
+    `
   }
 ];
 

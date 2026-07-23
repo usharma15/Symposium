@@ -72,12 +72,17 @@ const preferenceCategoryByKind: Readonly<Record<string, NotificationPreferenceCa
   comment_signal: "likes",
   post_comment: "commentsAndReplies",
   comment_reply: "commentsAndReplies",
+  post_mention: "commentsAndReplies",
+  comment_mention: "commentsAndReplies",
   post_reshare: "reshares",
   comment_reshare: "reshares",
+  post_quote: "reshares",
+  comment_quote: "reshares",
   profile_followed: "newFollowers",
   workspace_comment: "workspaceActivity",
   workspace_comment_reply: "workspaceActivity",
-  workspace_comment_signal: "workspaceActivity"
+  workspace_comment_signal: "workspaceActivity",
+  workspace_mention: "workspaceActivity"
 };
 
 export const notificationPreferenceCategory = (kind: string) =>
@@ -153,8 +158,12 @@ export const notificationActionLabel = (
   if (kind === "opportunity_application_received") return "Review applications";
   if (kind === "post_signal" || kind === "comment_signal") return "View likes";
   if (kind === "post_reshare" || kind === "comment_reshare") return "View reshares";
+  if (kind === "post_quote" || kind === "comment_quote") return "View quotes";
   if (kind === "post_comment") return "View comments";
   if (kind === "comment_reply") return "View reply";
+  if (kind === "post_mention" || kind === "comment_mention" || kind === "workspace_mention") {
+    return "View mention";
+  }
   if (kind === "profile_followed") return "View followers";
   if (kind === "workspace_comment") return "Open comment";
   if (kind === "workspace_comment_reply") return "View reply";
@@ -175,11 +184,24 @@ export const inferNotificationAggregationKey = (
   const parentCommentId = metadataString(metadata, "parentCommentId");
   const communityId = metadataString(metadata, "communityId");
   const noteId = metadataString(metadata, "noteId");
+  const mentionSourceId = metadataString(metadata, "mentionSourceId");
+  const sourceId = metadataString(metadata, "sourceId");
   if (["post_signal", "post_reshare", "post_comment"].includes(kind) && postId) {
     return `${kind}:post:${postId}`;
   }
   if (["comment_signal", "comment_reshare"].includes(kind) && commentId) {
     return `${kind}:comment:${commentId}`;
+  }
+  if (kind === "post_quote" && sourceId) return `${kind}:post:${sourceId}`;
+  if (kind === "comment_quote" && sourceId) return `${kind}:comment:${sourceId}`;
+  if (kind === "post_mention" && mentionSourceId) {
+    return `${kind}:post:${mentionSourceId}`;
+  }
+  if (kind === "comment_mention" && mentionSourceId) {
+    return `${kind}:comment:${mentionSourceId}`;
+  }
+  if (kind === "workspace_mention" && mentionSourceId) {
+    return `${kind}:comment:${mentionSourceId}`;
   }
   if (kind === "comment_reply" && parentCommentId) {
     return `${kind}:comment:${parentCommentId}`;
@@ -224,8 +246,12 @@ export const groupedNotificationTitle = (
   let title = row.title;
   if (row.kind === "post_signal") title = `${actors} liked your ${subjectLabel}`;
   else if (row.kind === "post_reshare") title = `${actors} reshared your ${subjectLabel}`;
+  else if (row.kind === "post_quote") title = `${actors} quoted your post`;
+  else if (row.kind === "post_mention") title = `${actors} mentioned you in a post`;
   else if (row.kind === "comment_signal") title = `${actors} liked your comment`;
   else if (row.kind === "comment_reshare") title = `${actors} reshared your comment`;
+  else if (row.kind === "comment_quote") title = `${actors} quoted your comment`;
+  else if (row.kind === "comment_mention") title = `${actors} mentioned you in a comment`;
   if (row.kind === "post_comment") {
     title = actorCount === 1 && row.groupCount > 1
       ? `${actors} added ${row.groupCount} comments to your ${subjectLabel}`
@@ -252,6 +278,7 @@ export const groupedNotificationTitle = (
       ? `${actors} added ${row.groupCount} replies to your draft comment`
       : `${actors} replied to your draft comment`;
   } else if (row.kind === "workspace_comment_signal") title = `${actors} liked your draft comment`;
+  else if (row.kind === "workspace_mention") title = `${actors} mentioned you in a draft comment`;
   return Array.from(title).slice(0, 200).join("");
 };
 
@@ -324,6 +351,7 @@ export const projectNotificationGroup = async (
        FROM notifications
        WHERE profile_handle = $1
          AND kind <> 'message'
+         AND archived_at IS NULL
          AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
      )
      SELECT latest.id::text, latest.kind, latest.title, latest.body, latest.href,
@@ -335,6 +363,7 @@ export const projectNotificationGroup = async (
        FROM notifications
        WHERE profile_handle = $1
          AND kind <> 'message'
+         AND archived_at IS NULL
          AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
        ORDER BY (resolved_at IS NULL) DESC, created_at DESC, id DESC
        LIMIT 1
@@ -348,6 +377,7 @@ export const projectNotificationGroup = async (
      FROM notifications
      WHERE profile_handle = $1
        AND kind <> 'message'
+       AND archived_at IS NULL
        AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
        AND (
          resolved_at IS NULL
@@ -356,6 +386,7 @@ export const projectNotificationGroup = async (
            FROM notifications active
            WHERE active.profile_handle = $1
              AND active.kind <> 'message'
+             AND active.archived_at IS NULL
              AND COALESCE(active.aggregation_key, 'notification:' || active.id::text) = $2
              AND active.resolved_at IS NULL
          )

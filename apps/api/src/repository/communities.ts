@@ -402,11 +402,27 @@ export const removeCommunityMember = async (rawInput: unknown, actor: Actor, mut
       dedupeKey: `community-member-removed:${community.id}:${memberHandle}:${value.revision}`,
       metadata: { communityId: community.id, removedByHandle: handle }
     }]);
+    const resolvedPrivateActivity = community.visibility === "private"
+      ? await resolveNotifications(client, {
+          kinds: [
+            "post_mention",
+            "comment_mention",
+            "post_quote",
+            "comment_quote"
+          ],
+          metadataMatches: [{ communityId: community.id }],
+          profileHandles: [memberHandle],
+          reason: "community_access_removed"
+        })
+      : { notifications: [], events: [] };
     const audienceHandles = community.visibility === "private"
       ? [...new Set([...(await communityAudienceHandles(client, community.id)), memberHandle])]
       : undefined;
     const event = await stageEvent(client, { kind: "community.member.removed", actorHandle: handle, subjectType: "community", subjectId: community.id, visibility: community.visibility === "private" ? "community" : "public", audienceHandles, payload: { communityId: community.id, removedHandle: memberHandle, revision: value.revision } });
-    return { value: response, events: [...createdNotifications.events, event] };
+    return {
+      value: response,
+      events: [...createdNotifications.events, ...resolvedPrivateActivity.events, event]
+    };
   });
 };
 
@@ -592,6 +608,20 @@ export const leaveCommunity = async (rawInput: unknown, actor: Actor) => {
           reason: "community_request_withdrawn"
         })
       : { notifications: [], events: [] };
+    const resolvedPrivateActivity =
+      existing.rows[0]?.status === "active" && community.visibility === "private"
+        ? await resolveNotifications(client, {
+            kinds: [
+              "post_mention",
+              "comment_mention",
+              "post_quote",
+              "comment_quote"
+            ],
+            metadataMatches: [{ communityId: community.id }],
+            profileHandles: [handle],
+            reason: "community_access_removed"
+          })
+        : { notifications: [], events: [] };
     const event = await stageEvent(client, {
       kind: "community.left",
       actorHandle: handle,
@@ -603,7 +633,11 @@ export const leaveCommunity = async (rawInput: unknown, actor: Actor) => {
     });
     return {
       value: { community: updatedCommunity, status: "left" as const },
-      events: [...resolvedNotifications.events, event]
+      events: [
+        ...resolvedNotifications.events,
+        ...resolvedPrivateActivity.events,
+        event
+      ]
     };
   });
 };

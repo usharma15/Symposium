@@ -1155,6 +1155,7 @@ export const notifications = pgTable(
     aggregationKey: text("aggregation_key"),
     readAt: timestamp("read_at", { withTimezone: true }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default(jsonObject).notNull(),
     createdAt: createdAtColumn()
   },
@@ -1163,17 +1164,18 @@ export const notifications = pgTable(
     index("notifications_profile_created_idx").on(table.profileHandle, table.createdAt),
     index("notifications_profile_page_idx")
       .on(table.profileHandle, table.createdAt.desc(), table.id.desc())
-      .where(sql`${table.kind} <> 'message'`),
+      .where(sql`${table.kind} <> 'message' AND ${table.archivedAt} IS NULL`),
     index("notifications_profile_unread_idx")
       .on(table.profileHandle, table.createdAt.desc(), table.id.desc())
-      .where(sql`${table.kind} <> 'message' AND ${table.readAt} IS NULL`),
+      .where(sql`${table.kind} <> 'message' AND ${table.archivedAt} IS NULL AND ${table.readAt} IS NULL`),
     index("notifications_profile_aggregation_idx")
       .on(table.profileHandle, table.aggregationKey, table.createdAt.desc(), table.id.desc())
-      .where(sql`${table.kind} <> 'message' AND ${table.aggregationKey} IS NOT NULL`),
+      .where(sql`${table.kind} <> 'message' AND ${table.archivedAt} IS NULL AND ${table.aggregationKey} IS NOT NULL`),
     index("notifications_profile_open_action_idx")
       .on(table.profileHandle, table.kind, table.createdAt.desc(), table.id.desc())
-      .where(sql`${table.kind} IN ('community_join_request', 'opportunity_application_received') AND ${table.resolvedAt} IS NULL`),
+      .where(sql`${table.kind} IN ('community_join_request', 'opportunity_application_received') AND ${table.archivedAt} IS NULL AND ${table.resolvedAt} IS NULL`),
     index("notifications_retention_idx").on(table.createdAt).where(sql`${table.readAt} IS NOT NULL`),
+    index("notifications_archived_retention_idx").on(table.archivedAt).where(sql`${table.archivedAt} IS NOT NULL`),
     uniqueIndex("notifications_profile_dedupe_idx").on(table.profileHandle, table.dedupeKey).where(sql`${table.dedupeKey} IS NOT NULL`)
   ]
 );

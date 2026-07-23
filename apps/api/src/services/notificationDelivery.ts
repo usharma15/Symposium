@@ -65,16 +65,21 @@ type ResolvedNotificationRow = {
 };
 
 export const personalActivityNotificationKinds = [
+  "comment_mention",
+  "comment_quote",
   "comment_reply",
   "comment_reshare",
   "comment_signal",
   "post_comment",
+  "post_mention",
+  "post_quote",
   "post_reshare",
   "post_signal",
   "profile_followed",
   "workspace_comment",
   "workspace_comment_reply",
-  "workspace_comment_signal"
+  "workspace_comment_signal",
+  "workspace_mention"
 ] as const;
 
 const truncateNotificationText = (value: string, maximum: number) =>

@@ -1945,20 +1945,28 @@
   text-transform: uppercase;
 }
 
-.notifications-list > button:not(.notifications-more, .notifications-retry) {
+.notification-card {
+  position: relative;
+  border-bottom: 1px solid rgba(20, 32, 31, 0.08);
+}
+
+.notification-card-main {
   display: grid;
   grid-template-columns: 7px minmax(0, 1fr);
   gap: 8px;
   width: 100%;
   border: 0;
-  border-bottom: 1px solid rgba(20, 32, 31, 0.08);
-  padding: 11px;
+  padding: 11px 42px 11px 11px;
   background: transparent;
   color: inherit;
   text-align: left;
 }
 
-.notifications-list > button.unread {
+.notification-card:not(.can-archive) .notification-card-main {
+  padding-right: 11px;
+}
+
+.notification-card.unread {
   background: rgba(207, 239, 237, 0.48);
 }
 
@@ -1970,18 +1978,45 @@
   background: transparent;
 }
 
-.notifications-list > button.unread .notification-marker {
+.notification-card.unread .notification-marker {
   background: #238d95;
 }
 
-.notifications-list > button.unread[data-priority="action"] .notification-marker {
+.notification-card.unread[data-priority="action"] .notification-marker {
   background: #b36a2e;
   box-shadow: 0 0 0 3px rgba(179, 106, 46, 0.12);
 }
 
-.notifications-list > button:not(.notifications-more, .notifications-retry) > span:last-child {
+.notification-card-main > span:last-child {
   display: grid;
   gap: 3px;
+}
+
+.notification-archive-action {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.notification-card:hover .notification-archive-action,
+.notification-card:focus-within .notification-archive-action {
+  opacity: 1;
+}
+
+.notification-archive-action:hover,
+.notification-archive-action:focus-visible {
+  border-color: rgba(20, 32, 31, 0.12);
+  background: color-mix(in srgb, var(--panel-strong) 76%, transparent);
 }
 
 .notifications-list p,
@@ -2036,7 +2071,7 @@
   line-height: 1.45;
 }
 
-.notifications-list > button[data-resolved="true"] .notification-marker {
+.notification-card[data-resolved="true"] .notification-marker {
   background: color-mix(in srgb, var(--muted) 42%, transparent);
 }
 
@@ -2082,6 +2117,12 @@
 
   .notification-preferences {
     max-height: calc(100dvh - 146px);
+  }
+}
+
+@media (hover: none) {
+  .notification-archive-action {
+    opacity: 0.72;
   }
 }
 
@@ -2282,8 +2323,15 @@
   color: #9bdde1;
 }
 
-.symposium-shell.night .notifications-list > button.unread {
+.symposium-shell.night .notification-card.unread {
   background: rgba(35, 103, 108, 0.34);
+}
+
+.symposium-shell.night .notification-archive-action:hover,
+.symposium-shell.night .notification-archive-action:focus-visible {
+  border-color: rgba(255, 253, 245, 0.14);
+  background: rgba(255, 253, 245, 0.08);
+  color: #fff8ea;
 }
 
 .symposium-shell.night .notification-primary-action {

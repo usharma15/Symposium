@@ -1619,6 +1619,17 @@ export const markNotificationInputSchema = z.object({
   message: "Choose a notification group or mark all notifications read."
 });
 
+export const archiveNotificationInputSchema = z.object({
+  notificationId: z.string().uuid().optional(),
+  groupKey: z.string().trim().min(1).max(500).optional(),
+  clearRead: z.boolean().default(false)
+}).refine((input) => {
+  const hasGroup = Boolean(input.notificationId || input.groupKey);
+  return input.clearRead ? !hasGroup : hasGroup;
+}, {
+  message: "Choose one notification group or clear read notifications."
+});
+
 export const contentAnalyticsSubjectTypeSchema = z.enum(["post", "comment"]);
 export const contentAnalyticsViewSchema = z.enum(["overview", "likes", "reshares", "quotes"]);
 export const contentAnalyticsQuerySchema = z.object({
@@ -1883,6 +1894,7 @@ export type NotificationUnreadCountContract = z.infer<typeof notificationUnreadC
 export type NotificationPreferenceCategoryContract = z.infer<typeof notificationPreferenceCategorySchema>;
 export type NotificationPreferencesContract = z.infer<typeof notificationPreferencesSchema>;
 export type UpdateNotificationPreferencesInputContract = z.infer<typeof updateNotificationPreferencesInputSchema>;
+export type ArchiveNotificationInputContract = z.infer<typeof archiveNotificationInputSchema>;
 export type ContentAnalyticsSubjectTypeContract = z.infer<typeof contentAnalyticsSubjectTypeSchema>;
 export type ContentAnalyticsViewContract = z.infer<typeof contentAnalyticsViewSchema>;
 export type ContentAnalyticsQueryContract = z.infer<typeof contentAnalyticsQuerySchema>;

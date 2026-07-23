@@ -31,6 +31,11 @@ import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { markQuotedCommentUnavailable, resolveContentQuote, resolveUpdatedContentQuote } from "../services/contentQuotes";
+import {
+  contentMentionNotificationInputs,
+  quoteNotificationInput,
+  sameQuoteSource
+} from "../services/contentNotifications";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
 import {
   createNotifications,
@@ -339,6 +344,40 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         }
       });
     }
+    if (lockedItem.room !== "office" && lockedItem.kind !== "draft") {
+      const href = `/posts/${encodeURIComponent(postId)}?comment=${encodeURIComponent(comment.id as string)}`;
+      const mentionNotifications = await contentMentionNotificationInputs(client, {
+        sourceType: "comment",
+        sourceId: comment.id as string,
+        postId,
+        communityId: lockedItem.communityId,
+        actorHandle: handle,
+        actorName: comment.author,
+        body: lockedItem.title,
+        href,
+        next: { body: comment.body, document: comment.document },
+        audienceHandles: eventScope.visibility === "community"
+          ? eventScope.audienceHandles
+          : undefined
+      });
+      notificationInputs.push(...mentionNotifications.inputs);
+      const quoteRecipient = comment.quote?.authorHandle
+        ? cleanHandle(comment.quote.authorHandle)
+        : null;
+      const quoteNotification = quoteNotificationInput({
+        quote: comment.quote,
+        quoteOwnerType: "comment",
+        quoteOwnerId: comment.id as string,
+        quoteOwnerPostId: postId,
+        actorHandle: handle,
+        actorName: comment.author,
+        body: lockedItem.title,
+        communityId: lockedItem.communityId,
+        recipientCanRead: eventScope.visibility !== "community"
+          || Boolean(quoteRecipient && eventScope.audienceHandles?.includes(quoteRecipient))
+      });
+      if (quoteNotification) notificationInputs.push(quoteNotification);
+    }
     const createdNotifications = await createNotifications(client, notificationInputs);
     stagedEvents.push(...createdNotifications.events);
     stagedEvents.push(await stageEvent(client, {
@@ -549,6 +588,69 @@ export const updateComment = async (
           ? { item: updatedItem, commentId }
           : { itemId: postId, commentId }
     }));
+    if (updatedItem.room !== "office" && updatedItem.kind !== "draft") {
+      const mentionNotifications = await contentMentionNotificationInputs(client, {
+        sourceType: "comment",
+        sourceId: commentId,
+        postId,
+        communityId: updatedItem.communityId,
+        actorHandle: handle,
+        actorName: original.author,
+        body: updatedItem.title,
+        href: `/posts/${encodeURIComponent(postId)}?comment=${encodeURIComponent(commentId)}`,
+        current: { body: original.body, document: original.document },
+        next: {
+          body: input.body,
+          document: input.document ?? original.document
+        },
+        audienceHandles: eventScope.visibility === "community"
+          ? eventScope.audienceHandles
+          : undefined
+      });
+      if (mentionNotifications.removedHandles.length) {
+        const resolvedMentions = await resolveNotifications(client, {
+          kinds: ["comment_mention"],
+          metadataMatches: [{ mentionSourceType: "comment", mentionSourceId: commentId }],
+          profileHandles: mentionNotifications.removedHandles,
+          reason: "mention_removed"
+        });
+        stagedEvents.push(...resolvedMentions.events);
+      }
+      const quoteChanged = !sameQuoteSource(original.quote, quote);
+      if (quoteChanged && original.quote) {
+        const resolvedQuote = await resolveNotifications(client, {
+          kinds: [original.quote.sourceType === "post" ? "post_quote" : "comment_quote"],
+          metadataMatches: [{
+            quoteOwnerType: "comment",
+            quoteOwnerId: commentId,
+            sourceType: original.quote.sourceType,
+            sourceId: original.quote.sourceId
+          }],
+          reason: "quote_removed_or_changed"
+        });
+        stagedEvents.push(...resolvedQuote.events);
+      }
+      const quoteRecipient = quote?.authorHandle ? cleanHandle(quote.authorHandle) : null;
+      const quoteNotification = quoteChanged
+        ? quoteNotificationInput({
+            quote,
+            quoteOwnerType: "comment",
+            quoteOwnerId: commentId,
+            quoteOwnerPostId: postId,
+            actorHandle: handle,
+            actorName: original.author,
+            body: updatedItem.title,
+            communityId: updatedItem.communityId,
+            recipientCanRead: eventScope.visibility !== "community"
+              || Boolean(quoteRecipient && eventScope.audienceHandles?.includes(quoteRecipient))
+          })
+        : null;
+      const createdNotifications = await createNotifications(client, [
+        ...mentionNotifications.inputs,
+        ...(quoteNotification ? [quoteNotification] : [])
+      ]);
+      stagedEvents.push(...createdNotifications.events);
+    }
     await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
     await client.query("COMMIT");
   } catch (error) {
@@ -736,10 +838,21 @@ export const deleteComment = async (
       );
       didDelete = true;
       const resolvedNotifications = await resolveNotifications(client, {
-        kinds: ["post_comment", "comment_reply", "comment_signal", "comment_reshare"],
+        kinds: [
+          "post_comment",
+          "comment_reply",
+          "comment_signal",
+          "comment_reshare",
+          "comment_mention",
+          "post_quote",
+          "comment_quote"
+        ],
         metadataMatches: [
           { postId, commentId },
-          { postId, parentCommentId: commentId }
+          { postId, parentCommentId: commentId },
+          { mentionSourceType: "comment", mentionSourceId: commentId },
+          { sourceType: "comment", sourceId: commentId },
+          { quoteOwnerType: "comment", quoteOwnerId: commentId }
         ],
         reason: "source_comment_deleted"
       });

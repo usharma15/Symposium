@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import {
+  archiveNotificationInputSchema,
   markNotificationInputSchema,
   notificationListQuerySchema,
   updateNotificationPreferencesInputSchema,
@@ -263,7 +264,7 @@ export const getUnreadNotificationCount = async (actor: Actor) => {
      FROM (
        SELECT COALESCE(aggregation_key, 'notification:' || id::text)
        FROM notifications
-       WHERE profile_handle = $1 AND kind <> 'message'
+       WHERE profile_handle = $1 AND kind <> 'message' AND archived_at IS NULL
        GROUP BY COALESCE(aggregation_key, 'notification:' || id::text)
        HAVING bool_or(read_at IS NULL)
      ) unread_groups`,
@@ -353,7 +354,7 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
          CASE WHEN bool_or(read_at IS NULL) THEN NULL ELSE max(read_at) END AS "readAt",
          CASE WHEN bool_or(resolved_at IS NULL) THEN NULL ELSE max(resolved_at) END AS "resolvedAt"
        FROM notifications
-       WHERE profile_handle = $1 AND kind <> 'message'
+       WHERE profile_handle = $1 AND kind <> 'message' AND archived_at IS NULL
        GROUP BY COALESCE(aggregation_key, 'notification:' || id::text)
      ),
      page AS (
@@ -378,6 +379,7 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
        SELECT id, kind, title, body, href, metadata
        FROM notifications notification
        WHERE notification.profile_handle = $1
+         AND notification.archived_at IS NULL
          AND COALESCE(notification.aggregation_key, 'notification:' || notification.id::text) = page."groupKey"
        ORDER BY (notification.resolved_at IS NULL) DESC,
          notification.created_at DESC, notification.id DESC
@@ -411,6 +413,7 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
            FROM notifications
            WHERE profile_handle = $1
              AND kind <> 'message'
+             AND archived_at IS NULL
              AND COALESCE(aggregation_key, 'notification:' || id::text) = ANY($2::text[])
              AND (
                NOT (COALESCE(aggregation_key, 'notification:' || id::text) = ANY($3::text[]))
@@ -461,7 +464,10 @@ export const markNotificationRead = async (rawInput: unknown, actor: Actor) => {
     if (input.all) {
       const updated = await client.query(
         `UPDATE notifications SET read_at = now()
-         WHERE profile_handle = $1 AND kind <> 'message' AND read_at IS NULL
+         WHERE profile_handle = $1
+           AND kind <> 'message'
+           AND archived_at IS NULL
+           AND read_at IS NULL
          RETURNING id`,
         [handle]
       );
@@ -493,6 +499,7 @@ export const markNotificationRead = async (rawInput: unknown, actor: Actor) => {
        FROM notifications
        WHERE profile_handle = $1
          AND kind <> 'message'
+         AND archived_at IS NULL
          AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
        HAVING count(*) > 0`,
       [handle, requestedGroupKey]
@@ -512,6 +519,7 @@ export const markNotificationRead = async (rawInput: unknown, actor: Actor) => {
        SET read_at = now()
        WHERE profile_handle = $1
          AND kind <> 'message'
+         AND archived_at IS NULL
          AND COALESCE(aggregation_key, 'notification:' || id::text) = $2`,
       [handle, requestedGroupKey]
     );
@@ -523,6 +531,124 @@ export const markNotificationRead = async (rawInput: unknown, actor: Actor) => {
     });
     const event = await stageEvent(client, {
       kind: "notification.read",
+      actorHandle: handle,
+      subjectType: "notification",
+      subjectId: notificationId,
+      visibility: "private",
+      audienceHandles: [handle],
+      payload: { groupKey: requestedGroupKey }
+    });
+    return { value, events: [event] };
+  });
+};
+
+export const archiveNotifications = async (rawInput: unknown, actor: Actor) => {
+  const input = archiveNotificationInputSchema.parse(rawInput);
+  const handle = actorHandle(actor);
+  if (!hasDatabase()) {
+    return {
+      notificationId: input.notificationId ?? null,
+      groupKey: input.groupKey ?? null,
+      clearRead: input.clearRead,
+      archivedCount: 0
+    };
+  }
+  await ensureLiveData();
+  return runAtomic<{
+    notificationId: string | null;
+    groupKey: string | null;
+    clearRead: boolean;
+    archivedCount: number;
+  }>(async (client) => {
+    if (input.clearRead) {
+      const updated = await client.query(
+        `UPDATE notifications
+         SET archived_at = now()
+         WHERE profile_handle = $1
+           AND kind <> 'message'
+           AND archived_at IS NULL
+           AND read_at IS NOT NULL
+           AND NOT (kind = ANY($2::text[]) AND resolved_at IS NULL)
+         RETURNING id`,
+        [handle, actionRequiredNotificationKinds]
+      );
+      const value = {
+        notificationId: null,
+        groupKey: null,
+        clearRead: true,
+        archivedCount: updated.rowCount ?? 0
+      };
+      if (!updated.rowCount) return { value };
+      await stageAuditLog(client, {
+        actorHandle: handle,
+        action: "notification.archive_read",
+        subjectType: "notification",
+        subjectId: handle,
+        metadata: { count: updated.rowCount }
+      });
+      const event = await stageEvent(client, {
+        kind: "notification.archived",
+        actorHandle: handle,
+        subjectType: "notification",
+        subjectId: handle,
+        visibility: "private",
+        audienceHandles: [handle],
+        payload: { clearRead: true }
+      });
+      return { value, events: [event] };
+    }
+
+    const requestedGroupKey = input.groupKey ?? `notification:${input.notificationId}`;
+    const group = await client.query<{
+      id: string;
+      protected: boolean;
+    }>(
+      `SELECT
+         max(id::text) AS id,
+         bool_or(kind = ANY($3::text[]) AND resolved_at IS NULL) AS protected
+       FROM notifications
+       WHERE profile_handle = $1
+         AND kind <> 'message'
+         AND archived_at IS NULL
+         AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
+       HAVING count(*) > 0`,
+      [handle, requestedGroupKey, actionRequiredNotificationKinds]
+    );
+    const existing = group.rows[0];
+    if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Notification not found." });
+    if (existing.protected) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Resolve this request before archiving it."
+      });
+    }
+    const updated = await client.query(
+      `UPDATE notifications
+       SET archived_at = now(),
+           read_at = COALESCE(read_at, now())
+       WHERE profile_handle = $1
+         AND kind <> 'message'
+         AND archived_at IS NULL
+         AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
+       RETURNING id`,
+      [handle, requestedGroupKey]
+    );
+    const notificationId = input.notificationId ?? existing.id;
+    const value = {
+      notificationId,
+      groupKey: requestedGroupKey,
+      clearRead: false,
+      archivedCount: updated.rowCount ?? 0
+    };
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "notification.archive",
+      subjectType: "notification",
+      subjectId: notificationId,
+      metadata: { count: updated.rowCount, groupKey: requestedGroupKey }
+    });
+    const event = await stageEvent(client, {
+      kind: "notification.archived",
       actorHandle: handle,
       subjectType: "notification",
       subjectId: notificationId,

@@ -16,6 +16,10 @@ const migrationSql = migrationSource.match(
   /id: "0045_notification_resolution",\s+sql: `([\s\S]*?)`\s+\}/
 )?.[1];
 if (!migrationSql) throw new Error("Notification resolution migration not found.");
+const inboxHygieneMigrationSql = migrationSource.match(
+  /id: "0046_notification_inbox_hygiene",\s+sql: `([\s\S]*?)`\s+\}/
+)?.[1];
+if (!inboxHygieneMigrationSql) throw new Error("Notification inbox hygiene migration not found.");
 
 const client = new Client({
   connectionString: databaseUrl,
@@ -41,6 +45,8 @@ const main = async () => {
         title TEXT NOT NULL DEFAULT 'Notification',
         body TEXT NOT NULL DEFAULT '',
         href TEXT,
+        dedupe_key TEXT,
+        aggregation_key TEXT,
         read_at TIMESTAMPTZ,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -155,6 +161,8 @@ const main = async () => {
 
     await client.query(migrationSql);
     await client.query(migrationSql);
+    await client.query(inboxHygieneMigrationSql);
+    await client.query(inboxHygieneMigrationSql);
 
     const rows = await client.query<{
       fixture: string;
@@ -191,10 +199,24 @@ const main = async () => {
       SELECT indexname
       FROM pg_indexes
       WHERE schemaname LIKE 'pg_temp_%'
-        AND indexname = 'notifications_profile_open_action_idx'
+        AND indexname IN (
+          'notifications_profile_page_idx',
+          'notifications_profile_unread_idx',
+          'notifications_profile_aggregation_idx',
+          'notifications_profile_open_action_idx',
+          'notifications_archived_retention_idx'
+        )
     `);
-    assert.equal(indexes.rowCount, 1);
-    console.log(`SYMPOSIUM isolated notification database checks passed (${fixtures.length} fixtures, migration rerun).`);
+    assert.equal(indexes.rowCount, 5);
+    const archivedColumn = await client.query(`
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema LIKE 'pg_temp_%'
+        AND table_name = 'notifications'
+        AND column_name = 'archived_at'
+    `);
+    assert.equal(archivedColumn.rowCount, 1);
+    console.log(`SYMPOSIUM isolated notification database checks passed (${fixtures.length} fixtures, two migration reruns).`);
   } finally {
     await client.query("ROLLBACK").catch(() => undefined);
     await client.end();

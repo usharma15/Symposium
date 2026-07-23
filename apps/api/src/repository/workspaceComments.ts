@@ -11,10 +11,11 @@ import {
 import { hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
-import { stageEvent } from "../services/events";
+import { stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { replaceOwnerAttachments } from "../services/attachmentOwnership";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
+import { contentMentionNotificationInputs } from "../services/contentNotifications";
 import { runAtomic } from "../services/transactions";
 import {
   createNotifications,
@@ -313,11 +314,24 @@ export const createWorkspaceComment = async (
         metadata: { noteId, commentId, actorHandle: handle }
       });
     }
+    const audienceHandles = await documentAudienceHandles(client, noteId);
+    const mentionNotifications = await contentMentionNotificationInputs(client, {
+      sourceType: "workspace_comment",
+      sourceId: commentId,
+      noteId,
+      actorHandle: handle,
+      actorName,
+      body: access!.title,
+      href,
+      next: { body: input.body, document: input.document },
+      audienceHandles
+    });
+    notificationInputs.push(...mentionNotifications.inputs);
     const createdNotifications = await createNotifications(client, notificationInputs);
     const event = await stageEvent(client, {
       kind: input.parentId ? "note.comment.replied" : "note.comment.created",
       actorHandle: handle,
-      audienceHandles: await documentAudienceHandles(client, noteId),
+      audienceHandles,
       subjectType: "note_comment",
       subjectId: commentId,
       visibility: "private",
@@ -345,8 +359,15 @@ export const updateWorkspaceComment = async (
     await lockDocument(client, noteId);
     const access = await findDocumentAccess(client, noteId, handle, true);
     if (!access) throw new TRPCError({ code: "NOT_FOUND", message: "Draft not found." });
-    const comment = await client.query<{ authorHandle: string | null; revision: number }>(
-      `SELECT author_handle AS "authorHandle", revision
+    const comment = await client.query<{
+      authorHandle: string | null;
+      authorName: string;
+      body: string;
+      document: InquiryCommentContract["document"] | null;
+      revision: number;
+    }>(
+      `SELECT author_handle AS "authorHandle", author_name AS "authorName",
+         body, content_document AS "document", revision
        FROM workspace_note_comments
        WHERE id = $1 AND note_id = $2 AND deleted_at IS NULL FOR UPDATE`,
       [commentId, noteId]
@@ -378,16 +399,45 @@ export const updateWorkspaceComment = async (
       metadata: mutationAuditMetadata(mutation, { noteId, revision: input.expectedRevision + 1 })
     });
     await completeMutation(client, handle, mutation, value);
+    const audienceHandles = await documentAudienceHandles(client, noteId);
+    const mentionNotifications = await contentMentionNotificationInputs(client, {
+      sourceType: "workspace_comment",
+      sourceId: commentId,
+      noteId,
+      actorHandle: handle,
+      actorName: current.authorName,
+      body: access.title,
+      href: `/workspace?view=notes&note=${encodeURIComponent(noteId)}&comment=${encodeURIComponent(commentId)}`,
+      current: { body: current.body, document: current.document ?? undefined },
+      next: { body: input.body, document: input.document },
+      audienceHandles
+    });
+    const notificationEvents: StoredLiveEvent[] = [];
+    if (mentionNotifications.removedHandles.length) {
+      const resolvedMentions = await resolveNotifications(client, {
+        kinds: ["workspace_mention"],
+        metadataMatches: [{
+          mentionSourceType: "workspace_comment",
+          mentionSourceId: commentId,
+          noteId
+        }],
+        profileHandles: mentionNotifications.removedHandles,
+        reason: "mention_removed"
+      });
+      notificationEvents.push(...resolvedMentions.events);
+    }
+    const createdNotifications = await createNotifications(client, mentionNotifications.inputs);
+    notificationEvents.push(...createdNotifications.events);
     const event = await stageEvent(client, {
       kind: "note.comment.updated",
       actorHandle: handle,
-      audienceHandles: await documentAudienceHandles(client, noteId),
+      audienceHandles,
       subjectType: "note_comment",
       subjectId: commentId,
       visibility: "private",
       payload: { noteId, commentId, revision: input.expectedRevision + 1 }
     });
-    return { value, events: [event] };
+    return { value, events: [...notificationEvents, event] };
   });
   if (removedAttachmentIds.length) await triggerStorageDeletion(removedAttachmentIds);
   return result;
@@ -423,10 +473,20 @@ export const deleteWorkspaceComment = async (
     removedAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(client, "note_comment", commentId, "workspace_comment_deleted");
     const value = { ...(await responseFor(client, noteId, handle, commentId)), removedAttachmentIds };
     const resolvedNotifications = await resolveNotifications(client, {
-      kinds: ["workspace_comment", "workspace_comment_reply", "workspace_comment_signal"],
+      kinds: [
+        "workspace_comment",
+        "workspace_comment_reply",
+        "workspace_comment_signal",
+        "workspace_mention"
+      ],
       metadataMatches: [
         { noteId, commentId },
-        { noteId, parentCommentId: commentId }
+        { noteId, parentCommentId: commentId },
+        {
+          mentionSourceType: "workspace_comment",
+          mentionSourceId: commentId,
+          noteId
+        }
       ],
       reason: "source_workspace_comment_deleted"
     });

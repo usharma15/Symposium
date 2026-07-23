@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Archive,
   Bell,
   CheckCheck,
   ChevronLeft,
@@ -22,10 +23,13 @@ import { notificationPreferencesSchema } from "@/packages/contracts/src";
 import { symposiumApi } from "@/features/api/symposiumApiClient";
 import {
   applyNotificationLiveEvent,
+  archiveNotificationGroup,
+  archiveReadNotifications,
   compactNotificationCount,
   latestNotificationEventKey,
   mergeNotificationPage,
   normalizeNotifications,
+  notificationCanArchive,
   partitionNotificationInbox,
   type NotificationLiveEvent,
   type NotificationState
@@ -48,15 +52,19 @@ const activityPreferenceRows: {
   { key: "likes", label: "Likes", detail: "Likes on your posts and comments." },
   {
     key: "commentsAndReplies",
-    label: "Comments and replies",
-    detail: "New discussion on your posts and replies to your comments."
+    label: "Comments, replies & mentions",
+    detail: "New discussion on your content and direct mentions in public conversations."
   },
-  { key: "reshares", label: "Reshares", detail: "Reshares of your posts and comments." },
+  {
+    key: "reshares",
+    label: "Reshares & quotes",
+    detail: "Reshares and quotes of your posts and comments."
+  },
   { key: "newFollowers", label: "New followers", detail: "People who begin following you." },
   {
     key: "workspaceActivity",
     label: "Workspace discussion",
-    detail: "Comments, replies and likes on your shared drafts."
+    detail: "Comments, replies, likes and direct mentions on your shared drafts."
   }
 ];
 
@@ -88,6 +96,8 @@ export function NotificationsControl({
   const [loadState, setLoadState] = useState<NotificationLoadState>("loading");
   const [loadingMore, setLoadingMore] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
+  const [clearingRead, setClearingRead] = useState(false);
+  const [archivingGroups, setArchivingGroups] = useState<Set<string>>(() => new Set());
   const [expanded, setExpanded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [preferences, setPreferences] = useState<NotificationPreferencesContract | null>(null);
@@ -261,6 +271,8 @@ export function NotificationsControl({
     setLoadState("loading");
     setLoadingMore(false);
     setMarkingAll(false);
+    setClearingRead(false);
+    setArchivingGroups(new Set());
     setExpanded(false);
     setSettingsOpen(false);
     setPreferences(null);
@@ -414,6 +426,46 @@ export function NotificationsControl({
     }
   };
 
+  const archiveNotification = async (notification: NotificationContract) => {
+    if (!notificationCanArchive(notification) || archivingGroups.has(notification.groupKey)) return;
+    setArchivingGroups((current) => new Set(current).add(notification.groupKey));
+    setState((current) => archiveNotificationGroup(current, notification.groupKey));
+    try {
+      await symposiumApi.request("/api/notifications/archive", {
+        method: "POST",
+        body: {
+          actorHandle,
+          notificationId: notification.id,
+          groupKey: notification.groupKey
+        }
+      });
+    } catch {
+      await refresh();
+    } finally {
+      setArchivingGroups((current) => {
+        const next = new Set(current);
+        next.delete(notification.groupKey);
+        return next;
+      });
+    }
+  };
+
+  const clearRead = async () => {
+    if (clearingRead) return;
+    setClearingRead(true);
+    setState(archiveReadNotifications);
+    try {
+      await symposiumApi.request("/api/notifications/archive", {
+        method: "POST",
+        body: { actorHandle, clearRead: true }
+      });
+    } catch {
+      await refresh();
+    } finally {
+      setClearingRead(false);
+    }
+  };
+
   const title = loadState === "error"
     ? "Notifications · reconnecting"
     : state.unreadCount
@@ -428,40 +480,63 @@ export function NotificationsControl({
     : expanded
       ? "All notifications"
       : "Notifications";
+  const hasClearableRead = state.notifications.some((notification) =>
+    Boolean(notification.readAt) && notificationCanArchive(notification)
+  );
   const notificationButton = (notification: NotificationContract) => (
-    <button
-      type="button"
+    <div
       key={notification.groupKey}
-      className={notification.readAt ? "" : "unread"}
+      className={`notification-card ${notification.readAt ? "" : "unread"} ${
+        notificationCanArchive(notification) ? "can-archive" : ""
+      }`}
       data-priority={notification.priority}
       data-resolved={notification.resolvedAt ? "true" : "false"}
-      onClick={() => markRead(notification)}
     >
-      <span className="notification-marker" />
-      <span>
-        <strong>{notification.title}</strong>
-        <p>{notification.body}</p>
-        <span className="notification-card-meta">
-          {notification.groupCount > 1 ? (
-            <small className="notification-group-count">
-              {notification.groupCount} updates
-            </small>
-          ) : null}
-          <time dateTime={notification.createdAt} title={new Date(notification.createdAt).toLocaleString()}>
-            {displayNotificationTime(notification.createdAt)}
-          </time>
-          {notification.resolvedAt ? <small className="notification-resolved">Resolved</small> : null}
-        </span>
-        {notification.actionLabel ? (
-          <span className="notification-primary-action">
-            {notification.actionLabel}
-            <ChevronRight size={13} />
+      <button
+        type="button"
+        className="notification-card-main"
+        onClick={() => markRead(notification)}
+      >
+        <span className="notification-marker" />
+        <span>
+          <strong>{notification.title}</strong>
+          <p>{notification.body}</p>
+          <span className="notification-card-meta">
+            {notification.groupCount > 1 ? (
+              <small className="notification-group-count">
+                {notification.groupCount} updates
+              </small>
+            ) : null}
+            <time dateTime={notification.createdAt} title={new Date(notification.createdAt).toLocaleString()}>
+              {displayNotificationTime(notification.createdAt)}
+            </time>
+            {notification.resolvedAt ? <small className="notification-resolved">Resolved</small> : null}
           </span>
-        ) : !notification.readAt ? (
-          <span className="notification-primary-action">Mark read</span>
-        ) : null}
-      </span>
-    </button>
+          {notification.actionLabel ? (
+            <span className="notification-primary-action">
+              {notification.actionLabel}
+              <ChevronRight size={13} />
+            </span>
+          ) : !notification.readAt ? (
+            <span className="notification-primary-action">Mark read</span>
+          ) : null}
+        </span>
+      </button>
+      {notificationCanArchive(notification) ? (
+        <button
+          type="button"
+          className="notification-archive-action"
+          title="Archive notification"
+          aria-label={`Archive ${notification.title}`}
+          disabled={archivingGroups.has(notification.groupKey)}
+          onClick={() => void archiveNotification(notification)}
+        >
+          {archivingGroups.has(notification.groupKey)
+            ? <LoaderCircle className="spin" size={14} />
+            : <Archive size={14} />}
+        </button>
+      ) : null}
+    </div>
   );
 
   return (
@@ -536,6 +611,19 @@ export function NotificationsControl({
                   onClick={() => void markAllRead()}
                 >
                   {markingAll ? <LoaderCircle className="spin" size={16} /> : <CheckCheck size={16} />}
+                </button>
+              ) : null}
+              {!settingsOpen && hasClearableRead ? (
+                <button
+                  type="button"
+                  title="Clear read notifications"
+                  aria-label="Clear read notifications"
+                  disabled={clearingRead}
+                  onClick={() => void clearRead()}
+                >
+                  {clearingRead
+                    ? <LoaderCircle className="spin" size={16} />
+                    : <Archive size={16} />}
                 </button>
               ) : null}
               <button

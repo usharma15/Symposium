@@ -39,6 +39,28 @@ export const notificationAttentionRank = (notification: NotificationContract) =>
   return 0;
 };
 
+export const notificationCanArchive = (notification: NotificationContract) =>
+  notification.priority !== "action" || Boolean(notification.resolvedAt);
+
+export const archiveNotificationGroup = (
+  state: NotificationState,
+  groupKey: string
+): NotificationState => {
+  const existing = state.notifications.find((notification) => notification.groupKey === groupKey);
+  if (!existing || !notificationCanArchive(existing)) return state;
+  return {
+    notifications: state.notifications.filter((notification) => notification.groupKey !== groupKey),
+    unreadCount: Math.max(0, state.unreadCount - Number(!existing.readAt))
+  };
+};
+
+export const archiveReadNotifications = (state: NotificationState): NotificationState => ({
+  notifications: state.notifications.filter((notification) =>
+    !notification.readAt || !notificationCanArchive(notification)
+  ),
+  unreadCount: state.unreadCount
+});
+
 export const normalizeNotifications = (notifications: unknown[]) =>
   notifications.flatMap((notification) => {
     const parsed = notificationSchema.safeParse(notification);
@@ -94,6 +116,12 @@ export const applyNotificationLiveEvent = (
       notifications: mergeNotificationPage(state.notifications, [notification]),
       unreadCount: Math.max(0, state.unreadCount + unreadDelta)
     };
+  }
+
+  if (event.kind === "notification.archived") {
+    if (event.payload?.clearRead === true) return archiveReadNotifications(state);
+    const groupKey = typeof event.payload?.groupKey === "string" ? event.payload.groupKey : null;
+    return groupKey ? archiveNotificationGroup(state, groupKey) : state;
   }
 
   if (event.kind !== "notification.read") return state;

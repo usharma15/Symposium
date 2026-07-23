@@ -20,7 +20,7 @@ import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { runAtomic } from "../services/transactions";
-import { createNotifications } from "../services/notificationDelivery";
+import { createNotifications, resolveNotifications } from "../services/notificationDelivery";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
 type ResourceAccess = {
@@ -552,6 +552,36 @@ export const deleteWorkspaceGrant = async (
           dedupeKey: `workspace-access-revoked:${type}:${resource.id}:${granteeHandle}:${input.expectedRevision}`,
           metadata: { resourceType: type, resourceId, removedByHandle: handle }
         }]);
+    const inaccessibleNotes = await client.query<{ noteId: string }>(
+      `SELECT note.id::text AS "noteId"
+       FROM notes note
+       WHERE (
+           ($1::text = 'document' AND note.id::text = $2)
+           OR ($1::text = 'notebook' AND note.notebook_id::text = $2)
+         )
+         AND note.owner_handle <> $3
+         AND NOT EXISTS (
+           SELECT 1
+           FROM workspace_note_grants direct
+           WHERE direct.note_id = note.id
+             AND direct.grantee_handle = $3
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM workspace_notebook_grants inherited
+           WHERE inherited.notebook_id = note.notebook_id
+             AND inherited.grantee_handle = $3
+         )`,
+      [type, resource.id, granteeHandle]
+    );
+    const resolvedMentions = inaccessibleNotes.rows.length
+      ? await resolveNotifications(client, {
+          kinds: ["workspace_mention"],
+          metadataMatches: inaccessibleNotes.rows.map((row) => ({ noteId: row.noteId })),
+          profileHandles: [granteeHandle],
+          reason: "workspace_access_revoked"
+        })
+      : { notifications: [], events: [] };
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "workspace.access.revoke",
@@ -577,7 +607,10 @@ export const deleteWorkspaceGrant = async (
     }
     const value = { removed: true, resourceId: resource.id, granteeHandle, access };
     await completeMutation(client, handle, mutation, value);
-    return { value, events: [...createdNotifications.events, event] };
+    return {
+      value,
+      events: [...createdNotifications.events, ...resolvedMentions.events, event]
+    };
   });
 };
 
