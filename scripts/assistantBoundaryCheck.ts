@@ -383,6 +383,7 @@ const attachmentContext = readFileSync("features/assistant/tabletAttachmentConte
 const attachmentViews = readFileSync("features/attachments/AttachmentViews.tsx", "utf8");
 const documentTranslationControl = readFileSync("features/attachments/DocumentTranslationControl.tsx", "utf8");
 const contentTranslationControl = readFileSync("features/translation/ContentTranslationControl.tsx", "utf8");
+const tabletStyles = readFileSync("styles/92-ai-tablet.css", "utf8");
 const postViews = readFileSync("features/posts/PostViews.tsx", "utf8");
 const commentThread = readFileSync("features/comments/CommentThread.tsx", "utf8");
 const attachmentModal = readFileSync("features/attachments/AttachmentPreviewModal.tsx", "utf8");
@@ -513,6 +514,7 @@ assert.match(contentTranslationControl, /Translate entire \{sourceLabel\}/);
 assert.match(contentTranslationControl, /Saved translations reuse 0 answers/);
 assert.match(contentTranslationControl, /Translate · up to 1/);
 assert.match(contentTranslationControl, /Original/);
+assert.match(tabletStyles, /\.room-layout > \.feed-stream > \.feed-post:first-child \.content-translation-post[\s\S]*?margin-left: max\(0px, calc\(708px - 50vw\)\)/);
 assert.match(postViews, /ContentTranslationControl state=\{translation\} sourceLabel="post"/);
 assert.match(commentThread, /ContentTranslationControl state=\{translation\} sourceLabel="comment"/);
 assert.doesNotMatch(attachmentViews, /<iframe[^>]+title=\{attachment\.fileName\}/);

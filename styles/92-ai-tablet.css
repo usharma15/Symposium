@@ -279,6 +279,12 @@
 .comment-card > .content-translation-copy,
 .profile-comment-card > .content-translation-copy { font-size: 0.9rem; margin-bottom: 0.45rem; }
 
+@media (min-width: 901px) {
+  .room-layout > .feed-stream > .feed-post:first-child .content-translation-post {
+    margin-left: max(0px, calc(708px - 50vw));
+  }
+}
+
 @media (max-width: 760px) {
   .tablet-panel {
     inset:
