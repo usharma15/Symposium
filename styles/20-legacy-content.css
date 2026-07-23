@@ -522,6 +522,7 @@
 }
 
 .attachment-pdf-stage {
+  position: relative;
   display: grid;
   place-items: center;
   width: 100%;
@@ -536,12 +537,30 @@
   cursor: default;
 }
 
+.attachment-pdf-stage-continuous {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.attachment-pdf-page-shell {
+  position: relative;
+  flex: 0 0 auto;
+  margin-inline: auto;
+}
+
 .attachment-pdf-page {
   position: relative;
   flex: 0 0 auto;
   overflow: hidden;
   background: #fff;
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+}
+
+.attachment-pdf-page-shell.translated .attachment-pdf-page {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--aqua) 62%, transparent), 0 12px 34px rgba(0, 0, 0, 0.28);
 }
 
 .attachment-pdf-page canvas {
@@ -611,6 +630,51 @@
 .attachment-pdf-text-layer ::selection {
   background: color-mix(in srgb, var(--aqua) 54%, transparent);
   color: transparent;
+}
+
+.attachment-pdf-translation-text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  color: #111817;
+  font-family: Georgia, "Times New Roman", serif;
+  pointer-events: none;
+}
+
+.attachment-pdf-translation-text-layer span {
+  position: absolute;
+  display: block;
+  overflow: hidden;
+  padding: 0 1px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #111817;
+  line-height: 1.02;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.attachment-pdf-visual-translation {
+  position: absolute;
+  z-index: 3;
+  right: 4%;
+  bottom: 4%;
+  left: 4%;
+  max-height: 46%;
+  overflow: auto;
+  border: 1px solid rgba(18, 31, 30, 0.2);
+  padding: clamp(12px, 3%, 28px);
+  background: rgba(255, 255, 255, 0.95);
+  color: #111817;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(0.68rem, 1.5vw, 0.92rem);
+  line-height: 1.5;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+
+.attachment-pdf-visual-translation p {
+  margin: 0 0 0.7em;
 }
 
 .attachment-pdf-loading {
@@ -1065,6 +1129,9 @@
 .attachment-docx { background: var(--attachment-preview-surface); }
 
 .attachment-docx-scroll {
+  display: grid;
+  align-content: start;
+  gap: 18px;
   height: 100%;
   min-height: 0;
   overflow: auto;
@@ -1091,6 +1158,8 @@
 }
 
 .attachment-docx-rendered .symposium-docx-wrapper {
+  display: grid !important;
+  gap: 18px !important;
   width: max-content !important;
   max-width: none !important;
   min-height: 100% !important;
@@ -1105,6 +1174,15 @@
   border-radius: 4px;
   background: var(--attachment-paper-surface) !important;
   box-shadow: 0 14px 38px rgba(15, 29, 31, 0.12) !important;
+}
+
+.attachment-docx-rendered section.symposium-docx[data-attachment-page] {
+  display: block !important;
+}
+
+.attachment-docx-rendered section.symposium-docx.translated,
+.attachment-docx-page.translated {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--aqua) 62%, transparent), 0 14px 38px rgba(15, 29, 31, 0.12) !important;
 }
 
 .attachment-docx-rendered section.symposium-docx[hidden] {

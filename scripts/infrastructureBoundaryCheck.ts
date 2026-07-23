@@ -37,7 +37,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0050_assistant_context_dock_translation");
+  assert.equal(latestMigrationId, "0051_translation_layout_fidelity");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -71,6 +71,7 @@ const main = async () => {
   assert.ok("sourceFingerprint" in documentTranslations);
   assert.ok("sourceFingerprint" in contentTranslations);
   assert.ok("sourceRevision" in contentTranslations);
+  assert.ok("translatedDocument" in contentTranslations);
   assert.ok("targetLanguage" in documentTranslations);
   assert.ok("shortlisted" in opportunityApplications);
   assert.ok("revision" in opportunityApplications);

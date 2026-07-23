@@ -680,7 +680,19 @@ function CommentNode({
           <ContentTranslationControl state={translation} sourceLabel="comment" />
         ) : null}
         {translation.showTranslation ? (
-          <TranslatedContent state={translation} showTitle={false} />
+          <TranslatedContent
+            state={translation}
+            attachments={comment.attachments}
+            profiles={profiles}
+            mode="comment"
+            onOpenAttachment={(attachmentId) => comment.id && onOpenAttachmentPreview(itemId, comment.id, attachmentId)}
+            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, scribbleSource))}
+            onExpand={() => {
+              if (comment.id && !commentDeleted) {
+                onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
+              }
+            }}
+          />
         ) : (
           <ScribbleCitable source={scribbleSource}><SymposiumDocumentRenderer
             document={comment.document}

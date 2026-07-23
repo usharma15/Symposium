@@ -39,14 +39,17 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Add source-specific reading tools for posts, comments, notes, workspace documents, attachments, messages, and the visible selection.
 - Make answer claims link back to the relevant Symposium passage or attachment location.
 
-### 3. Whole-content translation — post/comment translation shipped; document expansion remains
+### 3. Whole-content translation — structured post/comment and page translation shipped; whole-document action remains
 
 - Translate an entire post or individual comment on request while keeping the original one click away. **Shipped.**
 - Cache post/comment translations by canonical source revision and target language. **Shipped.**
 - Keep unsupported-language input and cached reuse at zero AI answers. **Shipped.**
-- Translate supported document attachments through the document viewer. **Current shipped beta remains one PDF/DOCX page at a time.**
-- Add one action for a bounded whole discussion and a richer whole-document reading surface. **Remaining.**
-- Preserve headings, structure, citations, quantities, uncertainty, and scientific terminology.
+- Translate supported document attachments through the document viewer. **Shipped for one user-selected PDF/DOCX page at a time.**
+- Keep PDF and DOCX documents continuously scrollable, with the visible reading position selecting the active translation page. **Shipped.**
+- Preserve rich post/comment document structure and translate text in place without replacing equations, code, citations, drawings, or inline attachments. **Shipped.**
+- Preserve the original PDF canvas and DOCX layout while substituting translated text at its source locations; retain diagrams, images, equations, and other non-text page content. **Shipped.**
+- Add one action for a bounded whole discussion and a bounded whole-document translation job. **Remaining.**
+- Preserve headings, structure, citations, quantities, uncertainty, and scientific terminology. **Enforced through structured segments and provider-output identity checks.**
 - Cache translations by source revision, target language, and translation policy.
 
 ### 4. Real in-app citations

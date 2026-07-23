@@ -49,7 +49,12 @@ import {
 } from "@/features/attachments/pdfAttachmentClient";
 import { feedPreviewAttachments } from "@/lib/documentModel";
 import { isDeletedPost } from "@/lib/symposiumCore";
-import { isSafeExternalUrl, type DocumentCitationLocatorContract } from "@/packages/contracts/src";
+import {
+  isSafeExternalUrl,
+  type DocumentCitationLocatorContract,
+  type TranslationResultSegmentContract,
+  type TranslationSourceSegmentContract
+} from "@/packages/contracts/src";
 
 export type AttachmentPreviewHandler = (item: InquiryItem, attachmentId: string) => void;
 export type AttachmentUploadHandler = (file: File) => Promise<InquiryAttachment>;
@@ -89,7 +94,12 @@ const metadataBoolean = (metadata: Record<string, unknown> | undefined, key: str
   metadata?.[key] === true;
 
 const boundedDocumentTranslationSource = (
-  sourcePages: Array<{ pageNumber: number; body?: string; imageDataUrl?: string }>,
+  sourcePages: Array<{
+    pageNumber: number;
+    body?: string;
+    segments?: TranslationSourceSegmentContract[];
+    imageDataUrl?: string;
+  }>,
   complete: boolean
 ): DocumentTranslationSource => {
   const pages: DocumentTranslationSource["pages"] = [];
@@ -106,6 +116,7 @@ const boundedDocumentTranslationSource = (
     pages.push({
       pageNumber: sourcePage.pageNumber,
       body,
+      segments: sourcePage.segments ?? [],
       ...(sourcePage.imageDataUrl ? { imageDataUrl: sourcePage.imageDataUrl } : {})
     });
     remaining -= body.length;
@@ -281,6 +292,28 @@ const plainTextToDocxBlocks = (text: string): DocxPreviewBlock[] => {
     runs: [{ text: chunk.replace(/\*\*/g, ""), bold: false, italic: false, underline: false }],
     style: /^(?:INTRODUCTION|BODY|CONCLUSION)\b/i.test(chunk) ? "heading" : "paragraph"
   }));
+};
+
+type PdfTextContentLike = {
+  items: Array<{ str?: unknown; hasEOL?: unknown } | unknown>;
+};
+
+export const pdfTranslationSegmentsFromTextContent = (
+  pageNumber: number,
+  textContent: PdfTextContentLike
+): TranslationSourceSegmentContract[] => {
+  let segmentIndex = 0;
+  return textContent.items.flatMap((item) => {
+    if (!item || typeof item !== "object" || !("str" in item) || typeof item.str !== "string" || !item.str.trim()) {
+      return [];
+    }
+    const segment = {
+      id: `pdf-${pageNumber}-${segmentIndex}`,
+      text: item.str
+    };
+    segmentIndex += 1;
+    return [segment];
+  });
 };
 
 const paginateDocxBlocks = (blocks: DocxPreviewBlock[], pageSize = 2600) => {
@@ -681,6 +714,174 @@ function AttachmentPreviewPane({
   );
 }
 
+type PdfPageDimensions = { width: number; height: number };
+type PdfTranslationLayout = TranslationSourceSegmentContract & {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+function PdfContinuousPage({
+  document,
+  fileName,
+  pageNumber,
+  pageCount,
+  dimensions,
+  availableWidth,
+  zoom,
+  shouldRender,
+  translatedSegments,
+  showTranslation
+}: {
+  document: import("pdfjs-dist").PDFDocumentProxy;
+  fileName: string;
+  pageNumber: number;
+  pageCount: number;
+  dimensions: PdfPageDimensions;
+  availableWidth: number;
+  zoom: number;
+  shouldRender: boolean;
+  translatedSegments: TranslationResultSegmentContract[];
+  showTranslation: boolean;
+}) {
+  const pageRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const textLayerRef = useRef<HTMLDivElement | null>(null);
+  const [layouts, setLayouts] = useState<PdfTranslationLayout[]>([]);
+  const [ready, setReady] = useState(false);
+  const renderedWidth = Math.max(120, availableWidth) * clampAttachmentZoom(zoom);
+  const renderedHeight = renderedWidth * (dimensions.height / Math.max(1, dimensions.width));
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const textLayerContainer = textLayerRef.current;
+    const pageContainer = pageRef.current;
+    if (!shouldRender || !canvas || !textLayerContainer || !pageContainer) {
+      setReady(false);
+      setLayouts([]);
+      textLayerContainer?.replaceChildren();
+      return;
+    }
+    let cancelled = false;
+    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
+    let textLayer: { cancel: () => void; render: () => Promise<unknown> } | null = null;
+    void Promise.all([loadPdfModule(), document.getPage(pageNumber)])
+      .then(async ([pdfjs, pdfPage]) => {
+        if (cancelled) return;
+        const baseViewport = pdfPage.getViewport({ scale: 1 });
+        const viewport = pdfPage.getViewport({ scale: Math.max(0.1, renderedWidth / baseViewport.width) });
+        const outputScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+        const cssWidth = Math.max(1, Math.floor(viewport.width));
+        const cssHeight = Math.max(1, Math.floor(viewport.height));
+        pageContainer.style.width = `${cssWidth}px`;
+        pageContainer.style.height = `${cssHeight}px`;
+        canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
+        canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
+        canvas.style.width = `${cssWidth}px`;
+        canvas.style.height = `${cssHeight}px`;
+        textLayerContainer.replaceChildren();
+        const textContent = await pdfPage.getTextContent();
+        if (cancelled) return;
+        renderTask = pdfPage.render({
+          canvas,
+          viewport,
+          transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0]
+        });
+        textLayer = new pdfjs.TextLayer({
+          textContentSource: textContent,
+          container: textLayerContainer,
+          viewport
+        });
+        await Promise.all([renderTask.promise, textLayer.render()]);
+        if (cancelled) return;
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        if (cancelled) return;
+        const sourceSegments = pdfTranslationSegmentsFromTextContent(pageNumber, textContent);
+        const spans = Array.from(textLayerContainer.querySelectorAll<HTMLElement>("span"))
+          .filter((span) => !span.classList.contains("markedContent") && Boolean(span.textContent?.trim()));
+        const pageBounds = pageContainer.getBoundingClientRect();
+        setLayouts(sourceSegments.slice(0, spans.length).map((segment, index) => {
+          const bounds = spans[index]!.getBoundingClientRect();
+          return {
+            ...segment,
+            left: bounds.left - pageBounds.left,
+            top: bounds.top - pageBounds.top,
+            width: bounds.width,
+            height: bounds.height
+          };
+        }));
+        setReady(true);
+      })
+      .catch((error) => {
+        if (!cancelled && error?.name !== "RenderingCancelledException" && error?.name !== "AbortException") {
+          setReady(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+      textLayer?.cancel();
+    };
+  }, [document, pageNumber, renderedWidth, shouldRender]);
+
+  const translations = new Map(translatedSegments.map((segment) => [segment.id, segment.text]));
+  const translatedLayouts = layouts.filter((layout) => translations.has(layout.id));
+  const visualFallback = showTranslation && translatedSegments.length > 0 && translatedLayouts.length === 0;
+
+  return (
+    <div
+      className={`attachment-pdf-page-shell${showTranslation ? " translated" : ""}`}
+      data-pdf-page-shell={pageNumber}
+      style={{ width: `${renderedWidth}px`, height: `${renderedHeight}px` }}
+    >
+      <div
+        ref={pageRef}
+        className="attachment-pdf-page"
+        data-attachment-selectable="true"
+        data-attachment-kind="pdf"
+        data-attachment-page={pageNumber}
+        style={{ width: `${renderedWidth}px`, height: `${renderedHeight}px` }}
+      >
+        {shouldRender ? (
+          <>
+            <canvas ref={canvasRef} role="img" aria-label={`${fileName}, page ${pageNumber} of ${pageCount}`} />
+            <div ref={textLayerRef} className="attachment-pdf-text-layer" />
+            {showTranslation && translatedLayouts.length ? (
+              <div className="attachment-pdf-translation-text-layer" lang="auto">
+                {translatedLayouts.map((layout) => (
+                  <span
+                    key={layout.id}
+                    style={{
+                      left: `${layout.left}px`,
+                      top: `${layout.top}px`,
+                      width: `${Math.max(1, layout.width)}px`,
+                      minHeight: `${Math.max(1, layout.height)}px`,
+                      fontSize: `${Math.max(5, layout.height * 0.78)}px`
+                    }}
+                  >
+                    {translations.get(layout.id)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {visualFallback ? (
+              <article className="attachment-pdf-visual-translation" data-attachment-selectable="true" data-attachment-kind="pdf" data-attachment-page={pageNumber}>
+                {plainTextToDocxBlocks(translatedSegments.map((segment) => segment.text).join("\n\n")).map((block) => (
+                  <p key={block.id}>{block.runs.map((run) => run.text).join("")}</p>
+                ))}
+              </article>
+            ) : null}
+            {!ready ? <span className="attachment-pdf-loading" role="status">Preparing page…</span> : null}
+          </>
+        ) : (
+          <span className="attachment-pdf-loading" role="status">Page {pageNumber}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PdfAttachmentPreview({
   attachment,
   mode,
@@ -693,11 +894,10 @@ function PdfAttachmentPreview({
   onViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const pageRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const textLayerRef = useRef<HTMLDivElement | null>(null);
+  const scrollFrameRef = useRef(0);
   const [document, setDocument] = useState<import("pdfjs-dist").PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
+  const [pageDimensions, setPageDimensions] = useState<PdfPageDimensions[]>([]);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [loadState, setLoadState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [pageContext, setPageContext] = useState<{
@@ -708,15 +908,26 @@ function PdfAttachmentPreview({
   } | null>(null);
   const [selectedText, setSelectedText] = useState("");
   const originalPageCount = document?.numPages ?? attachmentPageCount(attachment);
-  const boundedPage = Math.min(Math.max(1, page), Math.max(1, originalPageCount));
+  const pageCount = Math.max(1, originalPageCount);
+  const boundedPage = Math.min(Math.max(1, page), pageCount);
   const loadTranslationSource = useCallback(async () => {
     if (document) {
+      const pdfPage = await document.getPage(boundedPage);
+      const textContent = await pdfPage.getTextContent();
       const body = await readPdfPageText(document, boundedPage);
+      const segments = pdfTranslationSegmentsFromTextContent(boundedPage, textContent);
       const imageDataUrl = pdfPageNeedsVisualTranslationFallback(body)
         ? await renderPdfPageTranslationImage(document, boundedPage)
         : undefined;
       return boundedDocumentTranslationSource(
-        [{ pageNumber: boundedPage, body, ...(imageDataUrl ? { imageDataUrl } : {}) }],
+        [{
+          pageNumber: boundedPage,
+          body,
+          segments: segments.length
+            ? segments
+            : [{ id: `pdf-${boundedPage}-visual`, text: "" }],
+          ...(imageDataUrl ? { imageDataUrl } : {})
+        }],
         true
       );
     }
@@ -726,7 +937,14 @@ function PdfAttachmentPreview({
     );
     const currentPage = fallback.pages.find((sourcePage) => sourcePage.pageNumber === boundedPage);
     return {
-      pages: currentPage ? [currentPage] : [],
+      pages: currentPage
+        ? [{
+            ...currentPage,
+            segments: currentPage.segments.length
+              ? currentPage.segments
+              : [{ id: `pdf-${boundedPage}-body`, text: currentPage.body }]
+          }]
+        : [],
       complete: fallback.complete && Boolean(currentPage)
     };
   }, [attachment.metadata, boundedPage, document]);
@@ -737,9 +955,7 @@ function PdfAttachmentPreview({
     pageNumber: boundedPage,
     loadSource: loadTranslationSource
   });
-  const translatedPages = translation.result?.status === "translated" ? translation.result.pages : [];
-  const pageCount = originalPageCount;
-  const translatedPage = translatedPages.find((translatedSourcePage) => translatedSourcePage.pageNumber === boundedPage);
+  const translatedPage = translation.translatedPageFor(boundedPage);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -758,6 +974,7 @@ function PdfAttachmentPreview({
   useEffect(() => {
     setDocument(null);
     setPage(1);
+    setPageDimensions([]);
     setPageContext(null);
     setSelectedText("");
     setLoadState("loading");
@@ -765,7 +982,6 @@ function PdfAttachmentPreview({
       setLoadState("unavailable");
       return;
     }
-
     let cancelled = false;
     let loadingTask: import("pdfjs-dist").PDFDocumentLoadingTask | null = null;
     void loadPdfModule()
@@ -779,18 +995,24 @@ function PdfAttachmentPreview({
         });
         return loadingTask.promise;
       })
-      .then((loadedDocument) => {
+      .then(async (loadedDocument) => {
         if (cancelled) {
           void loadingTask?.destroy().catch(() => undefined);
           return;
         }
+        const dimensions = await Promise.all(Array.from({ length: loadedDocument.numPages }, async (_, index) => {
+          const pdfPage = await loadedDocument.getPage(index + 1);
+          const viewport = pdfPage.getViewport({ scale: 1 });
+          return { width: viewport.width, height: viewport.height };
+        }));
+        if (cancelled) return;
         setDocument(loadedDocument);
+        setPageDimensions(dimensions);
         setLoadState("ready");
       })
       .catch(() => {
         if (!cancelled) setLoadState("unavailable");
       });
-
     return () => {
       cancelled = true;
       void loadingTask?.destroy().catch(() => undefined);
@@ -798,7 +1020,7 @@ function PdfAttachmentPreview({
   }, [attachment.id, attachment.url]);
 
   useEffect(() => {
-    if (!document || translation.showTranslation) return;
+    if (!document) return;
     let cancelled = false;
     setPageContext(null);
     const pageNumbers = [boundedPage - 1, boundedPage, boundedPage + 1]
@@ -816,69 +1038,43 @@ function PdfAttachmentPreview({
         ...(boundedPage < document.numPages ? { nextPageText: textFor(boundedPage + 1).slice(0, 2000) } : {})
       });
     }).catch(() => {
-      if (!cancelled) {
-        setPageContext({ page: boundedPage, currentPageText: "" });
-      }
+      if (!cancelled) setPageContext({ page: boundedPage, currentPageText: "" });
     });
     return () => { cancelled = true; };
-  }, [boundedPage, document, translation.showTranslation]);
+  }, [boundedPage, document]);
+
+  const updateActivePage = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const stageBounds = stage.getBoundingClientRect();
+    const readingLine = stageBounds.top + stageBounds.height * 0.46;
+    const shells = Array.from(stage.querySelectorAll<HTMLElement>("[data-pdf-page-shell]"));
+    let closestPage = boundedPage;
+    let closestDistance = Number.POSITIVE_INFINITY;
+    shells.forEach((shell) => {
+      const bounds = shell.getBoundingClientRect();
+      const distance = readingLine < bounds.top
+        ? bounds.top - readingLine
+        : readingLine > bounds.bottom
+          ? readingLine - bounds.bottom
+          : 0;
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestPage = Number(shell.dataset.pdfPageShell) || closestPage;
+      }
+    });
+    setPage((current) => current === closestPage ? current : closestPage);
+  }, [boundedPage]);
+
+  const requestActivePageUpdate = () => {
+    window.cancelAnimationFrame(scrollFrameRef.current);
+    scrollFrameRef.current = window.requestAnimationFrame(updateActivePage);
+  };
 
   useEffect(() => {
-    if (!document || translation.showTranslation || !stageSize.width || !stageSize.height) return;
-    const canvas = canvasRef.current;
-    const textLayerContainer = textLayerRef.current;
-    const pageContainer = pageRef.current;
-    if (!canvas || !textLayerContainer || !pageContainer) return;
-
-    let cancelled = false;
-    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
-    let textLayer: { cancel: () => void; render: () => Promise<unknown> } | null = null;
-    void Promise.all([loadPdfModule(), document.getPage(boundedPage)])
-      .then(async ([pdfjs, pdfPage]) => {
-        if (cancelled) return;
-        const baseViewport = pdfPage.getViewport({ scale: 1 });
-        const availableWidth = Math.max(120, stageSize.width - 24);
-        const availableHeight = Math.max(120, stageSize.height - 24);
-        const fitScale = Math.min(availableWidth / baseViewport.width, availableHeight / baseViewport.height);
-        const viewport = pdfPage.getViewport({ scale: Math.max(0.1, fitScale * zoom) });
-        const outputScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-        const cssWidth = Math.max(1, Math.floor(viewport.width));
-        const cssHeight = Math.max(1, Math.floor(viewport.height));
-
-        pageContainer.style.width = `${cssWidth}px`;
-        pageContainer.style.height = `${cssHeight}px`;
-        canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
-        canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
-        canvas.style.width = `${cssWidth}px`;
-        canvas.style.height = `${cssHeight}px`;
-        textLayerContainer.replaceChildren();
-
-        const textContent = await pdfPage.getTextContent();
-        if (cancelled) return;
-        renderTask = pdfPage.render({
-          canvas,
-          viewport,
-          transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0]
-        });
-        textLayer = new pdfjs.TextLayer({
-          textContentSource: textContent,
-          container: textLayerContainer,
-          viewport
-        });
-        await Promise.all([renderTask.promise, textLayer.render()]);
-      })
-      .catch((error) => {
-        if (!cancelled && error?.name !== "RenderingCancelledException" && error?.name !== "AbortException") {
-          setLoadState("unavailable");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      renderTask?.cancel();
-      textLayer?.cancel();
-    };
-  }, [boundedPage, document, stageSize.height, stageSize.width, translation.showTranslation, zoom]);
+    requestActivePageUpdate();
+    return () => window.cancelAnimationFrame(scrollFrameRef.current);
+  }, [pageDimensions, stageSize.height, stageSize.width, updateActivePage, zoom]);
 
   useEffect(() => {
     if (!onViewContextChange) return;
@@ -886,7 +1082,7 @@ function PdfAttachmentPreview({
       attachmentId: attachment.id,
       fileName: attachment.fileName,
       page: boundedPage,
-      pageCount: Math.max(1, pageCount),
+      pageCount,
       currentPageText: translation.showTranslation
         ? translatedPage?.body.slice(0, 6000) ?? ""
         : pageContext?.page === boundedPage ? pageContext.currentPageText : "",
@@ -900,21 +1096,14 @@ function PdfAttachmentPreview({
   }, [attachment.fileName, attachment.id, boundedPage, loadState, onViewContextChange, pageContext, pageCount, selectedText, translatedPage, translation.showTranslation]);
 
   useEffect(() => () => onViewContextChange?.(null), [attachment.id, onViewContextChange]);
-
-  useEffect(() => {
-    setSelectedText("");
-    const selection = window.getSelection();
-    if (selection?.rangeCount && pageRef.current?.contains(selection.getRangeAt(0).commonAncestorContainer)) {
-      selection.removeAllRanges();
-    }
-  }, [attachment.id, boundedPage]);
+  useEffect(() => setSelectedText(""), [attachment.id, boundedPage]);
 
   const inspectSelection = () => {
     window.requestAnimationFrame(() => {
       const selection = window.getSelection();
       const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-      const pageElement = pageRef.current;
-      if (!selection || !range || selection.isCollapsed || !pageElement?.contains(range.commonAncestorContainer)) {
+      const stage = stageRef.current;
+      if (!selection || !range || selection.isCollapsed || !stage?.contains(range.commonAncestorContainer)) {
         setSelectedText("");
         return;
       }
@@ -922,11 +1111,20 @@ function PdfAttachmentPreview({
     });
   };
 
+  const jumpToPage = (targetPage: number) => {
+    const stage = stageRef.current;
+    const shell = stage?.querySelector<HTMLElement>(`[data-pdf-page-shell="${targetPage}"]`);
+    if (!stage || !shell) return;
+    setPage(targetPage);
+    stage.scrollTo({ top: Math.max(0, shell.offsetTop - 12), behavior: "smooth" });
+  };
   const movePage = (direction: -1 | 1) => (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    setPage((current) => Math.min(Math.max(1, current + direction), Math.max(1, pageCount)));
+    jumpToPage(Math.min(Math.max(1, boundedPage + direction), pageCount));
   };
+  const availablePageWidth = Math.max(120, stageSize.width - 24);
+  const fallbackDimensions = pageDimensions[0] ?? { width: 612, height: 792 };
 
   return (
     <div
@@ -937,7 +1135,7 @@ function PdfAttachmentPreview({
           return;
         }
         const target = event.target as HTMLElement;
-        const clickedPage = target.closest(".attachment-pdf-page, .attachment-pdf-translation-page");
+        const clickedPage = target.closest(".attachment-pdf-page");
         const selection = window.getSelection();
         if (!clickedPage || (selection && !selection.isCollapsed && selection.toString().trim())) {
           event.stopPropagation();
@@ -946,57 +1144,53 @@ function PdfAttachmentPreview({
     >
       <div className="attachment-pagebar">
         <span>
-          Page {boundedPage}/{Math.max(1, pageCount)}
+          Page {boundedPage}/{pageCount}
           {selectedText ? ` · ${selectedText.length} characters selected` : loadState === "loading" ? " · loading" : ""}
         </span>
         <div className="attachment-page-actions">
           <DocumentTranslationControl state={translation} />
-          <button type="button" title="Previous PDF page" disabled={boundedPage <= 1 || (!translation.showTranslation && loadState !== "ready")} onClick={movePage(-1)}>
+          <button type="button" title="Previous PDF page" disabled={boundedPage <= 1 || loadState !== "ready"} onClick={movePage(-1)}>
             <ChevronLeft size={15} />
           </button>
-          <button type="button" title="Next PDF page" disabled={boundedPage >= pageCount || (!translation.showTranslation && loadState !== "ready")} onClick={movePage(1)}>
+          <button type="button" title="Next PDF page" disabled={boundedPage >= pageCount || loadState !== "ready"} onClick={movePage(1)}>
             <ChevronRight size={15} />
           </button>
         </div>
       </div>
       <div
         ref={stageRef}
-        className="attachment-pdf-stage"
+        className="attachment-pdf-stage attachment-pdf-stage-continuous"
+        onScroll={requestActivePageUpdate}
         onMouseUp={inspectSelection}
         onKeyUp={inspectSelection}
       >
-        {translation.showTranslation && translatedPage ? (
-          <article
-            className="attachment-pdf-translation-page"
-            data-attachment-selectable="true"
-            data-attachment-kind="pdf"
-            data-attachment-page={translatedPage.pageNumber}
-          >
-            {plainTextToDocxBlocks(translatedPage.body).map((block) => (
-              <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
-                {block.runs.map((run) => run.text).join("")}
-              </p>
-            ))}
-          </article>
-        ) : loadState === "unavailable" ? (
-          <div className="attachment-file-shell" role="status">
-            <FileText size={24} />
-            <strong>{attachment.fileName}</strong>
-            <span>PDF preview unavailable. The original file is still accessible.</span>
-          </div>
-        ) : (
-          <div
-            ref={pageRef}
-            className="attachment-pdf-page"
-            data-attachment-selectable="true"
-            data-attachment-kind="pdf"
-            data-attachment-page={boundedPage}
-          >
-            <canvas ref={canvasRef} role="img" aria-label={`${attachment.fileName}, page ${boundedPage} of ${Math.max(1, pageCount)}`} />
-            <div ref={textLayerRef} className="attachment-pdf-text-layer" />
-            {loadState === "loading" ? <span className="attachment-pdf-loading" role="status">Preparing page…</span> : null}
-          </div>
-        )}
+        {loadState === "unavailable" || !document ? (
+          loadState === "unavailable" ? (
+            <div className="attachment-file-shell" role="status">
+              <FileText size={24} />
+              <strong>{attachment.fileName}</strong>
+              <span>PDF preview unavailable. The original file is still accessible.</span>
+            </div>
+          ) : <span className="attachment-pdf-loading" role="status">Preparing document…</span>
+        ) : Array.from({ length: pageCount }, (_, index) => {
+          const pageNumber = index + 1;
+          const translated = translation.translatedPageFor(pageNumber);
+          return (
+            <PdfContinuousPage
+              key={pageNumber}
+              document={document}
+              fileName={attachment.fileName}
+              pageNumber={pageNumber}
+              pageCount={pageCount}
+              dimensions={pageDimensions[index] ?? fallbackDimensions}
+              availableWidth={availablePageWidth}
+              zoom={zoom}
+              shouldRender={Math.abs(pageNumber - boundedPage) <= 2}
+              translatedSegments={translated?.segments ?? []}
+              showTranslation={translation.showTranslationForPage(pageNumber)}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -1090,6 +1284,42 @@ function TextAttachmentPreview({
   );
 }
 
+type DocxTranslationDomSegment = TranslationSourceSegmentContract & {
+  node: Text;
+  leading: string;
+  trailing: string;
+};
+
+const collectDocxTranslationSegments = (
+  pageElement: HTMLElement,
+  pageNumber: number
+): DocxTranslationDomSegment[] => {
+  const walker = globalThis.document.createTreeWalker(pageElement, NodeFilter.SHOW_TEXT);
+  const segments: DocxTranslationDomSegment[] = [];
+  let current = walker.nextNode();
+  while (current) {
+    const node = current as Text;
+    const parent = node.parentElement;
+    const raw = node.data;
+    if (parent && !parent.closest("script, style, svg, math") && raw.trim()) {
+      const leading = raw.match(/^\s*/)?.[0] ?? "";
+      const trailing = raw.match(/\s*$/)?.[0] ?? "";
+      const text = raw.slice(leading.length, raw.length - trailing.length || undefined);
+      if (text) {
+        segments.push({
+          id: `docx-${pageNumber}-${segments.length}`,
+          text,
+          node,
+          leading,
+          trailing
+        });
+      }
+    }
+    current = walker.nextNode();
+  }
+  return segments;
+};
+
 function DocxAttachmentPreview({
   attachment,
   mode,
@@ -1102,45 +1332,43 @@ function DocxAttachmentPreview({
   const metadataPreviewText = metadataString(attachment.metadata, "previewText");
   const [loadedPreviewText, setLoadedPreviewText] = useState("");
   const fallbackText = metadataPreviewText || loadedPreviewText;
-  const fallbackBlocks = useMemo(
-    () => plainTextToDocxBlocks(fallbackText),
-    [fallbackText]
-  );
+  const fallbackBlocks = useMemo(() => plainTextToDocxBlocks(fallbackText), [fallbackText]);
   const fallbackPages = useMemo(() => paginateDocxBlocks(fallbackBlocks), [fallbackBlocks]);
   const metadataPageCount = attachmentPageCount(attachment, fallbackText);
   const renderTargetRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollFrameRef = useRef(0);
+  const domSegmentsRef = useRef<Map<number, DocxTranslationDomSegment[]>>(new Map());
   const [renderedPageCount, setRenderedPageCount] = useState(0);
+  const [renderRevision, setRenderRevision] = useState(0);
   const [fitScale, setFitScale] = useState(1);
   const [parseFailed, setParseFailed] = useState(false);
   const [page, setPage] = useState(1);
-  const originalTotalPages = Math.max(1, renderedPageCount || metadataPageCount || fallbackPages.length);
-  const boundedPage = Math.min(page, originalTotalPages);
+  const totalPages = Math.max(1, renderedPageCount || metadataPageCount || fallbackPages.length);
+  const boundedPage = Math.min(Math.max(1, page), totalPages);
   const fallbackPageBlocks = fallbackPages[Math.min(boundedPage - 1, fallbackPages.length - 1)] ?? [];
+  const fallbackSegmentsForPage = useCallback((targetPage: number) => {
+    const blocks = fallbackPages[Math.min(targetPage - 1, fallbackPages.length - 1)] ?? [];
+    return blocks.map((block, index) => ({
+      id: `docx-fallback-${targetPage}-${index}`,
+      text: block.runs.map((run) => run.text).join("")
+    }));
+  }, [fallbackPages]);
   const loadTranslationSource = useCallback(async () => {
-    const target = renderTargetRef.current;
-    const renderedPage = renderedPageCount
-      ? Array.from(target?.querySelectorAll<HTMLElement>("section.symposium-docx") ?? [])[boundedPage - 1]
-      : undefined;
     if (attachment.url && !parseFailed && !renderedPageCount) {
       throw new Error("This page is still being prepared. Please try again in a moment.");
     }
-    const renderedBlocks = renderedPage
-      ? Array.from(renderedPage.querySelectorAll<HTMLElement>("p, h1, h2, h3, h4, h5, h6, li"))
-        .map((block) => block.textContent?.replace(/\s+/g, " ").trim() ?? "")
-        .filter(Boolean)
-      : [];
-    const fallbackBody = fallbackPageBlocks
-      .map((block) => block.runs.map((run) => run.text).join(""))
-      .join("\n\n")
-      .trim();
-    const body = (renderedBlocks.length
-      ? renderedBlocks.join("\n\n")
-      : renderedPage?.textContent?.replace(/\s+/g, " ").trim()) || fallbackBody;
+    const renderedSegments = domSegmentsRef.current.get(boundedPage) ?? [];
+    const segments: TranslationSourceSegmentContract[] = renderedSegments.length
+      ? renderedSegments.map(({ id, text }) => ({ id, text }))
+      : fallbackSegmentsForPage(boundedPage);
+    const body = segments.map((segment) => segment.text).join("\n\n").trim()
+      || fallbackPageBlocks.map((block) => block.runs.map((run) => run.text).join("")).join("\n\n").trim();
     return boundedDocumentTranslationSource(
-      body ? [{ pageNumber: boundedPage, body }] : [],
+      body ? [{ pageNumber: boundedPage, body, segments }] : [],
       Boolean(body)
     );
-  }, [attachment.url, boundedPage, fallbackPageBlocks, parseFailed, renderedPageCount]);
+  }, [attachment.url, boundedPage, fallbackPageBlocks, fallbackSegmentsForPage, parseFailed, renderedPageCount]);
   const translation = useDocumentTranslation({
     attachmentId: attachment.id,
     sourceTitle: attachment.fileName,
@@ -1148,17 +1376,12 @@ function DocxAttachmentPreview({
     pageNumber: boundedPage,
     loadSource: loadTranslationSource
   });
-  const translatedPages = translation.result?.status === "translated" ? translation.result.pages : [];
-  const totalPages = originalTotalPages;
-  const translatedPage = translatedPages.find((translatedSourcePage) => translatedSourcePage.pageNumber === boundedPage);
-  const translatedPageBlocks = plainTextToDocxBlocks(translatedPage?.body ?? "");
   const renderedZoom = fitScale * (mode === "expanded" ? clampAttachmentZoom(zoom) : 1);
-  const renderedStyle = {
-    "--docx-preview-scale": renderedZoom
-  } as CSSProperties;
+  const renderedStyle = { "--docx-preview-scale": renderedZoom } as CSSProperties;
 
   useEffect(() => {
     setPage(1);
+    domSegmentsRef.current = new Map();
   }, [attachment.id]);
 
   useEffect(() => {
@@ -1166,14 +1389,14 @@ function DocxAttachmentPreview({
     let resizeObserver: ResizeObserver | null = null;
     const target = renderTargetRef.current;
     if (target) target.replaceChildren();
+    domSegmentsRef.current = new Map();
     setRenderedPageCount(0);
+    setRenderRevision(0);
     setFitScale(1);
     setParseFailed(false);
     setLoadedPreviewText("");
-
     if (!attachment.url || !target) return;
     const attachmentUrl = attachment.url;
-
     const loadDocx = async () => {
       try {
         const response = await fetch(attachmentUrl, { cache: "force-cache" });
@@ -1185,7 +1408,6 @@ function DocxAttachmentPreview({
         }
         const { renderAsync } = await import("docx-preview");
         if (cancelled) return;
-
         await renderAsync(bytes, target, target, {
           breakPages: true,
           className: "symposium-docx",
@@ -1203,16 +1425,20 @@ function DocxAttachmentPreview({
           renderAltChunks: false,
           useBase64URL: true
         });
-
         if (cancelled) return;
         sanitizeRenderedDocx(target);
         const renderedPages = Array.from(target.querySelectorAll<HTMLElement>("section.symposium-docx"));
         if (!renderedPages.length) throw new Error("Document pages missing.");
+        const segmentMap = new Map<number, DocxTranslationDomSegment[]>();
         renderedPages.forEach((renderedPage, index) => {
-          renderedPage.hidden = index !== 0;
+          const pageNumber = index + 1;
+          renderedPage.hidden = false;
           renderedPage.dataset.attachmentSelectable = "true";
-          renderedPage.dataset.attachmentPage = String(index + 1);
+          renderedPage.dataset.attachmentPage = String(pageNumber);
+          renderedPage.dataset.docxPageShell = String(pageNumber);
+          segmentMap.set(pageNumber, collectDocxTranslationSegments(renderedPage, pageNumber));
         });
+        domSegmentsRef.current = segmentMap;
         const firstPageWidth = renderedPages[0]?.getBoundingClientRect().width ?? 0;
         const updateFitScale = () => {
           const availableWidth = Math.max(1, target.clientWidth - 28);
@@ -1222,6 +1448,7 @@ function DocxAttachmentPreview({
         resizeObserver = new ResizeObserver(updateFitScale);
         resizeObserver.observe(target);
         setRenderedPageCount(renderedPages.length);
+        setRenderRevision((current) => current + 1);
       } catch {
         if (!cancelled) {
           target.replaceChildren();
@@ -1229,7 +1456,6 @@ function DocxAttachmentPreview({
         }
       }
     };
-
     void loadDocx();
     return () => {
       cancelled = true;
@@ -1239,15 +1465,57 @@ function DocxAttachmentPreview({
   }, [attachment.contentType, attachment.fileName, attachment.id, attachment.url, metadataPreviewText, mode]);
 
   useEffect(() => {
-    const target = renderTargetRef.current;
-    if (!target || !renderedPageCount) return;
-    const renderedPages = Array.from(target.querySelectorAll<HTMLElement>("section.symposium-docx"));
-    renderedPages.forEach((renderedPage, index) => {
-      renderedPage.hidden = translation.showTranslation || index !== boundedPage - 1;
+    domSegmentsRef.current.forEach((segments, pageNumber) => {
+      const translatedPage = translation.translatedPageFor(pageNumber);
+      const translated = new Map((translatedPage?.segments ?? []).map((segment) => [segment.id, segment.text]));
+      const showTranslation = translation.showTranslationForPage(pageNumber);
+      renderTargetRef.current
+        ?.querySelector<HTMLElement>(`section.symposium-docx[data-attachment-page="${pageNumber}"]`)
+        ?.classList.toggle("translated", showTranslation);
+      segments.forEach((segment) => {
+        segment.node.data = `${segment.leading}${showTranslation ? translated.get(segment.id) ?? segment.text : segment.text}${segment.trailing}`;
+      });
     });
-    target.closest<HTMLElement>(".attachment-docx-scroll")?.scrollTo({ top: 0, left: 0 });
-  }, [boundedPage, renderedPageCount, translation.showTranslation]);
+  }, [renderRevision, translation.resultsByPage, translation.translatedVisiblePages]);
 
+  const updateActivePage = useCallback(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const bounds = scroller.getBoundingClientRect();
+    const readingLine = bounds.top + bounds.height * 0.46;
+    const pages = Array.from(scroller.querySelectorAll<HTMLElement>("[data-docx-page-shell]"));
+    let closestPage = boundedPage;
+    let closestDistance = Number.POSITIVE_INFINITY;
+    pages.forEach((pageElement) => {
+      const pageBounds = pageElement.getBoundingClientRect();
+      const distance = readingLine < pageBounds.top
+        ? pageBounds.top - readingLine
+        : readingLine > pageBounds.bottom
+          ? readingLine - pageBounds.bottom
+          : 0;
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestPage = Number(pageElement.dataset.docxPageShell) || closestPage;
+      }
+    });
+    setPage((current) => current === closestPage ? current : closestPage);
+  }, [boundedPage]);
+  const requestActivePageUpdate = () => {
+    window.cancelAnimationFrame(scrollFrameRef.current);
+    scrollFrameRef.current = window.requestAnimationFrame(updateActivePage);
+  };
+  useEffect(() => {
+    requestActivePageUpdate();
+    return () => window.cancelAnimationFrame(scrollFrameRef.current);
+  }, [fitScale, renderRevision, updateActivePage, zoom]);
+
+  const jumpToPage = (targetPage: number) => {
+    const scroller = scrollRef.current;
+    const pageElement = scroller?.querySelector<HTMLElement>(`[data-docx-page-shell="${targetPage}"]`);
+    if (!scroller || !pageElement) return;
+    setPage(targetPage);
+    scroller.scrollTo({ top: Math.max(0, pageElement.offsetTop - 14), behavior: "smooth" });
+  };
   return (
     <div className={`attachment-document attachment-document-${mode} attachment-docx`}>
       <div className="attachment-pagebar">
@@ -1256,83 +1524,72 @@ function DocxAttachmentPreview({
           <DocumentTranslationControl state={translation} />
           {totalPages > 1 ? (
             <>
-            <button
-              type="button"
-              title="Previous page"
-              disabled={boundedPage <= 1}
-              onClick={(event) => {
+              <button type="button" title="Previous page" disabled={boundedPage <= 1} onClick={(event) => {
                 event.stopPropagation();
-                setPage((current) => Math.max(1, current - 1));
-              }}
-            >
-              <ChevronLeft size={15} />
-            </button>
-            <button
-              type="button"
-              title="Next page"
-              disabled={boundedPage >= totalPages}
-              onClick={(event) => {
+                jumpToPage(Math.max(1, boundedPage - 1));
+              }}><ChevronLeft size={15} /></button>
+              <button type="button" title="Next page" disabled={boundedPage >= totalPages} onClick={(event) => {
                 event.stopPropagation();
-                setPage((current) => Math.min(totalPages, current + 1));
-              }}
-            >
-              <ChevronRight size={15} />
-            </button>
+                jumpToPage(Math.min(totalPages, boundedPage + 1));
+              }}><ChevronRight size={15} /></button>
             </>
           ) : null}
         </div>
       </div>
-      <div className="attachment-docx-scroll">
+      <div ref={scrollRef} className="attachment-docx-scroll" onScroll={requestActivePageUpdate}>
         <div
           ref={renderTargetRef}
           className="attachment-docx-rendered"
           style={renderedStyle}
           aria-label={`${attachment.fileName} document preview`}
         />
-        {translation.showTranslation && translatedPage ? (
-          <article
-            className="attachment-docx-page attachment-docx-derived"
-            data-attachment-selectable="true"
-            data-attachment-page={translatedPage.pageNumber}
-          >
-            {translatedPageBlocks.map((block) => (
-              <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
-                {block.runs.map((run) => run.text).join("")}
-              </p>
-            ))}
-          </article>
-        ) : !renderedPageCount ? (
-          <article className="attachment-docx-page attachment-docx-fallback" data-attachment-selectable="true" data-attachment-page={boundedPage}>
-            {fallbackPageBlocks.length ? (
-              fallbackPageBlocks.map((block) => (
-                <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
-                  {block.style === "list" ? <span className="attachment-docx-bullet" aria-hidden="true">•</span> : null}
-                  <span>
-                    {block.runs.map((run, runIndex) => (
-                      <span
-                        key={`${block.id}-${runIndex}`}
-                        className={[
-                          run.bold ? "attachment-docx-bold" : "",
-                          run.italic ? "attachment-docx-italic" : "",
-                          run.underline ? "attachment-docx-underline" : ""
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                      >
-                        {run.text}
-                      </span>
-                    ))}
-                  </span>
-                </p>
-              ))
-            ) : (
+        {!renderedPageCount ? (
+          fallbackPages.length ? fallbackPages.map((blocks, pageIndex) => {
+            const pageNumber = pageIndex + 1;
+            const translated = translation.showTranslationForPage(pageNumber);
+            const translatedFallbackMap = new Map(
+              (translation.translatedPageFor(pageNumber)?.segments ?? []).map((segment) => [segment.id, segment.text])
+            );
+            return (
+              <article
+                key={pageNumber}
+                className={`attachment-docx-page attachment-docx-fallback${translated ? " translated" : ""}`}
+                data-attachment-selectable="true"
+                data-attachment-page={pageNumber}
+                data-docx-page-shell={pageNumber}
+              >
+                {blocks.map((block, blockIndex) => (
+                  <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
+                    {block.style === "list" ? <span className="attachment-docx-bullet" aria-hidden="true">•</span> : null}
+                    <span>
+                      {translated
+                        ? translatedFallbackMap.get(`docx-fallback-${pageNumber}-${blockIndex}`) ?? block.runs.map((run) => run.text).join("")
+                        : block.runs.map((run, runIndex) => (
+                            <span
+                              key={`${block.id}-${runIndex}`}
+                              className={[
+                                run.bold ? "attachment-docx-bold" : "",
+                                run.italic ? "attachment-docx-italic" : "",
+                                run.underline ? "attachment-docx-underline" : ""
+                              ].filter(Boolean).join(" ")}
+                            >
+                              {run.text}
+                            </span>
+                          ))}
+                    </span>
+                  </p>
+                ))}
+              </article>
+            );
+          }) : (
+            <article className="attachment-docx-page attachment-docx-fallback" data-docx-page-shell="1">
               <div className="attachment-file-shell">
                 {attachmentIcon(attachment)}
                 <strong>{attachment.fileName}</strong>
                 <span>{parseFailed ? "Document formatting could not be rendered. Showing the available text preview." : "Preparing original document formatting."}</span>
               </div>
-            )}
-          </article>
+            </article>
+          )
         ) : null}
       </div>
     </div>

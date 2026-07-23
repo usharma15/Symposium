@@ -8,7 +8,10 @@ import {
   versionedDocumentSchema,
   type AssistantTranslationLanguageContract,
   type ContentTranslationModelInputContract,
-  type ContentTranslationResultContract
+  type ContentTranslationResultContract,
+  type TranslationResultSegmentContract,
+  type TranslationSourceSegmentContract,
+  type VersionedDocumentContract
 } from "../../../../packages/contracts/src";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
@@ -41,6 +44,7 @@ type TranslationCacheRow = {
   targetLanguageLabel: string;
   translatedTitle: string;
   translatedBody: string;
+  translatedDocument: unknown;
   model: string;
   createdAt: Date | string;
 };
@@ -56,9 +60,117 @@ type PreparedTranslation = {
   remainingToday: number;
 };
 
-const sourceBody = (document: unknown, fallback: string) => {
+const plainTextDocument = (body: string): VersionedDocumentContract => ({
+  version: 1,
+  nodes: body.replace(/\r\n/g, "\n").split(/\n{2,}/).map((paragraph, index) => ({
+    id: `translation-plain-${index}`,
+    type: "paragraph" as const,
+    content: paragraph ? [{ text: paragraph }] : [],
+    align: "left" as const,
+    indent: 0
+  })),
+  settings: { width: "standard", margin: "normal" }
+});
+
+const sourceDocument = (document: unknown, fallback: string) => {
   const parsed = versionedDocumentSchema.safeParse(document);
-  return parsed.success ? documentPlainTextProjection(parsed.data) : fallback;
+  return parsed.success ? parsed.data : plainTextDocument(fallback);
+};
+
+const sourceSegments = (document: VersionedDocumentContract): TranslationSourceSegmentContract[] => {
+  const segments: TranslationSourceSegmentContract[] = [];
+  const add = (id: string, text: string | undefined) => {
+    if (text?.trim()) segments.push({ id, text });
+  };
+  document.nodes.forEach((node, nodeIndex) => {
+    const prefix = `n${nodeIndex}`;
+    if (node.type === "paragraph" || node.type === "heading" || node.type === "quote") {
+      node.content.forEach((run, runIndex) => add(`${prefix}:r${runIndex}`, run.text));
+      return;
+    }
+    if (node.type === "list") {
+      node.items.forEach((item, itemIndex) => {
+        item.forEach((run, runIndex) => add(`${prefix}:i${itemIndex}:r${runIndex}`, run.text));
+      });
+      return;
+    }
+    if (node.type === "code") {
+      return;
+    }
+    if (node.type === "equation") {
+      return;
+    }
+    if (node.type === "drawing" || node.type === "attachment") {
+      add(`${prefix}:caption`, node.caption);
+      return;
+    }
+    if (node.type === "reference") {
+      add(`${prefix}:resource`, node.resource.label);
+      return;
+    }
+    if (node.type === "citation") {
+      add(`${prefix}:label`, node.label);
+      add(`${prefix}:excerpt`, node.excerpt);
+    }
+  });
+  if (segments.length > 0) return segments;
+
+  return [{
+    id: "fallback:body",
+    text: documentPlainTextProjection(document).trim() || "Content"
+  }];
+};
+
+const translatedDocument = (
+  document: VersionedDocumentContract,
+  translatedSegments: TranslationResultSegmentContract[]
+): VersionedDocumentContract => {
+  const translated = new Map(translatedSegments.map((segment) => [segment.id, segment.text]));
+  return {
+    ...document,
+    nodes: document.nodes.map((node, nodeIndex) => {
+      const prefix = `n${nodeIndex}`;
+      if (node.type === "paragraph" || node.type === "heading" || node.type === "quote") {
+        return {
+          ...node,
+          content: node.content.map((run, runIndex) => ({
+            ...run,
+            text: translated.get(`${prefix}:r${runIndex}`) ?? run.text
+          }))
+        };
+      }
+      if (node.type === "list") {
+        return {
+          ...node,
+          items: node.items.map((item, itemIndex) => item.map((run, runIndex) => ({
+            ...run,
+            text: translated.get(`${prefix}:i${itemIndex}:r${runIndex}`) ?? run.text
+          })))
+        };
+      }
+      if (node.type === "code" || node.type === "equation") return node;
+      if (node.type === "drawing" || node.type === "attachment") {
+        return { ...node, caption: translated.get(`${prefix}:caption`) ?? node.caption };
+      }
+      if (node.type === "reference") {
+        return {
+          ...node,
+          resource: {
+            ...node.resource,
+            label: translated.get(`${prefix}:resource`) ?? node.resource.label
+          }
+        };
+      }
+      if (node.type === "citation") {
+        return {
+          ...node,
+          label: translated.get(`${prefix}:label`) ?? node.label,
+          excerpt: translated.get(`${prefix}:excerpt`) ?? node.excerpt
+        };
+      }
+      return node;
+    })
+  };
 };
 
 const loadContentSource = async (input: ParsedInput, owner: string): Promise<ContentSource> => {
@@ -96,11 +208,14 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
     );
     const row = result.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "That post is unavailable or you no longer have access to it." });
+    const document = sourceDocument(row.document, row.body);
     return contentTranslationModelInputSchema.parse({
       ...input,
       sourceRevision: row.revision,
       sourceTitle: row.title,
-      sourceBody: sourceBody(row.document, row.body)
+      sourceBody: documentPlainTextProjection(document) || row.body,
+      sourceDocument: document,
+      sourceSegments: sourceSegments(document)
     });
   }
 
@@ -142,22 +257,27 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
   );
   const row = result.rows[0];
   if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "That comment is unavailable or you no longer have access to it." });
+  const document = sourceDocument(row.document, row.body);
   return contentTranslationModelInputSchema.parse({
     ...input,
     sourceRevision: row.revision,
     sourceTitle: `Comment by ${row.authorName} on ${row.postTitle}`.slice(0, 300),
-    sourceBody: sourceBody(row.document, row.body)
+    sourceBody: documentPlainTextProjection(document) || row.body,
+    sourceDocument: document,
+    sourceSegments: sourceSegments(document)
   });
 };
 
 export const contentTranslationFingerprint = (source: ContentSource) => createHash("sha256")
   .update(JSON.stringify({
-    policy: 1,
+    policy: 2,
     sourceType: source.sourceType,
     sourceId: source.sourceId,
     sourceRevision: source.sourceRevision,
     sourceTitle: source.sourceTitle,
-    sourceBody: source.sourceBody
+    sourceBody: source.sourceBody,
+    sourceDocument: source.sourceDocument,
+    sourceSegments: source.sourceSegments
   }))
   .digest("hex");
 
@@ -194,6 +314,7 @@ const findCachedTranslation = async (
        target_language_label AS "targetLanguageLabel",
        translated_title AS "translatedTitle",
        translated_body AS "translatedBody",
+       translated_document AS "translatedDocument",
        model,
        created_at AS "createdAt"
      FROM content_translations
@@ -207,22 +328,26 @@ const findCachedTranslation = async (
   return result.rows[0] ?? null;
 };
 
-const cachedResult = async (row: TranslationCacheRow, owner: string): Promise<ContentTranslationResultContract> => ({
-  status: "translated",
-  sourceType: row.sourceType,
-  sourceId: row.sourceId,
-  sourceRevision: row.sourceRevision,
-  sourceFingerprint: row.sourceFingerprint,
-  cached: true,
-  targetLanguage: row.targetLanguage,
-  targetLanguageLabel: translationLanguageLabels[row.targetLanguage],
-  translatedTitle: row.translatedTitle,
-  translatedBody: row.translatedBody,
-  message: "Reused the saved translation. No AI answer was consumed.",
-  model: row.model,
-  createdAt: new Date(row.createdAt).toISOString(),
-  quota: await currentQuota(owner)
-});
+const cachedResult = async (row: TranslationCacheRow, owner: string): Promise<ContentTranslationResultContract> => {
+  const parsedDocument = versionedDocumentSchema.safeParse(row.translatedDocument);
+  return {
+    status: "translated",
+    sourceType: row.sourceType,
+    sourceId: row.sourceId,
+    sourceRevision: row.sourceRevision,
+    sourceFingerprint: row.sourceFingerprint,
+    cached: true,
+    targetLanguage: row.targetLanguage,
+    targetLanguageLabel: translationLanguageLabels[row.targetLanguage],
+    translatedTitle: row.translatedTitle,
+    translatedBody: row.translatedBody,
+    translatedDocument: parsedDocument.success ? parsedDocument.data : plainTextDocument(row.translatedBody),
+    message: "Reused the saved translation. No AI answer was consumed.",
+    model: row.model,
+    createdAt: new Date(row.createdAt).toISOString(),
+    quota: await currentQuota(owner)
+  };
+};
 
 const noSpendResult = async (
   source: ContentSource,
@@ -241,6 +366,7 @@ const noSpendResult = async (
   targetLanguageLabel: null,
   translatedTitle: "",
   translatedBody: "",
+  translatedDocument: null,
   message,
   model: env.SYMPOSIUM_AI_MODEL,
   createdAt: new Date().toISOString(),
@@ -314,6 +440,10 @@ const finalizeTranslation = async (
   const validOutput = modelResult?.output.targetLanguage === prepared.requestedLanguage;
   const providerError = !modelResult || !validOutput;
   const output = validOutput ? modelResult.output : null;
+  const translatedStructure = output
+    ? translatedDocument(prepared.source.sourceDocument, output.translatedSegments)
+    : null;
+  const translatedBody = translatedStructure ? documentPlainTextProjection(translatedStructure) : "";
   const status: ContentTranslationResultContract["status"] = providerError ? "provider_error" : "translated";
   const message = providerError
     ? failure?.body ?? "The AI provider returned an invalid content translation. This failed attempt still uses one daily answer."
@@ -343,7 +473,8 @@ const finalizeTranslation = async (
     targetLanguage: providerError ? null : prepared.requestedLanguage,
     targetLanguageLabel: providerError ? null : translationLanguageLabels[prepared.requestedLanguage],
     translatedTitle: output?.translatedTitle ?? "",
-    translatedBody: output?.translatedBody ?? "",
+    translatedBody,
+    translatedDocument: translatedStructure,
     message,
     model: modelResult?.model ?? env.SYMPOSIUM_AI_MODEL,
     createdAt: new Date().toISOString(),
@@ -354,8 +485,9 @@ const finalizeTranslation = async (
     await client.query(
       `INSERT INTO content_translations (
          source_type, source_id, source_revision, source_fingerprint, source_title,
-         target_language, target_language_label, translated_title, translated_body, model, creator_handle
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         target_language, target_language_label, translated_title, translated_body,
+         translated_document, model, creator_handle
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (source_type, source_id, source_fingerprint, target_language) DO NOTHING`,
       [
         prepared.source.sourceType,
@@ -367,6 +499,7 @@ const finalizeTranslation = async (
         translationLanguageLabels[prepared.requestedLanguage],
         response.translatedTitle,
         response.translatedBody,
+        JSON.stringify(response.translatedDocument),
         response.model,
         prepared.owner
       ]

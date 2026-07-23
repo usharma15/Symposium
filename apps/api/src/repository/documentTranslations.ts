@@ -55,6 +55,7 @@ export { supportedLanguageFromInstruction } from "../services/translationLanguag
 
 export const documentTranslationFingerprint = (input: DocumentTranslationInputContract) => createHash("sha256")
   .update(JSON.stringify({
+    policy: 2,
     attachmentId: input.attachmentId,
     sourceTitle: input.sourceTitle,
     sourceKind: input.sourceKind,
@@ -217,6 +218,13 @@ const finalizeTranslation = async (
   const providerError = !modelResult;
   const output = modelResult?.output;
   const targetLanguage = output && output.targetLanguage !== "unsupported" ? output.targetLanguage : null;
+  const translatedPages = targetLanguage
+    ? (output?.pages ?? []).map((page) => ({
+        pageNumber: page.pageNumber,
+        body: page.segments.map((segment) => segment.text).join(" ").replace(/\s+/g, " ").trim(),
+        segments: page.segments
+      }))
+    : [];
   const status: DocumentTranslationResultContract["status"] = providerError
     ? "provider_error"
     : targetLanguage
@@ -256,7 +264,7 @@ const finalizeTranslation = async (
     targetLanguage,
     targetLanguageLabel: targetLanguage ? translationLanguageLabels[targetLanguage] : null,
     translatedTitle: targetLanguage ? output?.translatedTitle ?? "" : "",
-    pages: targetLanguage ? output?.pages ?? [] : [],
+    pages: translatedPages,
     message,
     model: modelResult?.model ?? env.SYMPOSIUM_AI_MODEL,
     createdAt,

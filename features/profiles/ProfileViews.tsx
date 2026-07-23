@@ -808,7 +808,22 @@ function ProfileCommentCard({
         <ContentTranslationControl state={translation} sourceLabel="comment" />
       ) : null}
       {translation.showTranslation ? (
-        <TranslatedContent state={translation} showTitle={false} />
+        <TranslatedContent
+          state={translation}
+          attachments={commentDeleted ? [] : activity.comment.attachments ?? []}
+          profiles={profiles}
+          mode="comment"
+          onOpenAttachment={(attachmentId) => {
+            if (activity.comment.id && !commentDeleted) {
+              onOpenAttachmentPreview(activity.item.id, activity.comment.id, attachmentId);
+            }
+          }}
+          onExpand={() => {
+            if (activity.comment.id && !interactionLocked) {
+              onCommentAction(activity.item.id, activity.comment.id, "read", { trigger: "expand", surface: "profile" });
+            }
+          }}
+        />
       ) : (
         <SymposiumDocumentRenderer
           document={activity.comment.document}

@@ -3,6 +3,8 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2, Languages, LoaderCircle, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
+import { SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
+import type { InquiryAttachment, ResearchProfile } from "@/lib/mockData";
 import type {
   AssistantTranslationLanguageContract,
   ContentTranslationResultContract
@@ -109,6 +111,7 @@ export function ContentTranslationControl({
   return (
     <div
       className={`content-translation-control content-translation-${sourceLabel}`}
+      onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
     >
@@ -140,29 +143,39 @@ export function ContentTranslationControl({
           className="content-translate-button"
           aria-expanded={state.open}
           title={`Translate this ${sourceLabel}`}
-          onClick={() => state.setOpen(!state.open)}
+          onClick={() => state.setOpen((current) => !current)}
         >
           <Languages size={13} />
           {translated ? "Change" : "Translate"}
         </button>
       </div>
       {state.open ? (
-        <form className="content-translation-menu" onSubmit={state.submit}>
+        <form
+          id={languageInputId}
+          className="content-translation-menu"
+          onSubmit={state.submit}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
           <header>
             <strong>Translate entire {sourceLabel}</strong>
             <button type="button" title="Close translation menu" onClick={() => state.setOpen(false)}><X size={14} /></button>
           </header>
-          <label htmlFor={languageInputId}>Language</label>
-          <select
-            id={languageInputId}
-            value={state.language}
-            disabled={state.busy}
-            onChange={(event) => state.setLanguage(event.target.value as AssistantTranslationLanguageContract)}
-          >
+          <span className="translation-language-label">Language</span>
+          <div className="translation-language-options" role="group" aria-label="Translation language">
             {Object.entries(languageLabels).map(([value, label]) => (
-              <option value={value} key={value}>{label}</option>
+              <button
+                type="button"
+                value={value}
+                key={value}
+                className={state.language === value ? "active" : ""}
+                aria-pressed={state.language === value}
+                disabled={state.busy}
+                onClick={() => state.setLanguage(value as AssistantTranslationLanguageContract)}
+              >
+                {label}
+              </button>
             ))}
-          </select>
+          </div>
           <small>The original stays available. Saved translations reuse 0 answers.</small>
           {state.error ? <p role="alert">{state.error}</p> : null}
           <button type="submit" className="primary" disabled={state.busy}>
@@ -183,18 +196,34 @@ export function ContentTranslationControl({
 
 export function TranslatedContent({
   state,
-  showTitle = true,
-  titleAs: Heading = "h2"
+  attachments,
+  profiles,
+  mode,
+  onOpenAttachment,
+  onCiteAttachment,
+  onExpand
 }: {
   state: ContentTranslationState;
-  showTitle?: boolean;
-  titleAs?: "h1" | "h2" | "h3";
+  attachments?: InquiryAttachment[];
+  profiles: Record<string, ResearchProfile>;
+  mode: "feed" | "detail" | "comment";
+  onOpenAttachment?: (attachmentId: string) => void;
+  onCiteAttachment?: (attachment: InquiryAttachment) => void;
+  onExpand?: () => void;
 }) {
   if (!state.showTranslation || state.result?.status !== "translated") return null;
   return (
     <div className="content-translation-copy" lang={state.result.targetLanguage ?? undefined}>
-      {showTitle ? <Heading>{state.result.translatedTitle}</Heading> : null}
-      <div>{state.result.translatedBody}</div>
+      <SymposiumDocumentRenderer
+        document={state.result.translatedDocument ?? undefined}
+        body={state.result.translatedBody}
+        attachments={attachments}
+        profiles={profiles}
+        mode={mode}
+        onOpenAttachment={onOpenAttachment}
+        onCiteAttachment={onCiteAttachment}
+        onExpand={onExpand}
+      />
     </div>
   );
 }

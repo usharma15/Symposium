@@ -1342,16 +1342,31 @@ const documentTranslationImageDataUrlSchema = z.string()
     "Document translation images must be bounded JPEG, PNG, or WebP data URLs."
   );
 
+export const translationSourceSegmentSchema = z.object({
+  id: z.string().trim().min(1).max(240),
+  text: z.string().max(12000)
+});
+
+export const translationResultSegmentSchema = z.object({
+  id: z.string().trim().min(1).max(240),
+  text: z.string().trim().min(1).max(20000)
+});
+
 export const documentTranslationSourcePageSchema = z.object({
   pageNumber: z.number().int().positive().max(1000),
   body: z.string().trim().max(12000).default(""),
+  segments: z.array(translationSourceSegmentSchema).max(1200).default([]),
   imageDataUrl: documentTranslationImageDataUrlSchema.optional()
 }).superRefine((page, context) => {
-  if (!page.body && !page.imageDataUrl) {
+  if (!page.body && !page.imageDataUrl && !page.segments.some((segment) => segment.text.trim())) {
     context.addIssue({
       code: "custom",
       message: "A document page requires extracted text or a rendered page image."
     });
+  }
+  const segmentIds = page.segments.map((segment) => segment.id);
+  if (new Set(segmentIds).size !== segmentIds.length) {
+    context.addIssue({ code: "custom", path: ["segments"], message: "Document translation segment IDs must be unique." });
   }
 });
 
@@ -1370,18 +1385,27 @@ export const documentTranslationInputSchema = z.object({
   if (input.sourcePages.reduce((total, page) => total + page.body.length, 0) > 50000) {
     context.addIssue({ code: "custom", path: ["sourcePages"], message: "Document translation is limited to 50,000 extracted characters." });
   }
+  if (input.sourcePages.reduce((total, page) => total + page.segments.reduce((pageTotal, segment) => pageTotal + segment.text.length, 0), 0) > 50000) {
+    context.addIssue({ code: "custom", path: ["sourcePages"], message: "Document translation is limited to 50,000 structured characters." });
+  }
 });
 
 export const documentTranslationPageSchema = z.object({
   pageNumber: z.number().int().positive().max(1000),
-  body: z.string().trim().min(1).max(20000)
+  body: z.string().trim().min(1).max(20000),
+  segments: z.array(translationResultSegmentSchema).min(1).max(1200)
+});
+
+export const documentTranslationModelPageSchema = z.object({
+  pageNumber: z.number().int().positive().max(1000),
+  segments: z.array(translationResultSegmentSchema).min(1).max(1200)
 });
 
 export const documentTranslationModelOutputSchema = z.object({
   targetLanguage: z.union([assistantTranslationLanguageSchema, z.literal("unsupported")]),
   targetLanguageLabel: z.string().trim().max(40),
   translatedTitle: z.string().trim().max(300),
-  pages: z.array(documentTranslationPageSchema).max(1),
+  pages: z.array(documentTranslationModelPageSchema).max(1),
   message: z.string().trim().max(1000)
 }).superRefine((output, context) => {
   if (output.targetLanguage === "unsupported" && output.pages.length) {
@@ -1401,21 +1425,23 @@ export const contentTranslationInputSchema = z.object({
 export const contentTranslationModelInputSchema = contentTranslationInputSchema.extend({
   sourceRevision: z.number().int().positive(),
   sourceTitle: z.string().trim().min(1).max(300),
-  sourceBody: z.string().trim().min(1).max(24000)
+  sourceBody: z.string().trim().min(1).max(24000),
+  sourceDocument: versionedDocumentSchema,
+  sourceSegments: z.array(translationSourceSegmentSchema).min(1).max(5000)
 });
 
 export const contentTranslationModelOutputSchema = z.object({
   targetLanguage: z.union([assistantTranslationLanguageSchema, z.literal("unsupported")]),
   targetLanguageLabel: z.string().trim().max(40),
   translatedTitle: z.string().trim().max(300),
-  translatedBody: z.string().trim().max(32000),
+  translatedSegments: z.array(translationResultSegmentSchema).max(5000),
   message: z.string().trim().max(1000)
 }).superRefine((output, context) => {
-  if (output.targetLanguage === "unsupported" && (output.translatedTitle || output.translatedBody)) {
+  if (output.targetLanguage === "unsupported" && (output.translatedTitle || output.translatedSegments.length)) {
     context.addIssue({ code: "custom", message: "Unsupported languages cannot contain translated content." });
   }
-  if (output.targetLanguage !== "unsupported" && (!output.translatedTitle || !output.translatedBody)) {
-    context.addIssue({ code: "custom", message: "A supported content translation requires a title and body." });
+  if (output.targetLanguage !== "unsupported" && (!output.translatedTitle || !output.translatedSegments.length)) {
+    context.addIssue({ code: "custom", message: "A supported content translation requires a title and translated segments." });
   }
 });
 
@@ -1922,15 +1948,16 @@ export const contentTranslationResultSchema = z.object({
   targetLanguageLabel: z.string().max(40).nullable(),
   translatedTitle: z.string().max(300),
   translatedBody: z.string().max(32000),
+  translatedDocument: versionedDocumentSchema.nullable(),
   message: z.string().max(1000),
   model: z.string(),
   createdAt: z.string().datetime(),
   quota: assistantQuotaSchema
 }).superRefine((result, context) => {
-  if (result.status === "translated" && (!result.targetLanguage || !result.translatedTitle.trim() || !result.translatedBody.trim())) {
+  if (result.status === "translated" && (!result.targetLanguage || !result.translatedTitle.trim() || !result.translatedBody.trim() || !result.translatedDocument)) {
     context.addIssue({ code: "custom", message: "A completed content translation requires its language, title, and body." });
   }
-  if (result.status !== "translated" && (result.translatedTitle || result.translatedBody)) {
+  if (result.status !== "translated" && (result.translatedTitle || result.translatedBody || result.translatedDocument)) {
     context.addIssue({ code: "custom", message: "An incomplete content translation cannot contain translated content." });
   }
 });
@@ -2104,9 +2131,12 @@ export type AssistantQuotaStatusContract = z.infer<typeof assistantQuotaStatusSc
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;
 export type SaveAssistantQuickNoteInputContract = z.infer<typeof saveAssistantQuickNoteInputSchema>;
 export type AssistantQuickNoteResultContract = z.infer<typeof assistantQuickNoteResultSchema>;
+export type TranslationSourceSegmentContract = z.infer<typeof translationSourceSegmentSchema>;
+export type TranslationResultSegmentContract = z.infer<typeof translationResultSegmentSchema>;
 export type DocumentTranslationSourcePageContract = z.infer<typeof documentTranslationSourcePageSchema>;
 export type DocumentTranslationInputContract = z.infer<typeof documentTranslationInputSchema>;
 export type DocumentTranslationPageContract = z.infer<typeof documentTranslationPageSchema>;
+export type DocumentTranslationModelPageContract = z.infer<typeof documentTranslationModelPageSchema>;
 export type DocumentTranslationModelOutputContract = z.infer<typeof documentTranslationModelOutputSchema>;
 export type DocumentTranslationResultContract = z.infer<typeof documentTranslationResultSchema>;
 export type ContentTranslationInputContract = z.infer<typeof contentTranslationInputSchema>;

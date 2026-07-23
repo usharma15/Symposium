@@ -782,7 +782,14 @@ export function FeedPost({
           </CanonicalLink>
         </h2>
         {translation.showTranslation ? (
-          <TranslatedContent state={translation} showTitle={false} />
+          <TranslatedContent
+            state={translation}
+            attachments={item.attachments}
+            profiles={profiles}
+            mode="feed"
+            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+            onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
+          />
         ) : interactionLocked ? (
           <SymposiumDocumentRenderer
             document={item.document}
@@ -1125,7 +1132,14 @@ export function DetailView({
           <ContentTranslationControl state={translation} sourceLabel="post" />
         ) : null}
         {translation.showTranslation ? (
-          <TranslatedContent state={translation} showTitle={false} titleAs="h1" />
+          <TranslatedContent
+            state={translation}
+            attachments={item.attachments}
+            profiles={profiles}
+            mode="detail"
+            onOpenAttachment={(attachmentId) => onOpenAttachmentPreview(item, attachmentId)}
+            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+          />
         ) : interactionLocked ? (
           <SymposiumDocumentRenderer
             document={item.document}

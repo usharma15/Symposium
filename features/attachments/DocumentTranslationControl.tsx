@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Languages, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import type {
@@ -32,26 +32,22 @@ export const useDocumentTranslation = ({
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<DocumentTranslationResultContract | null>(null);
-  const [showTranslation, setShowTranslation] = useState(false);
+  const [resultsByPage, setResultsByPage] = useState<Record<number, DocumentTranslationResultContract>>({});
+  const [translatedVisiblePages, setTranslatedVisiblePages] = useState<Set<number>>(() => new Set());
   const retryRef = useRef<{ fingerprint: string; key: string } | null>(null);
-  const pageNumberRef = useRef(pageNumber);
-  pageNumberRef.current = pageNumber;
 
   useEffect(() => {
     setOpen(false);
     setInstruction("");
     setBusy(false);
     setError("");
-    setResult(null);
-    setShowTranslation(false);
+    setResultsByPage({});
+    setTranslatedVisiblePages(new Set());
     retryRef.current = null;
   }, [attachmentId]);
 
   useEffect(() => {
-    setOpen(false);
     setError("");
-    setShowTranslation(false);
   }, [pageNumber]);
 
   const submit = async (event?: FormEvent) => {
@@ -87,10 +83,20 @@ export const useDocumentTranslation = ({
         }
       );
       retryRef.current = null;
-      setResult(response);
+      setResultsByPage((current) => {
+        const next = { ...current };
+        response.pages.forEach((translatedPage) => {
+          next[translatedPage.pageNumber] = response;
+        });
+        return next;
+      });
       window.dispatchEvent(new CustomEvent("symposium-ai-quota-change", { detail: response.quota }));
       if (response.status === "translated") {
-        setShowTranslation(pageNumberRef.current === submittedPageNumber);
+        setTranslatedVisiblePages((current) => {
+          const next = new Set(current);
+          next.add(submittedPageNumber);
+          return next;
+        });
         setOpen(false);
       } else {
         setError(response.message);
@@ -104,8 +110,26 @@ export const useDocumentTranslation = ({
     }
   };
 
+  const result = resultsByPage[pageNumber] ?? null;
   const translatedOnCurrentPage = result?.status === "translated" &&
     result.pages.some((translatedPage) => translatedPage.pageNumber === pageNumber);
+  const showTranslation = translatedOnCurrentPage && translatedVisiblePages.has(pageNumber);
+  const setShowTranslation = (visible: boolean) => {
+    setTranslatedVisiblePages((current) => {
+      const next = new Set(current);
+      if (visible) next.add(pageNumber);
+      else next.delete(pageNumber);
+      return next;
+    });
+  };
+  const translatedPageFor = (targetPage: number) => {
+    const pageResult = resultsByPage[targetPage];
+    return pageResult?.status === "translated"
+      ? pageResult.pages.find((translatedPage) => translatedPage.pageNumber === targetPage) ?? null
+      : null;
+  };
+  const showTranslationForPage = (targetPage: number) =>
+    Boolean(translatedPageFor(targetPage) && translatedVisiblePages.has(targetPage));
 
   return {
     open,
@@ -115,10 +139,14 @@ export const useDocumentTranslation = ({
     busy,
     error,
     result,
+    resultsByPage,
+    translatedVisiblePages,
     pageNumber,
     translatedOnCurrentPage,
     showTranslation,
     setShowTranslation,
+    translatedPageFor,
+    showTranslationForPage,
     submit
   };
 };
@@ -126,9 +154,13 @@ export const useDocumentTranslation = ({
 export type DocumentTranslationState = ReturnType<typeof useDocumentTranslation>;
 
 export function DocumentTranslationControl({ state }: { state: DocumentTranslationState }) {
-  const languageInputId = useId();
   return (
-    <div className="document-translation-control">
+    <div
+      className="document-translation-control"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
       {state.translatedOnCurrentPage ? (
         <div className="document-translation-view-toggle" aria-label="Document version">
           <button
@@ -162,7 +194,7 @@ export function DocumentTranslationControl({ state }: { state: DocumentTranslati
         aria-expanded={state.open}
         onClick={(event) => {
           event.stopPropagation();
-          state.setOpen(!state.open);
+          state.setOpen((current) => !current);
         }}
       >
         <Languages size={14} />
@@ -172,22 +204,28 @@ export function DocumentTranslationControl({ state }: { state: DocumentTranslati
         <form
           className="document-translation-popover"
           onSubmit={state.submit}
+          onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
           <div className="document-translation-popover-title">
             <strong>Translate page {state.pageNumber}</strong>
             <button type="button" title="Close translation" onClick={() => state.setOpen(false)}><X size={14} /></button>
           </div>
-          <label htmlFor={languageInputId}>Language</label>
-          <input
-            id={languageInputId}
-            autoFocus
-            value={state.instruction}
-            maxLength={120}
-            placeholder="e.g. Spanish"
-            disabled={state.busy}
-            onChange={(event) => state.setInstruction(event.target.value)}
-          />
+          <span className="translation-language-label">Language</span>
+          <div className="translation-language-options" role="group" aria-label="Translation language">
+            {["English", "French", "German", "Spanish"].map((language) => (
+              <button
+                type="button"
+                key={language}
+                className={state.instruction === language ? "active" : ""}
+                aria-pressed={state.instruction === language}
+                disabled={state.busy}
+                onClick={() => state.setInstruction(language)}
+              >
+                {language}
+              </button>
+            ))}
+          </div>
           <small className="document-translation-limit-warning">
             <TriangleAlert size={14} aria-hidden="true" />
             <span>Due to limited usage restriction this beta translates one page at a time</span>

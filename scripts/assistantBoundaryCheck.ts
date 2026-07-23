@@ -113,7 +113,14 @@ const documentTranslationInput = {
   attachmentId: "attachment-docx-1",
   sourceTitle: "Persuasive Framework.docx",
   sourceKind: "docx" as const,
-  sourcePages: [{ pageNumber: 7, body: "Persuasive Framework\nFund independent youth labs." }],
+  sourcePages: [{
+    pageNumber: 7,
+    body: "Persuasive Framework\nFund independent youth labs.",
+    segments: [{
+      id: "document-page-7-body",
+      text: "Persuasive Framework\nFund independent youth labs."
+    }]
+  }],
   sourceComplete: true,
   languageInstruction: "Please put this into Spanish"
 };
@@ -122,27 +129,45 @@ assert.equal(documentTranslationInputSchema.safeParse({
   ...documentTranslationInput,
   sourcePages: [
     ...documentTranslationInput.sourcePages,
-    { pageNumber: 8, body: "Evidence and objections." }
+    {
+      pageNumber: 8,
+      body: "Evidence and objections.",
+      segments: [{ id: "document-page-8-body", text: "Evidence and objections." }]
+    }
   ]
 }).success, false);
 assert.equal(documentTranslationInputSchema.safeParse({
   ...documentTranslationInput,
-  sourcePages: [{ pageNumber: 1, body: "x".repeat(12_001) }]
+  sourcePages: [{
+    pageNumber: 1,
+    body: "x".repeat(12_001),
+    segments: [{ id: "document-page-1-body", text: "x".repeat(12_001) }]
+  }]
 }).success, false);
 const scannedPdfTranslationInput = {
   ...documentTranslationInput,
   attachmentId: "attachment-pdf-scan-1",
   sourceKind: "pdf" as const,
-  sourcePages: [{ pageNumber: 1, body: "", imageDataUrl: "data:image/jpeg;base64,YWJj" }]
+  sourcePages: [{
+    pageNumber: 1,
+    body: "",
+    segments: [{ id: "document-page-1-visual", text: "" }],
+    imageDataUrl: "data:image/jpeg;base64,YWJj"
+  }]
 };
 assert.equal(documentTranslationInputSchema.safeParse(scannedPdfTranslationInput).success, true);
 assert.equal(documentTranslationInputSchema.safeParse({
   ...scannedPdfTranslationInput,
-  sourcePages: [{ pageNumber: 1, body: "" }]
+  sourcePages: [{ pageNumber: 1, body: "", segments: [] }]
 }).success, false);
 assert.equal(documentTranslationInputSchema.safeParse({
   ...scannedPdfTranslationInput,
-  sourcePages: [{ pageNumber: 1, body: "", imageDataUrl: "data:text/html;base64,YWJj" }]
+  sourcePages: [{
+    pageNumber: 1,
+    body: "",
+    segments: [{ id: "document-page-1-visual", text: "" }],
+    imageDataUrl: "data:text/html;base64,YWJj"
+  }]
 }).success, false);
 assert.equal(supportedLanguageFromInstruction("English"), "english");
 assert.equal(supportedLanguageFromInstruction("en français, s’il vous plaît"), "french");
@@ -158,7 +183,7 @@ assert.ok(documentTranslationRenderedInput(scannedPdfTranslationInput).length > 
 assert.deepEqual(documentTranslationRequestContent(documentTranslationInput).map((item) => item.type), ["input_text"]);
 assert.deepEqual(documentTranslationRequestContent(scannedPdfTranslationInput).map((item) => item.type), ["input_text", "input_image"]);
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 800);
-assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 6000);
+assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 7000);
 assert.equal(documentTranslationMaxOutputTokens(scannedPdfTranslationInput), 6000);
 assert.equal(pdfPageNeedsVisualTranslationFallback("Short title"), true);
 assert.equal(pdfPageNeedsVisualTranslationFallback("x".repeat(200)), false);
@@ -166,14 +191,14 @@ assert.equal(documentTranslationModelOutputSchema.safeParse({
   targetLanguage: "spanish",
   targetLanguageLabel: "Spanish",
   translatedTitle: "Marco persuasivo",
-  pages: [{ pageNumber: 7, body: "Marco persuasivo\nFinanciar laboratorios juveniles independientes." }],
+  pages: [{ pageNumber: 7, segments: [{ id: "document-page-7-body", text: "Marco persuasivo\nFinanciar laboratorios juveniles independientes." }] }],
   message: "Spanish translation ready."
 }).success, true);
 assert.equal(documentTranslationModelOutputSchema.safeParse({
   targetLanguage: "unsupported",
   targetLanguageLabel: "",
   translatedTitle: "",
-  pages: [{ pageNumber: 1, body: "Not allowed" }],
+  pages: [{ pageNumber: 1, segments: [{ id: "document-page-1-body", text: "Not allowed" }] }],
   message: "Use a supported language."
 }).success, false);
 const sourceFingerprint = documentTranslationFingerprint(documentTranslationInput);
@@ -189,7 +214,7 @@ assert.equal(documentTranslationResultSchema.safeParse({
   targetLanguage: "spanish",
   targetLanguageLabel: "Spanish",
   translatedTitle: "Marco persuasivo",
-  pages: [{ pageNumber: 7, body: "Marco persuasivo" }],
+  pages: [{ pageNumber: 7, body: "Marco persuasivo", segments: [{ id: "document-page-7-body", text: "Marco persuasivo" }] }],
   message: "Spanish translation ready.",
   model: "gpt-5.6-terra",
   createdAt: new Date().toISOString(),
@@ -202,6 +227,12 @@ const contentTranslationModelInput = {
   sourceRevision: 2,
   sourceTitle: "A bounded claim",
   sourceBody: "Claim, evidence, objection, and proposed test.",
+  sourceDocument: {
+    version: 1 as const,
+    nodes: [{ id: "claim", type: "paragraph" as const, content: [{ text: "Claim, evidence, objection, and proposed test." }], align: "left" as const, indent: 0 }],
+    settings: { width: "standard" as const, margin: "normal" as const }
+  },
+  sourceSegments: [{ id: "n0:r0", text: "Claim, evidence, objection, and proposed test." }],
   languageInstruction: "French"
 };
 assert.equal(contentTranslationInputSchema.safeParse({
@@ -212,19 +243,19 @@ assert.equal(contentTranslationInputSchema.safeParse({
 assert.match(contentTranslationInstructions, /complete Symposium post or comment/i);
 assert.match(contentTranslationRenderedInput(contentTranslationModelInput), /SOURCE CONTENT/);
 assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) >= 600);
-assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) <= 4500);
+assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) <= 6000);
 assert.equal(contentTranslationModelOutputSchema.safeParse({
   targetLanguage: "french",
   targetLanguageLabel: "French",
   translatedTitle: "Une affirmation circonscrite",
-  translatedBody: "Affirmation, preuve, objection et test proposé.",
+  translatedSegments: [{ id: "n0:r0", text: "Affirmation, preuve, objection et test proposé." }],
   message: "French translation ready."
 }).success, true);
 assert.equal(contentTranslationModelOutputSchema.safeParse({
   targetLanguage: "unsupported",
   targetLanguageLabel: "",
   translatedTitle: "Not allowed",
-  translatedBody: "",
+  translatedSegments: [],
   message: "Use a supported language."
 }).success, false);
 const contentFingerprint = contentTranslationFingerprint(contentTranslationModelInput);
@@ -241,6 +272,11 @@ assert.equal(contentTranslationResultSchema.safeParse({
   targetLanguageLabel: "French",
   translatedTitle: "Une affirmation circonscrite",
   translatedBody: "Affirmation, preuve, objection et test proposé.",
+  translatedDocument: {
+    version: 1,
+    nodes: [{ id: "claim", type: "paragraph", content: [{ text: "Affirmation, preuve, objection et test proposé." }], align: "left", indent: 0 }],
+    settings: { width: "standard", margin: "normal" }
+  },
   message: "French translation ready.",
   model: "gpt-5.6-terra",
   createdAt: new Date().toISOString(),
@@ -405,8 +441,8 @@ assert.match(provider, /strict: true/);
 assert.match(provider, /symposium-translation-v1/);
 assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v3"/);
 assert.match(provider, /reasoning: \{ effort: "none" \}/);
-assert.match(provider, /symposium-document-page-translation-v3/);
-assert.match(provider, /symposium-content-translation-v1/);
+assert.match(provider, /symposium-document-page-translation-v4/);
+assert.match(provider, /symposium-content-translation-v2/);
 assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
 assert.match(provider, /insufficient_quota/);
 assert.match(repository, /providerErrorCode/);
@@ -430,6 +466,7 @@ assert.match(migration, /INSERT INTO ai_daily_quota_resets[\s\S]*SELECT 'udayan'
 assert.match(migration, /0049_assistant_research_threads/);
 assert.match(migration, /context_sources JSONB NOT NULL DEFAULT '\[\]'::jsonb/);
 assert.match(migration, /0050_assistant_context_dock_translation/);
+assert.match(migration, /0051_translation_layout_fidelity/);
 assert.match(migration, /kind TEXT NOT NULL DEFAULT 'research_thread'/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS content_translations/);
 assert.match(repository, /listAssistantConversations/);
@@ -494,7 +531,7 @@ assert.match(attachmentViews, /new pdfjs\.TextLayer/);
 assert.match(attachmentViews, /readPdfPageText\(document, boundedPage\)/);
 assert.match(attachmentViews, /renderPdfPageTranslationImage\(document, boundedPage\)/);
 assert.match(attachmentViews, /DocumentTranslationControl state=\{translation\}/);
-assert.match(documentTranslationControl, /placeholder="e\.g\. Spanish"/);
+assert.match(documentTranslationControl, /\["English", "French", "German", "Spanish"\]/);
 assert.match(documentTranslationControl, /Due to limited usage restriction this beta translates one page at a time/);
 assert.match(documentTranslationControl, /TriangleAlert/);
 assert.match(documentTranslationControl, /Original/);
@@ -514,6 +551,11 @@ assert.match(contentTranslationControl, /Translate entire \{sourceLabel\}/);
 assert.match(contentTranslationControl, /Saved translations reuse 0 answers/);
 assert.match(contentTranslationControl, /Translate · up to 1/);
 assert.match(contentTranslationControl, /Original/);
+assert.match(contentTranslationControl, /translation-language-options/);
+assert.match(attachmentViews, /attachment-pdf-stage-continuous/);
+assert.match(attachmentViews, /data-docx-page-shell/);
+assert.match(attachmentViews, /translatedPageFor/);
+assert.match(contentRepository, /translated_document/);
 assert.match(tabletStyles, /\.room-layout > \.feed-stream > \.feed-post:first-child \.content-translation-post[\s\S]*?margin-left: max\(0px, calc\(708px - 50vw\)\)/);
 assert.match(postViews, /ContentTranslationControl state=\{translation\} sourceLabel="post"/);
 assert.match(commentThread, /ContentTranslationControl state=\{translation\} sourceLabel="comment"/);

@@ -214,6 +214,7 @@
 }
 .tablet-composer textarea { font: inherit; font-size: 0.72rem; line-height: 1.35; max-height: 7rem; min-height: 3.15rem; padding: 0.48rem 0.52rem; resize: vertical; width: 100%; }
 .tablet-composer button { align-items: center; display: flex; font-size: 0.69rem; gap: 0.32rem; justify-content: center; min-height: 2.05rem; width: 100%; }
+.tablet-launcher { z-index: 52 !important; }
 .tablet-launcher.active { background: rgba(196, 240, 238, 0.92); box-shadow: 0 0 0 2px rgba(196, 240, 238, 0.25), 0 18px 48px rgba(10, 16, 15, 0.22); }
 
 .content-translation-control {
@@ -223,6 +224,7 @@
   position: relative;
   z-index: 1;
 }
+.content-translation-control:has(.content-translation-menu) { z-index: 24; }
 .content-translation-bar {
   align-items: center;
   background: color-mix(in srgb, var(--aqua) 7%, var(--document-control-solid));
@@ -246,38 +248,63 @@
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22);
   display: grid;
   gap: 0.34rem;
+  left: 0;
   padding: 0.48rem;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
 }
 .content-translation-menu header { align-items: center; display: flex; justify-content: space-between; }
 .content-translation-menu header strong { font-size: 0.7rem; }
 .content-translation-menu header button { align-items: center; display: inline-flex; justify-content: center; min-height: 1.6rem; min-width: 1.6rem; padding: 0.2rem; }
 .content-translation-menu label,
 .content-translation-menu small { color: var(--muted); font-size: 0.6rem; }
-.content-translation-menu select { background: var(--document-control-solid); border: 1px solid var(--line); color: var(--ink); font: inherit; font-size: 0.68rem; min-height: 2rem; padding: 0.34rem; width: 100%; }
 .content-translation-menu > button { align-items: center; display: inline-flex; font-size: 0.65rem; gap: 0.28rem; justify-content: center; min-height: 2rem; }
 .content-translation-menu p { color: #a83d47; font-size: 0.61rem; margin: 0; }
 .content-translation-status { align-items: center; color: var(--muted); display: flex; font-size: 0.56rem; gap: 0.24rem; padding: 0 0.18rem; }
 .content-translation-status svg { color: #2d7b55; }
 .content-translation-copy {
-  background: color-mix(in srgb, var(--aqua) 5%, var(--document-surface-solid));
-  border: 1px solid color-mix(in srgb, var(--aqua) 26%, var(--line));
-  border-radius: 0.58rem;
-  display: grid;
-  gap: 0.5rem;
-  margin: 0.25rem 0 0.7rem;
-  padding: clamp(0.7rem, 2vw, 1rem);
+  display: block;
+  margin: 0;
+  padding: 0;
 }
-.content-translation-copy h1,
-.content-translation-copy h2,
-.content-translation-copy h3 { margin: 0; }
-.content-translation-copy > div { font-family: var(--font-serif); font-size: inherit; line-height: 1.62; overflow-wrap: anywhere; white-space: pre-wrap; }
 .comment-card > .content-translation-control,
 .profile-comment-card > .content-translation-control { margin-top: 0.24rem; }
 .content-translation-comment .content-translation-bar:has(.content-translation-label) { background: transparent; border: 0; justify-content: flex-start; min-height: 1.45rem; padding: 0; }
 .content-translation-comment .content-translation-bar:has(.content-translation-label) .content-translation-label { display: none; }
 .content-translation-comment .content-translation-bar:has(.content-translation-label) .content-translate-button { background: transparent; border-color: transparent; color: var(--muted); padding-left: 0; }
 .comment-card > .content-translation-copy,
-.profile-comment-card > .content-translation-copy { font-size: 0.9rem; margin-bottom: 0.45rem; }
+.profile-comment-card > .content-translation-copy { font-size: 0.9rem; }
+
+.translation-language-label {
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 750;
+}
+
+.translation-language-options {
+  display: grid !important;
+  gap: 0.28rem !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
+.translation-language-options button,
+.attachment-pagebar .translation-language-options button {
+  width: auto;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.3rem 0.38rem;
+  color: var(--ink);
+  font-size: 0.64rem;
+  font-weight: 750;
+}
+
+.translation-language-options button.active,
+.attachment-pagebar .translation-language-options button.active {
+  border-color: color-mix(in srgb, var(--aqua) 62%, var(--line));
+  background: color-mix(in srgb, var(--aqua) 22%, var(--document-control-solid));
+}
 
 @media (min-width: 901px) {
   .room-layout > .feed-stream > .feed-post:first-child .content-translation-post {

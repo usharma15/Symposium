@@ -2596,6 +2596,13 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS content_translations_source_idx
         ON content_translations (source_type, source_id, source_revision);
     `
+  },
+  {
+    id: "0051_translation_layout_fidelity",
+    sql: `
+      ALTER TABLE content_translations
+        ADD COLUMN IF NOT EXISTS translated_document JSONB;
+    `
   }
 ];
 

@@ -191,6 +191,7 @@
 .scribble-new-notebook input { font-size: 0.68rem; min-height: 1.95rem; min-width: 0; padding: 0.35rem 0.45rem; width: 100%; }
 .scribble-new-notebook button { font-size: 0.64rem; min-height: 1.95rem; padding: 0.35rem 0.48rem; white-space: nowrap; }
 
+.scribble-launcher { z-index: 52 !important; }
 .scribble-launcher.active { background: rgba(196, 240, 238, 0.92); box-shadow: 0 0 0 2px rgba(196, 240, 238, 0.25), 0 18px 48px rgba(10, 16, 15, 0.22); }
 .scribble-source-action { min-width: 2rem !important; width: auto !important; }
 .attachment-scribble-action { align-items: center; display: inline-flex; flex: 0 0 auto; justify-content: center; min-height: 2rem; min-width: 2rem; padding: 0.3rem; }

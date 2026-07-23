@@ -911,6 +911,7 @@ export const contentTranslations = pgTable(
     targetLanguageLabel: text("target_language_label").notNull(),
     translatedTitle: text("translated_title").notNull(),
     translatedBody: text("translated_body").notNull(),
+    translatedDocument: jsonb("translated_document").$type<VersionedDocumentContract>(),
     model: text("model").notNull(),
     creatorHandle: text("creator_handle").references(() => profiles.handle, { onDelete: "set null" }),
     createdAt: createdAtColumn(),
