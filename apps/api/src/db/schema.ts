@@ -1152,6 +1152,7 @@ export const notifications = pgTable(
     body: text("body").notNull(),
     href: text("href"),
     dedupeKey: text("dedupe_key"),
+    aggregationKey: text("aggregation_key"),
     readAt: timestamp("read_at", { withTimezone: true }),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default(jsonObject).notNull(),
     createdAt: createdAtColumn()
@@ -1165,6 +1166,9 @@ export const notifications = pgTable(
     index("notifications_profile_unread_idx")
       .on(table.profileHandle, table.createdAt.desc(), table.id.desc())
       .where(sql`${table.kind} <> 'message' AND ${table.readAt} IS NULL`),
+    index("notifications_profile_aggregation_idx")
+      .on(table.profileHandle, table.aggregationKey, table.createdAt.desc(), table.id.desc())
+      .where(sql`${table.kind} <> 'message' AND ${table.aggregationKey} IS NOT NULL`),
     index("notifications_retention_idx").on(table.createdAt).where(sql`${table.readAt} IS NOT NULL`),
     uniqueIndex("notifications_profile_dedupe_idx").on(table.profileHandle, table.dedupeKey).where(sql`${table.dedupeKey} IS NOT NULL`)
   ]

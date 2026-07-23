@@ -653,6 +653,14 @@
   text-align: right;
 }
 
+.profile-settings-modal .setting-privacy-note {
+  display: block;
+  margin: -4px 16px 2px 44px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
 .setting-toggle {
   display: flex;
   align-items: center;

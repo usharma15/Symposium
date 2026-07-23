@@ -1,6 +1,11 @@
 import type { PoolClient } from "pg";
 import type { NotificationContract } from "../../../../packages/contracts/src";
 import { stageEvent, type StoredLiveEvent } from "./events";
+import {
+  inferNotificationAggregationKey,
+  notificationActorHandle,
+  projectNotificationGroup
+} from "./notificationAggregation";
 
 type CreatedNotificationRow = {
   id: string;
@@ -9,6 +14,7 @@ type CreatedNotificationRow = {
   title: string;
   body: string;
   href: string | null;
+  aggregationKey: string | null;
   readAt: Date | string | null;
   metadata: Record<string, unknown> | null;
   createdAt: Date | string;
@@ -21,6 +27,7 @@ export type CreateNotificationInput = {
   body: string;
   href?: string | null;
   dedupeKey: string;
+  aggregationKey?: string | null;
   metadata?: Record<string, unknown>;
 };
 
@@ -31,17 +38,6 @@ export type CreatedNotifications = {
 
 const truncateNotificationText = (value: string, maximum: number) =>
   Array.from(value).slice(0, maximum).join("");
-
-const projectNotification = (row: CreatedNotificationRow): NotificationContract => ({
-  id: row.id,
-  kind: row.kind,
-  title: row.title,
-  body: row.body,
-  href: row.href ?? null,
-  readAt: row.readAt ? new Date(row.readAt).toISOString() : null,
-  createdAt: new Date(row.createdAt).toISOString(),
-  metadata: row.metadata && typeof row.metadata === "object" ? row.metadata : {}
-});
 
 export const notificationActorName = async (client: PoolClient, handle: string) => {
   const result = await client.query<{ name: string }>(
@@ -55,26 +51,50 @@ export const createNotifications = async (
   client: PoolClient,
   inputs: CreateNotificationInput[]
 ): Promise<CreatedNotifications> => {
-  const eligibleInputs = inputs
+  const normalizedInputs = inputs
     .filter((input) => input.kind !== "message")
     .map((input) => ({
       ...input,
       kind: truncateNotificationText(input.kind.trim(), 80),
       title: truncateNotificationText(input.title.trim(), 200),
       body: truncateNotificationText(input.body, 1000),
-      href: input.href ? truncateNotificationText(input.href, 500) : input.href
+      href: input.href ? truncateNotificationText(input.href, 500) : input.href,
+      aggregationKey: input.aggregationKey
+        ?? inferNotificationAggregationKey(input.kind, input.metadata)
     }))
     .filter((input) => input.kind && input.title);
+  const actorHandles = [...new Set(normalizedInputs
+    .map((input) => notificationActorHandle(input.metadata))
+    .filter((handle): handle is string => Boolean(handle)))];
+  const actorNames = actorHandles.length
+    ? await client.query<{ handle: string; name: string }>(
+        "SELECT handle, name FROM profiles WHERE handle = ANY($1::text[])",
+        [actorHandles]
+      )
+    : { rows: [] };
+  const actorNameByHandle = new Map(actorNames.rows.map((row) => [row.handle, row.name]));
+  const eligibleInputs = normalizedInputs.map((input) => {
+    const actorHandle = notificationActorHandle(input.metadata);
+    return {
+      ...input,
+      metadata: {
+        ...(input.metadata ?? {}),
+        ...(actorHandle ? { actorName: actorNameByHandle.get(actorHandle) ?? actorHandle } : {})
+      }
+    };
+  });
   if (!eligibleInputs.length) return { notifications: [], events: [] };
   const result = await client.query<CreatedNotificationRow>(
-    `INSERT INTO notifications (profile_handle, kind, title, body, href, dedupe_key, metadata)
-     SELECT input.profile_handle, input.kind, input.title, input.body, input.href, input.dedupe_key, input.metadata
+    `INSERT INTO notifications (profile_handle, kind, title, body, href, dedupe_key, aggregation_key, metadata)
+     SELECT input.profile_handle, input.kind, input.title, input.body, input.href,
+       input.dedupe_key, input.aggregation_key, input.metadata
      FROM jsonb_to_recordset($1::jsonb) AS input(
-       profile_handle text, kind text, title text, body text, href text, dedupe_key text, metadata jsonb
+       profile_handle text, kind text, title text, body text, href text,
+       dedupe_key text, aggregation_key text, metadata jsonb
      )
      ON CONFLICT (profile_handle, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
      RETURNING id::text, profile_handle AS "profileHandle", kind, title, body, href,
-       read_at AS "readAt", metadata, created_at AS "createdAt"`,
+       aggregation_key AS "aggregationKey", read_at AS "readAt", metadata, created_at AS "createdAt"`,
     [JSON.stringify(eligibleInputs.map((input) => ({
       profile_handle: input.profileHandle,
       kind: input.kind,
@@ -82,14 +102,21 @@ export const createNotifications = async (
       body: input.body,
       href: input.href ?? null,
       dedupe_key: input.dedupeKey,
+      aggregation_key: input.aggregationKey
+        ? truncateNotificationText(input.aggregationKey, 500)
+        : null,
       metadata: input.metadata ?? {}
     })))]
   );
-  const notifications = result.rows.map(projectNotification);
+  const notifications: NotificationContract[] = [];
   const events: StoredLiveEvent[] = [];
-  for (let index = 0; index < result.rows.length; index += 1) {
-    const row = result.rows[index]!;
-    const notification = notifications[index]!;
+  for (const row of result.rows) {
+    const groupKey = row.aggregationKey
+      ?? inferNotificationAggregationKey(row.kind, row.metadata ?? undefined)
+      ?? `notification:${row.id}`;
+    const notification = await projectNotificationGroup(client, row.profileHandle, groupKey);
+    if (!notification) continue;
+    notifications.push(notification);
     events.push(await stageEvent(client, {
       kind: "notification.created",
       subjectType: "notification",

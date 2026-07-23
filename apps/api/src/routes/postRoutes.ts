@@ -11,6 +11,7 @@ import {
 import { getPostDetail, listPostPage } from "../repository/inquiryReads";
 import { recordCommentView, recordPostView } from "../repository/inquiryViews";
 import { applyPostAction, createPost, deletePost, updatePost } from "../repository/posts";
+import { getContentAnalytics } from "../repository/contentAnalytics";
 import { getActorFromRequest } from "../services/auth";
 import type { RouteParams } from "./types";
 
@@ -53,6 +54,25 @@ export const registerPostRoutes = (app: FastifyInstance) => {
     try {
       const actor = await getActorFromRequest(request);
       return reply.send(await getPostDetail(request.params.id, actor.handle));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: RouteParams; Querystring: {
+    subjectType?: string;
+    commentId?: string;
+    view?: string;
+    query?: string;
+    cursor?: string;
+    limit?: string;
+  } }>("/v1/posts/:id/analytics", async (request, reply) => {
+    try {
+      return reply.send(await getContentAnalytics(
+        request.params.id,
+        request.query,
+        await withWriteActor(request, { scope: "content-analytics", limit: 180 })
+      ));
     } catch (error) {
       return sendError(app, reply, error);
     }

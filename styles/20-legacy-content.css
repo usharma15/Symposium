@@ -388,6 +388,23 @@
   letter-spacing: 0;
 }
 
+.feed-post .post-card-kind-label {
+  margin: 13px 0 4px;
+  color: color-mix(in srgb, var(--accent) 78%, var(--ink));
+  font-size: 0.68rem;
+  font-weight: 820;
+  letter-spacing: 0.11em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.feed-post .post-card-kind-label + h2 {
+  margin-top: 0;
+  font-size: clamp(1.12rem, 2vw, 1.38rem);
+  font-weight: 820;
+  line-height: 1.2;
+}
+
 .feed-post p {
   margin: 10px 0 12px;
   color: var(--muted);

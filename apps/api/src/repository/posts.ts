@@ -456,15 +456,17 @@ export const applyPostAction = async (
         Boolean(updated.authorHandle && eventScope.audienceHandles?.includes(updated.authorHandle))
       );
     if (canNotifyAuthor) {
-      const actionLabel = input.action === "signal" ? "signalled" : "reshared";
+      const actionLabel = input.action === "signal" ? "liked" : "reshared";
+      const subjectLabel = updated.postType ?? "post";
+      const analyticsView = input.action === "signal" ? "likes" : "reshares";
       const createdNotifications = await createNotifications(client, [{
         profileHandle: updated.authorHandle!,
         kind: input.action === "signal" ? "post_signal" : "post_reshare",
-        title: `${await notificationActorName(client, handle)} ${actionLabel} your ${updated.postType ?? "post"}`,
+        title: `${await notificationActorName(client, handle)} ${actionLabel} your ${subjectLabel}`,
         body: updated.title,
-        href: `/posts/${encodeURIComponent(postId)}`,
+        href: `/posts/${encodeURIComponent(postId)}?analytics=${analyticsView}`,
         dedupeKey: `post-${input.action}:${postId}:${handle}:${activity!.revision}`,
-        metadata: { postId, action: input.action, actorHandle: handle }
+        metadata: { postId, action: input.action, actorHandle: handle, subjectLabel, analyticsView }
       }]);
       stagedEvents.push(...createdNotifications.events);
     }

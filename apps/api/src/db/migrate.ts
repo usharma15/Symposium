@@ -2133,6 +2133,46 @@ const migrations: Migration[] = [
         ON notifications (profile_handle, created_at DESC, id DESC)
         WHERE kind <> 'message' AND read_at IS NULL;
     `
+  },
+  {
+    id: "0043_notification_aggregation",
+    sql: `
+      ALTER TABLE notifications
+        ADD COLUMN IF NOT EXISTS aggregation_key TEXT;
+
+      UPDATE notifications
+      SET aggregation_key = CASE
+        WHEN kind IN ('post_signal', 'post_reshare', 'post_comment')
+          AND metadata ? 'postId'
+          THEN kind || ':post:' || (metadata ->> 'postId')
+        WHEN kind IN ('comment_signal', 'comment_reshare')
+          AND metadata ? 'commentId'
+          THEN kind || ':comment:' || (metadata ->> 'commentId')
+        WHEN kind = 'comment_reply'
+          AND metadata ? 'parentCommentId'
+          THEN kind || ':comment:' || (metadata ->> 'parentCommentId')
+        WHEN kind = 'profile_followed'
+          THEN 'profile_followed'
+        WHEN kind = 'community_join_request'
+          AND metadata ? 'communityId'
+          THEN kind || ':community:' || (metadata ->> 'communityId')
+        WHEN kind = 'opportunity_application_received'
+          AND metadata ? 'postId'
+          THEN kind || ':post:' || (metadata ->> 'postId')
+        WHEN kind IN ('workspace_comment', 'workspace_comment_reply')
+          AND metadata ? 'noteId'
+          THEN kind || ':note:' || (metadata ->> 'noteId')
+        WHEN kind = 'workspace_comment_signal'
+          AND metadata ? 'commentId'
+          THEN kind || ':comment:' || (metadata ->> 'commentId')
+        ELSE NULL
+      END
+      WHERE aggregation_key IS NULL;
+
+      CREATE INDEX IF NOT EXISTS notifications_profile_aggregation_idx
+        ON notifications (profile_handle, aggregation_key, created_at DESC, id DESC)
+        WHERE kind <> 'message' AND aggregation_key IS NOT NULL;
+    `
   }
 ];
 

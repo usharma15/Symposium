@@ -30,13 +30,19 @@ export const latestNotificationEventKey = (events: NotificationLiveEvent[]) => {
 
 export const compactNotificationCount = (count: number) => count > 99 ? "99+" : String(count);
 
+export const normalizeNotifications = (notifications: unknown[]) =>
+  notifications.flatMap((notification) => {
+    const parsed = notificationSchema.safeParse(notification);
+    return parsed.success ? [parsed.data] : [];
+  });
+
 export const mergeNotificationPage = (
   current: NotificationContract[],
   incoming: NotificationContract[]
 ) => {
-  const byId = new Map(current.map((notification) => [notification.id, notification]));
-  for (const notification of incoming) byId.set(notification.id, notification);
-  return [...byId.values()].sort((left, right) =>
+  const byGroup = new Map(current.map((notification) => [notification.groupKey, notification]));
+  for (const notification of incoming) byGroup.set(notification.groupKey, notification);
+  return [...byGroup.values()].sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)
   );
 };
@@ -49,10 +55,12 @@ export const applyNotificationLiveEvent = (
     const parsed = notificationSchema.safeParse(event.payload?.notification);
     if (!parsed.success) return state;
     const notification = parsed.data;
-    const existing = state.notifications.find((entry) => entry.id === notification.id);
+    const existing = state.notifications.find((entry) => entry.groupKey === notification.groupKey);
     return {
       notifications: mergeNotificationPage(state.notifications, [notification]),
-      unreadCount: existing || notification.readAt ? state.unreadCount : state.unreadCount + 1
+      unreadCount: notification.readAt || existing?.readAt === null
+        ? state.unreadCount
+        : state.unreadCount + 1
     };
   }
 
@@ -68,10 +76,13 @@ export const applyNotificationLiveEvent = (
     };
   }
 
-  const existing = state.notifications.find((notification) => notification.id === event.subjectId);
+  const groupKey = typeof event.payload?.groupKey === "string" ? event.payload.groupKey : null;
+  const existing = state.notifications.find((notification) =>
+    groupKey ? notification.groupKey === groupKey : notification.id === event.subjectId
+  );
   return {
     notifications: state.notifications.map((notification) =>
-      notification.id === event.subjectId && !notification.readAt
+      (groupKey ? notification.groupKey === groupKey : notification.id === event.subjectId) && !notification.readAt
         ? { ...notification, readAt: event.createdAt ?? new Date().toISOString() }
         : notification
     ),

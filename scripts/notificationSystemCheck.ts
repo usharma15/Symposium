@@ -16,9 +16,14 @@ import {
 const notification = (
   id: string,
   createdAt: string,
-  readAt: string | null = null
+  readAt: string | null = null,
+  groupKey = `notification:${id}`,
+  groupCount = 1
 ): NotificationContract => ({
   id,
+  groupKey,
+  groupCount,
+  actorHandles: ["@researcher"],
   kind: "post_comment",
   title: "A comment arrived",
   body: "A durable notification",
@@ -48,6 +53,23 @@ const main = async () => {
   assert.deepEqual(created.notifications.map((entry) => entry.id), [newer.id, older.id]);
   assert.equal(created.unreadCount, 2);
   assert.equal(applyNotificationLiveEvent(created, createdEvent).unreadCount, 2);
+
+  const groupedNewer = notification(
+    "00000000-0000-4000-8000-000000000003",
+    "2026-07-22T10:00:00.000Z",
+    null,
+    older.groupKey,
+    2
+  );
+  const grouped = applyNotificationLiveEvent(created, {
+    id: "event-grouped",
+    kind: "notification.created",
+    subjectId: groupedNewer.id,
+    payload: { notification: groupedNewer }
+  });
+  assert.equal(grouped.notifications.length, 2);
+  assert.equal(grouped.notifications.find((entry) => entry.groupKey === older.groupKey)?.groupCount, 2);
+  assert.equal(grouped.unreadCount, 2);
 
   const read = applyNotificationLiveEvent(created, {
     id: "event-read",
@@ -96,12 +118,13 @@ const main = async () => {
   assert.match(delivery, /ON CONFLICT \(profile_handle, dedupe_key\)[\s\S]*?DO NOTHING/);
   assert.match(delivery, /kind: "notification\.created"/);
   assert.match(delivery, /audienceHandles: \[row\.profileHandle\]/);
-  assert.match(repository, /WITH page AS/);
+  assert.match(repository, /WITH grouped AS/);
+  assert.match(repository, /COALESCE\(aggregation_key, 'notification:' \|\| id::text\)/);
   assert.match(repository, /LEFT JOIN page ON true/);
-  assert.match(repository, /AND \(created_at, id\) < \(\$2::timestamptz, \$3::uuid\)/);
+  assert.match(repository, /AND COALESCE\(aggregation_key, 'notification:' \|\| id::text\) = \$2/);
   assert.match(repository, /export const getUnreadNotificationCount/);
   assert.match(repository, /profile_handle = \$1 AND kind <> 'message'/);
-  assert.match(repository, /profile_handle = \$2 AND kind <> 'message'/);
+  assert.match(repository, /groupKey/);
   assert.doesNotMatch(workspaceAccess, /INSERT INTO notifications/);
   assert.match(workspaceAccess, /workspace_access_updated/);
   assert.match(conversations, /\.\.\.createdNotifications\.events/);
@@ -124,11 +147,12 @@ const main = async () => {
   assert.match(shell, /setNotificationEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);
   assert.match(shell, /parseCanonicalRoute\(url\.pathname, url\.search\)/);
 
-  assert.match(migration, /0042_notification_delivery_indexes/);
+  assert.match(migration, /0043_notification_aggregation/);
   assert.match(migration, /notifications_profile_page_idx/);
   assert.match(migration, /notifications_profile_unread_idx/);
   assert.match(schema, /notifications_profile_page_idx/);
   assert.match(schema, /notifications_profile_unread_idx/);
+  assert.match(schema, /notifications_profile_aggregation_idx/);
 
   const app = await buildApp({ logger: false });
   try {

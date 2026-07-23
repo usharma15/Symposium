@@ -13,6 +13,7 @@ import {
   compactNotificationCount,
   latestNotificationEventKey,
   mergeNotificationPage,
+  normalizeNotifications,
   type NotificationLiveEvent,
   type NotificationState
 } from "@/features/notifications/notificationState";
@@ -85,8 +86,8 @@ export function NotificationsControl({
       if (requestEpoch !== requestEpochRef.current) return;
       setState((current) => ({
         notifications: append
-          ? mergeNotificationPage(current.notifications, page.notifications)
-          : page.notifications,
+          ? mergeNotificationPage(current.notifications, normalizeNotifications(page.notifications))
+          : normalizeNotifications(page.notifications),
         unreadCount: page.unreadCount
       }));
       nextCursorRef.current = page.nextCursor;
@@ -245,14 +246,18 @@ export function NotificationsControl({
       pendingReadIdsRef.current.add(notification.id);
       setState((current) => ({
         notifications: current.notifications.map((entry) =>
-          entry.id === notification.id ? { ...entry, readAt: new Date().toISOString() } : entry
+          entry.groupKey === notification.groupKey ? { ...entry, readAt: new Date().toISOString() } : entry
         ),
         unreadCount: Math.max(0, current.unreadCount - 1)
       }));
       void symposiumApi.request("/api/notifications/read", {
         method: "POST",
         keepalive: true,
-        body: { actorHandle, notificationId: notification.id }
+        body: {
+          actorHandle,
+          notificationId: notification.id,
+          groupKey: notification.groupKey
+        }
       }).catch(() => void refresh()).finally(() => {
         pendingReadIdsRef.current.delete(notification.id);
       });
@@ -286,6 +291,30 @@ export function NotificationsControl({
     : state.unreadCount
       ? `Notifications · ${state.unreadCount} unread`
       : "Notifications";
+  const needsAttention = state.notifications.filter((notification) => !notification.readAt);
+  const recent = state.notifications.filter((notification) => Boolean(notification.readAt));
+  const notificationButton = (notification: NotificationContract) => (
+    <button
+      type="button"
+      key={notification.groupKey}
+      className={notification.readAt ? "" : "unread"}
+      onClick={() => markRead(notification)}
+    >
+      <span className="notification-marker" />
+      <span>
+        <strong>{notification.title}</strong>
+        <p>{notification.body}</p>
+        {notification.groupCount > 1 ? (
+          <small className="notification-group-count">
+            {notification.groupCount} updates
+          </small>
+        ) : null}
+        <time dateTime={notification.createdAt} title={new Date(notification.createdAt).toLocaleString()}>
+          {displayNotificationTime(notification.createdAt)}
+        </time>
+      </span>
+    </button>
+  );
 
   return (
     <div className="notifications-control" ref={panelRef}>
@@ -343,23 +372,18 @@ export function NotificationsControl({
             aria-busy={loadState === "loading" || loadingMore}
             aria-live="polite"
           >
-            {state.notifications.map((notification) => (
-              <button
-                type="button"
-                key={notification.id}
-                className={notification.readAt ? "" : "unread"}
-                onClick={() => markRead(notification)}
-              >
-                <span className="notification-marker" />
-                <span>
-                  <strong>{notification.title}</strong>
-                  <p>{notification.body}</p>
-                  <time dateTime={notification.createdAt} title={new Date(notification.createdAt).toLocaleString()}>
-                    {displayNotificationTime(notification.createdAt)}
-                  </time>
-                </span>
-              </button>
-            ))}
+            {needsAttention.length ? (
+              <>
+                <h3 className="notifications-section-label">Needs your attention</h3>
+                {needsAttention.map(notificationButton)}
+              </>
+            ) : null}
+            {recent.length ? (
+              <>
+                <h3 className="notifications-section-label">Recent</h3>
+                {recent.map(notificationButton)}
+              </>
+            ) : null}
             {loadState === "loaded" && !state.notifications.length
               ? <p className="notifications-empty">You are all caught up.</p>
               : null}

@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   Bookmark,
+  BarChart3,
   Eye,
   MessageCircle,
   Link2,
@@ -60,6 +61,8 @@ import {
   useScribble
 } from "@/features/scribble/ScribbleContext";
 import { useCommunityGovernance } from "@/features/communities/CommunityGovernanceContext";
+import { ContentAnalyticsDialog } from "@/features/analytics/ContentAnalyticsDialog";
+import type { ContentAnalyticsViewContract } from "@/packages/contracts/src";
 
 export type CommentSegmentStacks = Record<string, string[]>;
 export type CommentThreadOptions = {
@@ -123,6 +126,53 @@ export function CommentOwnerControls({
   const governance = useCommunityGovernance();
   const isAuthor = cleanHandle(comment.authorHandle ?? comment.author) === actorHandle;
   const mayDelete = isAuthor || governance.canModerateComment(itemId);
+  const [analyticsView, setAnalyticsView] = useState<ContentAnalyticsViewContract | null>(() => {
+    if (typeof window === "undefined" || !isAuthor || !comment.id) return null;
+    try {
+      const pending = JSON.parse(window.sessionStorage.getItem("symposium:pending-content-analytics") ?? "null") as {
+        postId?: string;
+        commentId?: string;
+        subjectType?: string;
+        view?: string;
+      } | null;
+      if (
+        pending?.postId === itemId &&
+        pending.commentId === comment.id &&
+        pending.subjectType === "comment" &&
+        (pending.view === "likes" || pending.view === "reshares" || pending.view === "quotes" || pending.view === "overview")
+      ) {
+        window.sessionStorage.removeItem("symposium:pending-content-analytics");
+        return pending.view;
+      }
+    } catch {
+      window.sessionStorage.removeItem("symposium:pending-content-analytics");
+    }
+    const parameters = new URLSearchParams(window.location.search);
+    const value = parameters.get("analytics");
+    return window.location.pathname === `/posts/${encodeURIComponent(itemId)}`
+      && parameters.get("comment") === comment.id
+      && (value === "likes" || value === "reshares" || value === "quotes" || value === "overview")
+      ? value
+      : null;
+  });
+  useEffect(() => {
+    if (!isAuthor || !comment.id) return;
+    const onOpenAnalytics = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        postId?: string;
+        commentId?: string;
+        subjectType?: string;
+        view?: string;
+      }>).detail;
+      if (detail?.postId !== itemId || detail.commentId !== comment.id || detail.subjectType !== "comment") return;
+      if (detail.view === "likes" || detail.view === "reshares" || detail.view === "quotes" || detail.view === "overview") {
+        window.sessionStorage.removeItem("symposium:pending-content-analytics");
+        setAnalyticsView(detail.view);
+      }
+    };
+    window.addEventListener("symposium:open-content-analytics", onOpenAnalytics);
+    return () => window.removeEventListener("symposium:open-content-analytics", onOpenAnalytics);
+  }, [comment.id, isAuthor, itemId]);
   if (
     !comment.id ||
     isDeletedComment(comment) ||
@@ -132,7 +182,19 @@ export function CommentOwnerControls({
   }
 
   return (
+    <>
     <div className="comment-owner-actions" aria-label="Comment owner actions">
+      {isAuthor ? <button
+        type="button"
+        title="View comment analytics"
+        aria-label="View comment analytics"
+        onClick={(event) => {
+          event.stopPropagation();
+          setAnalyticsView("overview");
+        }}
+      >
+        <BarChart3 size={14} />
+      </button> : null}
       {isAuthor ? <button
         type="button"
         title="Edit comment"
@@ -154,6 +216,17 @@ export function CommentOwnerControls({
         <Trash2 size={14} />
       </button> : null}
     </div>
+    {isAuthor && analyticsView && comment.id ? (
+      <ContentAnalyticsDialog
+        actorHandle={actorHandle}
+        postId={itemId}
+        subjectType="comment"
+        commentId={comment.id}
+        initialView={analyticsView}
+        onClose={() => setAnalyticsView(null)}
+      />
+    ) : null}
+    </>
   );
 }
 

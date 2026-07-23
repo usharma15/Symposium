@@ -10,11 +10,15 @@ import type { Actor } from "../services/auth";
 import { stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";
 import { runAtomic } from "../services/transactions";
+import { groupedNotificationTitle, notificationActorHandle } from "../services/notificationAggregation";
 import { actorHandle, ensureLiveData } from "./foundation";
 
-type NotificationCursor = { createdAt: string; id: string };
+type NotificationCursor = { createdAt: string; groupKey: string };
 type NotificationRow = {
   id: string | null;
+  groupKey: string | null;
+  groupCount: number | null;
+  actorCount: number | null;
   kind: string | null;
   title: string | null;
   body: string | null;
@@ -26,16 +30,19 @@ type NotificationRow = {
 
 type PresentNotificationRow = Omit<NotificationRow, "id" | "kind" | "title" | "body" | "createdAt"> & {
   id: string;
+  groupKey: string;
+  groupCount: number;
+  actorCount: number;
   kind: string;
   title: string;
   body: string;
   createdAt: Date | string;
 };
 
-const encodeCursor = (row: Pick<PresentNotificationRow, "createdAt" | "id">) =>
+const encodeCursor = (row: Pick<PresentNotificationRow, "createdAt" | "groupKey">) =>
   Buffer.from(JSON.stringify({
     createdAt: new Date(row.createdAt).toISOString(),
-    id: row.id
+    groupKey: row.groupKey
   } satisfies NotificationCursor)).toString("base64url");
 
 const decodeCursor = (cursor?: string | null): NotificationCursor | null => {
@@ -45,19 +52,26 @@ const decodeCursor = (cursor?: string | null): NotificationCursor | null => {
     if (
       !value.createdAt ||
       Number.isNaN(Date.parse(value.createdAt)) ||
-      !value.id ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.id)
+      !value.groupKey ||
+      value.groupKey.length > 500
     ) return null;
-    return { createdAt: new Date(value.createdAt).toISOString(), id: value.id };
+    return { createdAt: new Date(value.createdAt).toISOString(), groupKey: value.groupKey };
   } catch {
     return null;
   }
 };
 
-const projectNotification = (row: PresentNotificationRow): NotificationContract => ({
+const projectNotification = (
+  row: PresentNotificationRow,
+  actorHandles: string[],
+  actorNames: string[]
+): NotificationContract => ({
   id: row.id,
+  groupKey: row.groupKey,
+  groupCount: row.groupCount,
+  actorHandles,
   kind: row.kind,
-  title: row.title,
+  title: groupedNotificationTitle(row, actorNames, row.actorCount),
   body: row.body,
   href: row.href ?? null,
   readAt: row.readAt ? new Date(row.readAt).toISOString() : null,
@@ -71,8 +85,13 @@ export const getUnreadNotificationCount = async (actor: Actor) => {
   await ensureLiveData();
   const result = await getPool().query<{ unreadCount: number }>(
     `SELECT count(*)::int AS "unreadCount"
-     FROM notifications
-     WHERE profile_handle = $1 AND kind <> 'message' AND read_at IS NULL`,
+     FROM (
+       SELECT COALESCE(aggregation_key, 'notification:' || id::text)
+       FROM notifications
+       WHERE profile_handle = $1 AND kind <> 'message'
+       GROUP BY COALESCE(aggregation_key, 'notification:' || id::text)
+       HAVING bool_or(read_at IS NULL)
+     ) unread_groups`,
     [handle]
   );
   return { unreadCount: result.rows[0]?.unreadCount ?? 0 };
@@ -88,41 +107,106 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
 
   const values: unknown[] = [handle];
   const cursorCondition = cursor
-    ? `AND (created_at, id) < ($2::timestamptz, $3::uuid)`
+    ? `WHERE ("createdAt", "groupKey") < ($2::timestamptz, $3::text)`
     : "";
-  if (cursor) values.push(cursor.createdAt, cursor.id);
+  if (cursor) values.push(cursor.createdAt, cursor.groupKey);
   values.push(query.limit + 1);
   const result = await getPool().query<NotificationRow & { unreadTotal: number }>(
-    `WITH page AS (
-       SELECT id, kind, title, body, href, read_at, metadata, created_at
+    `WITH grouped AS (
+       SELECT
+         COALESCE(aggregation_key, 'notification:' || id::text) AS "groupKey",
+         count(*)::int AS "groupCount",
+         count(DISTINCT COALESCE(
+           metadata ->> 'actorHandle',
+           metadata ->> 'followerHandle',
+           metadata ->> 'requesterHandle',
+           metadata ->> 'applicantHandle'
+         ))::int AS "actorCount",
+         max(created_at) AS "createdAt",
+         bool_or(read_at IS NULL) AS unread,
+         CASE WHEN bool_or(read_at IS NULL) THEN NULL ELSE max(read_at) END AS "readAt"
        FROM notifications
        WHERE profile_handle = $1 AND kind <> 'message'
+       GROUP BY COALESCE(aggregation_key, 'notification:' || id::text)
+     ),
+     page AS (
+       SELECT *
+       FROM grouped
        ${cursorCondition}
-       ORDER BY created_at DESC, id DESC
+       ORDER BY "createdAt" DESC, "groupKey" DESC
        LIMIT $${values.length}
      ),
      unread AS (
        SELECT count(*)::int AS total
-       FROM notifications
-       WHERE profile_handle = $1 AND kind <> 'message' AND read_at IS NULL
+       FROM grouped
+       WHERE unread
      )
-     SELECT page.id::text, page.kind, page.title, page.body, page.href,
-       page.read_at AS "readAt", page.metadata, page.created_at AS "createdAt",
-       unread.total AS "unreadTotal"
+     SELECT latest.id::text, page."groupKey", page."groupCount", page."actorCount", latest.kind,
+       latest.title, latest.body, latest.href, page."readAt", latest.metadata,
+       page."createdAt", unread.total AS "unreadTotal"
      FROM unread
      LEFT JOIN page ON true
-     ORDER BY page.created_at DESC NULLS LAST, page.id DESC NULLS LAST`,
+     LEFT JOIN LATERAL (
+       SELECT id, kind, title, body, href, metadata
+       FROM notifications notification
+       WHERE notification.profile_handle = $1
+         AND COALESCE(notification.aggregation_key, 'notification:' || notification.id::text) = page."groupKey"
+       ORDER BY notification.created_at DESC, notification.id DESC
+       LIMIT 1
+     ) latest ON true
+     ORDER BY page."createdAt" DESC NULLS LAST, page."groupKey" DESC NULLS LAST`,
     values
   );
   const rowsWithNotifications = result.rows.filter(
     (row): row is PresentNotificationRow & { unreadTotal: number } =>
-      Boolean(row.id && row.kind && row.title && row.body !== null && row.createdAt)
+      Boolean(row.id && row.groupKey && row.groupCount && row.kind && row.title && row.body !== null && row.createdAt)
   );
   const hasMore = rowsWithNotifications.length > query.limit;
   const rows = rowsWithNotifications.slice(0, query.limit);
+  const groupKeys = rows.map((row) => row.groupKey);
+  const actorRows = groupKeys.length
+    ? await getPool().query<{
+        groupKey: string;
+        metadata: Record<string, unknown> | null;
+      }>(
+        `WITH ranked AS (
+           SELECT
+             COALESCE(aggregation_key, 'notification:' || id::text) AS "groupKey",
+             metadata,
+             row_number() OVER (
+               PARTITION BY COALESCE(aggregation_key, 'notification:' || id::text)
+               ORDER BY created_at DESC, id DESC
+             ) AS position
+           FROM notifications
+           WHERE profile_handle = $1
+             AND kind <> 'message'
+             AND COALESCE(aggregation_key, 'notification:' || id::text) = ANY($2::text[])
+         )
+         SELECT "groupKey", metadata
+         FROM ranked
+         WHERE position <= 80
+         ORDER BY "groupKey", position`,
+        [handle, groupKeys]
+      )
+    : { rows: [] };
+  const actorsByGroup = new Map<string, { handles: string[]; names: string[] }>();
+  for (const actorRow of actorRows.rows) {
+    const metadata = actorRow.metadata ?? {};
+    const actor = notificationActorHandle(metadata);
+    if (!actor) continue;
+    const group = actorsByGroup.get(actorRow.groupKey) ?? { handles: [], names: [] };
+    if (group.handles.includes(actor)) continue;
+    if (group.handles.length >= 24) continue;
+    group.handles.push(actor);
+    group.names.push(typeof metadata.actorName === "string" ? metadata.actorName : actor);
+    actorsByGroup.set(actorRow.groupKey, group);
+  }
   const last = rows.at(-1);
   return {
-    notifications: rows.map(projectNotification),
+    notifications: rows.map((row) => {
+      const actors = actorsByGroup.get(row.groupKey) ?? { handles: [], names: [] };
+      return projectNotification(row, actors.handles, actors.names);
+    }),
     unreadCount: result.rows[0]?.unreadTotal ?? 0,
     nextCursor: hasMore && last ? encodeCursor(last) : null
   };
@@ -133,7 +217,12 @@ export const markNotificationRead = async (rawInput: unknown, actor: Actor) => {
   const handle = actorHandle(actor);
   if (!hasDatabase()) return { notificationId: input.notificationId ?? null, all: input.all, read: true };
   await ensureLiveData();
-  return runAtomic(async (client) => {
+  return runAtomic<{
+    notificationId: string | null;
+    groupKey?: string;
+    all: boolean;
+    read: boolean;
+  }>(async (client) => {
     if (input.all) {
       const updated = await client.query(
         `UPDATE notifications SET read_at = now()
@@ -161,33 +250,50 @@ export const markNotificationRead = async (rawInput: unknown, actor: Actor) => {
       return { value: { notificationId: null, all: true, read: true }, events: [event] };
     }
 
-    const notification = await client.query<{ readAt: Date | null }>(
-      `SELECT read_at AS "readAt" FROM notifications
-       WHERE id = $1 AND profile_handle = $2 AND kind <> 'message'
-       FOR UPDATE`,
-      [input.notificationId, handle]
+    const requestedGroupKey = input.groupKey ?? `notification:${input.notificationId}`;
+    const notification = await client.query<{ id: string; unread: boolean }>(
+      `SELECT
+         max(id::text) AS id,
+         bool_or(read_at IS NULL) AS unread
+       FROM notifications
+       WHERE profile_handle = $1
+         AND kind <> 'message'
+         AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
+       HAVING count(*) > 0`,
+      [handle, requestedGroupKey]
     );
     const existing = notification.rows[0];
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Notification not found." });
-    const value = { notificationId: input.notificationId ?? null, all: false, read: true };
-    if (existing.readAt) return { value };
+    const notificationId = input.notificationId ?? existing.id;
+    const value = {
+      notificationId,
+      groupKey: requestedGroupKey,
+      all: false,
+      read: true
+    };
+    if (!existing.unread) return { value };
     await client.query(
-      "UPDATE notifications SET read_at = now() WHERE id = $1 AND profile_handle = $2",
-      [input.notificationId, handle]
+      `UPDATE notifications
+       SET read_at = now()
+       WHERE profile_handle = $1
+         AND kind <> 'message'
+         AND COALESCE(aggregation_key, 'notification:' || id::text) = $2`,
+      [handle, requestedGroupKey]
     );
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "notification.read",
       subjectType: "notification",
-      subjectId: input.notificationId!
+      subjectId: notificationId
     });
     const event = await stageEvent(client, {
       kind: "notification.read",
       actorHandle: handle,
       subjectType: "notification",
-      subjectId: input.notificationId!,
+      subjectId: notificationId,
       visibility: "private",
-      audienceHandles: [handle]
+      audienceHandles: [handle],
+      payload: { groupKey: requestedGroupKey }
     });
     return { value, events: [event] };
   });

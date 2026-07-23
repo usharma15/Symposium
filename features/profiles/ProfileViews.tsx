@@ -1005,6 +1005,9 @@ export function ProfileSettingsModal({
           <input type="checkbox" checked={likesPublic} onChange={(event) => setLikesPublic(event.target.checked)} />
           Share likes on profile
         </label>
+        <small className="setting-privacy-note">
+          Authors can still see when you like their work, even when likes are hidden from your public profile.
+        </small>
         <label className="setting-toggle">
           <input type="checkbox" checked={resharesPublic} onChange={(event) => setResharesPublic(event.target.checked)} />
           Share reshares on profile

@@ -1807,6 +1807,21 @@
   scrollbar-width: thin;
 }
 
+.notifications-section-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  border-bottom: 1px solid rgba(20, 32, 31, 0.08);
+  padding: 7px 11px 6px 26px;
+  background: color-mix(in srgb, var(--panel-strong) 96%, transparent);
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 820;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
 .notifications-list > button:not(.notifications-more) {
   display: grid;
   grid-template-columns: 7px minmax(0, 1fr);
@@ -1851,6 +1866,17 @@
 
 .notifications-list time {
   font-size: 0.65rem;
+}
+
+.notification-group-count {
+  width: fit-content;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: color-mix(in srgb, var(--accent) 76%, var(--ink));
+  font-size: 0.63rem;
+  font-weight: 760;
+  line-height: 1.45;
 }
 
 .notifications-more,

@@ -528,7 +528,7 @@ export const applyWorkspaceCommentAction = async (
       ? await createNotifications(client, [{
           profileHandle: comment.rows[0].authorHandle,
           kind: "workspace_comment_signal",
-          title: `${await notificationActorName(client, handle)} signalled your draft comment`,
+          title: `${await notificationActorName(client, handle)} liked your draft comment`,
           body: access.title,
           href: `/workspace?view=notes&note=${encodeURIComponent(noteId)}&comment=${encodeURIComponent(commentId)}`,
           dedupeKey: `workspace-comment-signal:${commentId}:${handle}:${actionRevision}`,

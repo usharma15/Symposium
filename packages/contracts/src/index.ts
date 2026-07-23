@@ -1544,6 +1544,9 @@ export const conversationSearchInputSchema = z.object({
 
 export const notificationSchema = z.object({
   id: z.string().uuid(),
+  groupKey: z.string().min(1).max(500).optional(),
+  groupCount: z.number().int().positive().default(1),
+  actorHandles: z.array(z.string().min(1).max(80)).max(24).default([]),
   kind: z.string().min(1).max(80),
   title: z.string().min(1).max(200),
   body: z.string().max(1000),
@@ -1551,7 +1554,10 @@ export const notificationSchema = z.object({
   readAt: z.string().datetime().nullable(),
   metadata: z.record(z.string(), z.unknown()).default({}),
   createdAt: z.string().datetime()
-});
+}).transform((notification) => ({
+  ...notification,
+  groupKey: notification.groupKey ?? `notification:${notification.id}`
+}));
 
 export const notificationListQuerySchema = z.object({
   cursor: z.string().trim().max(500).optional(),
@@ -1570,9 +1576,61 @@ export const notificationUnreadCountSchema = z.object({
 
 export const markNotificationInputSchema = z.object({
   notificationId: z.string().uuid().optional(),
+  groupKey: z.string().trim().min(1).max(500).optional(),
   all: z.boolean().default(false)
-}).refine((input) => input.all || Boolean(input.notificationId), {
-  message: "Choose a notification or mark all notifications read."
+}).refine((input) => input.all || Boolean(input.notificationId || input.groupKey), {
+  message: "Choose a notification group or mark all notifications read."
+});
+
+export const contentAnalyticsSubjectTypeSchema = z.enum(["post", "comment"]);
+export const contentAnalyticsViewSchema = z.enum(["overview", "likes", "reshares", "quotes"]);
+export const contentAnalyticsQuerySchema = z.object({
+  subjectType: contentAnalyticsSubjectTypeSchema,
+  commentId: z.string().trim().min(1).max(240).optional(),
+  view: contentAnalyticsViewSchema.default("overview"),
+  query: z.string().trim().max(120).default(""),
+  cursor: z.string().trim().max(500).optional(),
+  limit: z.coerce.number().int().positive().max(50).default(24)
+}).superRefine((input, context) => {
+  if (input.subjectType === "comment" && !input.commentId) {
+    context.addIssue({ code: "custom", path: ["commentId"], message: "Choose a comment." });
+  }
+});
+
+export const contentAnalyticsActorSchema = z.object({
+  handle: z.string().min(1).max(80),
+  name: z.string().min(1).max(200),
+  avatarUrl: safeExternalUrlSchema.optional(),
+  occurredAt: z.string().datetime()
+});
+
+export const contentAnalyticsQuoteSchema = z.object({
+  id: z.string().min(1).max(240),
+  title: z.string().min(1).max(300),
+  authorHandle: z.string().min(1).max(80),
+  authorName: z.string().min(1).max(200),
+  avatarUrl: safeExternalUrlSchema.optional(),
+  href: z.string().min(1).max(500),
+  occurredAt: z.string().datetime()
+});
+
+export const contentAnalyticsOverviewSchema = z.object({
+  likes: z.number().int().nonnegative(),
+  reshares: z.number().int().nonnegative(),
+  quotes: z.number().int().nonnegative(),
+  saves: z.number().int().nonnegative(),
+  views: z.number().int().nonnegative()
+});
+
+export const contentAnalyticsPageSchema = z.object({
+  subjectType: contentAnalyticsSubjectTypeSchema,
+  subjectId: z.string().min(1).max(240),
+  postId: z.string().min(1).max(240),
+  title: z.string().min(1).max(300),
+  overview: contentAnalyticsOverviewSchema,
+  actors: z.array(contentAnalyticsActorSchema).max(50),
+  quotes: z.array(contentAnalyticsQuoteSchema).max(50),
+  nextCursor: z.string().nullable()
 });
 
 export const profileFollowSchema = z.object({
@@ -1785,6 +1843,13 @@ export type NotificationContract = z.infer<typeof notificationSchema>;
 export type NotificationListQueryContract = z.infer<typeof notificationListQuerySchema>;
 export type NotificationPageContract = z.infer<typeof notificationPageSchema>;
 export type NotificationUnreadCountContract = z.infer<typeof notificationUnreadCountSchema>;
+export type ContentAnalyticsSubjectTypeContract = z.infer<typeof contentAnalyticsSubjectTypeSchema>;
+export type ContentAnalyticsViewContract = z.infer<typeof contentAnalyticsViewSchema>;
+export type ContentAnalyticsQueryContract = z.infer<typeof contentAnalyticsQuerySchema>;
+export type ContentAnalyticsActorContract = z.infer<typeof contentAnalyticsActorSchema>;
+export type ContentAnalyticsQuoteContract = z.infer<typeof contentAnalyticsQuoteSchema>;
+export type ContentAnalyticsOverviewContract = z.infer<typeof contentAnalyticsOverviewSchema>;
+export type ContentAnalyticsPageContract = z.infer<typeof contentAnalyticsPageSchema>;
 export type FollowProfileInputContract = z.infer<typeof followProfileInputSchema>;
 export type ProfileFollowContract = z.infer<typeof profileFollowSchema>;
 export type CommunityCallContract = z.infer<typeof communityCallSchema>;

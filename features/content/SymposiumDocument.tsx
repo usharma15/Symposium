@@ -140,7 +140,8 @@ export function SymposiumDocumentRenderer({
 
     const className = `document-text-block document-align-${node.type === "quote" ? "left" : node.align}${node.type === "paragraph" ? ` document-indent-${node.indent}` : ""}`;
     if (node.type === "heading") {
-      const Heading = `h${Math.min(4, Math.max(1, node.level))}` as "h1" | "h2" | "h3" | "h4";
+      const hierarchyOffset = mode === "detail" ? 1 : mode === "feed" || mode === "comment" ? 2 : 0;
+      const Heading = `h${Math.min(4, Math.max(1, node.level + hierarchyOffset))}` as "h1" | "h2" | "h3" | "h4";
       return <Heading key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></Heading>;
     }
     if (node.type === "quote") return <blockquote key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></blockquote>;

@@ -330,7 +330,12 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         body: lockedItem.title,
         href: `/posts/${encodeURIComponent(postId)}?comment=${encodeURIComponent(comment.id as string)}`,
         dedupeKey: `post-comment:${comment.id}:${lockedItem.authorHandle}`,
-        metadata: { postId, commentId: comment.id, actorHandle: handle }
+        metadata: {
+          postId,
+          commentId: comment.id,
+          actorHandle: handle,
+          subjectLabel: lockedItem.postType ?? "post"
+        }
       });
     }
     const createdNotifications = await createNotifications(client, notificationInputs);
@@ -957,15 +962,16 @@ export const applyCommentAction = async (
         Boolean(original.authorHandle && eventScope.audienceHandles?.includes(original.authorHandle))
       );
     if (canNotifyAuthor) {
-      const actionLabel = input.action === "signal" ? "signalled" : "reshared";
+      const actionLabel = input.action === "signal" ? "liked" : "reshared";
+      const analyticsView = input.action === "signal" ? "likes" : "reshares";
       const createdNotifications = await createNotifications(client, [{
         profileHandle: original.authorHandle!,
         kind: input.action === "signal" ? "comment_signal" : "comment_reshare",
         title: `${await notificationActorName(client, handle)} ${actionLabel} your comment`,
         body: updatedItem.title,
-        href: `/posts/${encodeURIComponent(postId)}?comment=${encodeURIComponent(commentId)}`,
+        href: `/posts/${encodeURIComponent(postId)}?comment=${encodeURIComponent(commentId)}&analytics=${analyticsView}`,
         dedupeKey: `comment-${input.action}:${commentId}:${handle}:${activity!.revision}`,
-        metadata: { postId, commentId, action: input.action, actorHandle: handle }
+        metadata: { postId, commentId, action: input.action, actorHandle: handle, analyticsView }
       }]);
       stagedEvents.push(...createdNotifications.events);
     }

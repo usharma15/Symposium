@@ -4330,11 +4330,33 @@ function SymposiumExperience({
             }}
             onNavigate={(href) => {
               const url = new URL(href, window.location.origin);
+              const analyticsView = url.searchParams.get("analytics");
+              const commentId = url.searchParams.get("comment")?.trim() || undefined;
               const { scrollY: _scrollY, ...target } = snapshotForCanonicalRoute(
                 parseCanonicalRoute(url.pathname, url.search),
                 (postId) => itemsRef.current.find((item) => item.id === postId)?.room
               );
               navigateView(target);
+              const postId = parseCanonicalRoute(url.pathname, url.search).kind === "post"
+                ? (parseCanonicalRoute(url.pathname, url.search) as { kind: "post"; postId: string }).postId
+                : null;
+              if (
+                postId &&
+                (analyticsView === "likes" || analyticsView === "reshares" || analyticsView === "quotes" || analyticsView === "overview")
+              ) {
+                const detail = {
+                  postId,
+                  ...(commentId ? { commentId, subjectType: "comment" } : { subjectType: "post" }),
+                  view: analyticsView
+                };
+                window.sessionStorage.setItem(
+                  "symposium:pending-content-analytics",
+                  JSON.stringify(detail)
+                );
+                window.setTimeout(() => {
+                  window.dispatchEvent(new CustomEvent("symposium:open-content-analytics", { detail }));
+                }, 80);
+              }
             }}
           />
           <MessagesUnreadButton

@@ -26,7 +26,8 @@ const layers = [
   "89-post-tones.css",
   "90-immersive-responsive.css",
   "91-scribble.css",
-  "92-ai-tablet.css"
+  "92-ai-tablet.css",
+  "93-content-analytics.css"
 ];
 
 const main = async () => {

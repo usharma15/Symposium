@@ -510,7 +510,11 @@ export const joinOrRequestCommunity = async (rawInput: unknown, actor: Actor) =>
           body: "Review the pending membership request.",
           href: `/communities/${encodeURIComponent(community.id)}`,
           dedupeKey: `community-join-request:${community.id}:${handle}:${new Date(membership.rows[0]!.updatedAt).getTime()}`,
-          metadata: { communityId: community.id, requesterHandle: handle }
+          metadata: {
+            communityId: community.id,
+            requesterHandle: handle,
+            subjectLabel: community.name
+          }
         }));
     }
     const createdNotifications = await createNotifications(client, notificationInputs);

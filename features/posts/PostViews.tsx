@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   ArrowLeft,
+  BarChart3,
   Bookmark,
   Eye,
   Link2,
@@ -88,6 +89,8 @@ import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 import { postToneClassName, postToneForItem } from "@/lib/postTone";
 import { itemHasPostType } from "@/lib/postSemantics";
 import { communityPostIsInteractive } from "@/features/communities/communityPolicy";
+import { ContentAnalyticsDialog } from "@/features/analytics/ContentAnalyticsDialog";
+import type { ContentAnalyticsViewContract } from "@/packages/contracts/src";
 import {
   attachmentScribbleSource,
   postScribbleSource,
@@ -580,10 +583,64 @@ function PostOwnerControls({
   const governance = useCommunityGovernance();
   const isAuthor = cleanHandle(item.authorHandle ?? item.author) === actorHandle;
   const mayDelete = isAuthor || governance.canModeratePost(item);
+  const [analyticsView, setAnalyticsView] = useState<ContentAnalyticsViewContract | null>(() => {
+    if (typeof window === "undefined" || !isAuthor) return null;
+    try {
+      const pending = JSON.parse(window.sessionStorage.getItem("symposium:pending-content-analytics") ?? "null") as {
+        postId?: string;
+        subjectType?: string;
+        view?: string;
+      } | null;
+      if (
+        pending?.postId === item.id &&
+        pending.subjectType === "post" &&
+        (pending.view === "likes" || pending.view === "reshares" || pending.view === "quotes" || pending.view === "overview")
+      ) {
+        window.sessionStorage.removeItem("symposium:pending-content-analytics");
+        return pending.view;
+      }
+    } catch {
+      window.sessionStorage.removeItem("symposium:pending-content-analytics");
+    }
+    const pathMatches = window.location.pathname === `/posts/${encodeURIComponent(item.id)}`;
+    const value = new URLSearchParams(window.location.search).get("analytics");
+    return pathMatches && (value === "likes" || value === "reshares" || value === "quotes" || value === "overview")
+      ? value
+      : null;
+  });
+  useEffect(() => {
+    if (!isAuthor) return;
+    const onOpenAnalytics = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        postId?: string;
+        subjectType?: string;
+        view?: string;
+      }>).detail;
+      if (detail?.postId !== item.id || detail.subjectType !== "post") return;
+      if (detail.view === "likes" || detail.view === "reshares" || detail.view === "quotes" || detail.view === "overview") {
+        window.sessionStorage.removeItem("symposium:pending-content-analytics");
+        setAnalyticsView(detail.view);
+      }
+    };
+    window.addEventListener("symposium:open-content-analytics", onOpenAnalytics);
+    return () => window.removeEventListener("symposium:open-content-analytics", onOpenAnalytics);
+  }, [isAuthor, item.id]);
   if (isDeletedPost(item) || (!isAuthor && !mayDelete)) return null;
 
   return (
+    <>
     <div className={`post-owner-actions${inline ? " inline" : ""}`} aria-label="Post actions">
+      {isAuthor ? <button
+        type="button"
+        title="View post analytics"
+        aria-label="View post analytics"
+        onClick={(event) => {
+          event.stopPropagation();
+          setAnalyticsView("overview");
+        }}
+      >
+        <BarChart3 size={16} />
+      </button> : null}
       {isAuthor ? <button
         type="button"
         title="Edit post"
@@ -605,6 +662,16 @@ function PostOwnerControls({
         <Trash2 size={16} />
       </button> : null}
     </div>
+    {isAuthor && analyticsView ? (
+      <ContentAnalyticsDialog
+        actorHandle={actorHandle}
+        postId={item.id}
+        subjectType="post"
+        initialView={analyticsView}
+        onClose={() => setAnalyticsView(null)}
+      />
+    ) : null}
+    </>
   );
 }
 
@@ -646,6 +713,11 @@ export function FeedPost({
   const postRef = useRef<HTMLElement | null>(null);
   const scribble = useScribble();
   const tone = postToneForItem(item);
+  const feedKindLabel = itemHasPostType(item, "proposal")
+    ? "Patronage Proposal"
+    : itemHasPostType(item, "opportunity")
+      ? "Opportunity"
+      : kindLabels[item.kind];
   const interactionLocked = !communityPostIsInteractive(item);
   const openPost = () => onSelect(item.id);
   const openPostUnlessSelecting = () => {
@@ -691,6 +763,7 @@ export function FeedPost({
         </>
       )}
       <div className="post-body">
+        <p className="post-card-kind-label">{feedKindLabel}</p>
         <h2>
           <CanonicalLink
             route={{ kind: "post", postId: item.id }}
