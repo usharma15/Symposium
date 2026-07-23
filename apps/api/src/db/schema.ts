@@ -786,11 +786,14 @@ export const aiConversations = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     ownerHandle: text("owner_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    kind: text("kind").default("research_thread").notNull(),
     title: text("title").notNull(),
     contextType: text("context_type").default("general").notNull(),
     contextId: text("context_id"),
     contextSources: jsonb("context_sources").$type<AssistantThreadSourceContract[]>().default(jsonArray).notNull(),
     activeContextKey: text("active_context_key"),
+    activeSourceId: uuid("active_source_id"),
+    originSourceId: uuid("origin_source_id"),
     contextRevision: integer("context_revision").default(1).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
@@ -799,6 +802,8 @@ export const aiConversations = pgTable(
     index("ai_conversations_owner_idx").on(table.ownerHandle),
     index("ai_conversations_context_idx").on(table.contextType, table.contextId),
     index("ai_conversations_owner_updated_idx").on(table.ownerHandle, table.updatedAt.desc(), table.id.desc()),
+    index("ai_conversations_owner_kind_updated_idx").on(table.ownerHandle, table.kind, table.updatedAt.desc(), table.id.desc()),
+    check("ai_conversations_kind_check", sql`${table.kind} IN ('research_thread', 'document_translation', 'content_translation')`),
     check("ai_conversations_context_revision_check", sql`${table.contextRevision} >= 1`)
   ]
 );
@@ -890,6 +895,39 @@ export const documentTranslations = pgTable(
     check("document_translations_language_check", sql`${table.targetLanguage} IN ('english', 'french', 'german', 'spanish')`),
     check("document_translations_fingerprint_check", sql`${table.sourceFingerprint} ~ '^[a-f0-9]{64}$'`),
     check("document_translations_pages_check", sql`jsonb_typeof(${table.pages}) = 'array' AND jsonb_array_length(${table.pages}) BETWEEN 1 AND 40`)
+  ]
+);
+
+export const contentTranslations = pgTable(
+  "content_translations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceRevision: integer("source_revision").notNull(),
+    sourceFingerprint: text("source_fingerprint").notNull(),
+    sourceTitle: text("source_title").notNull(),
+    targetLanguage: text("target_language").notNull(),
+    targetLanguageLabel: text("target_language_label").notNull(),
+    translatedTitle: text("translated_title").notNull(),
+    translatedBody: text("translated_body").notNull(),
+    model: text("model").notNull(),
+    creatorHandle: text("creator_handle").references(() => profiles.handle, { onDelete: "set null" }),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("content_translations_source_language_unique_idx").on(
+      table.sourceType,
+      table.sourceId,
+      table.sourceFingerprint,
+      table.targetLanguage
+    ),
+    index("content_translations_source_idx").on(table.sourceType, table.sourceId, table.sourceRevision),
+    check("content_translations_source_type_check", sql`${table.sourceType} IN ('post', 'comment')`),
+    check("content_translations_source_revision_check", sql`${table.sourceRevision} >= 1`),
+    check("content_translations_language_check", sql`${table.targetLanguage} IN ('english', 'french', 'german', 'spanish')`),
+    check("content_translations_fingerprint_check", sql`${table.sourceFingerprint} ~ '^[a-f0-9]{64}$'`)
   ]
 );
 

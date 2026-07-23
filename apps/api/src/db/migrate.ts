@@ -2490,6 +2490,112 @@ const migrations: Migration[] = [
         END IF;
       END $$;
     `
+  },
+  {
+    id: "0050_assistant_context_dock_translation",
+    sql: `
+      ALTER TABLE ai_conversations
+        ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'research_thread',
+        ADD COLUMN IF NOT EXISTS active_source_id UUID,
+        ADD COLUMN IF NOT EXISTS origin_source_id UUID;
+
+      UPDATE ai_conversations conversation
+      SET kind = 'document_translation'
+      WHERE EXISTS (
+        SELECT 1
+        FROM ai_messages message
+        WHERE message.conversation_id = conversation.id
+          AND message.metadata ->> 'source' = 'document_translation'
+      );
+
+      WITH normalized AS (
+        SELECT
+          conversation.id,
+          COALESCE(
+            jsonb_agg(
+              source.value
+              || jsonb_build_object(
+                'id', COALESCE(NULLIF(source.value ->> 'id', ''), gen_random_uuid()::text),
+                'revision', COALESCE((source.value ->> 'revision')::integer, 1),
+                'included', COALESCE((source.value ->> 'included')::boolean, true),
+                'supersedesSourceId', CASE
+                  WHEN source.value ? 'supersedesSourceId' THEN source.value -> 'supersedesSourceId'
+                  ELSE 'null'::jsonb
+                END
+              )
+              ORDER BY source.ordinality
+            ) FILTER (WHERE source.value IS NOT NULL),
+            '[]'::jsonb
+          ) AS sources
+        FROM ai_conversations conversation
+        LEFT JOIN LATERAL jsonb_array_elements(conversation.context_sources)
+          WITH ORDINALITY AS source(value, ordinality) ON true
+        WHERE conversation.kind = 'research_thread'
+        GROUP BY conversation.id
+      )
+      UPDATE ai_conversations conversation
+      SET context_sources = normalized.sources
+      FROM normalized
+      WHERE conversation.id = normalized.id;
+
+      UPDATE ai_conversations conversation
+      SET
+        active_source_id = (
+          SELECT (source.value ->> 'id')::uuid
+          FROM jsonb_array_elements(conversation.context_sources)
+            WITH ORDINALITY AS source(value, ordinality)
+          WHERE source.value ->> 'key' = conversation.active_context_key
+          ORDER BY source.ordinality DESC
+          LIMIT 1
+        ),
+        origin_source_id = (
+          SELECT (source.value ->> 'id')::uuid
+          FROM jsonb_array_elements(conversation.context_sources)
+            WITH ORDINALITY AS source(value, ordinality)
+          ORDER BY source.ordinality ASC
+          LIMIT 1
+        )
+      WHERE conversation.kind = 'research_thread';
+
+      CREATE INDEX IF NOT EXISTS ai_conversations_owner_kind_updated_idx
+        ON ai_conversations (owner_handle, kind, updated_at DESC, id DESC);
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'ai_conversations_kind_check'
+        ) THEN
+          ALTER TABLE ai_conversations
+            ADD CONSTRAINT ai_conversations_kind_check
+            CHECK (kind IN ('research_thread', 'document_translation', 'content_translation'));
+        END IF;
+      END $$;
+
+      CREATE TABLE IF NOT EXISTS content_translations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        source_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        source_revision INTEGER NOT NULL,
+        source_fingerprint TEXT NOT NULL,
+        source_title TEXT NOT NULL,
+        target_language TEXT NOT NULL,
+        target_language_label TEXT NOT NULL,
+        translated_title TEXT NOT NULL,
+        translated_body TEXT NOT NULL,
+        model TEXT NOT NULL,
+        creator_handle TEXT REFERENCES profiles(handle) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT content_translations_source_type_check CHECK (source_type IN ('post', 'comment')),
+        CONSTRAINT content_translations_source_revision_check CHECK (source_revision >= 1),
+        CONSTRAINT content_translations_language_check CHECK (target_language IN ('english', 'french', 'german', 'spanish')),
+        CONSTRAINT content_translations_fingerprint_check CHECK (source_fingerprint ~ '^[a-f0-9]{64}$'),
+        UNIQUE (source_type, source_id, source_fingerprint, target_language)
+      );
+
+      CREATE INDEX IF NOT EXISTS content_translations_source_idx
+        ON content_translations (source_type, source_id, source_revision);
+    `
   }
 ];
 

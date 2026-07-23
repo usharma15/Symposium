@@ -1242,6 +1242,11 @@ export const assistantSurfaceSchema = z.enum([
 ]);
 export const assistantTranslationLanguageSchema = z.enum(["english", "french", "german", "spanish"]);
 export const assistantRequestIntentSchema = z.enum(["answer", "translate"]);
+export const assistantConversationKindSchema = z.enum([
+  "research_thread",
+  "document_translation",
+  "content_translation"
+]);
 
 export const assistantActionSourceSchema = z.object({
   surface: assistantSurfaceSchema,
@@ -1319,8 +1324,14 @@ export const assistantConversationListQuerySchema = z.object({
 });
 
 export const assistantContextUpdateInputSchema = z.object({
-  mode: z.enum(["use", "attach"]),
+  mode: z.enum(["use", "attach", "refresh"]),
   context: assistantContextSchema,
+  expectedRevision: z.number().int().positive()
+});
+
+export const assistantSourceUpdateInputSchema = z.object({
+  sourceId: z.string().uuid(),
+  action: z.enum(["use", "include", "exclude"]),
   expectedRevision: z.number().int().positive()
 });
 
@@ -1378,6 +1389,33 @@ export const documentTranslationModelOutputSchema = z.object({
   }
   if (output.targetLanguage !== "unsupported" && (!output.translatedTitle || !output.pages.length)) {
     context.addIssue({ code: "custom", message: "A supported translation requires its title and pages." });
+  }
+});
+
+export const contentTranslationInputSchema = z.object({
+  sourceType: z.enum(["post", "comment"]),
+  sourceId: z.string().trim().min(1).max(240),
+  languageInstruction: z.string().trim().min(1).max(120)
+});
+
+export const contentTranslationModelInputSchema = contentTranslationInputSchema.extend({
+  sourceRevision: z.number().int().positive(),
+  sourceTitle: z.string().trim().min(1).max(300),
+  sourceBody: z.string().trim().min(1).max(24000)
+});
+
+export const contentTranslationModelOutputSchema = z.object({
+  targetLanguage: z.union([assistantTranslationLanguageSchema, z.literal("unsupported")]),
+  targetLanguageLabel: z.string().trim().max(40),
+  translatedTitle: z.string().trim().max(300),
+  translatedBody: z.string().trim().max(32000),
+  message: z.string().trim().max(1000)
+}).superRefine((output, context) => {
+  if (output.targetLanguage === "unsupported" && (output.translatedTitle || output.translatedBody)) {
+    context.addIssue({ code: "custom", message: "Unsupported languages cannot contain translated content." });
+  }
+  if (output.targetLanguage !== "unsupported" && (!output.translatedTitle || !output.translatedBody)) {
+    context.addIssue({ code: "custom", message: "A supported content translation requires a title and body." });
   }
 });
 
@@ -1764,29 +1802,48 @@ export const assistantMessageSchema = z.object({
   conversationId: z.string(),
   role: aiMessageRoleSchema,
   body: z.string(),
-  createdAt: z.string().optional()
+  createdAt: z.string().optional(),
+  evidence: z.array(z.object({
+    sourceId: z.string().uuid(),
+    key: z.string().trim().min(1).max(800),
+    revision: z.number().int().positive(),
+    title: z.string().trim().max(300),
+    surface: assistantSurfaceSchema,
+    route: z.string().trim().max(500),
+    active: z.boolean()
+  })).max(5).default([]),
+  translation: assistantTranslationSchema.optional(),
+  quickNote: assistantQuickNoteSchema.optional()
 });
 
 export const assistantThreadSourceSchema = z.object({
+  id: z.string().uuid(),
   key: z.string().trim().min(1).max(800),
+  revision: z.number().int().positive(),
+  included: z.boolean(),
   context: assistantContextSchema,
-  attachedAt: z.string().datetime()
+  attachedAt: z.string().datetime(),
+  supersedesSourceId: z.string().uuid().nullable().default(null)
 });
 
 export const assistantThreadSummarySchema = z.object({
   id: z.string().uuid(),
+  kind: z.literal("research_thread"),
   title: z.string().trim().min(1).max(300),
   contextType: z.string().trim().min(1).max(80),
   contextId: z.string().trim().max(240).nullable(),
   activeContextKey: z.string().trim().max(800).nullable(),
+  activeSourceId: z.string().uuid().nullable(),
+  originSourceId: z.string().uuid().nullable(),
   contextRevision: z.number().int().positive(),
   sourceCount: z.number().int().nonnegative(),
+  sourceRevisionCount: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime()
 });
 
 export const assistantThreadStateSchema = assistantThreadSummarySchema.extend({
-  sources: z.array(assistantThreadSourceSchema).max(12)
+  sources: z.array(assistantThreadSourceSchema).max(24)
 });
 
 export const assistantThreadDetailSchema = assistantThreadStateSchema.extend({
@@ -1802,6 +1859,8 @@ export const assistantContextUpdateResultSchema = z.object({
   thread: assistantThreadStateSchema,
   message: assistantMessageSchema
 });
+
+export const assistantSourceUpdateResultSchema = assistantContextUpdateResultSchema;
 
 export const assistantQuotaSchema = z.object({
   dailyLimit: z.number().int().positive(),
@@ -1849,6 +1908,30 @@ export const documentTranslationResultSchema = z.object({
   }
   if (result.status !== "translated" && result.pages.length) {
     context.addIssue({ code: "custom", path: ["pages"], message: "An incomplete document translation cannot contain translated pages." });
+  }
+});
+
+export const contentTranslationResultSchema = z.object({
+  status: z.enum(["translated", "unsupported_language", "provider_error", "disabled"]),
+  sourceType: z.enum(["post", "comment"]),
+  sourceId: z.string(),
+  sourceRevision: z.number().int().positive(),
+  sourceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  cached: z.boolean(),
+  targetLanguage: assistantTranslationLanguageSchema.nullable(),
+  targetLanguageLabel: z.string().max(40).nullable(),
+  translatedTitle: z.string().max(300),
+  translatedBody: z.string().max(32000),
+  message: z.string().max(1000),
+  model: z.string(),
+  createdAt: z.string().datetime(),
+  quota: assistantQuotaSchema
+}).superRefine((result, context) => {
+  if (result.status === "translated" && (!result.targetLanguage || !result.translatedTitle.trim() || !result.translatedBody.trim())) {
+    context.addIssue({ code: "custom", message: "A completed content translation requires its language, title, and body." });
+  }
+  if (result.status !== "translated" && (result.translatedTitle || result.translatedBody)) {
+    context.addIssue({ code: "custom", message: "An incomplete content translation cannot contain translated content." });
   }
 });
 
@@ -1997,6 +2080,7 @@ export type PublishNoteInputContract = z.infer<typeof publishNoteInputSchema>;
 export type AssistantSurfaceContract = z.infer<typeof assistantSurfaceSchema>;
 export type AssistantTranslationLanguageContract = z.infer<typeof assistantTranslationLanguageSchema>;
 export type AssistantRequestIntentContract = z.infer<typeof assistantRequestIntentSchema>;
+export type AssistantConversationKindContract = z.infer<typeof assistantConversationKindSchema>;
 export type AssistantActionSourceContract = z.infer<typeof assistantActionSourceSchema>;
 export type AssistantTranslationDraftContract = z.infer<typeof assistantTranslationDraftSchema>;
 export type AssistantTranslationContract = z.infer<typeof assistantTranslationSchema>;
@@ -2007,12 +2091,15 @@ export type AssistantContextContract = z.infer<typeof assistantContextSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
 export type AssistantConversationListQueryContract = z.infer<typeof assistantConversationListQuerySchema>;
 export type AssistantContextUpdateInputContract = z.infer<typeof assistantContextUpdateInputSchema>;
+export type AssistantSourceUpdateInputContract = z.infer<typeof assistantSourceUpdateInputSchema>;
+export type AssistantMessageContract = z.infer<typeof assistantMessageSchema>;
 export type AssistantThreadSourceContract = z.infer<typeof assistantThreadSourceSchema>;
 export type AssistantThreadSummaryContract = z.infer<typeof assistantThreadSummarySchema>;
 export type AssistantThreadStateContract = z.infer<typeof assistantThreadStateSchema>;
 export type AssistantThreadDetailContract = z.infer<typeof assistantThreadDetailSchema>;
 export type AssistantThreadPageContract = z.infer<typeof assistantThreadPageSchema>;
 export type AssistantContextUpdateResultContract = z.infer<typeof assistantContextUpdateResultSchema>;
+export type AssistantSourceUpdateResultContract = z.infer<typeof assistantSourceUpdateResultSchema>;
 export type AssistantQuotaStatusContract = z.infer<typeof assistantQuotaStatusSchema>;
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;
 export type SaveAssistantQuickNoteInputContract = z.infer<typeof saveAssistantQuickNoteInputSchema>;
@@ -2022,6 +2109,10 @@ export type DocumentTranslationInputContract = z.infer<typeof documentTranslatio
 export type DocumentTranslationPageContract = z.infer<typeof documentTranslationPageSchema>;
 export type DocumentTranslationModelOutputContract = z.infer<typeof documentTranslationModelOutputSchema>;
 export type DocumentTranslationResultContract = z.infer<typeof documentTranslationResultSchema>;
+export type ContentTranslationInputContract = z.infer<typeof contentTranslationInputSchema>;
+export type ContentTranslationModelInputContract = z.infer<typeof contentTranslationModelInputSchema>;
+export type ContentTranslationModelOutputContract = z.infer<typeof contentTranslationModelOutputSchema>;
+export type ContentTranslationResultContract = z.infer<typeof contentTranslationResultSchema>;
 
 export const procedureNames = [
   "auth.syncUser",

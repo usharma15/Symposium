@@ -9,11 +9,15 @@ import {
   assistantProviderFailure,
   assistantRenderedInput,
   assistantTranslationInstructions,
+  contentTranslationInstructions,
+  contentTranslationMaxOutputTokens,
+  contentTranslationRenderedInput,
   documentTranslationInstructions,
   documentTranslationMaxOutputTokens,
   documentTranslationRequestContent,
   documentTranslationRenderedInput
 } from "@/apps/api/src/services/openaiResponses";
+import { contentTranslationFingerprint } from "@/apps/api/src/repository/contentTranslations";
 import {
   documentTranslationFingerprint,
   supportedLanguageFromInstruction
@@ -21,13 +25,17 @@ import {
 import {
   assistantContextUpdateInputSchema,
   assistantMessageInputSchema,
+  assistantSourceUpdateInputSchema,
   assistantQuickNoteResultSchema,
   assistantResponseSchema,
   assistantTranslationDraftSchema,
   saveAssistantQuickNoteInputSchema,
   documentTranslationInputSchema,
   documentTranslationModelOutputSchema,
-  documentTranslationResultSchema
+  documentTranslationResultSchema,
+  contentTranslationInputSchema,
+  contentTranslationModelOutputSchema,
+  contentTranslationResultSchema
 } from "@/packages/contracts/src";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
 import {
@@ -64,6 +72,16 @@ assert.equal(assistantContextUpdateInputSchema.safeParse({
   mode: "use",
   context: validInput.context,
   expectedRevision: 1
+}).success, true);
+assert.equal(assistantContextUpdateInputSchema.safeParse({
+  mode: "refresh",
+  context: validInput.context,
+  expectedRevision: 2
+}).success, true);
+assert.equal(assistantSourceUpdateInputSchema.safeParse({
+  sourceId: "c6f055c0-b137-4713-9f5f-c2ee0b78ab32",
+  action: "exclude",
+  expectedRevision: 3
 }).success, true);
 assert.equal(assistantContextUpdateInputSchema.safeParse({
   mode: "silent",
@@ -173,6 +191,57 @@ assert.equal(documentTranslationResultSchema.safeParse({
   translatedTitle: "Marco persuasivo",
   pages: [{ pageNumber: 7, body: "Marco persuasivo" }],
   message: "Spanish translation ready.",
+  model: "gpt-5.6-terra",
+  createdAt: new Date().toISOString(),
+  quota: { dailyLimit: 10, remainingToday: 9, monthlyBudgetUsd: 40, extremelyLimited: true }
+}).success, true);
+
+const contentTranslationModelInput = {
+  sourceType: "post" as const,
+  sourceId: "paper-1",
+  sourceRevision: 2,
+  sourceTitle: "A bounded claim",
+  sourceBody: "Claim, evidence, objection, and proposed test.",
+  languageInstruction: "French"
+};
+assert.equal(contentTranslationInputSchema.safeParse({
+  sourceType: "post",
+  sourceId: "paper-1",
+  languageInstruction: "French"
+}).success, true);
+assert.match(contentTranslationInstructions, /complete Symposium post or comment/i);
+assert.match(contentTranslationRenderedInput(contentTranslationModelInput), /SOURCE CONTENT/);
+assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) >= 600);
+assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) <= 4500);
+assert.equal(contentTranslationModelOutputSchema.safeParse({
+  targetLanguage: "french",
+  targetLanguageLabel: "French",
+  translatedTitle: "Une affirmation circonscrite",
+  translatedBody: "Affirmation, preuve, objection et test proposé.",
+  message: "French translation ready."
+}).success, true);
+assert.equal(contentTranslationModelOutputSchema.safeParse({
+  targetLanguage: "unsupported",
+  targetLanguageLabel: "",
+  translatedTitle: "Not allowed",
+  translatedBody: "",
+  message: "Use a supported language."
+}).success, false);
+const contentFingerprint = contentTranslationFingerprint(contentTranslationModelInput);
+assert.match(contentFingerprint, /^[a-f0-9]{64}$/);
+assert.notEqual(contentFingerprint, contentTranslationFingerprint({ ...contentTranslationModelInput, sourceRevision: 3 }));
+assert.equal(contentTranslationResultSchema.safeParse({
+  status: "translated",
+  sourceType: "post",
+  sourceId: "paper-1",
+  sourceRevision: 2,
+  sourceFingerprint: contentFingerprint,
+  cached: false,
+  targetLanguage: "french",
+  targetLanguageLabel: "French",
+  translatedTitle: "Une affirmation circonscrite",
+  translatedBody: "Affirmation, preuve, objection et test proposé.",
+  message: "French translation ready.",
   model: "gpt-5.6-terra",
   createdAt: new Date().toISOString(),
   quota: { dailyLimit: 10, remainingToday: 9, monthlyBudgetUsd: 40, extremelyLimited: true }
@@ -303,6 +372,7 @@ assert.equal(assistantQuickNoteResultSchema.safeParse({
 const repository = readFileSync("apps/api/src/repository/assistant.ts", "utf8");
 const usageService = readFileSync("apps/api/src/services/assistantUsage.ts", "utf8");
 const documentRepository = readFileSync("apps/api/src/repository/documentTranslations.ts", "utf8");
+const contentRepository = readFileSync("apps/api/src/repository/contentTranslations.ts", "utf8");
 const scribbles = readFileSync("apps/api/src/repository/workspaceScribbles.ts", "utf8");
 const provider = readFileSync("apps/api/src/services/openaiResponses.ts", "utf8");
 const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
@@ -312,6 +382,9 @@ const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
 const attachmentContext = readFileSync("features/assistant/tabletAttachmentContext.ts", "utf8");
 const attachmentViews = readFileSync("features/attachments/AttachmentViews.tsx", "utf8");
 const documentTranslationControl = readFileSync("features/attachments/DocumentTranslationControl.tsx", "utf8");
+const contentTranslationControl = readFileSync("features/translation/ContentTranslationControl.tsx", "utf8");
+const postViews = readFileSync("features/posts/PostViews.tsx", "utf8");
+const commentThread = readFileSync("features/comments/CommentThread.tsx", "utf8");
 const attachmentModal = readFileSync("features/attachments/AttachmentPreviewModal.tsx", "utf8");
 const pdfClient = readFileSync("features/attachments/pdfAttachmentClient.ts", "utf8");
 const packageManifest = readFileSync("package.json", "utf8");
@@ -332,6 +405,7 @@ assert.match(provider, /symposium-translation-v1/);
 assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v3"/);
 assert.match(provider, /reasoning: \{ effort: "none" \}/);
 assert.match(provider, /symposium-document-page-translation-v3/);
+assert.match(provider, /symposium-content-translation-v1/);
 assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
 assert.match(provider, /insufficient_quota/);
 assert.match(repository, /providerErrorCode/);
@@ -354,14 +428,23 @@ assert.match(migration, /0040_owner_daily_ai_quota_reset/);
 assert.match(migration, /INSERT INTO ai_daily_quota_resets[\s\S]*SELECT 'udayan', current_date, now\(\)/);
 assert.match(migration, /0049_assistant_research_threads/);
 assert.match(migration, /context_sources JSONB NOT NULL DEFAULT '\[\]'::jsonb/);
+assert.match(migration, /0050_assistant_context_dock_translation/);
+assert.match(migration, /kind TEXT NOT NULL DEFAULT 'research_thread'/);
+assert.match(migration, /CREATE TABLE IF NOT EXISTS content_translations/);
 assert.match(repository, /listAssistantConversations/);
 assert.match(repository, /getAssistantConversation/);
 assert.match(repository, /updateAssistantConversationContext/);
+assert.match(repository, /updateAssistantConversationSource/);
 assert.match(repository, /assistant\.context\.updated/);
+assert.match(repository, /kind = 'research_thread'/);
+assert.match(repository, /origin_source_id/);
+assert.match(repository, /evidenceForSources/);
 assert.match(repository, /attachedContexts/);
 assert.match(route, /shared: true, scope: "assistant", limit: 10/);
 assert.match(route, /\/v1\/assistant\/conversations\/:id\/context/);
+assert.match(route, /\/v1\/assistant\/conversations\/:id\/sources/);
 assert.match(route, /\/v1\/assistant\/document-translations/);
+assert.match(route, /\/v1\/assistant\/content-translations/);
 assert.match(route, /\/v1\/assistant\/quick-notes/);
 assert.match(route, /scope: "assistant-action", limit: 30/);
 assert.match(scribbles, /conversation\.owner_handle = \$3/);
@@ -376,9 +459,12 @@ assert.match(tablet, /Office destination/);
 assert.match(tablet, /All · Quick Notes/);
 assert.match(tablet, /Create & select/);
 assert.match(tablet, /New research thread/);
-assert.match(tablet, /View changed/);
-assert.match(tablet, /Use this view/);
-assert.match(tablet, /Add as source/);
+assert.match(tablet, /Context Dock/);
+assert.match(tablet, /Live view/);
+assert.match(tablet, /Capture update/);
+assert.match(tablet, /Use live view/);
+assert.match(tablet, /Add source/);
+assert.match(tablet, /Used \{message\.evidence\.length\} source/);
 assert.match(provider, /shouldOfferQuickNote/);
 assert.doesNotMatch(tablet, /Opening and browsing cost nothing/);
 assert.doesNotMatch(tablet, /tablet-context-card/);
@@ -416,6 +502,19 @@ assert.match(documentTranslationControl, /Translate · uses 1/);
 assert.match(documentRepository, /findCachedTranslation/);
 assert.match(documentRepository, /No AI answer was consumed/);
 assert.match(documentRepository, /reserveAssistantUsage/);
+assert.match(documentRepository, /kind, title, context_type/);
+assert.match(contentRepository, /kind, title, context_type/);
+assert.match(contentRepository, /'content_translation'/);
+assert.match(contentRepository, /findCachedTranslation/);
+assert.match(contentRepository, /No AI answer was consumed/);
+assert.match(contentRepository, /reserveAssistantUsage/);
+assert.match(contentRepository, /Only five sources|Choose English, French, German, or Spanish/);
+assert.match(contentTranslationControl, /Translate entire \{sourceLabel\}/);
+assert.match(contentTranslationControl, /Saved translations reuse 0 answers/);
+assert.match(contentTranslationControl, /Translate · up to 1/);
+assert.match(contentTranslationControl, /Original/);
+assert.match(postViews, /ContentTranslationControl state=\{translation\} sourceLabel="post"/);
+assert.match(commentThread, /ContentTranslationControl state=\{translation\} sourceLabel="comment"/);
 assert.doesNotMatch(attachmentViews, /<iframe[^>]+title=\{attachment\.fileName\}/);
 assert.match(attachmentModal, /kind: "pdf-text", page, excerpt/);
 assert.match(pdfClient, /maxPdfMetadataPages = 40/);

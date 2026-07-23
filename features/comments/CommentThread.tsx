@@ -69,6 +69,11 @@ import {
   openContentAnalyticsEvent
 } from "@/features/analytics/contentAnalyticsNavigation";
 import type { ContentAnalyticsViewContract } from "@/packages/contracts/src";
+import {
+  ContentTranslationControl,
+  TranslatedContent,
+  useContentTranslation
+} from "@/features/translation/ContentTranslationControl";
 
 export type CommentSegmentStacks = Record<string, string[]>;
 export type CommentThreadOptions = {
@@ -614,6 +619,11 @@ function CommentNode({
   const highlighted = Boolean(selectedCommentId && comment.id === selectedCommentId);
   const canShowReplies = segmentDepth < maxVisibleCommentPathLength;
   const shouldHideReplies = replies.length > 0 && !canShowReplies;
+  const translation = useContentTranslation({
+    sourceType: "comment",
+    sourceId: comment.id ?? `unavailable:${itemId}`,
+    sourceRevision: comment.revision ?? 1
+  });
 
   useQualifiedView(nodeRef, {
     disabled: commentDeleted || !comment.id,
@@ -666,20 +676,27 @@ function CommentNode({
           onEditComment={onEditComment}
           onDeleteComment={onDeleteComment}
         />
-        <ScribbleCitable source={scribbleSource}><SymposiumDocumentRenderer
-          document={comment.document}
-          body={comment.body}
-          attachments={comment.attachments}
-          profiles={profiles}
-          mode="comment"
-          onOpenAttachment={(attachmentId) => comment.id && onOpenAttachmentPreview(itemId, comment.id, attachmentId)}
-          onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, scribbleSource))}
-          onExpand={() => {
-            if (comment.id && !commentDeleted) {
-              onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
-            }
-          }}
-        /></ScribbleCitable>
+        {comment.id && !commentDeleted ? (
+          <ContentTranslationControl state={translation} sourceLabel="comment" />
+        ) : null}
+        {translation.showTranslation ? (
+          <TranslatedContent state={translation} showTitle={false} />
+        ) : (
+          <ScribbleCitable source={scribbleSource}><SymposiumDocumentRenderer
+            document={comment.document}
+            body={comment.body}
+            attachments={comment.attachments}
+            profiles={profiles}
+            mode="comment"
+            onOpenAttachment={(attachmentId) => comment.id && onOpenAttachmentPreview(itemId, comment.id, attachmentId)}
+            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, scribbleSource))}
+            onExpand={() => {
+              if (comment.id && !commentDeleted) {
+                onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
+              }
+            }}
+          /></ScribbleCitable>
+        )}
         {comment.id && !commentDeleted && appendedContentAttachments(comment.document, comment.attachments ?? []).length ? (
           <AttachmentCarousel
             attachments={appendedContentAttachments(comment.document, comment.attachments ?? [])}

@@ -1,17 +1,20 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, Folder, FolderPlus, History, Languages, Link2, LoaderCircle, Plus, RefreshCw, Save, Send, X } from "lucide-react";
+import { AlertTriangle, BookOpen, BrainCircuit, CheckCircle2, ChevronDown, ExternalLink, Eye, EyeOff, FileClock, Folder, FolderPlus, History, Languages, Link2, LoaderCircle, Plus, RefreshCw, Save, Send, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import type {
   AssistantQuickNoteResultContract,
   AssistantQuickNoteContract,
+  AssistantMessageContract,
   AssistantMessageInputContract,
   AssistantQuotaStatusContract,
   AssistantResponseContract,
   AssistantContextUpdateResultContract,
+  AssistantSourceUpdateResultContract,
   AssistantThreadDetailContract,
   AssistantThreadPageContract,
+  AssistantThreadSourceContract,
   AssistantThreadStateContract,
   AssistantThreadSummaryContract,
   AssistantTranslationContract,
@@ -25,6 +28,7 @@ type TabletMessage = {
   role: "user" | "assistant" | "system";
   body: string;
   conversationId?: string;
+  evidence?: AssistantMessageContract["evidence"];
   translation?: AssistantTranslationContract;
   quickNote?: AssistantQuickNoteContract;
 };
@@ -237,6 +241,128 @@ function TranslationCard({
   );
 }
 
+function ContextDock({
+  context,
+  thread,
+  open,
+  busy,
+  onToggle,
+  onContextChange,
+  onSourceChange
+}: {
+  context: TabletContext;
+  thread: AssistantThreadStateContract | null;
+  open: boolean;
+  busy: boolean;
+  onToggle: () => void;
+  onContextChange: (mode: "use" | "attach" | "refresh") => void;
+  onSourceChange: (source: AssistantThreadSourceContract, action: "use" | "include" | "exclude") => void;
+}) {
+  const contextKey = `${context.surface}:${context.entityId ?? context.route}`;
+  const latestCurrent = thread?.sources.filter((source) => source.key === contextKey).at(-1) ?? null;
+  const activeSource = thread?.sources.find((source) => source.id === thread.activeSourceId) ?? null;
+  const currentChanged = Boolean(latestCurrent && JSON.stringify(latestCurrent.context) !== JSON.stringify(context));
+  const includedCount = thread?.sources.filter((source) => source.included).length ?? 0;
+  const orderedSources = [...(thread?.sources ?? [])].reverse();
+
+  return (
+    <section className={`tablet-context-dock${open ? " open" : ""}`} aria-label="Context Dock">
+      <button type="button" className="tablet-context-dock-heading" aria-expanded={open} onClick={onToggle}>
+        <span>
+          <BookOpen size={14} />
+          <strong>Context Dock</strong>
+          <small>{thread ? `${includedCount} included · ${thread.sourceRevisionCount} snapshot${thread.sourceRevisionCount === 1 ? "" : "s"}` : "Current view becomes the origin"}</small>
+        </span>
+        <ChevronDown size={14} />
+      </button>
+      {open ? (
+        <div className="tablet-context-dock-body">
+          {!thread ? (
+            <div className="tablet-context-empty">
+              <strong>{context.title}</strong>
+              <span>Sending the first message captures this view as the immutable thread origin. Opening and arranging context costs nothing.</span>
+            </div>
+          ) : (
+            <>
+              <div className={`tablet-live-context${thread.activeContextKey !== contextKey ? " changed" : ""}`}>
+                <span>
+                  <RefreshCw size={13} />
+                  <strong>Live view</strong>
+                  <small>{context.title}</small>
+                </span>
+                <p>
+                  {!latestCurrent
+                    ? "This view is not attached to the thread."
+                    : currentChanged
+                      ? `The live view has changed since saved revision ${latestCurrent.revision}.`
+                      : latestCurrent.id === thread.activeSourceId
+                        ? `Matches active revision ${latestCurrent.revision}.`
+                        : `Saved as revision ${latestCurrent.revision}, but the thread is using ${activeSource?.context.title ?? "another source"}.`}
+                </p>
+                <div>
+                  {!latestCurrent ? (
+                    <>
+                      <button type="button" disabled={busy || includedCount >= 5} onClick={() => onContextChange("attach")}>
+                        <Link2 size={12} />Add source
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => onContextChange("use")}>Use live view</button>
+                    </>
+                  ) : currentChanged ? (
+                    <button type="button" disabled={busy} onClick={() => onContextChange("refresh")}>
+                      <FileClock size={12} />Capture update
+                    </button>
+                  ) : latestCurrent.id !== thread.activeSourceId ? (
+                    <button type="button" disabled={busy} onClick={() => onContextChange("use")}>Use live view</button>
+                  ) : (
+                    <button type="button" disabled={busy} onClick={() => onContextChange("refresh")}>
+                      <FileClock size={12} />Save new revision
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="tablet-source-list" aria-label="Saved source revisions">
+                {orderedSources.map((source) => {
+                  const active = source.id === thread.activeSourceId;
+                  const origin = source.id === thread.originSourceId;
+                  return (
+                    <article className={`${active ? "active " : ""}${source.included ? "included" : "excluded"}`} key={source.id}>
+                      <div>
+                        <span>
+                          {active ? <strong>Active</strong> : null}
+                          {origin ? <em>Origin</em> : null}
+                          <small>{source.context.surface} · v{source.revision}</small>
+                        </span>
+                        <h4>{source.context.title}</h4>
+                        <p>{source.context.summary || source.context.route}</p>
+                      </div>
+                      <div className="tablet-source-actions">
+                        {!active ? (
+                          <button type="button" disabled={busy} onClick={() => onSourceChange(source, "use")}>Use</button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className={source.included ? "included" : ""}
+                          disabled={busy || active || (!source.included && includedCount >= 5)}
+                          title={active ? "The active source is always included" : source.included ? "Exclude from future answers" : "Include in future answers"}
+                          aria-pressed={source.included}
+                          onClick={() => onSourceChange(source, source.included ? "exclude" : "include")}
+                        >
+                          {source.included ? <Eye size={12} /> : <EyeOff size={12} />}
+                          {source.included ? "Included" : "Excluded"}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function TabletPanel({
   actorHandle,
   context,
@@ -252,9 +378,11 @@ export function TabletPanel({
   const [threads, setThreads] = useState<AssistantThreadSummaryContract[]>([]);
   const [threadsOpen, setThreadsOpen] = useState(false);
   const [threadLoading, setThreadLoading] = useState(true);
+  const [contextDockOpen, setContextDockOpen] = useState(true);
   const [messages, setMessages] = useState<TabletMessage[]>(() => [initialMessage(context)]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [contextBusy, setContextBusy] = useState(false);
   const [error, setError] = useState("");
   const [quotaLoading, setQuotaLoading] = useState(true);
   const [dailyLimit, setDailyLimit] = useState(10);
@@ -369,9 +497,9 @@ export function TabletPanel({
     return () => window.cancelAnimationFrame(frame);
   }, [busy, messages.length]);
 
-  const changeThreadContext = async (mode: "use" | "attach") => {
-    if (!conversationId || !thread || busy) return;
-    setBusy(true);
+  const changeThreadContext = async (mode: "use" | "attach" | "refresh") => {
+    if (!conversationId || !thread || busy || contextBusy) return;
+    setContextBusy(true);
     setError("");
     try {
       const result = await symposiumApi.request<AssistantContextUpdateResultContract>(
@@ -396,15 +524,48 @@ export function TabletPanel({
     } catch (caught) {
       setError(caught instanceof SymposiumApiError ? caught.message : "The research thread context could not be changed.");
     } finally {
-      setBusy(false);
+      setContextBusy(false);
     }
   };
-  const currentViewAttached = Boolean(thread?.sources.some((source) => source.key === contextKey));
+
+  const changeSavedSource = async (
+    source: AssistantThreadSourceContract,
+    action: "use" | "include" | "exclude"
+  ) => {
+    if (!conversationId || !thread || busy || contextBusy) return;
+    setContextBusy(true);
+    setError("");
+    try {
+      const result = await symposiumApi.request<AssistantSourceUpdateResultContract>(
+        `/api/assistant/conversations/${encodeURIComponent(conversationId)}/sources`,
+        {
+          method: "POST",
+          idempotencyKey: createClientMutationId(`assistant-source-${action}`),
+          body: {
+            actorHandle,
+            sourceId: source.id,
+            action,
+            expectedRevision: thread.contextRevision
+          }
+        }
+      );
+      setThread(result.thread);
+      setThreads((current) => [
+        threadSummary(result.thread),
+        ...current.filter((candidate) => candidate.id !== result.thread.id)
+      ]);
+      setMessages((current) => [...current, result.message]);
+    } catch (caught) {
+      setError(caught instanceof SymposiumApiError ? caught.message : "The saved source could not be changed.");
+    } finally {
+      setContextBusy(false);
+    }
+  };
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
     const message = draft.trim();
-    if (!message || busy || threadLoading || quotaLoading || remainingToday <= 0) return;
+    if (!message || busy || contextBusy || threadLoading || quotaLoading || remainingToday <= 0) return;
     const userMessage: TabletMessage = {
       id: createClientMutationId("assistant-user"),
       role: "user",
@@ -440,12 +601,11 @@ export function TabletPanel({
         window.dispatchEvent(new CustomEvent("symposium-ai-quota-change", { detail: response.quota }));
       }
       setMessages((current) => [...current, {
-        id: response.message.id,
-        role: "assistant",
-        body: response.message.body,
+        ...response.message,
         conversationId: response.conversationId,
-        translation: response.translation,
-        quickNote: response.quickNote
+        evidence: response.message.evidence,
+        translation: response.message.translation ?? response.translation,
+        quickNote: response.message.quickNote ?? response.quickNote
       }]);
     } catch (caught) {
       const message = caught instanceof SymposiumApiError
@@ -500,25 +660,15 @@ export function TabletPanel({
         ) : null}
       </section>
 
-      {thread && thread.activeContextKey !== contextKey ? (
-        <section className="tablet-context-change" aria-label="Current view changed">
-          <div>
-            <RefreshCw size={14} />
-            <span><strong>View changed</strong><small>This thread is still using {thread.sources.find((source) => source.key === thread.activeContextKey)?.context.title ?? "its previous view"}.</small></span>
-          </div>
-          <div>
-            <button type="button" disabled={busy} onClick={() => void changeThreadContext("use")}>Use this view</button>
-            <button type="button" disabled={busy || currentViewAttached} onClick={() => void changeThreadContext("attach")}>
-              <Link2 size={12} />{currentViewAttached ? "Source attached" : "Add as source"}
-            </button>
-          </div>
-        </section>
-      ) : thread ? (
-        <section className="tablet-active-source">
-          <span>Using</span>
-          <strong>{thread.sources.find((source) => source.key === thread.activeContextKey)?.context.title ?? context.title}</strong>
-        </section>
-      ) : null}
+      <ContextDock
+        context={context}
+        thread={thread}
+        open={contextDockOpen}
+        busy={busy || contextBusy}
+        onToggle={() => setContextDockOpen((current) => !current)}
+        onContextChange={(mode) => void changeThreadContext(mode)}
+        onSourceChange={(source, action) => void changeSavedSource(source, action)}
+      />
 
       <section className="tablet-limit-notice" aria-label="AI usage limits">
         <AlertTriangle size={15} />
@@ -534,6 +684,18 @@ export function TabletPanel({
           <article className={`tablet-message ${message.role}${message.translation ? " has-translation" : ""}`} key={message.id}>
             <span>{message.role === "assistant" ? "Tablet" : message.role === "system" ? "Context" : "You"}</span>
             <p>{message.body}</p>
+            {message.role === "assistant" && message.evidence?.length ? (
+              <details className="tablet-message-evidence">
+                <summary><BookOpen size={12} />Used {message.evidence.length} source{message.evidence.length === 1 ? "" : "s"}</summary>
+                <div>
+                  {message.evidence.map((source) => (
+                    <span className={source.active ? "active" : ""} key={source.sourceId}>
+                      {source.active ? "Active · " : ""}{source.title} · v{source.revision}
+                    </span>
+                  ))}
+                </div>
+              </details>
+            ) : null}
             {message.role === "assistant" && message.translation && message.conversationId ? (
               <TranslationCard
                 actorHandle={actorHandle}
@@ -569,9 +731,9 @@ export function TabletPanel({
           maxLength={2000}
           rows={2}
           placeholder={quotaLoading ? "Loading AI allowance" : remainingToday > 0 ? "Ask about this view" : "Daily AI limit reached"}
-          disabled={busy || threadLoading || quotaLoading || remainingToday <= 0}
+          disabled={busy || contextBusy || threadLoading || quotaLoading || remainingToday <= 0}
         />
-        <button type="submit" className="primary" disabled={busy || threadLoading || quotaLoading || !draft.trim() || remainingToday <= 0} title="Send one limited AI request">
+        <button type="submit" className="primary" disabled={busy || contextBusy || threadLoading || quotaLoading || !draft.trim() || remainingToday <= 0} title="Send one limited AI request">
           <Send size={15} /><span>Send · uses 1</span>
         </button>
       </form>

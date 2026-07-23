@@ -104,6 +104,11 @@ import {
   useScribble
 } from "@/features/scribble/ScribbleContext";
 import {
+  ContentTranslationControl,
+  TranslatedContent,
+  useContentTranslation
+} from "@/features/translation/ContentTranslationControl";
+import {
   PatronageFeedSummary,
   PatronageProposalFields,
   PatronageProposalRail
@@ -705,6 +710,11 @@ export function FeedPost({
 }) {
   const postRef = useRef<HTMLElement | null>(null);
   const scribble = useScribble();
+  const translation = useContentTranslation({
+    sourceType: "post",
+    sourceId: item.id,
+    sourceRevision: item.revision ?? 1
+  });
   const tone = postToneForItem(item);
   const feedKindLabel = itemHasPostType(item, "proposal")
     ? "Patronage Proposal"
@@ -757,16 +767,23 @@ export function FeedPost({
       )}
       <div className="post-body">
         <p className="post-card-kind-label">{feedKindLabel}</p>
+        {!isDeletedPost(item) && !interactionLocked ? (
+          <ContentTranslationControl state={translation} sourceLabel="post" />
+        ) : null}
         <h2>
           <CanonicalLink
             route={{ kind: "post", postId: item.id }}
             onNavigate={openPost}
             onClick={(event) => event.stopPropagation()}
           >
-            {deletedPostContextTitle(item)}
+            {translation.showTranslation && translation.result?.status === "translated"
+              ? translation.result.translatedTitle
+              : deletedPostContextTitle(item)}
           </CanonicalLink>
         </h2>
-        {interactionLocked ? (
+        {translation.showTranslation ? (
+          <TranslatedContent state={translation} showTitle={false} />
+        ) : interactionLocked ? (
           <SymposiumDocumentRenderer
             document={item.document}
             body={item.body}
@@ -1025,6 +1042,11 @@ export function DetailView({
   };
   const threadSelectedCommentId = selectedCommentId === commentsSectionTargetId ? null : selectedCommentId;
   const scribble = useScribble();
+  const translation = useContentTranslation({
+    sourceType: "post",
+    sourceId: item.id,
+    sourceRevision: item.revision ?? 1
+  });
 
   useEffect(() => {
     if (selectedCommentId !== commentsSectionTargetId) return;
@@ -1072,7 +1094,11 @@ export function DetailView({
           </div>
         ) : <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />}
         <p className="eyebrow">{isProposal ? "Patronage Proposal" : isOpportunity ? "Opportunity" : kindLabels[item.kind]}</p>
-        <h1>{deletedPostContextTitle(item)}</h1>
+        <h1>
+          {translation.showTranslation && translation.result?.status === "translated"
+            ? translation.result.translatedTitle
+            : deletedPostContextTitle(item)}
+        </h1>
         {postDeleted ? (
           <div className="detail-byline-button deleted-post-author" aria-label="Deleted post">
             <span className="avatar deleted-avatar" aria-hidden="true" />
@@ -1095,7 +1121,12 @@ export function DetailView({
             </span>
           </CanonicalLink>
         )}
-        {interactionLocked ? (
+        {!postDeleted && !interactionLocked ? (
+          <ContentTranslationControl state={translation} sourceLabel="post" />
+        ) : null}
+        {translation.showTranslation ? (
+          <TranslatedContent state={translation} showTitle={false} titleAs="h1" />
+        ) : interactionLocked ? (
           <SymposiumDocumentRenderer
             document={item.document}
             body={item.body}

@@ -23,6 +23,7 @@ import {
   type AssistantProviderFailure,
   type DocumentTranslationModelResult
 } from "../services/openaiResponses";
+import { supportedLanguageFromInstruction, translationLanguageLabels } from "../services/translationLanguages";
 import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
@@ -50,34 +51,7 @@ type PreparedTranslation = {
   remainingToday: number;
 };
 
-const languageLabels: Record<AssistantTranslationLanguageContract, string> = {
-  english: "English",
-  french: "French",
-  german: "German",
-  spanish: "Spanish"
-};
-
-const languageAliases: Record<AssistantTranslationLanguageContract, string[]> = {
-  english: ["english", "anglais", "ingles", "englisch"],
-  french: ["french", "francais", "franzosisch", "frances"],
-  german: ["german", "deutsch", "allemand", "aleman"],
-  spanish: ["spanish", "espanol", "spanisch", "espagnol"]
-};
-
-const normalizedInstruction = (value: string) => value
-  .normalize("NFKD")
-  .replace(/[\u0300-\u036f]/g, "")
-  .toLowerCase()
-  .replace(/[^a-z]+/g, " ")
-  .trim();
-
-export const supportedLanguageFromInstruction = (value: string): AssistantTranslationLanguageContract | null => {
-  const words = new Set(normalizedInstruction(value).split(/\s+/).filter(Boolean));
-  const matches = (Object.entries(languageAliases) as Array<[AssistantTranslationLanguageContract, string[]]>)
-    .filter(([, aliases]) => aliases.some((alias) => words.has(alias)))
-    .map(([language]) => language);
-  return matches.length === 1 ? matches[0]! : null;
-};
+export { supportedLanguageFromInstruction } from "../services/translationLanguages";
 
 export const documentTranslationFingerprint = (input: DocumentTranslationInputContract) => createHash("sha256")
   .update(JSON.stringify({
@@ -138,7 +112,7 @@ const cachedResult = async (row: TranslationCacheRow, owner: string): Promise<Do
   sourceComplete: row.sourceComplete,
   cached: true,
   targetLanguage: row.targetLanguage,
-  targetLanguageLabel: languageLabels[row.targetLanguage],
+  targetLanguageLabel: translationLanguageLabels[row.targetLanguage],
   translatedTitle: row.translatedTitle,
   pages: row.pages,
   message: "Reused the saved translation. No AI answer was consumed.",
@@ -167,6 +141,26 @@ const disabledResult = (
   quota: assistantQuota(env.SYMPOSIUM_AI_USER_DAILY_LIMIT, 0)
 });
 
+const unsupportedResult = async (
+  input: ParsedInput,
+  sourceFingerprint: string,
+  owner: string
+): Promise<DocumentTranslationResultContract> => ({
+  status: "unsupported_language",
+  attachmentId: input.attachmentId,
+  sourceFingerprint,
+  sourceComplete: input.sourceComplete,
+  cached: false,
+  targetLanguage: null,
+  targetLanguageLabel: null,
+  translatedTitle: "",
+  pages: [],
+  message: "Choose English, French, German, or Spanish. No AI answer was consumed.",
+  model: env.SYMPOSIUM_AI_MODEL,
+  createdAt: new Date().toISOString(),
+  quota: await currentQuota(owner)
+});
+
 const prepareTranslation = async (
   input: ParsedInput,
   sourceFingerprint: string,
@@ -177,8 +171,8 @@ const prepareTranslation = async (
   if (claim.replayed) return { value: { replayed: documentTranslationResultSchema.parse(claim.response) } };
 
   const conversation = await client.query<{ id: string }>(
-    `INSERT INTO ai_conversations (owner_handle, title, context_type, context_id)
-     VALUES ($1, $2, 'attachment', $3)
+    `INSERT INTO ai_conversations (owner_handle, kind, title, context_type, context_id)
+     VALUES ($1, 'document_translation', $2, 'attachment', $3)
      RETURNING id`,
     [owner, `Translate ${input.sourceTitle}`.slice(0, 120), input.attachmentId]
   );
@@ -232,8 +226,8 @@ const finalizeTranslation = async (
     ? failure?.body ?? "The AI provider could not translate this document. This failed attempt still uses one daily answer."
     : targetLanguage
       ? prepared.input.sourceComplete
-        ? `${languageLabels[targetLanguage]} translation ready for page ${prepared.input.sourcePages[0]!.pageNumber}.`
-        : `${languageLabels[targetLanguage]} translation ready for the available text on page ${prepared.input.sourcePages[0]!.pageNumber}; that page's text extraction was incomplete.`
+        ? `${translationLanguageLabels[targetLanguage]} translation ready for page ${prepared.input.sourcePages[0]!.pageNumber}.`
+        : `${translationLanguageLabels[targetLanguage]} translation ready for the available text on page ${prepared.input.sourcePages[0]!.pageNumber}; that page's text extraction was incomplete.`
       : output?.message || "Type English, French, German, or Spanish.";
   const actualMicros = modelResult
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, modelResult.inputTokens, modelResult.outputTokens)
@@ -260,7 +254,7 @@ const finalizeTranslation = async (
     sourceComplete: prepared.input.sourceComplete,
     cached: false,
     targetLanguage,
-    targetLanguageLabel: targetLanguage ? languageLabels[targetLanguage] : null,
+    targetLanguageLabel: targetLanguage ? translationLanguageLabels[targetLanguage] : null,
     translatedTitle: targetLanguage ? output?.translatedTitle ?? "" : "",
     pages: targetLanguage ? output?.pages ?? [] : [],
     message,
@@ -284,7 +278,7 @@ const finalizeTranslation = async (
         prepared.input.sourceKind,
         prepared.input.sourceComplete,
         targetLanguage,
-        languageLabels[targetLanguage],
+        translationLanguageLabels[targetLanguage],
         response.translatedTitle,
         JSON.stringify(response.pages),
         response.model,
@@ -353,10 +347,9 @@ export const translateDocument = async (
   const owner = await ensureProfileHandle(actorHandle(actor));
   await ensureLiveData();
   const requestedLanguage = supportedLanguageFromInstruction(input.languageInstruction);
-  if (requestedLanguage) {
-    const cached = await findCachedTranslation(input.attachmentId, sourceFingerprint, requestedLanguage);
-    if (cached) return cachedResult(cached, owner);
-  }
+  if (!requestedLanguage) return unsupportedResult(input, sourceFingerprint, owner);
+  const cached = await findCachedTranslation(input.attachmentId, sourceFingerprint, requestedLanguage);
+  if (cached) return cachedResult(cached, owner);
 
   const prepared = await prepareTranslation(input, sourceFingerprint, owner, mutation);
   if ("replayed" in prepared) return prepared.replayed;

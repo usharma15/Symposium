@@ -65,6 +65,11 @@ import {
 } from "@/features/quotes/QuoteViews";
 import { postToneClassName, postToneForItem } from "@/lib/postTone";
 import { itemHasPostType } from "@/lib/postSemantics";
+import {
+  ContentTranslationControl,
+  TranslatedContent,
+  useContentTranslation
+} from "@/features/translation/ContentTranslationControl";
 
 export type { ProfileTab } from "@/features/navigation/canonicalRoute";
 export type ProfileActivityKind = "authored" | "comments" | "fork" | "signal" | "save";
@@ -724,6 +729,11 @@ function ProfileCommentCard({
   const authorName = authorProfile?.name ?? activity.comment.author;
   const commentDeleted = isDeletedComment(activity.comment);
   const interactionLocked = !communityPostIsInteractive(activity.item);
+  const translation = useContentTranslation({
+    sourceType: "comment",
+    sourceId: activity.comment.id ?? `unavailable:${activity.item.id}`,
+    sourceRevision: activity.comment.revision ?? 1
+  });
   const openComment = () => {
     if (activity.comment.id && !commentDeleted && !interactionLocked) {
       onCommentAction(activity.item.id, activity.comment.id, "read", { trigger: "click", surface: "profile" });
@@ -794,23 +804,30 @@ function ProfileCommentCard({
           /> : null}
         </div>
       </header>
-      <SymposiumDocumentRenderer
-        document={activity.comment.document}
-        body={activity.comment.body}
-        attachments={commentDeleted ? [] : activity.comment.attachments ?? []}
-        profiles={profiles}
-        mode="comment"
-        onOpenAttachment={(attachmentId) => {
-          if (activity.comment.id && !commentDeleted) {
-            onOpenAttachmentPreview(activity.item.id, activity.comment.id, attachmentId);
-          }
-        }}
-        onExpand={() => {
-          if (activity.comment.id && !interactionLocked) {
-            onCommentAction(activity.item.id, activity.comment.id, "read", { trigger: "expand", surface: "profile" });
-          }
-        }}
-      />
+      {activity.comment.id && !commentDeleted && !interactionLocked ? (
+        <ContentTranslationControl state={translation} sourceLabel="comment" />
+      ) : null}
+      {translation.showTranslation ? (
+        <TranslatedContent state={translation} showTitle={false} />
+      ) : (
+        <SymposiumDocumentRenderer
+          document={activity.comment.document}
+          body={activity.comment.body}
+          attachments={commentDeleted ? [] : activity.comment.attachments ?? []}
+          profiles={profiles}
+          mode="comment"
+          onOpenAttachment={(attachmentId) => {
+            if (activity.comment.id && !commentDeleted) {
+              onOpenAttachmentPreview(activity.item.id, activity.comment.id, attachmentId);
+            }
+          }}
+          onExpand={() => {
+            if (activity.comment.id && !interactionLocked) {
+              onCommentAction(activity.item.id, activity.comment.id, "read", { trigger: "expand", surface: "profile" });
+            }
+          }}
+        />
+      )}
       {activity.comment.id && !commentDeleted ? (
         <AttachmentCarousel
           attachments={appendedContentAttachments(activity.comment.document, activity.comment.attachments ?? [])}

@@ -8,8 +8,10 @@ import {
   getAssistantConversation,
   getAssistantQuota,
   listAssistantConversations,
-  updateAssistantConversationContext
+  updateAssistantConversationContext,
+  updateAssistantConversationSource
 } from "../repository/assistant";
+import { translateContent } from "../repository/contentTranslations";
 import { translateDocument } from "../repository/documentTranslations";
 import { createOpportunity, listOpportunities } from "../repository/opportunities";
 import { saveNoteBlock } from "../repository/workspace";
@@ -507,6 +509,20 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
     }
   });
 
+  app.post<{ Params: RouteParams }>("/v1/assistant/conversations/:id/sources", async (request, reply) => {
+    try {
+      const conversationId = z.string().uuid().parse(request.params.id);
+      return reply.send(await updateAssistantConversationSource(
+        conversationId,
+        request.body,
+        await withWriteActor(request, { shared: true, scope: "assistant-action", limit: 30 }),
+        mutationContextFromRequest(request, "assistant.source.update", { conversationId, body: request.body })
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
   app.post("/v1/assistant/messages", async (request, reply) => {
     try {
       const actor = await withWriteActor(request, { shared: true, scope: "assistant", limit: 10 });
@@ -528,6 +544,20 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
         request.body,
         actor,
         mutationContextFromRequest(request, "assistant.document-translation", request.body)
+      );
+      return reply.send(response);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/assistant/content-translations", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request, { shared: true, scope: "assistant", limit: 10 });
+      const response = await translateContent(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "assistant.content-translation", request.body)
       );
       return reply.send(response);
     } catch (error) {

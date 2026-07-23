@@ -18,7 +18,7 @@ Symposium remains the system of record. Conversation history, attached sources, 
 
 ## Build order
 
-### 1. Research Threads and context history — building now
+### 1. Research Threads and context history — shipped
 
 - Persist named thread history across Tablet openings.
 - Resume the most relevant recent thread for the current view.
@@ -28,19 +28,24 @@ Symposium remains the system of record. Conversation history, attached sources, 
   - **Add as source** — attach it without changing the active view.
 - Record context changes in the visible thread timeline.
 - Protect source mutations with revision checks so two sessions cannot silently overwrite one another.
+- Keep internal document/content translation jobs out of the user’s Research Thread history.
+- Preserve an immutable origin snapshot and explicit source revisions instead of overwriting an earlier snapshot.
 
-### 2. Inspectable evidence and scoped reading
+### 2. Inspectable evidence and scoped reading — Context Dock foundation shipped
 
-- Show the exact source set used for each answer.
-- Let users include or exclude attached sources before asking.
+- Show the exact source set used for each answer. **Shipped.**
+- Let users include or exclude attached sources before asking. **Shipped, bounded to five included snapshots.**
+- Capture and revisit saved source revisions through the Context Dock. **Shipped.**
 - Add source-specific reading tools for posts, comments, notes, workspace documents, attachments, messages, and the visible selection.
 - Make answer claims link back to the relevant Symposium passage or attachment location.
 
-### 3. Whole-content translation
+### 3. Whole-content translation — post/comment translation shipped; document expansion remains
 
-- Move translation out of the cramped current preview control.
-- Translate an entire post and its comments on request while keeping the original one click away.
-- Translate supported document attachments through the document viewer.
+- Translate an entire post or individual comment on request while keeping the original one click away. **Shipped.**
+- Cache post/comment translations by canonical source revision and target language. **Shipped.**
+- Keep unsupported-language input and cached reuse at zero AI answers. **Shipped.**
+- Translate supported document attachments through the document viewer. **Current shipped beta remains one PDF/DOCX page at a time.**
+- Add one action for a bounded whole discussion and a richer whole-document reading surface. **Remaining.**
 - Preserve headings, structure, citations, quantities, uncertainty, and scientific terminology.
 - Cache translations by source revision, target language, and translation policy.
 
@@ -89,7 +94,7 @@ A phase is complete only when it has:
 ## Decisions intentionally left open
 
 - Whether a thread is manually named, automatically titled, or both.
-- Whether “Update view” replaces an existing source snapshot or creates a source revision visible in the timeline.
+- “Update view” now creates a preserved source revision; the product still needs a longer-term archival policy beyond the current bounded revision history.
 - Which read permissions can become standing per-user preferences.
 - Which reversible draft actions can eventually run without confirmation.
 - The exact citation-style edition policy and CSL-compatible rendering layer.
