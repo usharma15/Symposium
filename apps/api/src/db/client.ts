@@ -1,5 +1,5 @@
 import { Pool, type PoolClient } from "pg";
-import { databaseUrl, env } from "../config/env";
+import { databaseApplicationName, databaseUrl, env } from "../config/env";
 import { currentRequestCost, recordDatabaseQuery } from "../services/requestCosts";
 
 let pool: Pool | null = null;
@@ -62,7 +62,7 @@ export const getPool = () => {
       max: env.DATABASE_POOL_MAX,
       idleTimeoutMillis: env.DATABASE_IDLE_TIMEOUT_MS,
       connectionTimeoutMillis: 10_000,
-      application_name: env.DATABASE_APPLICATION_NAME,
+      application_name: databaseApplicationName,
       ssl: databaseUrl.includes("localhost") || databaseUrl.includes("127.0.0.1")
         ? undefined
         : { rejectUnauthorized: false }
@@ -74,7 +74,7 @@ export const getPool = () => {
 };
 
 export const getDatabaseActivityStatus = () => ({
-  applicationName: env.DATABASE_APPLICATION_NAME,
+  applicationName: databaseApplicationName,
   poolCreated: Boolean(pool),
   connectionCount: pool?.totalCount ?? 0,
   idleConnectionCount: pool?.idleCount ?? 0,

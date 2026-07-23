@@ -20,6 +20,7 @@ const workspaceRoutes = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "
 const messageRoutes = readFileSync("apps/api/src/routes/messageRoutes.ts", "utf8");
 const auth = readFileSync("apps/api/src/services/auth.ts", "utf8");
 const dbClient = readFileSync("apps/api/src/db/client.ts", "utf8");
+const apiEnv = readFileSync("apps/api/src/config/env.ts", "utf8");
 const readiness = readFileSync("apps/api/src/config/readiness.ts", "utf8");
 const systemRoutes = readFileSync("apps/api/src/routes/systemRoutes.ts", "utf8");
 const apiSmoke = readFileSync("apps/api/src/smoke.ts", "utf8");
@@ -63,7 +64,8 @@ assert.match(workspaceRoutes, /shared: true, scope: "assistant"/);
 assert.match(messageRoutes, /shared: true, scope: "message-send"/);
 assert.match(auth, /syncedHandleCacheTtlMs = 5 \* 60 \* 1000/);
 assert.match(dbClient, /max: env\.DATABASE_POOL_MAX/);
-assert.match(dbClient, /application_name: env\.DATABASE_APPLICATION_NAME/);
+assert.match(apiEnv, /env\.DATABASE_APPLICATION_NAME === "symposium-api" && env\.RENDER_GIT_COMMIT/);
+assert.match(dbClient, /application_name: databaseApplicationName/);
 assert.match(dbClient, /getDatabaseActivityStatus/);
 assert.match(dbClient, /pool\.on\("connect", instrumentPoolClient\)/);
 assert.match(server, /runWithRequestCost\(cost, done\)/);

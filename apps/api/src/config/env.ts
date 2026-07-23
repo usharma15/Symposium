@@ -68,6 +68,10 @@ if (!parsed.success) {
 export const env = parsed.data;
 
 export const databaseUrl = env.POSTGRES_PRISMA_URL ?? env.POSTGRES_URL ?? env.DATABASE_URL;
+export const databaseApplicationName =
+  env.DATABASE_APPLICATION_NAME === "symposium-api" && env.RENDER_GIT_COMMIT
+    ? "symposium-api-render"
+    : env.DATABASE_APPLICATION_NAME;
 
 export const webOrigins = env.SYMPOSIUM_WEB_ORIGINS.split(",")
   .map((origin) => origin.trim())
