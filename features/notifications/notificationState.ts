@@ -17,6 +17,8 @@ export type NotificationState = {
   unreadCount: number;
 };
 
+export const compactNotificationLimit = 12;
+
 const eventKey = (event: NotificationLiveEvent) =>
   event.id ?? event.cursor ?? `${event.kind}:${event.subjectId}:${event.createdAt ?? ""}`;
 
@@ -45,6 +47,29 @@ export const mergeNotificationPage = (
   return [...byGroup.values()].sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)
   );
+};
+
+export const partitionNotificationInbox = (
+  notifications: NotificationContract[],
+  expanded = false,
+  limit = compactNotificationLimit
+) => {
+  const needsAttention = notifications.filter((notification) =>
+    !notification.readAt && notification.priority !== "activity"
+  );
+  const recent = notifications.filter((notification) =>
+    notification.readAt || notification.priority === "activity"
+  );
+  if (expanded) {
+    return { needsAttention, recent, hiddenCount: 0 };
+  }
+  const visibleAttention = needsAttention.slice(0, limit);
+  const visibleRecent = recent.slice(0, Math.max(0, limit - visibleAttention.length));
+  return {
+    needsAttention: visibleAttention,
+    recent: visibleRecent,
+    hiddenCount: notifications.length - visibleAttention.length - visibleRecent.length
+  };
 };
 
 export const applyNotificationLiveEvent = (

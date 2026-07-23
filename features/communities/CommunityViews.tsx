@@ -606,6 +606,44 @@ export function SelectedCommunityView({
   }, [community.id]);
 
   useEffect(() => {
+    const openPendingRequests = (event?: Event) => {
+      const eventDetail = event instanceof CustomEvent
+        ? event.detail as { communityId?: unknown }
+        : null;
+      let pendingCommunityId = typeof eventDetail?.communityId === "string"
+        ? eventDetail.communityId
+        : null;
+      if (!pendingCommunityId) {
+        try {
+          const pending = JSON.parse(
+            window.sessionStorage.getItem("symposium:pending-community-requests") ?? "null"
+          ) as { communityId?: unknown } | null;
+          pendingCommunityId = typeof pending?.communityId === "string" ? pending.communityId : null;
+        } catch {
+          try {
+            window.sessionStorage.removeItem("symposium:pending-community-requests");
+          } catch {
+            // A storage-denied browser can still use the live custom event.
+          }
+        }
+      }
+      if (pendingCommunityId !== community.id) return;
+      try {
+        window.sessionStorage.removeItem("symposium:pending-community-requests");
+      } catch {
+        // The request panel can still open without clearing browser storage.
+      }
+      if (!mayManage || community.visibility !== "private") return;
+      setPeopleOpen("requests");
+    };
+    openPendingRequests();
+    window.addEventListener("symposium:open-community-requests", openPendingRequests);
+    return () => {
+      window.removeEventListener("symposium:open-community-requests", openPendingRequests);
+    };
+  }, [community.id, community.visibility, mayManage]);
+
+  useEffect(() => {
     if (selectedAnnouncementId && !selectedAnnouncement) setSelectedAnnouncementId(null);
     if (editingAnnouncementId && !editingAnnouncement) setEditingAnnouncementId(null);
   }, [editingAnnouncement, editingAnnouncementId, selectedAnnouncement, selectedAnnouncementId]);

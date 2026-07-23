@@ -1547,6 +1547,8 @@ export const notificationSchema = z.object({
   groupKey: z.string().min(1).max(500).optional(),
   groupCount: z.number().int().positive().default(1),
   actorHandles: z.array(z.string().min(1).max(80)).max(24).default([]),
+  priority: z.enum(["action", "important", "activity"]).default("activity"),
+  actionLabel: z.string().trim().min(1).max(80).nullable().default(null),
   kind: z.string().min(1).max(80),
   title: z.string().min(1).max(200),
   body: z.string().max(1000),

@@ -14,6 +14,8 @@ type NotificationGroupRow = {
   actorCount: number;
 };
 
+export type NotificationPriority = NotificationContract["priority"];
+
 const metadataString = (metadata: Record<string, unknown> | undefined, key: string) => {
   const value = metadata?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -24,6 +26,60 @@ export const notificationActorHandle = (metadata: Record<string, unknown> | unde
   ?? metadataString(metadata, "followerHandle")
   ?? metadataString(metadata, "requesterHandle")
   ?? metadataString(metadata, "applicantHandle");
+
+export const actionRequiredNotificationKinds = [
+  "community_join_request",
+  "opportunity_application_received"
+] as const;
+
+export const importantNotificationKinds = [
+  "community_member_removed",
+  "community_request_approved",
+  "community_request_declined",
+  "community_role_updated",
+  "group_added",
+  "group_removed",
+  "group_role_updated",
+  "opportunity_application_closed",
+  "opportunity_application_shortlisted",
+  "opportunity_application_status",
+  "workspace_access_granted",
+  "workspace_access_revoked",
+  "workspace_access_updated"
+] as const;
+
+export const attentionNotificationKinds = [
+  ...actionRequiredNotificationKinds,
+  ...importantNotificationKinds
+] as const;
+
+const actionRequiredKinds = new Set<string>(actionRequiredNotificationKinds);
+const importantKinds = new Set<string>(importantNotificationKinds);
+
+export const notificationPriority = (kind: string): NotificationPriority => {
+  if (actionRequiredKinds.has(kind)) return "action";
+  if (importantKinds.has(kind)) return "important";
+  return "activity";
+};
+
+export const notificationActionLabel = (kind: string, href: string | null) => {
+  if (!href) return null;
+  if (kind === "community_join_request") return "Review requests";
+  if (kind === "opportunity_application_received") return "Review applications";
+  if (kind === "post_signal" || kind === "comment_signal") return "View likes";
+  if (kind === "post_reshare" || kind === "comment_reshare") return "View reshares";
+  if (kind === "post_comment") return "View comments";
+  if (kind === "comment_reply") return "View reply";
+  if (kind === "profile_followed") return "View profile";
+  if (kind === "workspace_comment") return "Open comment";
+  if (kind === "workspace_comment_reply") return "View reply";
+  if (kind === "workspace_comment_signal") return "View likes";
+  if (kind.startsWith("workspace_access_")) return "Open workspace";
+  if (kind.startsWith("community_")) return "Open community";
+  if (kind.startsWith("opportunity_application_")) return "View opportunity";
+  if (kind.startsWith("group_")) return "Open messages";
+  return "Open";
+};
 
 export const inferNotificationAggregationKey = (
   kind: string,
@@ -120,15 +176,29 @@ export const projectNotificationGroup = async (
   groupKey: string
 ): Promise<NotificationContract | null> => {
   const result = await client.query<NotificationGroupRow>(
-    `WITH summary AS (
+     `WITH summary AS (
        SELECT
-         count(*)::int AS "groupCount",
-         count(DISTINCT COALESCE(
-           metadata ->> 'actorHandle',
-           metadata ->> 'followerHandle',
-           metadata ->> 'requesterHandle',
-           metadata ->> 'applicantHandle'
-         ))::int AS "actorCount",
+         CASE
+           WHEN bool_or(read_at IS NULL)
+             THEN (count(*) FILTER (WHERE read_at IS NULL))::int
+           ELSE count(*)::int
+         END AS "groupCount",
+         CASE
+           WHEN bool_or(read_at IS NULL) THEN count(DISTINCT CASE
+             WHEN read_at IS NULL THEN COALESCE(
+               metadata ->> 'actorHandle',
+               metadata ->> 'followerHandle',
+               metadata ->> 'requesterHandle',
+               metadata ->> 'applicantHandle'
+             )
+           END)::int
+           ELSE count(DISTINCT COALESCE(
+             metadata ->> 'actorHandle',
+             metadata ->> 'followerHandle',
+             metadata ->> 'requesterHandle',
+             metadata ->> 'applicantHandle'
+           ))::int
+         END AS "actorCount",
          CASE
            WHEN bool_or(read_at IS NULL) THEN NULL
            ELSE max(read_at)
@@ -161,6 +231,17 @@ export const projectNotificationGroup = async (
      WHERE profile_handle = $1
        AND kind <> 'message'
        AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
+       AND (
+         read_at IS NULL
+         OR NOT EXISTS (
+           SELECT 1
+           FROM notifications unread
+           WHERE unread.profile_handle = $1
+             AND unread.kind <> 'message'
+             AND COALESCE(unread.aggregation_key, 'notification:' || unread.id::text) = $2
+             AND unread.read_at IS NULL
+         )
+       )
      ORDER BY created_at DESC, id DESC
      LIMIT 80`,
     [profileHandle, groupKey]
@@ -180,6 +261,8 @@ export const projectNotificationGroup = async (
     groupKey,
     groupCount: row.groupCount,
     actorHandles,
+    priority: notificationPriority(row.kind),
+    actionLabel: notificationActionLabel(row.kind, row.href ?? null),
     kind: row.kind,
     title: groupedNotificationTitle(row, actorNames, row.actorCount),
     body: row.body,

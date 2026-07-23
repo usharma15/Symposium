@@ -1775,6 +1775,11 @@
   -webkit-backdrop-filter: blur(26px);
 }
 
+.notifications-panel.expanded {
+  width: min(440px, calc(100vw - 24px));
+  max-height: min(78vh, 760px);
+}
+
 .notifications-panel > header {
   display: flex;
   align-items: center;
@@ -1822,7 +1827,7 @@
   text-transform: uppercase;
 }
 
-.notifications-list > button:not(.notifications-more) {
+.notifications-list > button:not(.notifications-more, .notifications-retry) {
   display: grid;
   grid-template-columns: 7px minmax(0, 1fr);
   gap: 8px;
@@ -1851,7 +1856,12 @@
   background: #238d95;
 }
 
-.notifications-list > button > span:last-child {
+.notifications-list > button.unread[data-priority="action"] .notification-marker {
+  background: #b36a2e;
+  box-shadow: 0 0 0 3px rgba(179, 106, 46, 0.12);
+}
+
+.notifications-list > button:not(.notifications-more, .notifications-retry) > span:last-child {
   display: grid;
   gap: 3px;
 }
@@ -1866,6 +1876,24 @@
 
 .notifications-list time {
   font-size: 0.65rem;
+}
+
+.notification-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 19px;
+}
+
+.notification-primary-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  width: fit-content;
+  margin-top: 3px;
+  color: #176e76;
+  font-size: 0.7rem;
+  font-weight: 840;
 }
 
 .notification-group-count {
@@ -1890,12 +1918,34 @@
   font-weight: 820;
 }
 
+.notifications-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .notifications-retry {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   color: #9b4d3f;
+}
+
+@media (max-width: 520px) {
+  .notifications-panel,
+  .notifications-panel.expanded {
+    position: fixed;
+    top: 76px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-height: calc(100dvh - 92px);
+  }
+
+  .notifications-list {
+    max-height: calc(100dvh - 146px);
+  }
 }
 
 .profile-primary-actions {
@@ -2097,6 +2147,10 @@
 
 .symposium-shell.night .notifications-list > button.unread {
   background: rgba(35, 103, 108, 0.34);
+}
+
+.symposium-shell.night .notification-primary-action {
+  color: #9bdde1;
 }
 
 .symposium-shell.night .profile-message-button {

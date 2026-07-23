@@ -508,7 +508,7 @@ export const joinOrRequestCommunity = async (rawInput: unknown, actor: Actor) =>
           kind: "community_join_request",
           title: `${requesterName} requested to join ${community.name}`,
           body: "Review the pending membership request.",
-          href: `/communities/${encodeURIComponent(community.id)}`,
+          href: `/communities/${encodeURIComponent(community.id)}?requests=pending`,
           dedupeKey: `community-join-request:${community.id}:${handle}:${new Date(membership.rows[0]!.updatedAt).getTime()}`,
           metadata: {
             communityId: community.id,

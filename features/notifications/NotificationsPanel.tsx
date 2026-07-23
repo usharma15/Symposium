@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, CheckCheck, LoaderCircle, RefreshCw, X } from "lucide-react";
+import { Bell, CheckCheck, ChevronLeft, ChevronRight, LoaderCircle, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   NotificationContract,
@@ -14,6 +14,7 @@ import {
   latestNotificationEventKey,
   mergeNotificationPage,
   normalizeNotifications,
+  partitionNotificationInbox,
   type NotificationLiveEvent,
   type NotificationState
 } from "@/features/notifications/notificationState";
@@ -51,6 +52,7 @@ export function NotificationsControl({
   const [loadState, setLoadState] = useState<NotificationLoadState>("loading");
   const [loadingMore, setLoadingMore] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const openRef = useRef(false);
   const nextCursorRef = useRef<string | null>(null);
@@ -58,7 +60,7 @@ export function NotificationsControl({
   const retryAttemptRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
-  const pendingReadIdsRef = useRef(new Set<string>());
+  const pendingReadGroupsRef = useRef(new Set<string>());
   const processedEventKeysRef = useRef(new Set<string>());
   const latestEventKey = useMemo(() => latestNotificationEventKey(liveEvents), [liveEvents]);
 
@@ -77,7 +79,7 @@ export function NotificationsControl({
     if (append) setLoadingMore(true);
     else setLoadState((current) => current === "loaded" ? current : "loading");
     try {
-      const parameters = new URLSearchParams({ actorHandle, limit: "30" });
+      const parameters = new URLSearchParams({ actorHandle, limit: "50" });
       if (cursor) parameters.set("cursor", cursor);
       const page = await symposiumApi.request<NotificationPageContract>(
         `/api/notifications?${parameters}`,
@@ -154,7 +156,7 @@ export function NotificationsControl({
     clearRetry();
     nextCursorRef.current = null;
     retryAttemptRef.current = 0;
-    pendingReadIdsRef.current.clear();
+    pendingReadGroupsRef.current.clear();
     processedEventKeysRef.current = new Set(
       liveEvents.filter((event) => event.kind.startsWith("notification.")).map(liveEventKey)
     );
@@ -163,6 +165,7 @@ export function NotificationsControl({
     setLoadState("loading");
     setLoadingMore(false);
     setMarkingAll(false);
+    setExpanded(false);
     openRef.current = false;
     setOpen(false);
     void loadUnreadCount();
@@ -212,12 +215,14 @@ export function NotificationsControl({
       if (!panelRef.current?.contains(event.target as Node)) {
         openRef.current = false;
         setOpen(false);
+        setExpanded(false);
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         openRef.current = false;
         setOpen(false);
+        setExpanded(false);
       }
     };
     window.addEventListener("pointerdown", onPointerDown);
@@ -232,18 +237,26 @@ export function NotificationsControl({
     const conversationId = typeof notification.metadata.conversationId === "string"
       ? notification.metadata.conversationId
       : null;
-    openRef.current = false;
-    setOpen(false);
     if (conversationId) {
+      openRef.current = false;
+      setOpen(false);
+      setExpanded(false);
       onOpenConversation(conversationId);
-      return;
+      return true;
     }
-    if (notification.href) onNavigate(notification.href);
+    if (notification.href) {
+      openRef.current = false;
+      setOpen(false);
+      setExpanded(false);
+      onNavigate(notification.href);
+      return true;
+    }
+    return false;
   };
 
   const markRead = (notification: NotificationContract) => {
-    if (!notification.readAt && !pendingReadIdsRef.current.has(notification.id)) {
-      pendingReadIdsRef.current.add(notification.id);
+    if (!notification.readAt && !pendingReadGroupsRef.current.has(notification.groupKey)) {
+      pendingReadGroupsRef.current.add(notification.groupKey);
       setState((current) => ({
         notifications: current.notifications.map((entry) =>
           entry.groupKey === notification.groupKey ? { ...entry, readAt: new Date().toISOString() } : entry
@@ -259,7 +272,7 @@ export function NotificationsControl({
           groupKey: notification.groupKey
         }
       }).catch(() => void refresh()).finally(() => {
-        pendingReadIdsRef.current.delete(notification.id);
+        pendingReadGroupsRef.current.delete(notification.groupKey);
       });
     }
     followNotification(notification);
@@ -291,27 +304,40 @@ export function NotificationsControl({
     : state.unreadCount
       ? `Notifications · ${state.unreadCount} unread`
       : "Notifications";
-  const needsAttention = state.notifications.filter((notification) => !notification.readAt);
-  const recent = state.notifications.filter((notification) => Boolean(notification.readAt));
+  const { needsAttention, recent, hiddenCount } = partitionNotificationInbox(
+    state.notifications,
+    expanded
+  );
   const notificationButton = (notification: NotificationContract) => (
     <button
       type="button"
       key={notification.groupKey}
       className={notification.readAt ? "" : "unread"}
+      data-priority={notification.priority}
       onClick={() => markRead(notification)}
     >
       <span className="notification-marker" />
       <span>
         <strong>{notification.title}</strong>
         <p>{notification.body}</p>
-        {notification.groupCount > 1 ? (
-          <small className="notification-group-count">
-            {notification.groupCount} updates
-          </small>
+        <span className="notification-card-meta">
+          {notification.groupCount > 1 ? (
+            <small className="notification-group-count">
+              {notification.groupCount} updates
+            </small>
+          ) : null}
+          <time dateTime={notification.createdAt} title={new Date(notification.createdAt).toLocaleString()}>
+            {displayNotificationTime(notification.createdAt)}
+          </time>
+        </span>
+        {notification.actionLabel ? (
+          <span className="notification-primary-action">
+            {notification.actionLabel}
+            <ChevronRight size={13} />
+          </span>
+        ) : !notification.readAt ? (
+          <span className="notification-primary-action">Mark read</span>
         ) : null}
-        <time dateTime={notification.createdAt} title={new Date(notification.createdAt).toLocaleString()}>
-          {displayNotificationTime(notification.createdAt)}
-        </time>
       </span>
     </button>
   );
@@ -331,6 +357,7 @@ export function NotificationsControl({
           openRef.current = nextOpen;
           setOpen(nextOpen);
           if (nextOpen) void load(false);
+          else setExpanded(false);
         }}
       >
         <Bell size={18} />
@@ -339,9 +366,24 @@ export function NotificationsControl({
           : null}
       </button>
       {open ? (
-        <section className="notifications-panel" aria-label="Notifications">
+        <section
+          className={`notifications-panel ${expanded ? "expanded" : "compact"}`}
+          aria-label={expanded ? "All notifications" : "Notifications"}
+        >
           <header>
-            <span><Bell size={17} /><strong>Notifications</strong></span>
+            <span>
+              {expanded ? (
+                <button
+                  type="button"
+                  title="Back to compact notifications"
+                  aria-label="Back to compact notifications"
+                  onClick={() => setExpanded(false)}
+                >
+                  <ChevronLeft size={16} />
+                </button>
+              ) : <Bell size={17} />}
+              <strong>{expanded ? "All notifications" : "Notifications"}</strong>
+            </span>
             <span>
               {state.unreadCount ? (
                 <button
@@ -361,6 +403,7 @@ export function NotificationsControl({
                 onClick={() => {
                   openRef.current = false;
                   setOpen(false);
+                  setExpanded(false);
                 }}
               >
                 <X size={16} />
@@ -380,7 +423,7 @@ export function NotificationsControl({
             ) : null}
             {recent.length ? (
               <>
-                <h3 className="notifications-section-label">Recent</h3>
+                <h3 className="notifications-section-label">Recent activity</h3>
                 {recent.map(notificationButton)}
               </>
             ) : null}
@@ -396,7 +439,7 @@ export function NotificationsControl({
                 <span>Reconnect notifications</span>
               </button>
             ) : null}
-            {nextCursor ? (
+            {expanded && nextCursor ? (
               <button
                 className="notifications-more"
                 type="button"
@@ -404,6 +447,16 @@ export function NotificationsControl({
                 onClick={() => void load(true)}
               >
                 {loadingMore ? "Loading…" : "Load older notifications"}
+              </button>
+            ) : null}
+            {!expanded && (hiddenCount > 0 || nextCursor) ? (
+              <button
+                className="notifications-more"
+                type="button"
+                onClick={() => setExpanded(true)}
+              >
+                View all notifications
+                {hiddenCount > 0 ? ` · ${hiddenCount}${nextCursor ? "+" : ""} more` : ""}
               </button>
             ) : null}
           </div>

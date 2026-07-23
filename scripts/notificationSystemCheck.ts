@@ -4,14 +4,21 @@ import { buildApp } from "@/apps/api/src/server";
 import {
   markNotificationInputSchema,
   notificationListQuerySchema,
+  notificationSchema,
   type NotificationContract
 } from "@/packages/contracts/src";
 import {
   applyNotificationLiveEvent,
+  compactNotificationLimit,
   compactNotificationCount,
   latestNotificationEventKey,
-  mergeNotificationPage
+  mergeNotificationPage,
+  partitionNotificationInbox
 } from "@/features/notifications/notificationState";
+import {
+  notificationActionLabel,
+  notificationPriority
+} from "@/apps/api/src/services/notificationAggregation";
 
 const notification = (
   id: string,
@@ -24,6 +31,8 @@ const notification = (
   groupKey,
   groupCount,
   actorHandles: ["@researcher"],
+  priority: "activity",
+  actionLabel: "View comments",
   kind: "post_comment",
   title: "A comment arrived",
   body: "A durable notification",
@@ -37,6 +46,55 @@ const main = async () => {
   assert.equal(compactNotificationCount(1), "1");
   assert.equal(compactNotificationCount(99), "99");
   assert.equal(compactNotificationCount(100), "99+");
+  assert.equal(notificationPriority("community_join_request"), "action");
+  assert.equal(notificationPriority("workspace_access_granted"), "important");
+  assert.equal(notificationPriority("post_signal"), "activity");
+  assert.equal(notificationActionLabel("community_join_request", "/communities/community-1"), "Review requests");
+  assert.equal(notificationActionLabel("post_signal", "/posts/post-1?analytics=likes"), "View likes");
+  assert.equal(notificationActionLabel("unknown", null), null);
+  const notificationKindMatrix = [
+    ["comment_reply", "activity", "View reply"],
+    ["comment_reshare", "activity", "View reshares"],
+    ["comment_signal", "activity", "View likes"],
+    ["community_join_request", "action", "Review requests"],
+    ["community_member_removed", "important", "Open community"],
+    ["community_request_approved", "important", "Open community"],
+    ["community_request_declined", "important", "Open community"],
+    ["community_role_updated", "important", "Open community"],
+    ["group_added", "important", "Open messages"],
+    ["group_removed", "important", "Open messages"],
+    ["group_role_updated", "important", "Open messages"],
+    ["opportunity_application_closed", "important", "View opportunity"],
+    ["opportunity_application_received", "action", "Review applications"],
+    ["opportunity_application_shortlisted", "important", "View opportunity"],
+    ["opportunity_application_status", "important", "View opportunity"],
+    ["post_comment", "activity", "View comments"],
+    ["post_reshare", "activity", "View reshares"],
+    ["post_signal", "activity", "View likes"],
+    ["profile_followed", "activity", "View profile"],
+    ["workspace_access_granted", "important", "Open workspace"],
+    ["workspace_access_revoked", "important", "Open workspace"],
+    ["workspace_access_updated", "important", "Open workspace"],
+    ["workspace_comment", "activity", "Open comment"],
+    ["workspace_comment_reply", "activity", "View reply"],
+    ["workspace_comment_signal", "activity", "View likes"]
+  ] as const;
+  for (const [kind, expectedPriority, expectedAction] of notificationKindMatrix) {
+    assert.equal(notificationPriority(kind), expectedPriority, `${kind} priority`);
+    assert.equal(notificationActionLabel(kind, "/destination"), expectedAction, `${kind} action`);
+  }
+  const legacyNotification = notificationSchema.parse({
+    id: "00000000-0000-4000-8000-000000000000",
+    kind: "legacy_kind",
+    title: "An older API response",
+    body: "",
+    href: null,
+    readAt: null,
+    metadata: {},
+    createdAt: "2026-07-20T10:00:00.000Z"
+  });
+  assert.equal(legacyNotification.priority, "activity");
+  assert.equal(legacyNotification.actionLabel, null);
 
   const older = notification("00000000-0000-4000-8000-000000000001", "2026-07-20T10:00:00.000Z");
   const newer = notification("00000000-0000-4000-8000-000000000002", "2026-07-21T10:00:00.000Z");
@@ -70,6 +128,76 @@ const main = async () => {
   assert.equal(grouped.notifications.length, 2);
   assert.equal(grouped.notifications.find((entry) => entry.groupKey === older.groupKey)?.groupCount, 2);
   assert.equal(grouped.unreadCount, 2);
+
+  const previouslyRead = {
+    ...notification(
+      "00000000-0000-4000-8000-000000000004",
+      "2026-07-20T11:00:00.000Z",
+      "2026-07-20T11:05:00.000Z",
+      "post_signal:post:reactivated"
+    ),
+    kind: "post_signal",
+    actionLabel: "View likes"
+  };
+  const reactivated = applyNotificationLiveEvent(
+    { notifications: [previouslyRead], unreadCount: 0 },
+    {
+      id: "event-reactivated",
+      kind: "notification.created",
+      subjectId: "00000000-0000-4000-8000-000000000005",
+      createdAt: "2026-07-23T10:00:00.000Z",
+      payload: {
+        notification: {
+          ...previouslyRead,
+          id: "00000000-0000-4000-8000-000000000005",
+          groupCount: 1,
+          readAt: null,
+          createdAt: "2026-07-23T10:00:00.000Z"
+        }
+      }
+    }
+  );
+  assert.equal(reactivated.unreadCount, 1);
+  assert.equal(reactivated.notifications[0]?.groupCount, 1);
+
+  const massActivity = Array.from({ length: 500 }, (_, index) => notification(
+    `00000000-0000-4000-8000-${String(index + 10).padStart(12, "0")}`,
+    new Date(Date.UTC(2026, 6, 23, 12, 0, 0) - index * 1_000).toISOString()
+  ));
+  const olderAttention = {
+    ...notification(
+      "00000000-0000-4000-8000-999999999999",
+      "2026-07-20T10:00:00.000Z"
+    ),
+    priority: "action" as const,
+    actionLabel: "Review requests"
+  };
+  const compact = partitionNotificationInbox([...massActivity, olderAttention]);
+  assert.equal(compact.needsAttention[0]?.id, olderAttention.id);
+  assert.equal(compact.needsAttention.length + compact.recent.length, compactNotificationLimit);
+  assert.equal(compact.hiddenCount, massActivity.length + 1 - compactNotificationLimit);
+  const expanded = partitionNotificationInbox([...massActivity, olderAttention], true);
+  assert.equal(expanded.needsAttention.length, 1);
+  assert.equal(expanded.recent.length, massActivity.length);
+  assert.equal(expanded.hiddenCount, 0);
+  const attentionFlood = Array.from({ length: compactNotificationLimit + 20 }, (_, index) => ({
+    ...notification(
+      `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      new Date(Date.UTC(2026, 6, 23, 12, 0, 0) - index * 1_000).toISOString()
+    ),
+    priority: "important" as const,
+    actionLabel: "Open workspace"
+  }));
+  const compactAttentionFlood = partitionNotificationInbox([...massActivity, ...attentionFlood]);
+  assert.equal(compactAttentionFlood.needsAttention.length, compactNotificationLimit);
+  assert.equal(compactAttentionFlood.recent.length, 0);
+  assert.equal(
+    new Set([
+      ...compactAttentionFlood.needsAttention,
+      ...compactAttentionFlood.recent
+    ].map((entry) => entry.groupKey)).size,
+    compactNotificationLimit
+  );
 
   const read = applyNotificationLiveEvent(created, {
     id: "event-read",
@@ -113,12 +241,37 @@ const main = async () => {
   const comments = readFileSync("apps/api/src/repository/comments.ts", "utf8");
   const profiles = readFileSync("apps/api/src/repository/profiles.ts", "utf8");
   const communities = readFileSync("apps/api/src/repository/communities.ts", "utf8");
+  const communityRequests = readFileSync("apps/api/src/repository/communityRequests.ts", "utf8");
   const opportunityApplications = readFileSync("apps/api/src/repository/opportunityApplications.ts", "utf8");
+  const notificationProducerSources = [
+    workspaceAccess,
+    conversations,
+    comments,
+    profiles,
+    communities,
+    communityRequests,
+    opportunityApplications,
+    readFileSync("apps/api/src/repository/posts.ts", "utf8"),
+    readFileSync("apps/api/src/repository/workspaceComments.ts", "utf8")
+  ].join("\n");
+  const knownKinds = new Set(notificationKindMatrix.map(([kind]) => kind));
+  const staticNotificationKinds = [...notificationProducerSources.matchAll(/kind:\s*"([a-z]+(?:_[a-z]+)+)"/g)]
+    .map((match) => match[1]!)
+    .filter((kind, index, values) => values.indexOf(kind) === index);
+  assert.deepEqual(
+    staticNotificationKinds.filter((kind) => !knownKinds.has(kind as typeof notificationKindMatrix[number][0])),
+    [],
+    "Every statically declared notification kind needs an explicit priority and primary action."
+  );
 
   assert.match(delivery, /ON CONFLICT \(profile_handle, dedupe_key\)[\s\S]*?DO NOTHING/);
   assert.match(delivery, /kind: "notification\.created"/);
   assert.match(delivery, /audienceHandles: \[row\.profileHandle\]/);
   assert.match(repository, /WITH grouped AS/);
+  assert.match(repository, /"attentionRank"/);
+  assert.match(repository, /kind = ANY\(\$2::text\[\]\)/);
+  assert.match(repository, /count\(\*\) FILTER \(WHERE read_at IS NULL\)/);
+  assert.match(repository, /unreadGroupKeys/);
   assert.match(repository, /COALESCE\(aggregation_key, 'notification:' \|\| id::text\)/);
   assert.match(repository, /LEFT JOIN page ON true/);
   assert.match(repository, /AND COALESCE\(aggregation_key, 'notification:' \|\| id::text\) = \$2/);
@@ -132,6 +285,7 @@ const main = async () => {
   assert.match(comments, /kind: "post_comment"/);
   assert.match(profiles, /kind: "profile_followed"/);
   assert.match(communities, /kind: "community_join_request"/);
+  assert.match(communities, /\?requests=pending/);
   assert.match(opportunityApplications, /kind: "opportunity_application_received"/);
 
   assert.match(panel, /requestEpochRef/);
@@ -143,9 +297,14 @@ const main = async () => {
   assert.match(panel, /applyNotificationLiveEvent/);
   assert.match(panel, /data-unread-state=\{loadState\}/);
   assert.match(panel, /keepalive: true/);
+  assert.match(panel, /View all notifications/);
+  assert.match(panel, /notification\.actionLabel/);
+  assert.match(panel, /partitionNotificationInbox/);
   assert.doesNotMatch(panel, /window\.location\.assign/);
   assert.match(shell, /setNotificationEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);
   assert.match(shell, /parseCanonicalRoute\(url\.pathname, url\.search\)/);
+  assert.match(shell, /symposium:pending-community-requests/);
+  assert.match(shell, /symposium:open-community-requests/);
 
   assert.match(migration, /0043_notification_aggregation/);
   assert.match(migration, /notifications_profile_page_idx/);

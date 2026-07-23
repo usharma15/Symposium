@@ -4331,14 +4331,30 @@ function SymposiumExperience({
             onNavigate={(href) => {
               const url = new URL(href, window.location.origin);
               const analyticsView = url.searchParams.get("analytics");
+              const pendingCommunityRequests = url.searchParams.get("requests") === "pending";
               const commentId = url.searchParams.get("comment")?.trim() || undefined;
+              const route = parseCanonicalRoute(url.pathname, url.search);
               const { scrollY: _scrollY, ...target } = snapshotForCanonicalRoute(
-                parseCanonicalRoute(url.pathname, url.search),
+                route,
                 (postId) => itemsRef.current.find((item) => item.id === postId)?.room
               );
               navigateView(target);
-              const postId = parseCanonicalRoute(url.pathname, url.search).kind === "post"
-                ? (parseCanonicalRoute(url.pathname, url.search) as { kind: "post"; postId: string }).postId
+              if (pendingCommunityRequests && route.kind === "community") {
+                const detail = { communityId: route.communityId };
+                try {
+                  window.sessionStorage.setItem(
+                    "symposium:pending-community-requests",
+                    JSON.stringify(detail)
+                  );
+                } catch {
+                  // The immediate event remains sufficient when browser storage is unavailable.
+                }
+                window.setTimeout(() => {
+                  window.dispatchEvent(new CustomEvent("symposium:open-community-requests", { detail }));
+                }, 80);
+              }
+              const postId = route.kind === "post"
+                ? route.postId
                 : null;
               if (
                 postId &&
