@@ -1427,6 +1427,8 @@ export const conversationSummarySchema = z.object({
   participants: z.array(conversationParticipantSchema).max(64),
   lastMessage: messageSchema.nullable(),
   draftBody: z.string().max(8000),
+  draftRevision: z.number().int().positive(),
+  draftClientVersion: z.string().max(160).nullable(),
   draftUpdatedAt: z.string().datetime().nullable(),
   updatedAt: z.string().datetime()
 });
@@ -1460,7 +1462,9 @@ export const sendMessageInputSchema = z.object({
   conversationId: z.string().uuid().optional(),
   recipientHandle: z.string().trim().min(1).max(80).optional(),
   body: z.string().trim().max(8000).default(""),
-  attachmentIds: z.array(z.string().uuid()).max(10).default([])
+  attachmentIds: z.array(z.string().uuid()).max(10).default([]),
+  draftRevision: z.number().int().positive().optional(),
+  draftClientVersion: z.string().min(1).max(160).optional()
 }).superRefine((input, context) => {
   if (input.conversationId && input.recipientHandle) {
     context.addIssue({ code: "custom", message: "Choose either a conversation or a recipient, not both." });
@@ -1470,6 +1474,9 @@ export const sendMessageInputSchema = z.object({
   }
   if (!input.body && !input.attachmentIds.length) {
     context.addIssue({ code: "custom", message: "Write a message or attach a file." });
+  }
+  if ((input.draftRevision === undefined) !== (input.draftClientVersion === undefined)) {
+    context.addIssue({ code: "custom", message: "Draft revision and client version must be sent together." });
   }
 });
 
@@ -1500,7 +1507,9 @@ export const updateConversationPreferencesInputSchema = z.object({
 });
 
 export const saveConversationDraftInputSchema = z.object({
-  body: z.string().max(8000)
+  body: z.string().max(8000),
+  expectedRevision: z.number().int().positive(),
+  clientVersion: z.string().min(1).max(160)
 });
 
 export const markConversationReadInputSchema = z.object({

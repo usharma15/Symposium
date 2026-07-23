@@ -825,8 +825,16 @@
     ". status .";
 }
 
-.message-draft-sync {
+.message-draft-status {
   grid-area: status;
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+}
+
+.message-draft-sync {
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -838,6 +846,24 @@
 
 .message-draft-sync.local {
   color: #8a5c22;
+}
+
+.message-draft-recovery {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #8a5c22;
+  font-size: 0.59rem;
+}
+
+.message-draft-recovery button {
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 760;
 }
 
 .message-danger-actions > small {

@@ -662,6 +662,8 @@ export const conversationParticipants = pgTable(
     muted: boolean("muted").default(false).notNull(),
     pinned: boolean("pinned").default(false).notNull(),
     draftBody: text("draft_body").default("").notNull(),
+    draftRevision: bigint("draft_revision", { mode: "number" }).default(1).notNull(),
+    draftClientVersion: text("draft_client_version"),
     draftUpdatedAt: timestamp("draft_updated_at", { withTimezone: true }),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     removedAt: timestamp("removed_at", { withTimezone: true }),
@@ -674,7 +676,8 @@ export const conversationParticipants = pgTable(
     check("conversation_participants_role_check", sql`${table.role} IN ('owner', 'admin', 'member')`),
     check("conversation_participants_status_check", sql`${table.status} IN ('invited', 'active', 'removed')`),
     check("conversation_participants_read_sequence_check", sql`${table.lastReadSequence} >= 0`),
-    check("conversation_participants_cleared_sequence_check", sql`${table.clearedThroughSequence} >= 0`)
+    check("conversation_participants_cleared_sequence_check", sql`${table.clearedThroughSequence} >= 0`),
+    check("conversation_participants_draft_revision_check", sql`${table.draftRevision} >= 1`)
   ]
 );
 

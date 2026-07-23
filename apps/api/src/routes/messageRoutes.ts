@@ -89,7 +89,7 @@ export const registerMessageRoutes = (app: FastifyInstance) => {
   app.post("/v1/messages", async (request, reply) => {
     try {
       const actor = await withWriteActor(request, { shared: true, scope: "message-send", limit: 60 });
-      return reply.send({ message: await sendMessage(request.body, actor, mutationContextFromRequest(request, "message.send", request.body)) });
+      return reply.send(await sendMessage(request.body, actor, mutationContextFromRequest(request, "message.send", request.body)));
     } catch (error) {
       return sendError(app, reply, error);
     }
@@ -154,7 +154,11 @@ export const registerMessageRoutes = (app: FastifyInstance) => {
 
   app.patch<{ Params: RouteParams }>("/v1/conversations/:id/draft", async (request, reply) => {
     try {
-      return reply.send(await saveConversationDraft(uuidParam(request.params.id), request.body, await withWriteActor(request, { scope: "message-draft", limit: 90 })));
+      const result = await saveConversationDraft(uuidParam(request.params.id), request.body, await withWriteActor(request, { scope: "message-draft", limit: 90 }));
+      if (result.conflict) {
+        return reply.status(409).send({ error: "This draft changed on another device.", draft: result.draft, requestId: request.id });
+      }
+      return reply.send(result);
     } catch (error) {
       return sendError(app, reply, error);
     }

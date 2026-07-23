@@ -3,7 +3,12 @@ import { readFileSync } from "node:fs";
 import { buildApp } from "@/apps/api/src/server";
 import { compactAttachmentFileName } from "@/lib/attachmentRules";
 import type { ResearchProfile } from "@/lib/mockData";
-import { emptyMessageDraftState, reduceMessageDraft } from "@/features/messages/messageDraftState";
+import {
+  emptyMessageDraftState,
+  parseStoredMessageDraft,
+  reduceMessageDraft,
+  storedMessageDraftFromState
+} from "@/features/messages/messageDraftState";
 import {
   attachmentMatchesMessageMediaKind,
   messageBodyLinks,
@@ -62,6 +67,9 @@ const main = async () => {
   assert.equal(conversationListQuerySchema.safeParse({ limit: 51 }).success, false);
   assert.equal(notificationListQuerySchema.safeParse({ limit: 51 }).success, false);
   assert.equal(saveConversationDraftInputSchema.safeParse({ body: "x".repeat(8001) }).success, false);
+  assert.equal(saveConversationDraftInputSchema.safeParse({ body: "draft", expectedRevision: 1, clientVersion: "device-v1" }).success, true);
+  assert.equal(saveConversationDraftInputSchema.safeParse({ body: "draft" }).success, false);
+  assert.equal(sendMessageInputSchema.safeParse({ conversationId: validConversationId, body: "message", draftRevision: 1 }).success, false);
   assert.equal(markConversationReadInputSchema.safeParse({ sequence: -1 }).success, false);
   assert.equal(updateConversationParticipantInputSchema.safeParse({ role: "owner" }).success, true);
   assert.equal(editMessageInputSchema.safeParse({ body: "revised", expectedRevision: 1 }).success, true);
@@ -86,19 +94,25 @@ const main = async () => {
   const selectedDraft = reduceMessageDraft(emptyMessageDraftState, {
     type: "select",
     conversationId: validConversationId,
-    localBody: null,
+    localDraft: null,
     serverBody: "",
+    serverRevision: 1,
+    serverClientVersion: null,
     serverUpdatedAt: "2026-07-18T20:00:00.000Z"
   });
   const locallyEditedDraft = reduceMessageDraft(selectedDraft, {
     type: "edit",
     conversationId: validConversationId,
-    body: "normal typing survives"
+    body: "normal typing survives",
+    clientVersion: "local-v1",
+    updatedAt: "2026-07-18T20:00:01.000Z"
   });
   const staleProjectionDuringTyping = reduceMessageDraft(locallyEditedDraft, {
     type: "server",
     conversationId: validConversationId,
     body: "",
+    revision: 1,
+    clientVersion: null,
     preserveLocal: true,
     updatedAt: "2026-07-18T20:00:00.000Z"
   });
@@ -108,12 +122,16 @@ const main = async () => {
     type: "saved",
     conversationId: validConversationId,
     body: "normal typing survives",
+    revision: 2,
+    clientVersion: "local-v1",
     updatedAt: "2026-07-18T20:00:02.000Z"
   });
   const lateOlderResponse = reduceMessageDraft(savedDraft, {
     type: "server",
     conversationId: validConversationId,
     body: "",
+    revision: 1,
+    clientVersion: null,
     preserveLocal: false,
     updatedAt: "2026-07-18T20:00:01.000Z"
   });
@@ -122,6 +140,8 @@ const main = async () => {
     type: "server",
     conversationId: validConversationId,
     body: "newer cross-device draft",
+    revision: 3,
+    clientVersion: "remote-v3",
     preserveLocal: false,
     updatedAt: "2026-07-18T20:00:03.000Z"
   });
@@ -134,9 +154,89 @@ const main = async () => {
   const nextMessageWhileSending = reduceMessageDraft(clearedForSend, {
     type: "edit",
     conversationId: validConversationId,
-    body: "typed while the prior message sends"
+    body: "typed while the prior message sends",
+    clientVersion: "local-v4",
+    updatedAt: "2026-07-18T20:00:04.000Z"
   });
   assert.equal(nextMessageWhileSending.body, "typed while the prior message sends");
+
+  const staleDeviceDraft = reduceMessageDraft(emptyMessageDraftState, {
+    type: "select",
+    conversationId: validConversationId,
+    localDraft: {
+      version: 1,
+      body: "older device copy",
+      clientVersion: "older-device",
+      baseRevision: 2,
+      updatedAt: "2026-07-18T20:00:02.000Z",
+      recovery: null
+    },
+    serverBody: "newer cloud copy",
+    serverRevision: 3,
+    serverClientVersion: "newer-device",
+    serverUpdatedAt: "2026-07-18T20:00:03.000Z"
+  });
+  assert.equal(staleDeviceDraft.body, "newer cloud copy");
+  assert.equal(staleDeviceDraft.dirty, false);
+  assert.equal(staleDeviceDraft.recovery?.body, "older device copy");
+  const restoredDeviceDraft = reduceMessageDraft(staleDeviceDraft, {
+    type: "restore",
+    conversationId: validConversationId,
+    clientVersion: "restored-device",
+    updatedAt: "2026-07-18T20:00:04.000Z"
+  });
+  assert.equal(restoredDeviceDraft.body, "older device copy");
+  assert.equal(restoredDeviceDraft.dirty, true);
+  const storedRestoredDraft = storedMessageDraftFromState(restoredDeviceDraft);
+  assert.equal(parseStoredMessageDraft(JSON.stringify(storedRestoredDraft))?.baseRevision, 3);
+  const legacyDeviceDraft = reduceMessageDraft(emptyMessageDraftState, {
+    type: "select",
+    conversationId: validConversationId,
+    localDraft: parseStoredMessageDraft("legacy browser copy"),
+    serverBody: "current cloud copy",
+    serverRevision: 1,
+    serverClientVersion: null,
+    serverUpdatedAt: "2026-07-18T20:00:03.000Z"
+  });
+  assert.equal(legacyDeviceDraft.body, "current cloud copy");
+  assert.equal(legacyDeviceDraft.recovery?.body, "legacy browser copy");
+
+  const locallyTypedNextMessage = reduceMessageDraft(clearedForSend, {
+    type: "edit",
+    conversationId: validConversationId,
+    body: "next message",
+    clientVersion: "next-v4",
+    updatedAt: "2026-07-18T20:00:04.000Z"
+  });
+  const sendClearedOlderGeneration = reduceMessageDraft(locallyTypedNextMessage, {
+    type: "server",
+    conversationId: validConversationId,
+    body: "",
+    revision: 4,
+    clientVersion: null,
+    preserveLocal: true,
+    updatedAt: "2026-07-18T20:00:05.000Z"
+  });
+  assert.equal(sendClearedOlderGeneration.body, "next message");
+  assert.equal(sendClearedOlderGeneration.dirty, true);
+  const nextDraftSaved = reduceMessageDraft(sendClearedOlderGeneration, {
+    type: "saved",
+    conversationId: validConversationId,
+    body: "next message",
+    revision: 5,
+    clientVersion: "next-v4",
+    updatedAt: "2026-07-18T20:00:06.000Z"
+  });
+  const lateSentDraftSave = reduceMessageDraft(nextDraftSaved, {
+    type: "saved",
+    conversationId: validConversationId,
+    body: "newer cross-device draft",
+    revision: 4,
+    clientVersion: "remote-v3",
+    updatedAt: "2026-07-18T20:00:05.000Z"
+  });
+  assert.equal(lateSentDraftSave.body, "next message");
+  assert.equal(lateSentDraftSave.serverRevision, 5);
 
   const firstLiveMessage = {
     id: "00000000-0000-4000-8000-000000000011",
@@ -208,6 +308,8 @@ const main = async () => {
     participants: [...participants],
     lastMessage: firstLiveMessage,
     draftBody: "",
+    draftRevision: 1,
+    draftClientVersion: null,
     draftUpdatedAt: null,
     updatedAt: firstLiveMessage.createdAt
   };
@@ -252,9 +354,10 @@ const main = async () => {
   assert.match(repository, /cleared_through_sequence = CASE WHEN hidden_at IS NOT NULL/);
   assert.match(repository, /status = 'removed'[\s\S]*removed_through_sequence/);
   assert.match(repository, /Date\.now\(\) - new Date\(message\.createdAt\)\.getTime\(\) > messageEditWindowMs/);
-  assert.match(repository, /draft_body IS DISTINCT FROM/);
+  assert.match(repository, /draft_revision = draft_revision \+ 1/);
+  assert.match(repository, /draft_client_version/);
   assert.match(repository, /last_read_sequence < \$3/);
-  assert.match(repository, /payload: \{ conversationId, messageId, sequence, message: value \}/);
+  assert.match(repository, /payload: \{ conversationId, messageId, sequence, message \}/);
   assert.match(repository, /message: canonicalMessage/);
   assert.match(repository, /attachment\.owner_id IS NULL AND attachment\.uploader_handle = \$2/);
   assert.doesNotMatch(repository, /createNotifications\(client, visibleRecipients/);
@@ -283,17 +386,21 @@ const main = async () => {
   assert.match(migration, /0035_message_notification_boundary/);
   assert.match(migration, /DELETE FROM notifications WHERE kind = 'message'/);
   assert.match(migration, /0036_immediate_group_membership/);
+  assert.match(migration, /0041_message_draft_revisions/);
+  assert.match(migration, /draft_revision BIGINT NOT NULL DEFAULT 1/);
   assert.match(migration, /WHERE status = 'invited'/);
   assert.match(migration, /DELETE FROM notifications WHERE kind = 'group_invite'/);
   assert.match(client, /Math\.min\(textarea\.scrollHeight, 288\)/);
   assert.match(client, /symposium:message-draft/);
-  assert.match(client, /document\.activeElement === textareaRef\.current/);
+  assert.match(client, /preserveLocal: draftStateRef\.current\.dirty/);
   assert.match(client, /draftSaveTimerRef/);
   assert.match(client, /conversationLoadEpochRef/);
-  assert.match(client, /bodyTypedWhileSending/);
+  assert.match(client, /failedSendDraftsRef/);
+  assert.match(client, /sendRequestQueueRef/);
   assert.match(client, /messageReadViewportActive/);
   assert.match(client, /cloud sync pending/);
-  assert.match(client, /draftState\.body \|\| draftState\.dirty/);
+  assert.match(client, /storedMessageDraftFromState/);
+  assert.match(client, /Restore this device’s draft/);
   assert.match(client, /liveEvent\.kind === "conversation\.draft\.updated" \|\| liveEvent\.kind === "conversation\.read"/);
   assert.match(client, /Transfer ownership/);
   assert.match(client, /Leave group/);

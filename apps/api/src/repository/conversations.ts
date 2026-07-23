@@ -60,7 +60,21 @@ type MembershipRow = {
   muted: boolean;
   pinned: boolean;
   draftBody: string;
+  draftRevision: number | string;
+  draftClientVersion: string | null;
   draftUpdatedAt: Date | string | null;
+};
+
+export type ConversationDraftSnapshot = {
+  body: string;
+  revision: number;
+  clientVersion: string | null;
+  updatedAt: string | null;
+};
+
+type SendMessageResult = {
+  message: MessageContract;
+  draft: ConversationDraftSnapshot;
 };
 
 type MessageRow = {
@@ -119,6 +133,16 @@ const decodeMessageCursor = (cursor?: string | null): MessageCursor | null => {
 
 const numberValue = (value: number | string | null | undefined) => Number(value ?? 0);
 
+const conversationDraftSnapshot = (row: Pick<MembershipRow, "draftBody" | "draftRevision" | "draftClientVersion" | "draftUpdatedAt">): ConversationDraftSnapshot => ({
+  body: row.draftBody ?? "",
+  revision: Math.max(1, numberValue(row.draftRevision)),
+  clientVersion: row.draftClientVersion ?? null,
+  updatedAt: row.draftUpdatedAt ? new Date(row.draftUpdatedAt).toISOString() : null
+});
+
+const isSendMessageResult = (value: SendMessageResult | MessageContract): value is SendMessageResult =>
+  Boolean(value && typeof value === "object" && "message" in value && "draft" in value);
+
 const attachmentForMessage = (row: AttachmentRow): InquiryAttachmentContract => ({
   id: row.id,
   fileName: row.fileName,
@@ -175,7 +199,8 @@ const membershipSelect = `
     me.role, me.status, me.last_read_sequence AS "lastReadSequence",
     me.cleared_through_sequence AS "clearedThroughSequence",
     me.removed_through_sequence AS "removedThroughSequence", me.hidden_at AS "hiddenAt",
-    me.muted, me.pinned, me.draft_body AS "draftBody", me.draft_updated_at AS "draftUpdatedAt"
+    me.muted, me.pinned, me.draft_body AS "draftBody", me.draft_revision AS "draftRevision",
+    me.draft_client_version AS "draftClientVersion", me.draft_updated_at AS "draftUpdatedAt"
   FROM conversations c
   JOIN conversation_participants me ON me.conversation_id = c.id`;
 
@@ -290,6 +315,8 @@ const summariesForMemberships = async (
       participants: conversationParticipants,
       lastMessage: last ? messageContract(last, lastAttachments.get(last.id) ?? []) : null,
       draftBody: membership.draftBody ?? "",
+      draftRevision: Math.max(1, numberValue(membership.draftRevision)),
+      draftClientVersion: membership.draftClientVersion ?? null,
       draftUpdatedAt: membership.draftUpdatedAt ? new Date(membership.draftUpdatedAt).toISOString() : null,
       updatedAt: new Date(membership.updatedAt).toISOString()
     };
@@ -543,7 +570,10 @@ const directConversation = async (client: PoolClient, sender: string, recipient:
        SET hidden_at = NULL, status = 'active', removed_at = NULL, removed_through_sequence = NULL,
            cleared_through_sequence = CASE WHEN hidden_at IS NOT NULL THEN $3 ELSE cleared_through_sequence END,
            last_read_sequence = CASE WHEN hidden_at IS NOT NULL THEN $3 ELSE last_read_sequence END,
-           draft_body = CASE WHEN hidden_at IS NOT NULL THEN '' ELSE draft_body END
+           draft_body = CASE WHEN hidden_at IS NOT NULL THEN '' ELSE draft_body END,
+           draft_revision = CASE WHEN hidden_at IS NOT NULL THEN draft_revision + 1 ELSE draft_revision END,
+           draft_client_version = CASE WHEN hidden_at IS NOT NULL THEN NULL ELSE draft_client_version END,
+           draft_updated_at = CASE WHEN hidden_at IS NOT NULL THEN now() ELSE draft_updated_at END
        WHERE conversation_id = $1 AND profile_handle = $2`,
       [existing.rows[0].conversationId, sender, numberValue(existing.rows[0].nextSequence)]
     );
@@ -566,18 +596,26 @@ export const sendMessage = async (rawInput: unknown, actor: Actor, mutation?: Mu
   const sender = actorHandle(actor);
   if (!hasDatabase()) {
     const now = new Date().toISOString();
-    return messageContract({
+    const message = messageContract({
       id: randomUUID(), conversationId: input.conversationId ?? randomUUID(), sequence: 1, revision: 1,
       senderHandle: sender, body: input.body, editedAt: null, deletedAt: null, createdAt: now
     });
+    return {
+      message,
+      draft: { body: "", revision: (input.draftRevision ?? 1) + 1, clientVersion: null, updatedAt: now }
+    } satisfies SendMessageResult;
   }
   await ensureLiveData();
   const requestedRecipient = input.recipientHandle ? await ensureProfileHandle(input.recipientHandle) : undefined;
   if (requestedRecipient === sender) throw new TRPCError({ code: "BAD_REQUEST", message: "Direct messages require another recipient." });
 
   return runAtomic(async (client) => {
-    const claim = await claimMutation<MessageContract>(client, sender, mutation);
-    if (claim.replayed) return { value: claim.response };
+    const claim = await claimMutation<SendMessageResult | MessageContract>(client, sender, mutation);
+    if (claim.replayed) {
+      if (isSendMessageResult(claim.response)) return { value: claim.response };
+      const replayMembership = await getMembership(client, claim.response.conversationId, sender, { allowHidden: true, lock: true });
+      return { value: { message: claim.response, draft: conversationDraftSnapshot(replayMembership) } };
+    }
     let conversationId = input.conversationId;
     if (!conversationId) {
       const recipient = requestedRecipient!;
@@ -621,13 +659,38 @@ export const sendMessage = async (rawInput: unknown, actor: Actor, mutation?: Mu
       ownerType: "message",
       uploaderHandle: sender
     });
-    await client.query(
+    const senderState = await client.query<{
+      draftBody: string;
+      draftRevision: number | string;
+      draftClientVersion: string | null;
+      draftUpdatedAt: Date | string | null;
+    }>(
       `UPDATE conversation_participants
-       SET draft_body = '', draft_updated_at = now(), last_read_sequence = GREATEST(last_read_sequence, $3), last_read_at = now()
-       WHERE conversation_id = $1 AND profile_handle = $2`,
-      [conversationId, sender, sequence]
+       SET draft_body = CASE
+             WHEN $4::bigint IS NULL OR draft_revision = $4 OR ($5::text IS NOT NULL AND draft_client_version = $5) THEN ''
+             ELSE draft_body
+           END,
+           draft_revision = CASE
+             WHEN $4::bigint IS NULL OR draft_revision = $4 OR ($5::text IS NOT NULL AND draft_client_version = $5) THEN draft_revision + 1
+             ELSE draft_revision
+           END,
+           draft_client_version = CASE
+             WHEN $4::bigint IS NULL OR draft_revision = $4 OR ($5::text IS NOT NULL AND draft_client_version = $5) THEN NULL
+             ELSE draft_client_version
+           END,
+           draft_updated_at = CASE
+             WHEN $4::bigint IS NULL OR draft_revision = $4 OR ($5::text IS NOT NULL AND draft_client_version = $5) THEN now()
+             ELSE draft_updated_at
+           END,
+           last_read_sequence = GREATEST(last_read_sequence, $3), last_read_at = now()
+       WHERE conversation_id = $1 AND profile_handle = $2
+       RETURNING draft_body AS "draftBody", draft_revision AS "draftRevision",
+         draft_client_version AS "draftClientVersion", draft_updated_at AS "draftUpdatedAt"`,
+      [conversationId, sender, sequence, input.draftRevision ?? null, input.draftClientVersion ?? null]
     );
-    const value = messageContract(inserted.rows[0]!, claimedAttachments.attachments.map(attachmentForMessage));
+    const message = messageContract(inserted.rows[0]!, claimedAttachments.attachments.map(attachmentForMessage));
+    const senderDraft = conversationDraftSnapshot(senderState.rows[0]!);
+    const value = { message, draft: senderDraft } satisfies SendMessageResult;
     await stageAuditLog(client, {
       actorHandle: sender,
       action: "message.send",
@@ -648,7 +711,7 @@ export const sendMessage = async (rawInput: unknown, actor: Actor, mutation?: Mu
       subjectId: conversationId,
       visibility: "private",
       audienceHandles,
-      payload: { conversationId, messageId, sequence, message: value }
+      payload: { conversationId, messageId, sequence, message }
     });
     return { value, events: [event] };
   });
@@ -922,7 +985,8 @@ export const removeConversationParticipant = async (
     const through = numberValue(membership.nextMessageSequence);
     await client.query(
       `UPDATE conversation_participants
-       SET status = 'removed', removed_at = now(), removed_through_sequence = $3, muted = true, pinned = false, draft_body = '',
+       SET status = 'removed', removed_at = now(), removed_through_sequence = $3, muted = true, pinned = false,
+           draft_body = '', draft_revision = draft_revision + 1, draft_client_version = NULL, draft_updated_at = now(),
            hidden_at = CASE WHEN $4 = 'invited' THEN now() ELSE NULL END
        WHERE conversation_id = $1 AND profile_handle = $2`,
       [conversationId, target, through, existing.status]
@@ -991,23 +1055,44 @@ export const updateConversationPreferences = async (conversationId: string, rawI
 export const saveConversationDraft = async (conversationId: string, rawInput: unknown, actor: Actor) => {
   const input = saveConversationDraftInputSchema.parse(rawInput);
   const handle = actorHandle(actor);
-  if (!hasDatabase()) return { conversationId, body: input.body, updatedAt: new Date().toISOString() };
+  if (!hasDatabase()) return {
+    conflict: false,
+    draft: {
+      body: input.body,
+      revision: input.expectedRevision + 1,
+      clientVersion: input.clientVersion,
+      updatedAt: new Date().toISOString()
+    } satisfies ConversationDraftSnapshot
+  };
   await ensureLiveData();
   return runAtomic(async (client) => {
     const membership = await getMembership(client, conversationId, handle, { lock: true });
     if (membership.status !== "active") throw new TRPCError({ code: "FORBIDDEN", message: "Join this conversation before saving a draft." });
-    const updated = await client.query<{ updatedAt: Date | string }>(
-      `UPDATE conversation_participants SET draft_body = $3, draft_updated_at = now()
-       WHERE conversation_id = $1 AND profile_handle = $2 AND draft_body IS DISTINCT FROM $3
-       RETURNING draft_updated_at AS "updatedAt"`,
-      [conversationId, handle, input.body]
+    if (numberValue(membership.draftRevision) !== input.expectedRevision) {
+      return { value: { conflict: true, draft: conversationDraftSnapshot(membership) } };
+    }
+    if (membership.draftBody === input.body && membership.draftClientVersion === input.clientVersion) {
+      return { value: { conflict: false, draft: conversationDraftSnapshot(membership) } };
+    }
+    const updated = await client.query<{
+      draftBody: string;
+      draftRevision: number | string;
+      draftClientVersion: string | null;
+      draftUpdatedAt: Date | string | null;
+    }>(
+      `UPDATE conversation_participants
+       SET draft_body = $3, draft_revision = draft_revision + 1,
+           draft_client_version = $4, draft_updated_at = now()
+       WHERE conversation_id = $1 AND profile_handle = $2 AND draft_revision = $5
+       RETURNING draft_body AS "draftBody", draft_revision AS "draftRevision",
+         draft_client_version AS "draftClientVersion", draft_updated_at AS "draftUpdatedAt"`,
+      [conversationId, handle, input.body, input.clientVersion, input.expectedRevision]
     );
-    const value = {
-      conversationId,
-      body: input.body,
-      updatedAt: new Date(updated.rows[0]?.updatedAt ?? membership.draftUpdatedAt ?? new Date()).toISOString()
-    };
-    if (!updated.rowCount) return { value };
+    if (!updated.rows[0]) {
+      const current = await getMembership(client, conversationId, handle, { lock: true });
+      return { value: { conflict: true, draft: conversationDraftSnapshot(current) } };
+    }
+    const value = { conflict: false, draft: conversationDraftSnapshot(updated.rows[0]) };
     const event = await stageEvent(client, {
       kind: "conversation.draft.updated", actorHandle: handle, subjectType: "conversation", subjectId: conversationId,
       visibility: "private", audienceHandles: [handle], payload: { conversationId }
@@ -1056,7 +1141,8 @@ export const clearConversation = async (conversationId: string, actor: Actor) =>
     await client.query(
       `UPDATE conversation_participants
        SET cleared_through_sequence = $3, last_read_sequence = GREATEST(last_read_sequence, $3),
-           draft_body = '', draft_updated_at = now()
+           draft_body = '', draft_revision = draft_revision + 1,
+           draft_client_version = NULL, draft_updated_at = now()
        WHERE conversation_id = $1 AND profile_handle = $2`,
       [conversationId, handle, through]
     );
@@ -1090,7 +1176,8 @@ const leaveGroupMembership = async (client: PoolClient, membership: MembershipRo
   await client.query(
     `UPDATE conversation_participants
      SET status = 'removed', removed_at = now(), removed_through_sequence = $3,
-         hidden_at = now(), muted = true, pinned = false, draft_body = '', draft_updated_at = now()
+         hidden_at = now(), muted = true, pinned = false, draft_body = '',
+         draft_revision = draft_revision + 1, draft_client_version = NULL, draft_updated_at = now()
      WHERE conversation_id = $1 AND profile_handle = $2`,
     [membership.conversationId, handle, through]
   );
@@ -1148,7 +1235,8 @@ export const deleteConversationForViewer = async (conversationId: string, actor:
     await client.query(
       `UPDATE conversation_participants
        SET hidden_at = now(), cleared_through_sequence = $3,
-           last_read_sequence = GREATEST(last_read_sequence, $3), draft_body = '', pinned = false
+           last_read_sequence = GREATEST(last_read_sequence, $3), draft_body = '',
+           draft_revision = draft_revision + 1, draft_client_version = NULL, draft_updated_at = now(), pinned = false
        WHERE conversation_id = $1 AND profile_handle = $2`,
       [conversationId, handle, through]
     );

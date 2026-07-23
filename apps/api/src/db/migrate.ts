@@ -2099,6 +2099,28 @@ const migrations: Migration[] = [
       ON CONFLICT (owner_handle, usage_day)
       DO UPDATE SET reset_at = EXCLUDED.reset_at;
     `
+  },
+  {
+    id: "0041_message_draft_revisions",
+    sql: `
+      ALTER TABLE conversation_participants
+        ADD COLUMN IF NOT EXISTS draft_revision BIGINT NOT NULL DEFAULT 1;
+      ALTER TABLE conversation_participants
+        ADD COLUMN IF NOT EXISTS draft_client_version TEXT;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'conversation_participants_draft_revision_check'
+        ) THEN
+          ALTER TABLE conversation_participants
+            ADD CONSTRAINT conversation_participants_draft_revision_check
+            CHECK (draft_revision >= 1);
+        END IF;
+      END
+      $$;
+    `
   }
 ];
 

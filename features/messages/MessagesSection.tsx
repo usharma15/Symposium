@@ -56,6 +56,7 @@ import { cleanHandle } from "@/lib/symposiumCore";
 import { profileInitials } from "@/features/identity/profilePresentation";
 import {
   createClientMutationId,
+  SymposiumApiError,
   symposiumApi
 } from "@/features/api/symposiumApiClient";
 import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
@@ -65,9 +66,14 @@ import {
   buildPostAttachmentMetadata
 } from "@/features/attachments/AttachmentViews";
 import {
+  createMessageDraftClientVersion,
   emptyMessageDraftState,
+  parseStoredMessageDraft,
   reduceMessageDraft,
-  type MessageDraftState
+  storedMessageDraftFromState,
+  type MessageDraftAction,
+  type MessageDraftState,
+  type StoredMessageDraft
 } from "@/features/messages/messageDraftState";
 import {
   attachmentMatchesMessageMediaKind,
@@ -145,6 +151,22 @@ const messageAttachmentUrl = (attachment: InquiryAttachmentContract, actorHandle
 const localDraftKey = (actorHandle: string, conversationId: string) =>
   `symposium:message-draft:${cleanHandle(actorHandle)}:${conversationId}`;
 
+const readLocalDraft = (actorHandle: string, conversationId: string) => {
+  try {
+    return parseStoredMessageDraft(window.localStorage.getItem(localDraftKey(actorHandle, conversationId)));
+  } catch {
+    return null;
+  }
+};
+
+const removeLocalDraft = (actorHandle: string, conversationId: string) => {
+  try {
+    window.localStorage.removeItem(localDraftKey(actorHandle, conversationId));
+  } catch {
+    // In-memory draft state remains usable when browser storage is unavailable.
+  }
+};
+
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Messaging could not sync.";
 const messagingLiveEventKey = (event: MessagingLiveEvent) =>
   event.id ?? event.cursor ?? `${event.kind}:${event.subjectId}:${event.createdAt ?? "unknown"}`;
@@ -154,7 +176,67 @@ type PendingMessageAttachment = {
   previewUrl: string;
 };
 
+type FailedSendDraft = {
+  sequence: number;
+  body: string;
+  baseRevision: number;
+  updatedAt: string;
+};
+
 type MessageDraftSyncState = "idle" | "saving" | "saved" | "local";
+
+type ConversationDraftSnapshot = {
+  body: string;
+  revision: number;
+  clientVersion: string | null;
+  updatedAt: string | null;
+};
+
+const persistFailedMessageDraft = ({
+  actorHandle,
+  conversationId,
+  failures,
+  latestDraft
+}: {
+  actorHandle: string;
+  conversationId: string;
+  failures: FailedSendDraft[];
+  latestDraft?: ConversationDraftSnapshot;
+}) => {
+  const orderedFailures = [...failures].sort((left, right) => left.sequence - right.sequence);
+  const failedBody = orderedFailures.map((failure) => failure.body).filter(Boolean).join("\n");
+  if (!failedBody) return true;
+  const existing = readLocalDraft(actorHandle, conversationId);
+  const restored: StoredMessageDraft = {
+    version: 1,
+    body: [failedBody, existing?.body ?? ""].filter(Boolean).join("\n"),
+    clientVersion: createMessageDraftClientVersion(),
+    baseRevision: latestDraft?.revision ?? existing?.baseRevision ?? Math.max(1, ...orderedFailures.map((failure) => failure.baseRevision)),
+    updatedAt: new Date().toISOString(),
+    recovery: existing?.recovery ?? null
+  };
+  try {
+    window.localStorage.setItem(localDraftKey(actorHandle, conversationId), JSON.stringify(restored));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const conversationDraftFromConflict = (error: unknown): ConversationDraftSnapshot | null => {
+  if (!(error instanceof SymposiumApiError) || error.status !== 409 || !error.payload || typeof error.payload !== "object") return null;
+  const draft = (error.payload as { draft?: unknown }).draft;
+  if (!draft || typeof draft !== "object") return null;
+  const value = draft as Partial<ConversationDraftSnapshot>;
+  if (
+    typeof value.body !== "string" ||
+    !Number.isSafeInteger(value.revision) ||
+    Number(value.revision) < 1 ||
+    (value.clientVersion !== null && typeof value.clientVersion !== "string") ||
+    (value.updatedAt !== null && typeof value.updatedAt !== "string")
+  ) return null;
+  return value as ConversationDraftSnapshot;
+};
 
 const revokePendingAttachment = (entry: PendingMessageAttachment) => {
   if (entry.previewUrl.startsWith("blob:")) URL.revokeObjectURL(entry.previewUrl);
@@ -808,6 +890,7 @@ export function MessagingExperience({
   const [draftState, dispatchDraft] = useReducer(reduceMessageDraft, emptyMessageDraftState);
   const draft = draftState.body;
   const [draftSyncState, setDraftSyncState] = useState<MessageDraftSyncState>("idle");
+  const [draftServerHydrated, setDraftServerHydrated] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([]);
   const [sendingCount, setSendingCount] = useState(0);
   const [conversationListLoading, setConversationListLoading] = useState(true);
@@ -832,7 +915,16 @@ export function MessagingExperience({
   const shouldStickToBottomRef = useRef(true);
   const conversationSentinelRef = useRef<HTMLDivElement | null>(null);
   const draftStateRef = useRef<MessageDraftState>(draftState);
+  const draftServerHydratedRef = useRef(false);
   const draftSaveTimerRef = useRef<number | null>(null);
+  const failedSendAttachmentsRef = useRef(new Map<string, PendingMessageAttachment[]>());
+  const failedSendDraftsRef = useRef(new Map<string, FailedSendDraft[]>());
+  const latestSendDraftRef = useRef(new Map<string, ConversationDraftSnapshot>());
+  const pendingSendCountsRef = useRef(new Map<string, number>());
+  const sendConversationAliasesRef = useRef(new Map<string, string>());
+  const sendRequestQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const sendSequenceRef = useRef(0);
+  const sendSessionRef = useRef({ actorHandle: actor.handle, generation: 1 });
   const liveRefreshTimerRef = useRef<number | null>(null);
   const liveRefreshConversationIdRef = useRef<string | null>(null);
   const readReceiptTimerRef = useRef<number | null>(null);
@@ -851,11 +943,24 @@ export function MessagingExperience({
   const processedLiveEventKeysRef = useRef<string[]>(liveEvents.map(messagingLiveEventKey));
   const processedLiveEventKeySetRef = useRef(new Set(processedLiveEventKeysRef.current));
   const selectedRef = useRef(selectedConversationId);
+  if (sendSessionRef.current.actorHandle !== actor.handle) {
+    sendSessionRef.current = {
+      actorHandle: actor.handle,
+      generation: sendSessionRef.current.generation + 1
+    };
+  }
   selectedRef.current = selectedConversationId;
   draftStateRef.current = draftState;
   pendingAttachmentsRef.current = pendingAttachments;
   conversationsRef.current = conversations;
   messagesRef.current = messages;
+
+  const applyDraftAction = useCallback((action: MessageDraftAction) => {
+    const next = reduceMessageDraft(draftStateRef.current, action);
+    draftStateRef.current = next;
+    dispatchDraft(action);
+    return next;
+  }, []);
 
   const flushReadReceipt = useCallback(() => {
     const conversationId = readReceiptConversationRef.current;
@@ -993,6 +1098,21 @@ export function MessagingExperience({
       );
       if (requestEpoch !== conversationLoadEpochRef.current || selectedRef.current !== conversationId) return;
       setConversation(page.conversation);
+      if (!draftServerHydratedRef.current) {
+        const local = readLocalDraft(actor.handle, conversationId);
+        const hydratedDraft = applyDraftAction({
+          type: "select",
+          conversationId,
+          localDraft: local,
+          serverBody: page.conversation.draftBody,
+          serverRevision: page.conversation.draftRevision ?? 1,
+          serverClientVersion: page.conversation.draftClientVersion ?? null,
+          serverUpdatedAt: page.conversation.draftUpdatedAt
+        });
+        draftServerHydratedRef.current = true;
+        setDraftServerHydrated(true);
+        setDraftSyncState(hydratedDraft.dirty ? "local" : "idle");
+      }
       setMessages((current) => options.older
         ? [...page.messages, ...current.filter((entry) => !page.messages.some((incoming) => incoming.id === entry.id))]
         : page.messages);
@@ -1153,6 +1273,8 @@ export function MessagingExperience({
   useEffect(() => {
     for (const attachment of pendingAttachmentsRef.current) void discardPendingAttachment(attachment, actor.handle);
     if (!selectedConversationId) {
+      draftServerHydratedRef.current = false;
+      setDraftServerHydrated(false);
       readReceiptConversationRef.current = null;
       latestReadSequenceRef.current = 0;
       if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
@@ -1161,29 +1283,66 @@ export function MessagingExperience({
       setMessages([]);
       setMessageCursor(null);
       setConversationLoading(false);
-      dispatchDraft({ type: "select", conversationId: null, localBody: null, serverBody: "", serverUpdatedAt: null });
+      applyDraftAction({
+        type: "select",
+        conversationId: null,
+        localDraft: null,
+        serverBody: "",
+        serverRevision: 1,
+        serverClientVersion: null,
+        serverUpdatedAt: null
+      });
       setDraftSyncState("idle");
       setPendingAttachments([]);
       setAttachmentPreview(null);
       return;
     }
-    const local = window.localStorage.getItem(localDraftKey(actor.handle, selectedConversationId));
+    const failedConversationKey = Array.from(failedSendDraftsRef.current.keys()).find((key) =>
+      !pendingSendCountsRef.current.get(key) &&
+      (sendConversationAliasesRef.current.get(key) ?? key) === selectedConversationId
+    );
+    const failedDrafts = failedConversationKey
+      ? (failedSendDraftsRef.current.get(failedConversationKey) ?? []).sort((left, right) => left.sequence - right.sequence)
+      : [];
+    const failedBody = failedDrafts.map((failure) => failure.body).filter(Boolean).join("\n");
+    const storedLocal = readLocalDraft(actor.handle, selectedConversationId);
+    const latestFailedDraft = failedConversationKey
+      ? latestSendDraftRef.current.get(selectedConversationId) ?? latestSendDraftRef.current.get(failedConversationKey)
+      : null;
+    const local = failedBody ? {
+      version: 1 as const,
+      body: [failedBody, storedLocal?.body ?? ""].filter(Boolean).join("\n"),
+      clientVersion: createMessageDraftClientVersion(),
+      baseRevision: latestFailedDraft?.revision ?? storedLocal?.baseRevision ?? Math.max(1, ...failedDrafts.map((failure) => failure.baseRevision)),
+      updatedAt: new Date().toISOString(),
+      recovery: storedLocal?.recovery ?? null
+    } : storedLocal;
+    if (failedConversationKey) failedSendDraftsRef.current.delete(failedConversationKey);
     if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
     readReceiptTimerRef.current = null;
     const summary = conversations.find((entry) => entry.id === selectedConversationId);
+    const canonicalReady = !messageIdPattern.test(selectedConversationId) || Boolean(summary);
+    draftServerHydratedRef.current = canonicalReady;
+    setDraftServerHydrated(canonicalReady);
     setConversation(summary ?? null);
     setMessages([]);
     setMessageCursor(null);
     setConversationLoading(messageIdPattern.test(selectedConversationId));
-    dispatchDraft({
+    const selectedDraft = applyDraftAction({
       type: "select",
       conversationId: selectedConversationId,
-      localBody: local,
+      localDraft: local,
       serverBody: summary?.draftBody ?? "",
+      serverRevision: summary?.draftRevision ?? 1,
+      serverClientVersion: summary?.draftClientVersion ?? null,
       serverUpdatedAt: summary?.draftUpdatedAt ?? null
     });
-    setDraftSyncState(local !== null && local !== (summary?.draftBody ?? "") ? "local" : "idle");
-    setPendingAttachments([]);
+    setDraftSyncState(selectedDraft.dirty ? "local" : "idle");
+    const failedAttachments = failedSendAttachmentsRef.current.get(selectedConversationId) ??
+      (failedConversationKey ? failedSendAttachmentsRef.current.get(failedConversationKey) ?? [] : []);
+    failedSendAttachmentsRef.current.delete(selectedConversationId);
+    if (failedConversationKey) failedSendAttachmentsRef.current.delete(failedConversationKey);
+    setPendingAttachments(failedAttachments);
     setAttachmentPreview(null);
     setAddPeopleOpen(false);
     setInfoTab("info");
@@ -1216,9 +1375,28 @@ export function MessagingExperience({
 
   useEffect(() => {
     mountedRef.current = true;
+    setSendingCount(0);
     return () => {
       mountedRef.current = false;
       for (const attachment of pendingAttachmentsRef.current) void discardPendingAttachment(attachment, actor.handle);
+      for (const [conversationId, failures] of failedSendDraftsRef.current) {
+        const restoredConversationId = sendConversationAliasesRef.current.get(conversationId) ?? conversationId;
+        persistFailedMessageDraft({
+          actorHandle: actor.handle,
+          conversationId: restoredConversationId,
+          failures,
+          latestDraft: latestSendDraftRef.current.get(restoredConversationId) ?? latestSendDraftRef.current.get(conversationId)
+        });
+      }
+      for (const attachments of failedSendAttachmentsRef.current.values()) {
+        for (const attachment of attachments) void discardPendingAttachment(attachment, actor.handle);
+      }
+      failedSendAttachmentsRef.current.clear();
+      failedSendDraftsRef.current.clear();
+      latestSendDraftRef.current.clear();
+      pendingSendCountsRef.current.clear();
+      sendConversationAliasesRef.current.clear();
+      sendRequestQueueRef.current = Promise.resolve();
       if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
     };
   }, [actor.handle]);
@@ -1227,52 +1405,128 @@ export function MessagingExperience({
     if (!selectedConversationId) return;
     const summary = conversations.find((entry) => entry.id === selectedConversationId);
     if (!summary) return;
-    dispatchDraft({
+    if (!draftServerHydratedRef.current) {
+      const local = readLocalDraft(actor.handle, selectedConversationId);
+      const hydratedDraft = applyDraftAction({
+        type: "select",
+        conversationId: selectedConversationId,
+        localDraft: local,
+        serverBody: summary.draftBody,
+        serverRevision: summary.draftRevision,
+        serverClientVersion: summary.draftClientVersion,
+        serverUpdatedAt: summary.draftUpdatedAt
+      });
+      draftServerHydratedRef.current = true;
+      setDraftServerHydrated(true);
+      setDraftSyncState(hydratedDraft.dirty ? "local" : "idle");
+      return;
+    }
+    applyDraftAction({
       type: "server",
       conversationId: selectedConversationId,
       body: summary.draftBody,
-      preserveLocal: document.activeElement === textareaRef.current,
+      revision: summary.draftRevision ?? 1,
+      clientVersion: summary.draftClientVersion ?? null,
+      preserveLocal: draftStateRef.current.dirty,
       updatedAt: summary.draftUpdatedAt
     });
   }, [conversations, selectedConversationId]);
 
-  const persistDraft = useCallback(async (conversationId: string, body: string) => {
+  const persistDraft = useCallback(async (
+    conversationId: string,
+    body: string,
+    expectedRevision: number,
+    clientVersion: string
+  ) => {
     if (!messageIdPattern.test(conversationId)) return;
+    const requestActorHandle = actor.handle;
+    const requestGeneration = sendSessionRef.current.generation;
+    const ownsDraftSurface = () => mountedRef.current &&
+      sendSessionRef.current.actorHandle === requestActorHandle &&
+      sendSessionRef.current.generation === requestGeneration;
     if (selectedRef.current === conversationId) setDraftSyncState("saving");
     try {
-      const saved = await symposiumApi.request<{ body: string; updatedAt: string | null }>(`/api/conversations/${encodeURIComponent(conversationId)}/draft`, {
+      const saved = await symposiumApi.request<{
+        conflict?: false;
+        draft?: ConversationDraftSnapshot;
+        body?: string;
+        updatedAt?: string | null;
+      }>(`/api/conversations/${encodeURIComponent(conversationId)}/draft`, {
         method: "PATCH",
-        body: { actorHandle: actor.handle, body }
+        body: { actorHandle: requestActorHandle, body, expectedRevision, clientVersion }
       });
-      dispatchDraft({ type: "saved", conversationId, body: saved.body, updatedAt: saved.updatedAt });
+      if (!ownsDraftSurface()) return;
+      const savedDraft = saved.draft ?? {
+        body: saved.body ?? body,
+        revision: expectedRevision + 1,
+        clientVersion,
+        updatedAt: saved.updatedAt ?? new Date().toISOString()
+      };
+      const next = applyDraftAction({
+        type: "saved",
+        conversationId,
+        body: savedDraft.body,
+        revision: savedDraft.revision,
+        clientVersion: savedDraft.clientVersion ?? clientVersion,
+        updatedAt: savedDraft.updatedAt
+      });
       if (selectedRef.current === conversationId) {
-        setDraftSyncState(draftStateRef.current.body === saved.body ? "saved" : "local");
+        setDraftSyncState(next.dirty ? "local" : "saved");
       }
-    } catch {
+    } catch (saveError) {
+      if (!ownsDraftSurface()) return;
+      const canonical = conversationDraftFromConflict(saveError);
+      if (canonical) {
+        const requestWasAlreadyApplied = canonical.body === body && canonical.clientVersion === clientVersion;
+        const next = applyDraftAction(requestWasAlreadyApplied ? {
+          type: "saved",
+          conversationId,
+          body: canonical.body,
+          revision: canonical.revision,
+          clientVersion,
+          updatedAt: canonical.updatedAt
+        } : {
+          type: "server",
+          conversationId,
+          body: canonical.body,
+          revision: canonical.revision,
+          clientVersion: canonical.clientVersion,
+          preserveLocal: true,
+          updatedAt: canonical.updatedAt
+        });
+        if (selectedRef.current === conversationId) setDraftSyncState(next.dirty ? "local" : "saved");
+        return;
+      }
       if (selectedRef.current === conversationId) setDraftSyncState("local");
     }
-  }, [actor.handle]);
+  }, [actor.handle, applyDraftAction]);
 
   useEffect(() => {
     if (!selectedConversationId || draftState.conversationId !== selectedConversationId) return;
+    if (messageIdPattern.test(selectedConversationId) && !draftServerHydrated) return;
     if (draftSaveTimerRef.current !== null) window.clearTimeout(draftSaveTimerRef.current);
-    if (draftState.body || draftState.dirty) {
-      window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), draftState.body);
-    } else {
-      window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
+    const storageKey = localDraftKey(actor.handle, selectedConversationId);
+    const storedDraft = storedMessageDraftFromState(draftState);
+    try {
+      if (storedDraft) window.localStorage.setItem(storageKey, JSON.stringify(storedDraft));
+      else window.localStorage.removeItem(storageKey);
+    } catch {
+      // The in-memory editor remains authoritative when browser storage is full or unavailable.
     }
-    if (draftState.dirty && messageIdPattern.test(selectedConversationId)) {
+    if (draftState.dirty && draftState.clientVersion && messageIdPattern.test(selectedConversationId)) {
       const body = draftState.body;
+      const expectedRevision = draftState.serverRevision;
+      const clientVersion = draftState.clientVersion;
       draftSaveTimerRef.current = window.setTimeout(() => {
         draftSaveTimerRef.current = null;
-        void persistDraft(selectedConversationId, body);
+        void persistDraft(selectedConversationId, body, expectedRevision, clientVersion);
       }, 900);
     }
     return () => {
       if (draftSaveTimerRef.current !== null) window.clearTimeout(draftSaveTimerRef.current);
       draftSaveTimerRef.current = null;
     };
-  }, [actor.handle, draftState, persistDraft, selectedConversationId]);
+  }, [actor.handle, draftServerHydrated, draftState, persistDraft, selectedConversationId]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1312,54 +1566,165 @@ export function MessagingExperience({
     }
   };
 
-  const sendCurrent = async () => {
+  const restoreFailedSends = (conversationId: string) => {
+    const restoredConversationId = sendConversationAliasesRef.current.get(conversationId) ?? conversationId;
+    const failures = (failedSendDraftsRef.current.get(conversationId) ?? [])
+      .sort((left, right) => left.sequence - right.sequence);
+    failedSendDraftsRef.current.delete(conversationId);
+    const failedBody = failures.map((failure) => failure.body).filter(Boolean).join("\n");
+
+    if (mountedRef.current && selectedRef.current === restoredConversationId) {
+      const activeDraft = draftStateRef.current;
+      if (failedBody && activeDraft.conversationId === restoredConversationId) {
+        const restoredBody = [failedBody, activeDraft.body].filter(Boolean).join("\n");
+        const next = applyDraftAction({
+          type: "edit",
+          conversationId: restoredConversationId,
+          body: restoredBody,
+          clientVersion: createMessageDraftClientVersion(),
+          updatedAt: new Date().toISOString()
+        });
+        setDraftSyncState(next.dirty ? "local" : "idle");
+      }
+      const failedAttachments = failedSendAttachmentsRef.current.get(conversationId) ?? [];
+      failedSendAttachmentsRef.current.delete(conversationId);
+      if (failedAttachments.length) {
+        setPendingAttachments((current) => [
+          ...failedAttachments,
+          ...current.filter((entry) => !failedAttachments.some((failed) => failed.attachment.id === entry.attachment.id))
+        ].slice(0, 10));
+      }
+      return;
+    }
+
+    if (!failedBody) {
+      if (!mountedRef.current) {
+        const failedAttachments = failedSendAttachmentsRef.current.get(conversationId) ?? [];
+        failedSendAttachmentsRef.current.delete(conversationId);
+        for (const attachment of failedAttachments) void discardPendingAttachment(attachment, actor.handle);
+      }
+      return;
+    }
+    const latestDraft = latestSendDraftRef.current.get(restoredConversationId) ?? latestSendDraftRef.current.get(conversationId);
+    if (!persistFailedMessageDraft({
+      actorHandle: actor.handle,
+      conversationId: restoredConversationId,
+      failures,
+      latestDraft
+    })) {
+      // Failed text remains in memory until this mounted messaging surface closes.
+      failedSendDraftsRef.current.set(conversationId, failures);
+    }
+    if (!mountedRef.current) {
+      const failedAttachments = failedSendAttachmentsRef.current.get(conversationId) ?? [];
+      failedSendAttachmentsRef.current.delete(conversationId);
+      for (const attachment of failedAttachments) void discardPendingAttachment(attachment, actor.handle);
+    }
+  };
+
+  const sendCurrent = () => {
     if (!selectedConversationId || conversation?.status === "removed" || conversation?.blockedByViewer || (!draft.trim() && !pendingAttachments.length)) return;
+    const sendConversationId = selectedConversationId;
+    const sendActorHandle = actor.handle;
+    const sendGeneration = sendSessionRef.current.generation;
+    const ownsSendSurface = () => mountedRef.current &&
+      sendSessionRef.current.actorHandle === sendActorHandle &&
+      sendSessionRef.current.generation === sendGeneration;
+    const sendSequence = sendSequenceRef.current + 1;
+    sendSequenceRef.current = sendSequence;
+    pendingSendCountsRef.current.set(sendConversationId, (pendingSendCountsRef.current.get(sendConversationId) ?? 0) + 1);
     setSendingCount((current) => current + 1);
     shouldStickToBottomRef.current = true;
     const originalDraft = draft;
+    const originalDraftRevision = draftStateRef.current.serverRevision;
+    const originalDraftClientVersion = draftStateRef.current.clientVersion ?? createMessageDraftClientVersion();
     const originalAttachments = pendingAttachments;
     const attachmentIds = pendingAttachments.map((entry) => entry.attachment.id);
-    dispatchDraft({ type: "clear", conversationId: selectedConversationId });
+    applyDraftAction({ type: "clear", conversationId: sendConversationId });
     setDraftSyncState("idle");
     setPendingAttachments([]);
     setAttachmentPreview(null);
-    window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
-    try {
-      const directRecipient = !messageIdPattern.test(selectedConversationId)
-        ? cleanHandle(selectedConversationId.replace(/^direct:/, ""))
-        : undefined;
-      const data = await symposiumApi.request<{ message: MessageContract }>("/api/messages", {
-        method: "POST",
-        idempotencyKey: createClientMutationId("message-send"),
-        body: {
-          actorHandle: actor.handle,
-          ...(directRecipient ? { recipientHandle: directRecipient } : { conversationId: selectedConversationId }),
-          body: originalDraft.trim(),
-          attachmentIds
+    removeLocalDraft(sendActorHandle, sendConversationId);
+    const performSend = async () => {
+      try {
+        const directRecipient = !messageIdPattern.test(sendConversationId)
+          ? cleanHandle(sendConversationId.replace(/^direct:/, ""))
+          : undefined;
+        const data = await symposiumApi.request<{ message: MessageContract; draft?: ConversationDraftSnapshot }>("/api/messages", {
+          method: "POST",
+          idempotencyKey: createClientMutationId("message-send"),
+          body: {
+            actorHandle: sendActorHandle,
+            ...(directRecipient ? { recipientHandle: directRecipient } : { conversationId: sendConversationId }),
+            body: originalDraft.trim(),
+            attachmentIds,
+            draftRevision: originalDraftRevision,
+            draftClientVersion: originalDraftClientVersion
+          }
+        });
+        const serverDraft = data.draft ?? {
+          body: "",
+          revision: originalDraftRevision + 1,
+          clientVersion: null,
+          updatedAt: new Date().toISOString()
+        };
+        for (const attachment of originalAttachments) revokePendingAttachment(attachment);
+        if (!ownsSendSurface()) return;
+        latestSendDraftRef.current.set(sendConversationId, serverDraft);
+        latestSendDraftRef.current.set(data.message.conversationId, serverDraft);
+        if (data.message.conversationId !== sendConversationId) {
+          sendConversationAliasesRef.current.set(sendConversationId, data.message.conversationId);
         }
-      });
-      if (data.message.conversationId !== selectedConversationId) selectConversation(data.message.conversationId);
-      else mergeLiveMessage(data.message, "message.sent");
-      for (const attachment of originalAttachments) revokePendingAttachment(attachment);
-    } catch (sendError) {
-      const activeDraft = draftStateRef.current;
-      if (activeDraft.conversationId === selectedConversationId) {
-        const bodyTypedWhileSending = activeDraft.body === originalDraft ? "" : activeDraft.body;
-        const restoredBody = bodyTypedWhileSending
-          ? `${originalDraft}${originalDraft ? "\n" : ""}${bodyTypedWhileSending}`
-          : originalDraft;
-        dispatchDraft({ type: "edit", conversationId: selectedConversationId, body: restoredBody });
-        setDraftSyncState(restoredBody ? "local" : "idle");
-        if (restoredBody) window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), restoredBody);
+        applyDraftAction({
+          type: "server",
+          conversationId: sendConversationId,
+          body: serverDraft.body,
+          revision: serverDraft.revision,
+          clientVersion: serverDraft.clientVersion,
+          preserveLocal: draftStateRef.current.dirty,
+          updatedAt: serverDraft.updatedAt
+        });
+        if (data.message.conversationId !== sendConversationId) selectConversation(data.message.conversationId);
+        else mergeLiveMessage(data.message, "message.sent");
+      } catch (sendError) {
+        const failure = {
+          sequence: sendSequence,
+          body: originalDraft,
+          baseRevision: originalDraftRevision,
+          updatedAt: new Date().toISOString()
+        };
+        if (!ownsSendSurface()) {
+          persistFailedMessageDraft({
+            actorHandle: sendActorHandle,
+            conversationId: sendConversationId,
+            failures: [failure]
+          });
+          for (const attachment of originalAttachments) void discardPendingAttachment(attachment, sendActorHandle);
+          return;
+        }
+        const failedDrafts = failedSendDraftsRef.current.get(sendConversationId) ?? [];
+        failedSendDraftsRef.current.set(sendConversationId, [
+          ...failedDrafts,
+          failure
+        ]);
+        const waitingAttachments = failedSendAttachmentsRef.current.get(sendConversationId) ?? [];
+        failedSendAttachmentsRef.current.set(sendConversationId, [
+          ...waitingAttachments,
+          ...originalAttachments.filter((entry) => !waitingAttachments.some((existing) => existing.attachment.id === entry.attachment.id))
+        ].slice(0, 10));
+        setError(errorText(sendError));
+      } finally {
+        if (!ownsSendSurface()) return;
+        setSendingCount((current) => Math.max(0, current - 1));
+        const remaining = Math.max(0, (pendingSendCountsRef.current.get(sendConversationId) ?? 1) - 1);
+        if (remaining) pendingSendCountsRef.current.set(sendConversationId, remaining);
+        else {
+          pendingSendCountsRef.current.delete(sendConversationId);
+          restoreFailedSends(sendConversationId);
+        }
       }
-      setPendingAttachments((current) => [
-        ...originalAttachments,
-        ...current.filter((entry) => !originalAttachments.some((original) => original.attachment.id === entry.attachment.id))
-      ].slice(0, 10));
-      setError(errorText(sendError));
-    } finally {
-      setSendingCount((current) => Math.max(0, current - 1));
-    }
+    };
+    sendRequestQueueRef.current = sendRequestQueueRef.current.then(performSend, performSend);
   };
 
   const uploadFiles = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1458,8 +1823,8 @@ export function MessagingExperience({
     try {
       await symposiumApi.request(`/api/conversations/${conversation.id}/clear`, { method: "POST", body: { actorHandle: actor.handle } });
       setMessages([]);
-      dispatchDraft({ type: "clear", conversationId: conversation.id });
-      window.localStorage.removeItem(localDraftKey(actor.handle, conversation.id));
+      applyDraftAction({ type: "clear", conversationId: conversation.id });
+      removeLocalDraft(actor.handle, conversation.id);
       await loadConversations(false);
     } catch (actionError) { setError(errorText(actionError)); }
   };
@@ -1468,7 +1833,7 @@ export function MessagingExperience({
     if (!conversation || !window.confirm("Delete this chat for you? It will stay hidden until you deliberately start a new connection.")) return;
     try {
       await symposiumApi.request(`/api/conversations/${conversation.id}`, { method: "DELETE", body: { actorHandle: actor.handle } });
-      window.localStorage.removeItem(localDraftKey(actor.handle, conversation.id));
+      removeLocalDraft(actor.handle, conversation.id);
       selectConversation(null);
       await loadConversations(false);
     } catch (actionError) { setError(errorText(actionError)); }
@@ -1603,7 +1968,7 @@ export function MessagingExperience({
         method: "POST",
         body: { actorHandle: actor.handle }
       });
-      window.localStorage.removeItem(localDraftKey(actor.handle, conversation.id));
+      removeLocalDraft(actor.handle, conversation.id);
       selectConversation(null);
       await loadConversations(false);
     } catch (actionError) { setError(errorText(actionError)); }
@@ -1712,7 +2077,7 @@ export function MessagingExperience({
               );
             })}
           </div>
-          <div className={`message-composer${pendingAttachments.length ? " has-attachments" : ""}${draftSyncState !== "idle" ? " has-status" : ""}`}>
+          <div className={`message-composer${pendingAttachments.length ? " has-attachments" : ""}${draftSyncState !== "idle" || draftState.recovery ? " has-status" : ""}`}>
             {pendingAttachments.length ? (
               <div className="message-composer-attachments" role="list" aria-label="Attachments ready to send">
                 {pendingAttachments.map((entry) => {
@@ -1766,17 +2131,23 @@ export function MessagingExperience({
               onChange={(event) => {
                 if (!selectedConversationId) return;
                 const body = event.target.value;
-                if (body) window.localStorage.setItem(localDraftKey(actor.handle, selectedConversationId), body);
-                else window.localStorage.removeItem(localDraftKey(actor.handle, selectedConversationId));
-                dispatchDraft({ type: "edit", conversationId: selectedConversationId, body });
-                setDraftSyncState(body !== draftStateRef.current.serverBody ? "local" : "idle");
+                const next = applyDraftAction({
+                  type: "edit",
+                  conversationId: selectedConversationId,
+                  body,
+                  clientVersion: createMessageDraftClientVersion(),
+                  updatedAt: new Date().toISOString()
+                });
+                setDraftSyncState(next.dirty ? "local" : "idle");
               }}
               onBlur={() => {
                 const current = draftStateRef.current;
                 if (current.conversationId && current.dirty) {
                   if (draftSaveTimerRef.current !== null) window.clearTimeout(draftSaveTimerRef.current);
                   draftSaveTimerRef.current = null;
-                  void persistDraft(current.conversationId, current.body);
+                  if (current.clientVersion) {
+                    void persistDraft(current.conversationId, current.body, current.serverRevision, current.clientVersion);
+                  }
                 }
               }}
               onKeyDown={(event) => {
@@ -1786,10 +2157,40 @@ export function MessagingExperience({
                 }
               }}
             />
-            {draftSyncState !== "idle" ? (
-              <small className={`message-draft-sync ${draftSyncState}`} aria-live="polite">
-                {draftSyncState === "saving" ? "Saving draft…" : draftSyncState === "saved" ? "Draft saved" : "Saved on this device · cloud sync pending"}
-              </small>
+            {draftSyncState !== "idle" || draftState.recovery ? (
+              <div className="message-draft-status" aria-live="polite">
+                {draftSyncState !== "idle" ? (
+                  <small className={`message-draft-sync ${draftSyncState}`}>
+                    {draftSyncState === "saving" ? "Saving draft…" : draftSyncState === "saved" ? "Draft saved" : "Saved on this device · cloud sync pending"}
+                  </small>
+                ) : null}
+                {draftState.recovery ? (
+                  <small className="message-draft-recovery">
+                    Newer cloud draft loaded.
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedConversationId) return;
+                        const next = applyDraftAction({
+                          type: "restore",
+                          conversationId: selectedConversationId,
+                          clientVersion: createMessageDraftClientVersion(),
+                          updatedAt: new Date().toISOString()
+                        });
+                        setDraftSyncState(next.dirty ? "local" : "idle");
+                        textareaRef.current?.focus();
+                      }}
+                    >Restore this device’s draft</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedConversationId) return;
+                        applyDraftAction({ type: "discard-recovery", conversationId: selectedConversationId });
+                      }}
+                    >Dismiss</button>
+                  </small>
+                ) : null}
+              </div>
             ) : null}
             <button className="send-message-button" type="button" title={sendingCount ? "Send another message" : "Send"} disabled={uploading || conversation?.status === "removed" || conversation?.blockedByViewer || (!draft.trim() && !pendingAttachments.length)} onClick={() => void sendCurrent()}>
               {sendingCount ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}
