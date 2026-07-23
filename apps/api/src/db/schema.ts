@@ -1174,6 +1174,26 @@ export const notifications = pgTable(
   ]
 );
 
+export const notificationPreferences = pgTable(
+  "notification_preferences",
+  {
+    profileHandle: text("profile_handle")
+      .primaryKey()
+      .references(() => profiles.handle, { onDelete: "cascade" }),
+    activityEnabled: boolean("activity_enabled").default(true).notNull(),
+    likes: boolean("likes").default(true).notNull(),
+    commentsAndReplies: boolean("comments_and_replies").default(true).notNull(),
+    reshares: boolean("reshares").default(true).notNull(),
+    newFollowers: boolean("new_followers").default(true).notNull(),
+    workspaceActivity: boolean("workspace_activity").default(true).notNull(),
+    revision: integer("revision").default(1).notNull(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    check("notification_preferences_revision_check", sql`${table.revision} >= 1`)
+  ]
+);
+
 export const events = pgTable(
   "events",
   {

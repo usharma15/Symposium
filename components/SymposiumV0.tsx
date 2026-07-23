@@ -138,6 +138,11 @@ import {
   OfficeDeskView,
   ViewNav
 } from "@/features/shell/SymposiumShellViews";
+import {
+  isPersistentSyncStatus,
+  syncStatusAfterNavigation,
+  syncStatusExpiryMs
+} from "@/features/shell/syncStatusState";
 import type {
   ViewActionOptions,
   ViewSurface
@@ -653,6 +658,7 @@ function SymposiumExperience({
   const selectedItemIdRef = useRef(selectedItemId);
   const selectedItemFallbackRef = useRef<InquiryItem | null>(null);
   const selectedCommentIdRef = useRef(selectedCommentId);
+  const connectionSyncStatusRef = useRef<string>(liveStatus.loading);
   const commentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const visibleCommentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const actionVersionsRef = useRef<Record<string, number>>({});
@@ -829,6 +835,27 @@ function SymposiumExperience({
   useEffect(() => {
     currentProfileRef.current = currentProfile;
   }, [currentProfile]);
+
+  useEffect(() => {
+    if (isPersistentSyncStatus(syncStatus)) {
+      connectionSyncStatusRef.current = syncStatus;
+      return undefined;
+    }
+    const expiry = syncStatusExpiryMs(syncStatus);
+    if (expiry === null) return undefined;
+    const timer = window.setTimeout(() => {
+      setSyncStatus((current) =>
+        current === syncStatus ? connectionSyncStatusRef.current : current
+      );
+    }, expiry);
+    return () => window.clearTimeout(timer);
+  }, [syncStatus]);
+
+  const dismissTransientSyncStatus = () => {
+    setSyncStatus((current) =>
+      syncStatusAfterNavigation(current, connectionSyncStatusRef.current)
+    );
+  };
 
 
   const clientViewStorageKey = (handle: string) => `symposium-view-dedupe:${cleanHandle(handle)}`;
@@ -1218,6 +1245,7 @@ function SymposiumExperience({
   };
 
   const markLiveDataConnected = () => {
+    connectionSyncStatusRef.current = liveStatus.connected;
     setSyncStatus((status) =>
       status === liveStatus.loading ||
       status === liveStatus.reconnecting ||
@@ -1228,6 +1256,7 @@ function SymposiumExperience({
   };
 
   const markLiveUpdatesReconnecting = () => {
+    connectionSyncStatusRef.current = liveStatus.reconnecting;
     setSyncStatus((status) =>
       status === liveStatus.loading ||
       status === liveStatus.connected ||
@@ -1777,6 +1806,7 @@ function SymposiumExperience({
   };
 
   const applyInitialRouteState = () => {
+    dismissTransientSyncStatus();
     const snapshot = snapshotForCanonicalRoute(
       initialRoute,
       (postId) => itemsRef.current.find((item) => item.id === postId)?.room
@@ -2749,6 +2779,7 @@ function SymposiumExperience({
   };
 
   const restoreView = (snapshot: ViewSnapshot) => {
+    dismissTransientSyncStatus();
     if (snapshot.selectedProfileName) flushPendingActivityRecency();
     setActiveRoom(snapshot.activeRoom);
     setSelectedItemId(snapshot.selectedItemId);
@@ -2806,6 +2837,7 @@ function SymposiumExperience({
     next: Partial<Omit<ViewSnapshot, "scrollY">>,
     scrollY: number | null = 0
   ) => {
+    dismissTransientSyncStatus();
     if (next.selectedProfileName) flushPendingActivityRecency();
     const currentSnapshot = snapshotView();
     const nextSnapshot: ViewSnapshot = {
@@ -4398,7 +4430,7 @@ function SymposiumExperience({
         </nav>
       </header>
 
-      <div className="sync-status" aria-live="polite">
+      <div className="sync-status" role="status" aria-live="polite">
         {syncStatus}
       </div>
 

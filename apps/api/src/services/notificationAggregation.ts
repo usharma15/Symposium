@@ -1,5 +1,9 @@
 import type { PoolClient } from "pg";
-import type { NotificationContract } from "../../../../packages/contracts/src";
+import type {
+  NotificationContract,
+  NotificationPreferenceCategoryContract,
+  NotificationPreferencesContract
+} from "../../../../packages/contracts/src";
 
 type NotificationGroupRow = {
   id: string;
@@ -60,6 +64,45 @@ export const notificationPriority = (kind: string): NotificationPriority => {
   if (actionRequiredKinds.has(kind)) return "action";
   if (importantKinds.has(kind)) return "important";
   return "activity";
+};
+
+const preferenceCategoryByKind: Readonly<Record<string, NotificationPreferenceCategoryContract>> = {
+  post_signal: "likes",
+  comment_signal: "likes",
+  post_comment: "commentsAndReplies",
+  comment_reply: "commentsAndReplies",
+  post_reshare: "reshares",
+  comment_reshare: "reshares",
+  profile_followed: "newFollowers",
+  workspace_comment: "workspaceActivity",
+  workspace_comment_reply: "workspaceActivity",
+  workspace_comment_signal: "workspaceActivity"
+};
+
+export const notificationPreferenceCategory = (kind: string) =>
+  preferenceCategoryByKind[kind] ?? null;
+
+export const defaultNotificationPreferences = (
+  updatedAt = "1970-01-01T00:00:00.000Z"
+): NotificationPreferencesContract => ({
+  activityEnabled: true,
+  likes: true,
+  commentsAndReplies: true,
+  reshares: true,
+  newFollowers: true,
+  workspaceActivity: true,
+  revision: 1,
+  updatedAt
+});
+
+export const notificationAllowedByPreferences = (
+  kind: string,
+  preferences: NotificationPreferencesContract
+) => {
+  if (notificationPriority(kind) !== "activity") return true;
+  const category = notificationPreferenceCategory(kind);
+  if (!category) return true;
+  return preferences.activityEnabled && preferences[category];
 };
 
 export const notificationActionLabel = (kind: string, href: string | null) => {

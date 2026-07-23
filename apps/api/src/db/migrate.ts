@@ -2173,6 +2173,23 @@ const migrations: Migration[] = [
         ON notifications (profile_handle, aggregation_key, created_at DESC, id DESC)
         WHERE kind <> 'message' AND aggregation_key IS NOT NULL;
     `
+  },
+  {
+    id: "0044_notification_preferences",
+    sql: `
+      CREATE TABLE IF NOT EXISTS notification_preferences (
+        profile_handle TEXT PRIMARY KEY REFERENCES profiles(handle) ON DELETE CASCADE,
+        activity_enabled BOOLEAN NOT NULL DEFAULT true,
+        likes BOOLEAN NOT NULL DEFAULT true,
+        comments_and_replies BOOLEAN NOT NULL DEFAULT true,
+        reshares BOOLEAN NOT NULL DEFAULT true,
+        new_followers BOOLEAN NOT NULL DEFAULT true,
+        workspace_activity BOOLEAN NOT NULL DEFAULT true,
+        revision INTEGER NOT NULL DEFAULT 1,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT notification_preferences_revision_check CHECK (revision >= 1)
+      );
+    `
   }
 ];
 

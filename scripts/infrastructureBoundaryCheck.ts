@@ -13,6 +13,7 @@ import {
   maintenanceLeases,
   messages,
   messageStars,
+  notificationPreferences,
   noteBlocks,
   notes,
   opportunityApplicationComments,
@@ -34,7 +35,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0043_notification_aggregation");
+  assert.equal(latestMigrationId, "0044_notification_preferences");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -60,6 +61,8 @@ const main = async () => {
   assert.ok("sequence" in messages);
   assert.ok("revision" in messages);
   assert.ok("profileHandle" in messageStars);
+  assert.ok("activityEnabled" in notificationPreferences);
+  assert.ok("revision" in notificationPreferences);
   assert.ok("reservedCostMicros" in aiUsage);
   assert.ok("actualCostMicros" in aiUsage);
   assert.ok("sourceFingerprint" in documentTranslations);

@@ -30,9 +30,11 @@ import {
   updateConversationPreferences
 } from "../repository/conversations";
 import {
+  getNotificationPreferences,
   getUnreadNotificationCount,
   listNotifications,
-  markNotificationRead
+  markNotificationRead,
+  updateNotificationPreferences
 } from "../repository/notifications";
 import { mutationContextFromRequest } from "../services/mutations";
 import { createPrivateDownloadUrl } from "../services/storage";
@@ -259,6 +261,27 @@ export const registerMessageRoutes = (app: FastifyInstance) => {
   app.get("/v1/notifications/unread", async (request, reply) => {
     try {
       return reply.send(await getUnreadNotificationCount(await withWriteActor(request, { scope: "notification-read", limit: 180 })));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/notifications/preferences", async (request, reply) => {
+    try {
+      return reply.send(await getNotificationPreferences(
+        await withWriteActor(request, { scope: "notification-read", limit: 180 })
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch("/v1/notifications/preferences", async (request, reply) => {
+    try {
+      return reply.send(await updateNotificationPreferences(
+        request.body,
+        await withWriteActor(request, { scope: "notification-update", limit: 60 })
+      ));
     } catch (error) {
       return sendError(app, reply, error);
     }

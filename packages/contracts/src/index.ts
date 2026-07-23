@@ -1576,6 +1576,40 @@ export const notificationUnreadCountSchema = z.object({
   unreadCount: z.number().int().nonnegative()
 });
 
+export const notificationPreferenceCategorySchema = z.enum([
+  "likes",
+  "commentsAndReplies",
+  "reshares",
+  "newFollowers",
+  "workspaceActivity"
+]);
+
+export const notificationPreferencesSchema = z.object({
+  activityEnabled: z.boolean(),
+  likes: z.boolean(),
+  commentsAndReplies: z.boolean(),
+  reshares: z.boolean(),
+  newFollowers: z.boolean(),
+  workspaceActivity: z.boolean(),
+  revision: z.number().int().positive(),
+  updatedAt: z.string().datetime()
+}).strict();
+
+export const updateNotificationPreferencesInputSchema = z.object({
+  actorHandle: z.string().trim().min(1).max(80).optional(),
+  expectedRevision: z.number().int().positive().max(2_147_483_647),
+  changes: z.object({
+    activityEnabled: z.boolean().optional(),
+    likes: z.boolean().optional(),
+    commentsAndReplies: z.boolean().optional(),
+    reshares: z.boolean().optional(),
+    newFollowers: z.boolean().optional(),
+    workspaceActivity: z.boolean().optional()
+  }).strict().refine((changes) => Object.values(changes).some((value) => value !== undefined), {
+    message: "Choose a notification preference to update."
+  })
+}).strict();
+
 export const markNotificationInputSchema = z.object({
   notificationId: z.string().uuid().optional(),
   groupKey: z.string().trim().min(1).max(500).optional(),
@@ -1845,6 +1879,9 @@ export type NotificationContract = z.infer<typeof notificationSchema>;
 export type NotificationListQueryContract = z.infer<typeof notificationListQuerySchema>;
 export type NotificationPageContract = z.infer<typeof notificationPageSchema>;
 export type NotificationUnreadCountContract = z.infer<typeof notificationUnreadCountSchema>;
+export type NotificationPreferenceCategoryContract = z.infer<typeof notificationPreferenceCategorySchema>;
+export type NotificationPreferencesContract = z.infer<typeof notificationPreferencesSchema>;
+export type UpdateNotificationPreferencesInputContract = z.infer<typeof updateNotificationPreferencesInputSchema>;
 export type ContentAnalyticsSubjectTypeContract = z.infer<typeof contentAnalyticsSubjectTypeSchema>;
 export type ContentAnalyticsViewContract = z.infer<typeof contentAnalyticsViewSchema>;
 export type ContentAnalyticsQueryContract = z.infer<typeof contentAnalyticsQuerySchema>;
@@ -1942,6 +1979,8 @@ export const procedureNames = [
   "search.query",
   "notifications.list",
   "notifications.markRead",
+  "notifications.getPreferences",
+  "notifications.updatePreferences",
   "messages.listConversations",
   "messages.getConversation",
   "messages.listMessages",

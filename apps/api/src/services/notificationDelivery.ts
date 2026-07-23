@@ -2,8 +2,11 @@ import type { PoolClient } from "pg";
 import type { NotificationContract } from "../../../../packages/contracts/src";
 import { stageEvent, type StoredLiveEvent } from "./events";
 import {
+  defaultNotificationPreferences,
   inferNotificationAggregationKey,
+  notificationAllowedByPreferences,
   notificationActorHandle,
+  notificationPreferenceCategory,
   projectNotificationGroup
 } from "./notificationAggregation";
 
@@ -18,6 +21,18 @@ type CreatedNotificationRow = {
   readAt: Date | string | null;
   metadata: Record<string, unknown> | null;
   createdAt: Date | string;
+};
+
+type NotificationPreferenceRow = {
+  profileHandle: string;
+  activityEnabled: boolean;
+  likes: boolean;
+  commentsAndReplies: boolean;
+  reshares: boolean;
+  newFollowers: boolean;
+  workspaceActivity: boolean;
+  revision: number;
+  updatedAt: Date | string;
 };
 
 export type CreateNotificationInput = {
@@ -63,7 +78,46 @@ export const createNotifications = async (
         ?? inferNotificationAggregationKey(input.kind, input.metadata)
     }))
     .filter((input) => input.kind && input.title);
-  const actorHandles = [...new Set(normalizedInputs
+  const configurableRecipients = [...new Set(normalizedInputs
+    .filter((input) => notificationPreferenceCategory(input.kind))
+    .map((input) => input.profileHandle))];
+  const preferenceRows = configurableRecipients.length
+    ? await client.query<NotificationPreferenceRow>(
+        `SELECT
+           profile_handle AS "profileHandle",
+           activity_enabled AS "activityEnabled",
+           likes,
+           comments_and_replies AS "commentsAndReplies",
+           reshares,
+           new_followers AS "newFollowers",
+           workspace_activity AS "workspaceActivity",
+           revision,
+           updated_at AS "updatedAt"
+         FROM notification_preferences
+         WHERE profile_handle = ANY($1::text[])`,
+        [configurableRecipients]
+      )
+    : { rows: [] };
+  const preferencesByHandle = new Map(preferenceRows.rows.map((row) => [
+    row.profileHandle,
+    {
+      activityEnabled: row.activityEnabled,
+      likes: row.likes,
+      commentsAndReplies: row.commentsAndReplies,
+      reshares: row.reshares,
+      newFollowers: row.newFollowers,
+      workspaceActivity: row.workspaceActivity,
+      revision: row.revision,
+      updatedAt: new Date(row.updatedAt).toISOString()
+    }
+  ]));
+  const preferenceEligibleInputs = normalizedInputs.filter((input) =>
+    notificationAllowedByPreferences(
+      input.kind,
+      preferencesByHandle.get(input.profileHandle) ?? defaultNotificationPreferences()
+    )
+  );
+  const actorHandles = [...new Set(preferenceEligibleInputs
     .map((input) => notificationActorHandle(input.metadata))
     .filter((handle): handle is string => Boolean(handle)))];
   const actorNames = actorHandles.length
@@ -73,7 +127,7 @@ export const createNotifications = async (
       )
     : { rows: [] };
   const actorNameByHandle = new Map(actorNames.rows.map((row) => [row.handle, row.name]));
-  const eligibleInputs = normalizedInputs.map((input) => {
+  const eligibleInputs = preferenceEligibleInputs.map((input) => {
     const actorHandle = notificationActorHandle(input.metadata);
     return {
       ...input,

@@ -1,12 +1,24 @@
 "use client";
 
-import { Bell, CheckCheck, ChevronLeft, ChevronRight, LoaderCircle, RefreshCw, X } from "lucide-react";
+import {
+  Bell,
+  CheckCheck,
+  ChevronLeft,
+  ChevronRight,
+  LoaderCircle,
+  LockKeyhole,
+  RefreshCw,
+  Settings2,
+  X
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   NotificationContract,
   NotificationPageContract,
+  NotificationPreferencesContract,
   NotificationUnreadCountContract
 } from "@/packages/contracts/src";
+import { notificationPreferencesSchema } from "@/packages/contracts/src";
 import { symposiumApi } from "@/features/api/symposiumApiClient";
 import {
   applyNotificationLiveEvent,
@@ -18,11 +30,35 @@ import {
   type NotificationLiveEvent,
   type NotificationState
 } from "@/features/notifications/notificationState";
+import {
+  notificationPreferencesFromLiveEvent,
+  type NotificationPreferenceKey
+} from "@/features/notifications/notificationPreferences";
 
 type NotificationLoadState = "loading" | "loaded" | "error";
 
 const retryDelayMs = 2_000;
 const maximumRetryDelayMs = 30_000;
+
+const activityPreferenceRows: {
+  key: Exclude<NotificationPreferenceKey, "activityEnabled">;
+  label: string;
+  detail: string;
+}[] = [
+  { key: "likes", label: "Likes", detail: "Likes on your posts and comments." },
+  {
+    key: "commentsAndReplies",
+    label: "Comments and replies",
+    detail: "New discussion on your posts and replies to your comments."
+  },
+  { key: "reshares", label: "Reshares", detail: "Reshares of your posts and comments." },
+  { key: "newFollowers", label: "New followers", detail: "People who begin following you." },
+  {
+    key: "workspaceActivity",
+    label: "Workspace discussion",
+    detail: "Comments, replies and likes on your shared drafts."
+  }
+];
 
 const displayNotificationTime = (value: string) => {
   const elapsed = Math.max(0, Date.now() - new Date(value).getTime());
@@ -53,6 +89,11 @@ export function NotificationsControl({
   const [loadingMore, setLoadingMore] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [preferences, setPreferences] = useState<NotificationPreferencesContract | null>(null);
+  const [preferencesLoading, setPreferencesLoading] = useState(false);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [preferencesStatus, setPreferencesStatus] = useState("");
   const panelRef = useRef<HTMLDivElement | null>(null);
   const openRef = useRef(false);
   const nextCursorRef = useRef<string | null>(null);
@@ -60,6 +101,7 @@ export function NotificationsControl({
   const retryAttemptRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
+  const preferencesRequestEpochRef = useRef(0);
   const pendingReadGroupsRef = useRef(new Set<string>());
   const processedEventKeysRef = useRef(new Set<string>());
   const latestEventKey = useMemo(() => latestNotificationEventKey(liveEvents), [liveEvents]);
@@ -68,6 +110,59 @@ export function NotificationsControl({
     if (retryTimerRef.current === null) return;
     window.clearTimeout(retryTimerRef.current);
     retryTimerRef.current = null;
+  };
+
+  const loadPreferences = useCallback(async () => {
+    const requestEpoch = preferencesRequestEpochRef.current + 1;
+    preferencesRequestEpochRef.current = requestEpoch;
+    setPreferencesLoading(true);
+    setPreferencesStatus("");
+    try {
+      const parameters = new URLSearchParams({ actorHandle });
+      const response = await symposiumApi.request<NotificationPreferencesContract>(
+        `/api/notifications/preferences?${parameters}`,
+        { cache: "no-store" }
+      );
+      const next = notificationPreferencesSchema.parse(response);
+      if (requestEpoch !== preferencesRequestEpochRef.current) return;
+      setPreferences(next);
+    } catch {
+      if (requestEpoch !== preferencesRequestEpochRef.current) return;
+      setPreferencesStatus("Notification settings could not load.");
+    } finally {
+      if (requestEpoch === preferencesRequestEpochRef.current) setPreferencesLoading(false);
+    }
+  }, [actorHandle]);
+
+  const updatePreference = async (key: NotificationPreferenceKey, value: boolean) => {
+    if (!preferences || preferencesSaving || preferences[key] === value) return;
+    const previous = preferences;
+    const optimistic = { ...previous, [key]: value };
+    setPreferences(optimistic);
+    setPreferencesSaving(true);
+    setPreferencesStatus("Saving…");
+    try {
+      const response = await symposiumApi.request<NotificationPreferencesContract>(
+        "/api/notifications/preferences",
+        {
+          method: "PATCH",
+          body: {
+            actorHandle,
+            expectedRevision: previous.revision,
+            changes: { [key]: value }
+          }
+        }
+      );
+      const canonical = notificationPreferencesSchema.parse(response);
+      setPreferences(canonical);
+      setPreferencesStatus("Saved");
+    } catch {
+      setPreferences(previous);
+      setPreferencesStatus("Settings changed elsewhere or could not save. Reloading…");
+      await loadPreferences();
+    } finally {
+      setPreferencesSaving(false);
+    }
   };
 
   const load = useCallback(async (append = false) => {
@@ -153,6 +248,7 @@ export function NotificationsControl({
 
   useEffect(() => {
     requestEpochRef.current += 1;
+    preferencesRequestEpochRef.current += 1;
     clearRetry();
     nextCursorRef.current = null;
     retryAttemptRef.current = 0;
@@ -166,6 +262,11 @@ export function NotificationsControl({
     setLoadingMore(false);
     setMarkingAll(false);
     setExpanded(false);
+    setSettingsOpen(false);
+    setPreferences(null);
+    setPreferencesLoading(false);
+    setPreferencesSaving(false);
+    setPreferencesStatus("");
     openRef.current = false;
     setOpen(false);
     void loadUnreadCount();
@@ -202,6 +303,16 @@ export function NotificationsControl({
     });
     if (!unseen.length) return;
     setState((current) => unseen.reduce(applyNotificationLiveEvent, current));
+    const livePreferences = unseen
+      .map(notificationPreferencesFromLiveEvent)
+      .filter((value): value is NotificationPreferencesContract => Boolean(value))
+      .at(-1);
+    if (livePreferences) {
+      setPreferences((current) =>
+        !current || livePreferences.revision >= current.revision ? livePreferences : current
+      );
+      setPreferencesStatus("Settings synced");
+    }
     if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = window.setTimeout(() => {
       refreshTimerRef.current = null;
@@ -216,6 +327,7 @@ export function NotificationsControl({
         openRef.current = false;
         setOpen(false);
         setExpanded(false);
+        setSettingsOpen(false);
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -223,6 +335,7 @@ export function NotificationsControl({
         openRef.current = false;
         setOpen(false);
         setExpanded(false);
+        setSettingsOpen(false);
       }
     };
     window.addEventListener("pointerdown", onPointerDown);
@@ -241,6 +354,7 @@ export function NotificationsControl({
       openRef.current = false;
       setOpen(false);
       setExpanded(false);
+      setSettingsOpen(false);
       onOpenConversation(conversationId);
       return true;
     }
@@ -248,6 +362,7 @@ export function NotificationsControl({
       openRef.current = false;
       setOpen(false);
       setExpanded(false);
+      setSettingsOpen(false);
       onNavigate(notification.href);
       return true;
     }
@@ -308,6 +423,11 @@ export function NotificationsControl({
     state.notifications,
     expanded
   );
+  const panelLabel = settingsOpen
+    ? "Notification settings"
+    : expanded
+      ? "All notifications"
+      : "Notifications";
   const notificationButton = (notification: NotificationContract) => (
     <button
       type="button"
@@ -357,7 +477,10 @@ export function NotificationsControl({
           openRef.current = nextOpen;
           setOpen(nextOpen);
           if (nextOpen) void load(false);
-          else setExpanded(false);
+          else {
+            setExpanded(false);
+            setSettingsOpen(false);
+          }
         }}
       >
         <Bell size={18} />
@@ -367,25 +490,42 @@ export function NotificationsControl({
       </button>
       {open ? (
         <section
-          className={`notifications-panel ${expanded ? "expanded" : "compact"}`}
-          aria-label={expanded ? "All notifications" : "Notifications"}
+          className={`notifications-panel ${expanded || settingsOpen ? "expanded" : "compact"}`}
+          aria-label={panelLabel}
         >
           <header>
             <span>
-              {expanded ? (
+              {expanded || settingsOpen ? (
                 <button
                   type="button"
-                  title="Back to compact notifications"
-                  aria-label="Back to compact notifications"
-                  onClick={() => setExpanded(false)}
+                  title="Back to notifications"
+                  aria-label="Back to notifications"
+                  onClick={() => {
+                    setExpanded(false);
+                    setSettingsOpen(false);
+                  }}
                 >
                   <ChevronLeft size={16} />
                 </button>
               ) : <Bell size={17} />}
-              <strong>{expanded ? "All notifications" : "Notifications"}</strong>
+              <strong>{panelLabel}</strong>
             </span>
             <span>
-              {state.unreadCount ? (
+              {!settingsOpen ? (
+                <button
+                  type="button"
+                  title="Notification settings"
+                  aria-label="Notification settings"
+                  onClick={() => {
+                    setExpanded(false);
+                    setSettingsOpen(true);
+                    void loadPreferences();
+                  }}
+                >
+                  <Settings2 size={16} />
+                </button>
+              ) : null}
+              {!settingsOpen && state.unreadCount ? (
                 <button
                   type="button"
                   title="Mark all read"
@@ -404,62 +544,142 @@ export function NotificationsControl({
                   openRef.current = false;
                   setOpen(false);
                   setExpanded(false);
+                  setSettingsOpen(false);
                 }}
               >
                 <X size={16} />
               </button>
             </span>
           </header>
-          <div
-            className="notifications-list"
-            aria-busy={loadState === "loading" || loadingMore}
-            aria-live="polite"
-          >
-            {needsAttention.length ? (
-              <>
-                <h3 className="notifications-section-label">Needs your attention</h3>
-                {needsAttention.map(notificationButton)}
-              </>
-            ) : null}
-            {recent.length ? (
-              <>
-                <h3 className="notifications-section-label">Recent activity</h3>
-                {recent.map(notificationButton)}
-              </>
-            ) : null}
-            {loadState === "loaded" && !state.notifications.length
-              ? <p className="notifications-empty">You are all caught up.</p>
-              : null}
-            {loadState === "loading" && !state.notifications.length
-              ? <LoaderCircle className="spin notifications-loader" size={18} />
-              : null}
-            {loadState === "error" ? (
-              <button className="notifications-retry" type="button" onClick={() => void refresh()}>
-                <RefreshCw size={14} />
-                <span>Reconnect notifications</span>
-              </button>
-            ) : null}
-            {expanded && nextCursor ? (
-              <button
-                className="notifications-more"
-                type="button"
-                disabled={loadingMore}
-                onClick={() => void load(true)}
-              >
-                {loadingMore ? "Loading…" : "Load older notifications"}
-              </button>
-            ) : null}
-            {!expanded && (hiddenCount > 0 || nextCursor) ? (
-              <button
-                className="notifications-more"
-                type="button"
-                onClick={() => setExpanded(true)}
-              >
-                View all notifications
-                {hiddenCount > 0 ? ` · ${hiddenCount}${nextCursor ? "+" : ""} more` : ""}
-              </button>
-            ) : null}
-          </div>
+          {settingsOpen ? (
+            <div
+              className="notification-preferences"
+              aria-busy={preferencesLoading || preferencesSaving}
+            >
+              {preferencesLoading && !preferences
+                ? <LoaderCircle className="spin notifications-loader" size={18} />
+                : null}
+              {!preferencesLoading && !preferences ? (
+                <button
+                  className="notifications-retry"
+                  type="button"
+                  onClick={() => void loadPreferences()}
+                >
+                  <RefreshCw size={14} />
+                  <span>Reload notification settings</span>
+                </button>
+              ) : null}
+              {preferences ? (
+                <>
+                  <p className="notification-preferences-intro">
+                    Choose which new activity reaches your inbox. Existing notifications stay in your history.
+                  </p>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={preferences.activityEnabled}
+                    className="notification-preference-row primary"
+                    disabled={preferencesSaving}
+                    onClick={() => void updatePreference("activityEnabled", !preferences.activityEnabled)}
+                  >
+                    <span>
+                      <strong>Activity notifications</strong>
+                      <small>Pause or resume every optional activity category below.</small>
+                    </span>
+                    <span className="notification-preference-switch" aria-hidden="true"><i /></span>
+                  </button>
+                  <h3 className="notifications-section-label">Activity</h3>
+                  {activityPreferenceRows.map((row) => (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={preferences[row.key]}
+                      className="notification-preference-row"
+                      disabled={preferencesSaving}
+                      key={row.key}
+                      onClick={() => void updatePreference(row.key, !preferences[row.key])}
+                    >
+                      <span>
+                        <strong>{row.label}</strong>
+                        <small>{row.detail}</small>
+                      </span>
+                      <span className="notification-preference-switch" aria-hidden="true"><i /></span>
+                    </button>
+                  ))}
+                  {!preferences.activityEnabled ? (
+                    <p className="notification-preferences-paused">
+                      Optional activity is paused. Your category choices are preserved.
+                    </p>
+                  ) : null}
+                  <h3 className="notifications-section-label">Always on</h3>
+                  <div className="notification-preferences-required">
+                    <LockKeyhole size={16} />
+                    <span>
+                      <strong>Important and actionable alerts</strong>
+                      <small>
+                        Access changes, membership decisions, applications and moderation-related requests
+                        always reach you.
+                      </small>
+                    </span>
+                  </div>
+                  <p className="notification-preferences-status" role="status" aria-live="polite">
+                    {preferencesSaving ? "Saving…" : preferencesStatus}
+                  </p>
+                </>
+              ) : null}
+            </div>
+          ) : (
+            <div
+              className="notifications-list"
+              aria-busy={loadState === "loading" || loadingMore}
+              aria-live="polite"
+            >
+              {needsAttention.length ? (
+                <>
+                  <h3 className="notifications-section-label">Needs your attention</h3>
+                  {needsAttention.map(notificationButton)}
+                </>
+              ) : null}
+              {recent.length ? (
+                <>
+                  <h3 className="notifications-section-label">Recent activity</h3>
+                  {recent.map(notificationButton)}
+                </>
+              ) : null}
+              {loadState === "loaded" && !state.notifications.length
+                ? <p className="notifications-empty">You are all caught up.</p>
+                : null}
+              {loadState === "loading" && !state.notifications.length
+                ? <LoaderCircle className="spin notifications-loader" size={18} />
+                : null}
+              {loadState === "error" ? (
+                <button className="notifications-retry" type="button" onClick={() => void refresh()}>
+                  <RefreshCw size={14} />
+                  <span>Reconnect notifications</span>
+                </button>
+              ) : null}
+              {expanded && nextCursor ? (
+                <button
+                  className="notifications-more"
+                  type="button"
+                  disabled={loadingMore}
+                  onClick={() => void load(true)}
+                >
+                  {loadingMore ? "Loading…" : "Load older notifications"}
+                </button>
+              ) : null}
+              {!expanded && (hiddenCount > 0 || nextCursor) ? (
+                <button
+                  className="notifications-more"
+                  type="button"
+                  onClick={() => setExpanded(true)}
+                >
+                  View all notifications
+                  {hiddenCount > 0 ? ` · ${hiddenCount}${nextCursor ? "+" : ""} more` : ""}
+                </button>
+              ) : null}
+            </div>
+          )}
         </section>
       ) : null}
     </div>

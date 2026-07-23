@@ -2,8 +2,10 @@ import { TRPCError } from "@trpc/server";
 import {
   markNotificationInputSchema,
   notificationListQuerySchema,
+  updateNotificationPreferencesInputSchema,
   type NotificationContract,
-  type NotificationPageContract
+  type NotificationPageContract,
+  type NotificationPreferencesContract
 } from "../../../../packages/contracts/src";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
@@ -12,6 +14,7 @@ import { stageEvent } from "../services/events";
 import { runAtomic } from "../services/transactions";
 import {
   attentionNotificationKinds,
+  defaultNotificationPreferences,
   groupedNotificationTitle,
   notificationActionLabel,
   notificationActorHandle,
@@ -33,6 +36,17 @@ type NotificationRow = {
   createdAt: Date | string | null;
   readAt: Date | string | null;
   attentionRank: number | null;
+};
+
+type NotificationPreferencesRow = {
+  activityEnabled: boolean;
+  likes: boolean;
+  commentsAndReplies: boolean;
+  reshares: boolean;
+  newFollowers: boolean;
+  workspaceActivity: boolean;
+  revision: number;
+  updatedAt: Date | string;
 };
 
 type PresentNotificationRow = Omit<NotificationRow, "id" | "kind" | "title" | "body" | "createdAt"> & {
@@ -91,6 +105,138 @@ const projectNotification = (
   createdAt: new Date(row.createdAt).toISOString(),
   metadata: row.metadata && typeof row.metadata === "object" ? row.metadata : {}
 });
+
+const projectNotificationPreferences = (
+  row: NotificationPreferencesRow
+): NotificationPreferencesContract => ({
+  activityEnabled: row.activityEnabled,
+  likes: row.likes,
+  commentsAndReplies: row.commentsAndReplies,
+  reshares: row.reshares,
+  newFollowers: row.newFollowers,
+  workspaceActivity: row.workspaceActivity,
+  revision: row.revision,
+  updatedAt: new Date(row.updatedAt).toISOString()
+});
+
+const notificationPreferencesSelect = `
+  activity_enabled AS "activityEnabled",
+  likes,
+  comments_and_replies AS "commentsAndReplies",
+  reshares,
+  new_followers AS "newFollowers",
+  workspace_activity AS "workspaceActivity",
+  revision,
+  updated_at AS "updatedAt"
+`;
+
+export const getNotificationPreferences = async (actor: Actor): Promise<NotificationPreferencesContract> => {
+  const handle = actorHandle(actor);
+  if (!hasDatabase()) return defaultNotificationPreferences();
+  await ensureLiveData();
+  const result = await getPool().query<NotificationPreferencesRow>(
+    `SELECT ${notificationPreferencesSelect}
+     FROM notification_preferences
+     WHERE profile_handle = $1`,
+    [handle]
+  );
+  return result.rows[0]
+    ? projectNotificationPreferences(result.rows[0])
+    : defaultNotificationPreferences();
+};
+
+export const updateNotificationPreferences = async (rawInput: unknown, actor: Actor) => {
+  const input = updateNotificationPreferencesInputSchema.parse(rawInput);
+  const handle = actorHandle(actor);
+  if (!hasDatabase()) {
+    return {
+      ...defaultNotificationPreferences(),
+      ...input.changes,
+      revision: input.expectedRevision + 1,
+      updatedAt: new Date().toISOString()
+    } satisfies NotificationPreferencesContract;
+  }
+  await ensureLiveData();
+  return runAtomic<NotificationPreferencesContract>(async (client) => {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('symposium:notification-preferences:' || $1, 0))",
+      [handle]
+    );
+    const existingResult = await client.query<NotificationPreferencesRow>(
+      `SELECT ${notificationPreferencesSelect}
+       FROM notification_preferences
+       WHERE profile_handle = $1
+       FOR UPDATE`,
+      [handle]
+    );
+    const existing = existingResult.rows[0]
+      ? projectNotificationPreferences(existingResult.rows[0])
+      : defaultNotificationPreferences();
+    if (existing.revision !== input.expectedRevision) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "Notification settings changed on another device. Review the latest settings and try again."
+      });
+    }
+    const next = {
+      ...existing,
+      ...input.changes
+    };
+    const unchanged = (
+      next.activityEnabled === existing.activityEnabled
+      && next.likes === existing.likes
+      && next.commentsAndReplies === existing.commentsAndReplies
+      && next.reshares === existing.reshares
+      && next.newFollowers === existing.newFollowers
+      && next.workspaceActivity === existing.workspaceActivity
+    );
+    if (unchanged) return { value: existing };
+    const updated = await client.query<NotificationPreferencesRow>(
+      `INSERT INTO notification_preferences (
+         profile_handle, activity_enabled, likes, comments_and_replies,
+         reshares, new_followers, workspace_activity, revision, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 2, now())
+       ON CONFLICT (profile_handle) DO UPDATE SET
+         activity_enabled = EXCLUDED.activity_enabled,
+         likes = EXCLUDED.likes,
+         comments_and_replies = EXCLUDED.comments_and_replies,
+         reshares = EXCLUDED.reshares,
+         new_followers = EXCLUDED.new_followers,
+         workspace_activity = EXCLUDED.workspace_activity,
+         revision = notification_preferences.revision + 1,
+         updated_at = now()
+       RETURNING ${notificationPreferencesSelect}`,
+      [
+        handle,
+        next.activityEnabled,
+        next.likes,
+        next.commentsAndReplies,
+        next.reshares,
+        next.newFollowers,
+        next.workspaceActivity
+      ]
+    );
+    const value = projectNotificationPreferences(updated.rows[0]!);
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "notification.preferences.update",
+      subjectType: "profile",
+      subjectId: handle,
+      metadata: { changed: Object.keys(input.changes), revision: value.revision }
+    });
+    const event = await stageEvent(client, {
+      kind: "notification.preferences.updated",
+      actorHandle: handle,
+      subjectType: "profile",
+      subjectId: handle,
+      visibility: "private",
+      audienceHandles: [handle],
+      payload: { preferences: value }
+    });
+    return { value, events: [event] };
+  });
+};
 
 export const getUnreadNotificationCount = async (actor: Actor) => {
   const handle = actorHandle(actor);

@@ -4,7 +4,10 @@ import { buildApp } from "@/apps/api/src/server";
 import {
   markNotificationInputSchema,
   notificationListQuerySchema,
+  notificationPreferencesSchema,
   notificationSchema,
+  updateNotificationPreferencesInputSchema,
+  type NotificationPreferencesContract,
   type NotificationContract
 } from "@/packages/contracts/src";
 import {
@@ -16,9 +19,23 @@ import {
   partitionNotificationInbox
 } from "@/features/notifications/notificationState";
 import {
+  defaultNotificationPreferences,
+  notificationAllowedByPreferences,
   notificationActionLabel,
+  notificationPreferenceCategory,
   notificationPriority
 } from "@/apps/api/src/services/notificationAggregation";
+import {
+  hasNotificationPreferenceChanges,
+  notificationPreferenceChanges,
+  notificationPreferenceKeys,
+  notificationPreferencesFromLiveEvent
+} from "@/features/notifications/notificationPreferences";
+import {
+  isPersistentSyncStatus,
+  syncStatusAfterNavigation,
+  syncStatusExpiryMs
+} from "@/features/shell/syncStatusState";
 
 const notification = (
   id: string,
@@ -41,6 +58,14 @@ const notification = (
   metadata: { postId: "post-1" },
   createdAt
 });
+
+const permutations = <T,>(values: T[]): T[][] => {
+  if (values.length <= 1) return [values];
+  return values.flatMap((value, index) =>
+    permutations([...values.slice(0, index), ...values.slice(index + 1)])
+      .map((tail) => [value, ...tail])
+  );
+};
 
 const main = async () => {
   assert.equal(compactNotificationCount(1), "1");
@@ -83,6 +108,120 @@ const main = async () => {
     assert.equal(notificationPriority(kind), expectedPriority, `${kind} priority`);
     assert.equal(notificationActionLabel(kind, "/destination"), expectedAction, `${kind} action`);
   }
+  const preferenceScenarios: NotificationPreferencesContract[] = Array.from(
+    { length: 2 ** notificationPreferenceKeys.length },
+    (_, mask) => ({
+      ...defaultNotificationPreferences("2026-07-23T00:00:00.000Z"),
+      ...Object.fromEntries(notificationPreferenceKeys.map((key, index) => [
+        key,
+        Boolean(mask & (1 << index))
+      ]))
+    })
+  );
+  for (const [scenarioIndex, preferences] of preferenceScenarios.entries()) {
+    assert.equal(notificationPreferencesSchema.safeParse(preferences).success, true);
+    for (const [kind, priority] of notificationKindMatrix) {
+      const category = notificationPreferenceCategory(kind);
+      if (priority === "activity") {
+        assert.ok(category, `${kind} must map to an activity preference`);
+      } else {
+        assert.equal(category, null, `${kind} must remain an always-on alert`);
+      }
+      const expected = category
+        ? preferences.activityEnabled && preferences[category]
+        : true;
+      assert.equal(
+        notificationAllowedByPreferences(kind, preferences),
+        expected,
+        `preference scenario ${scenarioIndex}, ${kind}`
+      );
+    }
+    assert.equal(
+      notificationAllowedByPreferences("future_required_notification", preferences),
+      true,
+      "Unknown future notifications fail open instead of silently disappearing."
+    );
+  }
+  for (const canonical of preferenceScenarios) {
+    for (const desired of preferenceScenarios) {
+      const changes = notificationPreferenceChanges(canonical, desired);
+      const expectedChangedKeys = notificationPreferenceKeys.filter(
+        (key) => canonical[key] !== desired[key]
+      );
+      assert.deepEqual(Object.keys(changes), expectedChangedKeys);
+      assert.equal(
+        hasNotificationPreferenceChanges(canonical, desired),
+        expectedChangedKeys.length > 0
+      );
+    }
+  }
+  const allDisabled = {
+    ...defaultNotificationPreferences("2026-07-23T00:00:00.000Z"),
+    ...Object.fromEntries(notificationPreferenceKeys.map((key) => [key, false]))
+  } as NotificationPreferencesContract;
+  for (const order of permutations([...notificationPreferenceKeys])) {
+    const toggled = order.reduce<NotificationPreferencesContract>(
+      (current, key) => ({ ...current, [key]: true }),
+      allDisabled
+    );
+    assert.ok(notificationPreferenceKeys.every((key) => toggled[key]), `toggle order ${order.join(",")}`);
+  }
+  assert.equal(updateNotificationPreferencesInputSchema.safeParse({
+    actorHandle: "@researcher",
+    expectedRevision: 1,
+    changes: { likes: false, commentsAndReplies: false }
+  }).success, true);
+  assert.equal(updateNotificationPreferencesInputSchema.safeParse({
+    expectedRevision: 1,
+    changes: {}
+  }).success, false);
+  assert.equal(updateNotificationPreferencesInputSchema.safeParse({
+    expectedRevision: 0,
+    changes: { likes: false }
+  }).success, false);
+  assert.equal(updateNotificationPreferencesInputSchema.safeParse({
+    expectedRevision: 2_147_483_648,
+    changes: { likes: false }
+  }).success, false);
+  assert.equal(updateNotificationPreferencesInputSchema.safeParse({
+    expectedRevision: 1,
+    changes: { likes: false, inventedCategory: false }
+  }).success, false);
+  assert.equal(updateNotificationPreferencesInputSchema.safeParse({
+    expectedRevision: 1,
+    changes: { likes: false },
+    inventedTransportField: true
+  }).success, false);
+  const livePreferenceUpdate = {
+    id: "preferences-event",
+    kind: "notification.preferences.updated",
+    subjectId: "@viewer",
+    payload: {
+      preferences: {
+        ...defaultNotificationPreferences("2026-07-23T10:00:00.000Z"),
+        likes: false,
+        revision: 2
+      }
+    }
+  };
+  assert.equal(notificationPreferencesFromLiveEvent(livePreferenceUpdate)?.likes, false);
+  assert.equal(notificationPreferencesFromLiveEvent({
+    ...livePreferenceUpdate,
+    payload: { preferences: { likes: false } }
+  }), null);
+  assert.equal(isPersistentSyncStatus("Live data connected"), true);
+  assert.equal(syncStatusExpiryMs("Live data connected"), null);
+  assert.equal(syncStatusExpiryMs("Post detail could not load"), 6_500);
+  assert.equal(syncStatusExpiryMs("Saving profile settings"), 30_000);
+  assert.equal(syncStatusExpiryMs("Post saved"), 3_500);
+  assert.equal(
+    syncStatusAfterNavigation("Post detail could not load", "Live updates reconnecting"),
+    "Live updates reconnecting"
+  );
+  assert.equal(
+    syncStatusAfterNavigation("Live data connected", "Live updates reconnecting"),
+    "Live data connected"
+  );
   const legacyNotification = notificationSchema.parse({
     id: "00000000-0000-4000-8000-000000000000",
     kind: "legacy_kind",
@@ -265,6 +404,8 @@ const main = async () => {
   );
 
   assert.match(delivery, /ON CONFLICT \(profile_handle, dedupe_key\)[\s\S]*?DO NOTHING/);
+  assert.match(delivery, /FROM notification_preferences/);
+  assert.match(delivery, /notificationAllowedByPreferences/);
   assert.match(delivery, /kind: "notification\.created"/);
   assert.match(delivery, /audienceHandles: \[row\.profileHandle\]/);
   assert.match(repository, /WITH grouped AS/);
@@ -278,6 +419,11 @@ const main = async () => {
   assert.match(repository, /export const getUnreadNotificationCount/);
   assert.match(repository, /profile_handle = \$1 AND kind <> 'message'/);
   assert.match(repository, /groupKey/);
+  assert.match(repository, /export const getNotificationPreferences/);
+  assert.match(repository, /export const updateNotificationPreferences/);
+  assert.match(repository, /pg_advisory_xact_lock/);
+  assert.match(repository, /kind: "notification\.preferences\.updated"/);
+  assert.match(repository, /audienceHandles: \[handle\]/);
   assert.doesNotMatch(workspaceAccess, /INSERT INTO notifications/);
   assert.match(workspaceAccess, /workspace_access_updated/);
   assert.match(conversations, /\.\.\.createdNotifications\.events/);
@@ -300,18 +446,28 @@ const main = async () => {
   assert.match(panel, /View all notifications/);
   assert.match(panel, /notification\.actionLabel/);
   assert.match(panel, /partitionNotificationInbox/);
+  assert.match(panel, /Notification settings/);
+  assert.match(panel, /Important and actionable alerts/);
+  assert.match(panel, /role="switch"/);
+  assert.match(panel, /notificationPreferencesFromLiveEvent/);
   assert.doesNotMatch(panel, /window\.location\.assign/);
   assert.match(shell, /setNotificationEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);
   assert.match(shell, /parseCanonicalRoute\(url\.pathname, url\.search\)/);
   assert.match(shell, /symposium:pending-community-requests/);
   assert.match(shell, /symposium:open-community-requests/);
+  assert.match(shell, /syncStatusExpiryMs/);
+  assert.match(shell, /dismissTransientSyncStatus\(\)/);
+  assert.match(shell, /role="status"/);
 
   assert.match(migration, /0043_notification_aggregation/);
+  assert.match(migration, /0044_notification_preferences/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS notification_preferences/);
   assert.match(migration, /notifications_profile_page_idx/);
   assert.match(migration, /notifications_profile_unread_idx/);
   assert.match(schema, /notifications_profile_page_idx/);
   assert.match(schema, /notifications_profile_unread_idx/);
   assert.match(schema, /notifications_profile_aggregation_idx/);
+  assert.match(schema, /export const notificationPreferences/);
 
   const app = await buildApp({ logger: false });
   try {
@@ -330,6 +486,52 @@ const main = async () => {
     });
     assert.equal(unread.statusCode, 200);
     assert.deepEqual(unread.json(), { unreadCount: 0 });
+
+    const defaultPreferences = await app.inject({
+      method: "GET",
+      url: "/v1/notifications/preferences",
+      headers: { "x-symposium-handle": "@notification-boundary" }
+    });
+    assert.equal(defaultPreferences.statusCode, 200);
+    assert.deepEqual(
+      defaultPreferences.json(),
+      defaultNotificationPreferences()
+    );
+
+    const updatedPreferences = await app.inject({
+      method: "PATCH",
+      url: "/v1/notifications/preferences",
+      headers: {
+        "content-type": "application/json",
+        "x-symposium-handle": "@notification-boundary"
+      },
+      payload: {
+        expectedRevision: 1,
+        changes: {
+          activityEnabled: false,
+          likes: false,
+          commentsAndReplies: false,
+          reshares: false,
+          newFollowers: false,
+          workspaceActivity: false
+        }
+      }
+    });
+    assert.equal(updatedPreferences.statusCode, 200);
+    const updatedPreferenceBody = notificationPreferencesSchema.parse(updatedPreferences.json());
+    assert.equal(updatedPreferenceBody.revision, 2);
+    assert.ok(notificationPreferenceKeys.every((key) => !updatedPreferenceBody[key]));
+
+    const invalidPreferences = await app.inject({
+      method: "PATCH",
+      url: "/v1/notifications/preferences",
+      headers: {
+        "content-type": "application/json",
+        "x-symposium-handle": "@notification-boundary"
+      },
+      payload: { expectedRevision: 1, changes: {} }
+    });
+    assert.equal(invalidPreferences.statusCode, 400);
 
     const invalidCursor = await app.inject({
       method: "GET",
