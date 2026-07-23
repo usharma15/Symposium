@@ -28,6 +28,7 @@ Useful endpoints:
 
 - `GET /healthz`
 - `GET /readyz`
+- `GET /readyz?probe=database` (explicit deep deployment probe)
 - `GET /v1/bootstrap`
 - `GET /v1/posts`
 - `POST /v1/posts`
@@ -74,6 +75,7 @@ Backend:
 DATABASE_URL=postgres://...
 DATABASE_POOL_MAX=4
 DATABASE_IDLE_TIMEOUT_MS=30000
+DATABASE_APPLICATION_NAME=symposium-api-local
 CLERK_SECRET_KEY=sk_...
 CLERK_JWT_AUDIENCE=
 SYMPOSIUM_STRICT_ENV=true
@@ -168,7 +170,9 @@ npm run api:smoke:writes
 
 This creates verification posts, comments, post actions, community calls, opportunities, note blocks, note publications, and assistant messages. Use it only against environments where test writes are acceptable.
 
-`/healthz` is a cheap process liveness check. `/readyz` is the safer deployment-readiness check: it verifies the database connection and migration position, reports the maintenance worker and release identifier, and checks the provider boundary without returning secret values. Neither endpoint spends an Upstash command. In strict live mode readiness expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash for shared mutation limits, R2, a public R2 delivery URL, and the reserved owner handle binding. The AI tablet provider is reported separately because the fallback response is valid until model execution policy is finalized.
+`/healthz` is a cheap process liveness check. `/readyz` is also database-silent: it reports the database and migration state verified during startup, current pool activity, the maintenance worker, release identifier, and provider boundaries without waking a suspended Neon compute or returning secret values. Use `/readyz?probe=database` only for an explicit deployment or incident check; it performs a live connection probe and refreshes migration state. Neither endpoint spends an Upstash command. In strict live mode readiness expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash for shared mutation limits, R2, a public R2 delivery URL, and the reserved owner handle binding. The AI tablet provider is reported separately because fallback mode remains a valid degraded state.
+
+The Render blueprint restricts API rebuilds to backend, shared-library, contract, dependency, and API configuration paths. Design-only frontend commits therefore do not restart the API or reopen Neon. Database connections identify themselves as `symposium-api-render` in `pg_stat_activity`. Six-hour housekeeping is activity-driven: it runs after startup while migrations have already activated the database, then only after genuine database traffic when due. It does not use a timer that wakes an idle compute.
 
 ## Integrity Architecture
 
@@ -197,7 +201,7 @@ The current guarantees are:
 - Migration `0012_operational_integrity` backfills event audiences, removes impossible self-follows and duplicate publication links, normalizes legacy enum values conservatively, adds database checks, and adds compound/GIN indexes for the live read paths.
 - Migration `0013_authoritative_entity_revisions` adds monotonic revisions to posts, comments, profiles, and follow relationships so clients can deterministically reject stale snapshots across tabs, browsers, devices, bootstrap refreshes, and delayed live events.
 - Migration `0014_note_revision_guards` adds authoritative note and note-block revisions. Existing-note writes must supply the revisions they loaded, so delayed autosaves fail with a conflict instead of overwriting newer work.
-- Migration `0015_durable_r2_deletion` adds a leased, retry-safe object-deletion queue and backfills attachments belonging to existing post tombstones. Post deletion keeps its database tombstone and live event, but atomically removes the attachment from read projections and queues both canonical and staging R2 keys before commit. Removal is attempted before the delete request returns; transient failures are recovered by the shared six-hour maintenance pass so an idle scale-to-zero database is not woken every minute.
+- Migration `0015_durable_r2_deletion` adds a leased, retry-safe object-deletion queue and backfills attachments belonging to existing post tombstones. Post deletion keeps its database tombstone and live event, but atomically removes the attachment from read projections and queues both canonical and staging R2 keys before commit. Removal is attempted before the delete request returns; transient failures are recovered by the shared maintenance pass after startup or genuine database activity once the six-hour lease is due. No timer wakes an idle scale-to-zero database.
 - Migration `0016_comment_attachment_ownership` extends the attachment-owner constraint to comments. Comment and reply creation claims verified staged objects in the comment transaction; post/comment edits replace a content-version-guarded desired attachment set; comment deletion and parent-post deletion queue every canonical and staging object durably.
 - Migration `0017_content_quotes` adds the shared post/comment quote snapshot columns. Quote resolution rejects private, deleted, or self-referential sources; source deletion sanitizes dependent snapshots, and live deletion events converge the unavailable state across active tabs.
 - Migration `0018_comment_quote_kind` backfills the source post kind into existing comment quote snapshots so paper/thought presentation remains consistent without exposing parent-post content.
@@ -287,6 +291,6 @@ Current provider-plan boundaries:
 6. Put the backend env vars in Render and run `npm run deploy:api:check`.
 7. Run `npm run db:migrate` against Neon.
 8. Deploy the Render API and run `SYMPOSIUM_SMOKE_URL=<render-url> npm run api:smoke`.
-9. Open `<render-url>/readyz` and confirm `status: "ready"`, no pending migration ids, and no issues.
+9. Open `<render-url>/readyz?probe=database` once and confirm `status: "ready"`, `databaseProbe: "deep"`, no pending migration ids, and no issues. Routine uptime monitors must use `/healthz` or the database-silent `/readyz`.
 10. Put frontend env vars in Vercel: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and `SYMPOSIUM_API_URL`.
 11. Redeploy Vercel and verify sign-in, `/api/auth/sync`, `/api/bootstrap`, post creation, comments, saves, attachment prepare/confirm, private-room concealment, and community browsing against the live API.

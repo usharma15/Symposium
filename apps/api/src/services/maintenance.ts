@@ -11,7 +11,8 @@ import {
 
 const maintenanceIntervalMs = 6 * 60 * 60 * 1000;
 const maintenanceLeaseKey = "database-housekeeping-v1";
-let maintenanceTimer: NodeJS.Timeout | null = null;
+let maintenanceActive = false;
+let maintenanceRun: Promise<void> | null = null;
 let lastCompletedAt: string | null = null;
 let lastErrorAt: string | null = null;
 let lastStartedAt: string | null = null;
@@ -20,7 +21,7 @@ let lastStorageDeletionResult: { claimed: number; deleted: number; failed: numbe
 let lastSkippedAt: string | null = null;
 
 export const getMaintenanceStatus = () => ({
-  active: Boolean(maintenanceTimer),
+  active: maintenanceActive,
   lastCompletedAt,
   lastErrorAt,
   lastStartedAt,
@@ -244,19 +245,32 @@ export const runDatabaseMaintenance = async () => {
   await runStorageDeletionMaintenance();
 };
 
-export const startDatabaseMaintenance = () => {
-  if (maintenanceTimer || !hasDatabase()) return;
-  const execute = () => {
-    void runDatabaseMaintenance().catch((error) => {
+const maintenanceIsDue = () => {
+  const mostRecent = lastCompletedAt ?? lastSkippedAt ?? lastStartedAt;
+  return !mostRecent || Date.now() - Date.parse(mostRecent) >= maintenanceIntervalMs;
+};
+
+export const scheduleDatabaseMaintenanceAfterActivity = () => {
+  if (!maintenanceActive || maintenanceRun || !hasDatabase() || !maintenanceIsDue()) return false;
+  maintenanceRun = runDatabaseMaintenance()
+    .catch((error) => {
       console.warn("SYMPOSIUM database maintenance failed.", error);
+    })
+    .finally(() => {
+      maintenanceRun = null;
     });
-  };
-  execute();
-  maintenanceTimer = setInterval(execute, maintenanceIntervalMs);
-  maintenanceTimer.unref();
+  return true;
+};
+
+export const startDatabaseMaintenance = () => {
+  if (maintenanceActive || !hasDatabase()) return;
+  maintenanceActive = true;
+  // Startup migrations have already activated Neon. Run recovery inside that
+  // same active window, then rely on real database traffic instead of a timer
+  // that would wake an otherwise suspended compute.
+  scheduleDatabaseMaintenanceAfterActivity();
 };
 
 export const stopDatabaseMaintenance = () => {
-  if (maintenanceTimer) clearInterval(maintenanceTimer);
-  maintenanceTimer = null;
+  maintenanceActive = false;
 };

@@ -2134,6 +2134,27 @@ export type MigrationStatus = {
   pendingMigrationIds: string[];
 };
 
+let cachedMigrationStatus: MigrationStatus | null = null;
+
+const completeMigrationStatus = (): MigrationStatus => ({
+  appliedCount: migrationIds.length,
+  currentMigrationId: latestMigrationId,
+  latestMigrationId,
+  pendingMigrationIds: []
+});
+
+export const getCachedMigrationStatus = (): MigrationStatus => cachedMigrationStatus
+  ? {
+      ...cachedMigrationStatus,
+      pendingMigrationIds: [...cachedMigrationStatus.pendingMigrationIds]
+    }
+  : {
+      appliedCount: 0,
+      currentMigrationId: null,
+      latestMigrationId,
+      pendingMigrationIds: hasDatabase() ? migrationIds : []
+    };
+
 export const getMigrationStatus = async (): Promise<MigrationStatus> => {
   if (!hasDatabase()) {
     return {
@@ -2150,12 +2171,13 @@ export const getMigrationStatus = async (): Promise<MigrationStatus> => {
   );
   const applied = new Set(result.rows.map((row) => row.id));
   const appliedIds = migrationIds.filter((id) => applied.has(id));
-  return {
+  cachedMigrationStatus = {
     appliedCount: appliedIds.length,
     currentMigrationId: appliedIds.at(-1) ?? null,
     latestMigrationId,
     pendingMigrationIds: migrationIds.filter((id) => !applied.has(id))
   };
+  return getCachedMigrationStatus();
 };
 
 let migrationReady: Promise<void> | null = null;
@@ -2187,6 +2209,7 @@ export const runMigrations = async () => {
     }
 
     await client.query("COMMIT");
+    cachedMigrationStatus = completeMigrationStatus();
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

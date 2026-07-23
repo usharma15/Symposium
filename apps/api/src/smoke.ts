@@ -23,7 +23,7 @@ const main = async () => {
     checks?: unknown[];
     issues?: unknown[];
     migrations?: { currentMigrationId?: string | null; latestMigrationId?: string | null; pendingMigrationIds?: string[] };
-  }>("/readyz");
+  }>("/readyz?probe=database");
 
   if (readiness.status !== 200 || !readiness.body.ok || !Array.isArray(readiness.body.checks)) {
     throw new Error(`/readyz failed with ${readiness.status}: ${JSON.stringify(readiness.body)}`);

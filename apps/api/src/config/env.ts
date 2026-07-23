@@ -27,6 +27,7 @@ const envSchema = z.object({
   POSTGRES_PRISMA_URL: z.string().optional(),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(20).default(4),
   DATABASE_IDLE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(30000),
+  DATABASE_APPLICATION_NAME: z.string().trim().min(1).max(63).default("symposium-api"),
   CLERK_SECRET_KEY: z.string().optional(),
   CLERK_JWT_AUDIENCE: z.string().optional(),
   SYMPOSIUM_OWNER_CLERK_USER_ID: z.string().optional(),

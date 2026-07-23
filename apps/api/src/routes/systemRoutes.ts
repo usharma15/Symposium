@@ -13,9 +13,11 @@ export const registerSystemRoutes = (app: FastifyInstance) => {
     time: new Date().toISOString()
   }));
 
-  app.get("/readyz", async (_request, reply) => {
+  app.get<{ Querystring: { probe?: string } }>("/readyz", async (request, reply) => {
     try {
-      const readiness = await getRuntimeReadiness();
+      const readiness = await getRuntimeReadiness({
+        probeDatabase: request.query.probe === "database"
+      });
       return reply.status(readiness.ok ? 200 : 503).send(readiness);
     } catch (error) {
       return sendError(app, reply, error);

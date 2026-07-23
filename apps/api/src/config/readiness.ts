@@ -1,9 +1,8 @@
 import { cleanHandle } from "@/lib/symposiumCore";
-import { getPool } from "../db/client";
+import { getDatabaseActivityStatus, getPool } from "../db/client";
 import {
+  getCachedMigrationStatus,
   getMigrationStatus,
-  latestMigrationId,
-  migrationIds,
   type MigrationStatus
 } from "../db/migrate";
 import { getMaintenanceStatus } from "../services/maintenance";
@@ -36,6 +35,8 @@ export type RuntimeReadiness = {
   warnings: string[];
   maintenance: ReturnType<typeof getMaintenanceStatus>;
   migrations: MigrationStatus;
+  databaseActivity: ReturnType<typeof getDatabaseActivityStatus>;
+  databaseProbe: "startup" | "deep";
   release: string | null;
 };
 
@@ -56,7 +57,9 @@ const requiredCheck = (
   detail
 });
 
-export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
+export const getRuntimeReadiness = async (
+  options: { probeDatabase?: boolean } = {}
+): Promise<RuntimeReadiness> => {
   const strict = env.SYMPOSIUM_STRICT_ENV;
   const ownerHandle = cleanHandle(env.SYMPOSIUM_OWNER_HANDLE);
   const ownerBindingReady = ownerHandle !== "@udayan" || Boolean(env.SYMPOSIUM_OWNER_CLERK_USER_ID);
@@ -64,12 +67,7 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
   const warnings = deploymentEnvWarnings();
   const maintenance = getMaintenanceStatus();
   const checks: RuntimeCheck[] = [];
-  let migrations: MigrationStatus = {
-    appliedCount: 0,
-    currentMigrationId: null,
-    latestMigrationId,
-    pendingMigrationIds: databaseUrl ? migrationIds : []
-  };
+  let migrations = getCachedMigrationStatus();
 
   const databaseCheck = requiredCheck(
     "database",
@@ -80,19 +78,27 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
   );
 
   if (databaseUrl) {
-    try {
-      await getPool().query("SELECT 1");
-      databaseCheck.detail = "connection verified";
-      migrations = await getMigrationStatus();
-      if (migrations.pendingMigrationIds.length) {
+    if (options.probeDatabase) {
+      try {
+        await getPool().query("SELECT 1");
+        migrations = await getMigrationStatus();
+        databaseCheck.detail = "deep connection probe verified";
+      } catch {
         databaseCheck.ok = false;
-        databaseCheck.detail = `${migrations.pendingMigrationIds.length} migration(s) pending`;
-        issues.push("Database migrations are not current.");
+        databaseCheck.detail = "deep connection probe failed";
+        issues.push("Database connection check failed.");
       }
-    } catch {
+    } else if (migrations.pendingMigrationIds.length) {
       databaseCheck.ok = false;
-      databaseCheck.detail = "connection failed";
-      issues.push("Database connection check failed.");
+      databaseCheck.detail = "startup migration verification unavailable";
+      issues.push("Database startup verification is unavailable.");
+    } else {
+      databaseCheck.detail = "startup verified; idle-safe probe";
+    }
+    if (migrations.pendingMigrationIds.length) {
+      databaseCheck.ok = false;
+      databaseCheck.detail = `${migrations.pendingMigrationIds.length} migration(s) pending`;
+      issues.push("Database migrations are not current.");
     }
   }
 
@@ -201,6 +207,8 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
     warnings,
     maintenance,
     migrations,
+    databaseActivity: getDatabaseActivityStatus(),
+    databaseProbe: options.probeDatabase ? "deep" : "startup",
     release: env.APP_VERSION ?? env.RENDER_GIT_COMMIT ?? env.VERCEL_GIT_COMMIT_SHA ?? null
   };
 };

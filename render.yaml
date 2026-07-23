@@ -6,6 +6,16 @@ services:
     buildCommand: npm ci && npm run deploy:api:check
     startCommand: npm run api:start
     healthCheckPath: /healthz
+    buildFilter:
+      paths:
+        - apps/api/**
+        - packages/**
+        - lib/**
+        - package.json
+        - package-lock.json
+        - tsconfig.json
+        - tsconfig.api.json
+        - drizzle.config.ts
     envVars:
       - key: NODE_ENV
         value: production
@@ -31,6 +41,8 @@ services:
         value: "4"
       - key: DATABASE_IDLE_TIMEOUT_MS
         value: "30000"
+      - key: DATABASE_APPLICATION_NAME
+        value: symposium-api-render
       - key: SYMPOSIUM_SEED_ON_BOOT
         value: "false"
       - key: CLERK_SECRET_KEY

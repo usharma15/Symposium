@@ -64,6 +64,9 @@ const main = async () => {
   assert.match(maintenanceSource, /owner_type IN \('post', 'comment', 'message', 'note', 'note_comment', 'opportunity_application'\)/);
   assert.match(maintenanceSource, /profile_attachment_replaced/);
   assert.match(maintenanceSource, /maintenanceIntervalMs = 6 \* 60 \* 60 \* 1000/);
+  assert.match(maintenanceSource, /scheduleDatabaseMaintenanceAfterActivity/);
+  assert.match(maintenanceSource, /rely on real database traffic instead of a timer/);
+  assert.doesNotMatch(maintenanceSource, /setInterval\(/);
   assert.match(maintenanceSource, /await runStorageDeletionMaintenance\(\)/);
   assert.doesNotMatch(maintenanceSource, /storageDeletionIntervalMs/);
   assert.match(migrationSource, /0015_durable_r2_deletion/);
@@ -84,7 +87,7 @@ const main = async () => {
           "failed and abandoned upload cleanup",
           "legacy promoted staging-object cleanup",
           "replaced profile image cleanup",
-          "immediate deletion with batched six-hour durable recovery",
+          "immediate deletion with activity-driven six-hour durable recovery",
           "legacy deleted-post backfill"
         ]
       },

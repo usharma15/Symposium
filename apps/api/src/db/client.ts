@@ -4,13 +4,17 @@ import { currentRequestCost, recordDatabaseQuery } from "../services/requestCost
 
 let pool: Pool | null = null;
 const instrumentedClient = Symbol("symposium.instrumented-pg-client");
+let lastConnectionOpenedAt: string | null = null;
+let lastQueryAt: string | null = null;
 
 const instrumentPoolClient = (client: PoolClient) => {
   const markedClient = client as PoolClient & { [instrumentedClient]?: boolean };
   if (markedClient[instrumentedClient]) return;
   markedClient[instrumentedClient] = true;
+  lastConnectionOpenedAt = new Date().toISOString();
   const originalQuery = client.query.bind(client) as (...args: unknown[]) => unknown;
   (client as unknown as { query: (...args: unknown[]) => unknown }).query = (...rawArgs: unknown[]) => {
+    lastQueryAt = new Date().toISOString();
     const startedAt = performance.now();
     const requestCost = currentRequestCost();
     const args = [...rawArgs];
@@ -58,6 +62,7 @@ export const getPool = () => {
       max: env.DATABASE_POOL_MAX,
       idleTimeoutMillis: env.DATABASE_IDLE_TIMEOUT_MS,
       connectionTimeoutMillis: 10_000,
+      application_name: env.DATABASE_APPLICATION_NAME,
       ssl: databaseUrl.includes("localhost") || databaseUrl.includes("127.0.0.1")
         ? undefined
         : { rejectUnauthorized: false }
@@ -67,6 +72,16 @@ export const getPool = () => {
 
   return pool;
 };
+
+export const getDatabaseActivityStatus = () => ({
+  applicationName: env.DATABASE_APPLICATION_NAME,
+  poolCreated: Boolean(pool),
+  connectionCount: pool?.totalCount ?? 0,
+  idleConnectionCount: pool?.idleCount ?? 0,
+  waitingRequestCount: pool?.waitingCount ?? 0,
+  lastConnectionOpenedAt,
+  lastQueryAt
+});
 
 export const closeDb = async () => {
   if (pool) {

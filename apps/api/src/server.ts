@@ -14,7 +14,11 @@ import { registerOpportunityApplicationRoutes } from "./routes/opportunityApplic
 import { registerProfileRoutes } from "./routes/profileRoutes";
 import { registerSystemRoutes } from "./routes/systemRoutes";
 import { registerWorkspaceRoutes } from "./routes/workspaceRoutes";
-import { startDatabaseMaintenance, stopDatabaseMaintenance } from "./services/maintenance";
+import {
+  scheduleDatabaseMaintenanceAfterActivity,
+  startDatabaseMaintenance,
+  stopDatabaseMaintenance
+} from "./services/maintenance";
 import { rateLimit } from "./services/rateLimit";
 import {
   completeRequestCost,
@@ -67,6 +71,7 @@ export const buildApp = async (options: { logger?: boolean } = {}) => {
       statusCode: reply.statusCode,
       responseBytes: responsePayloadBytes(payload)
     });
+    if (snapshot.queryCount > 0) scheduleDatabaseMaintenanceAfterActivity();
     const log = {
       event: snapshot.violations.length ? "request_cost_budget_exceeded" : "request_cost_sample",
       method: snapshot.method,
