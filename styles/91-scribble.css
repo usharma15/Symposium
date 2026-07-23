@@ -2,7 +2,7 @@
 
 .scribble-panel {
   position: fixed;
-  z-index: 31;
+  z-index: 50;
   inset:
     var(--symposium-side-tool-top)
     auto
@@ -157,7 +157,7 @@
 .scribble-footer {
   border-top: 1px solid var(--line);
   flex: 0 0 auto;
-  padding: 0.42rem 0.55rem calc(0.42rem + var(--symposium-side-tool-launcher-clearance));
+  padding: 0.42rem 0.55rem;
   position: relative;
   z-index: 6;
 }
@@ -259,5 +259,4 @@
   .attachment-modal-toolbar { flex-wrap: wrap; justify-content: flex-start; }
   .attachment-modal-toolbar .attachment-zoom-controls { margin-inline: auto; }
   .attachment-citation-controls:not(.compact) .attachment-citation-button span { display: none; }
-  .symposium-shell[data-view="messages"] .scribble-footer { padding-bottom: 0.42rem; }
 }

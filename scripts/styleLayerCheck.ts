@@ -130,7 +130,6 @@ const main = async () => {
   assert.match(foundationStyles, /--symposium-side-tool-width:\s*max\(/);
   assert.match(foundationStyles, /--symposium-side-tool-top:\s*104px/);
   assert.match(foundationStyles, /--symposium-side-tool-bottom:\s*84px/);
-  assert.match(foundationStyles, /--symposium-side-tool-launcher-clearance:\s*60px/);
   assert.match(foundationStyles, /@media \(max-width:\s*640px\)[\s\S]*?--symposium-side-tool-bottom:\s*76px/);
   assert.match(foundationStyles, /@media \(max-width:\s*760px\)[\s\S]*?--symposium-side-tool-top:\s*88px/);
   assert.match(scribbleStyles, /\.scribble-panel\s*\{[^}]*width:\s*var\(--symposium-side-tool-width\)/);
@@ -143,8 +142,8 @@ const main = async () => {
   assert.match(immersiveShellStyles, /\.room-hotspots\s*\{[^}]*z-index:\s*3/);
   assert.match(immersiveShellStyles, /\.office-hotspot\s*\{[^}]*clip-path:\s*var\(--office-hotspot-shape/);
   assert.match(immersiveShellStyles, /\.symposium-shell\[data-room="office"\] \.bottom-action\s*\{[^}]*z-index:\s*45/);
-  assert.match(feedStyles, /\.bottom-action-search,[\s\S]*?z-index:\s*51/);
-  assert.match(feedStyles, /\.bottom-action-new,[\s\S]*?z-index:\s*51/);
+  assert.match(scribbleStyles, /\.scribble-panel\s*\{[^}]*z-index:\s*50/);
+  assert.doesNotMatch(feedStyles, /\.bottom-action-(?:search|new),[\s\S]*?z-index:\s*51/);
   assert.match(feedStyles, /\.feed-stream[\s\S]*max-width:\s*var\(--symposium-feed-width\)/);
   assert.match(feedStyles, /\.detail-layout\.simple-detail[\s\S]*var\(--symposium-feed-width\)/);
   assert.match(feedStyles, /\.workspace-main-column[\s\S]*var\(--symposium-feed-width\)/);

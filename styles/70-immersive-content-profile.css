@@ -834,7 +834,6 @@ button.quote-card-opportunity:hover {
 .bottom-action-search,
 .pocket.bottom-action-search,
 .search-launcher.bottom-action-search {
-  z-index: 51;
   left: 24px;
   right: auto;
   bottom: 84px;
@@ -849,7 +848,6 @@ button.quote-card-opportunity:hover {
 
 .bottom-action-new,
 .new-post-launcher.bottom-action-new {
-  z-index: 51;
   right: 24px;
   left: auto;
   bottom: 84px;

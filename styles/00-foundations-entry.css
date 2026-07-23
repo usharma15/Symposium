@@ -25,7 +25,6 @@
   );
   --symposium-side-tool-top: 104px;
   --symposium-side-tool-bottom: 84px;
-  --symposium-side-tool-launcher-clearance: 60px;
   --symposium-shell-edge: 24px;
   --symposium-detail-top: 120px;
   --symposium-topbar-brand-slot: 112px;
@@ -37,7 +36,6 @@
 @media (max-width: 640px) {
   :root {
     --symposium-side-tool-bottom: 76px;
-    --symposium-side-tool-launcher-clearance: 62px;
   }
 }
 

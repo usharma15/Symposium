@@ -2276,9 +2276,6 @@
   .symposium-shell[data-view="messages"] .messaging-experience.full > .messages-info-panel {
     height: calc(100% - var(--messages-panel-top-clearance));
   }
-
-  .symposium-shell[data-view="messages"] .scribble-footer { padding-bottom: 0.42rem; }
-  .symposium-shell[data-view="messages"] .tablet-composer { padding-bottom: 0.48rem; }
 }
 
 @media (max-width: 480px) {
