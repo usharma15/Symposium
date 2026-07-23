@@ -2830,7 +2830,6 @@ function SymposiumExperience({
     commentSegmentStacksRef.current = restoredSegmentStacks;
     visibleCommentSegmentStacksRef.current = {};
     setCommentSegmentStacks(restoredSegmentStacks);
-    setTabletOpen(false);
     setComposerOpen(false);
     setComposerCommunityId(null);
     setSettingsOpen(false);
@@ -2912,7 +2911,6 @@ function SymposiumExperience({
     }
     if (next.officeMode !== undefined) setOfficeMode(next.officeMode);
     if (next.selectedCommunityId !== undefined) setSelectedCommunityId(next.selectedCommunityId);
-    setTabletOpen(false);
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
