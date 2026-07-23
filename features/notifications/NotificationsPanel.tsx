@@ -57,8 +57,13 @@ const activityPreferenceRows: {
   },
   {
     key: "reshares",
-    label: "Reshares & quotes",
-    detail: "Reshares and quotes of your posts and comments."
+    label: "Reshares",
+    detail: "Direct reshares of your posts and comments."
+  },
+  {
+    key: "quotes",
+    label: "Quotes",
+    detail: "Posts and comments that quote your work."
   },
   { key: "newFollowers", label: "New followers", detail: "People who begin following you." },
   {

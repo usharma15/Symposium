@@ -31,6 +31,7 @@ import {
 } from "@/apps/api/src/services/contentNotifications";
 import {
   defaultNotificationPreferences,
+  inferNotificationAggregationKey,
   notificationAllowedByPreferences,
   notificationActionLabel,
   notificationDestination,
@@ -171,11 +172,23 @@ const main = async () => {
     assert.equal(notificationPriority(kind), expectedPriority, `${kind} priority`);
     assert.equal(notificationActionLabel(kind, "/destination"), expectedAction, `${kind} action`);
   }
-  assert.equal(notificationPreferenceCategory("post_quote"), "reshares");
-  assert.equal(notificationPreferenceCategory("comment_quote"), "reshares");
+  assert.equal(notificationPreferenceCategory("post_reshare"), "reshares");
+  assert.equal(notificationPreferenceCategory("comment_reshare"), "reshares");
+  assert.equal(notificationPreferenceCategory("post_quote"), "quotes");
+  assert.equal(notificationPreferenceCategory("comment_quote"), "quotes");
   assert.equal(notificationPreferenceCategory("post_mention"), "commentsAndReplies");
   assert.equal(notificationPreferenceCategory("comment_mention"), "commentsAndReplies");
   assert.equal(notificationPreferenceCategory("workspace_mention"), "workspaceActivity");
+  const postReshareGroup = inferNotificationAggregationKey("post_reshare", { postId: "post-1" });
+  const postQuoteGroup = inferNotificationAggregationKey("post_quote", { sourceId: "post-1" });
+  const commentReshareGroup = inferNotificationAggregationKey("comment_reshare", { commentId: "comment-1" });
+  const commentQuoteGroup = inferNotificationAggregationKey("comment_quote", { sourceId: "comment-1" });
+  assert.equal(postReshareGroup, "post_reshare:post:post-1");
+  assert.equal(postQuoteGroup, "post_quote:post:post-1");
+  assert.notEqual(postReshareGroup, postQuoteGroup);
+  assert.equal(commentReshareGroup, "comment_reshare:comment:comment-1");
+  assert.equal(commentQuoteGroup, "comment_quote:comment:comment-1");
+  assert.notEqual(commentReshareGroup, commentQuoteGroup);
 
   const mentionDocument = {
     version: 1 as const,
@@ -884,6 +897,9 @@ const main = async () => {
   assert.match(migration, /0044_notification_preferences/);
   assert.match(migration, /0045_notification_resolution/);
   assert.match(migration, /0046_notification_inbox_hygiene/);
+  assert.match(migration, /0048_quote_notification_preference/);
+  assert.match(migration, /SET quotes = reshares/);
+  assert.match(migration, /kind IN \('post_quote', 'comment_quote'\)/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS archived_at/);
   assert.match(migration, /migrated_source_inactive/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS notification_preferences/);
@@ -900,6 +916,11 @@ const main = async () => {
   assert.match(maintenance, /archived_at < now\(\) - interval '30 days'/);
   assert.match(maintenance, /kind IN \('community_join_request', 'opportunity_application_received'\)/);
   assert.match(messageRoutes, /\/v1\/notifications\/archive/);
+  assert.match(panel, /key: "reshares",\s+label: "Reshares"/);
+  assert.match(panel, /key: "quotes",\s+label: "Quotes"/);
+  assert.doesNotMatch(panel, /Reshares & quotes/);
+  assert.match(delivery, /quotes,/);
+  assert.match(delivery, /quotes: row\.quotes/);
 
   const app = await buildApp({ logger: false });
   try {
@@ -944,6 +965,7 @@ const main = async () => {
           likes: false,
           commentsAndReplies: false,
           reshares: false,
+          quotes: false,
           newFollowers: false,
           workspaceActivity: false
         }

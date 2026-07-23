@@ -10,6 +10,7 @@ export const notificationPreferenceKeys = [
   "likes",
   "commentsAndReplies",
   "reshares",
+  "quotes",
   "newFollowers",
   "workspaceActivity"
 ] as const;

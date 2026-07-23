@@ -1210,6 +1210,7 @@ export const notificationPreferences = pgTable(
     likes: boolean("likes").default(true).notNull(),
     commentsAndReplies: boolean("comments_and_replies").default(true).notNull(),
     reshares: boolean("reshares").default(true).notNull(),
+    quotes: boolean("quotes").default(true).notNull(),
     newFollowers: boolean("new_followers").default(true).notNull(),
     workspaceActivity: boolean("workspace_activity").default(true).notNull(),
     revision: integer("revision").default(1).notNull(),

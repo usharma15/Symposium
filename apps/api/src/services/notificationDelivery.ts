@@ -30,6 +30,7 @@ type NotificationPreferenceRow = {
   likes: boolean;
   commentsAndReplies: boolean;
   reshares: boolean;
+  quotes: boolean;
   newFollowers: boolean;
   workspaceActivity: boolean;
   revision: number;
@@ -123,6 +124,7 @@ export const createNotifications = async (
            likes,
            comments_and_replies AS "commentsAndReplies",
            reshares,
+           quotes,
            new_followers AS "newFollowers",
            workspace_activity AS "workspaceActivity",
            revision,
@@ -139,6 +141,7 @@ export const createNotifications = async (
       likes: row.likes,
       commentsAndReplies: row.commentsAndReplies,
       reshares: row.reshares,
+      quotes: row.quotes,
       newFollowers: row.newFollowers,
       workspaceActivity: row.workspaceActivity,
       revision: row.revision,

@@ -1581,6 +1581,7 @@ export const notificationPreferenceCategorySchema = z.enum([
   "likes",
   "commentsAndReplies",
   "reshares",
+  "quotes",
   "newFollowers",
   "workspaceActivity"
 ]);
@@ -1590,6 +1591,7 @@ export const notificationPreferencesSchema = z.object({
   likes: z.boolean(),
   commentsAndReplies: z.boolean(),
   reshares: z.boolean(),
+  quotes: z.boolean(),
   newFollowers: z.boolean(),
   workspaceActivity: z.boolean(),
   revision: z.number().int().positive(),
@@ -1604,6 +1606,7 @@ export const updateNotificationPreferencesInputSchema = z.object({
     likes: z.boolean().optional(),
     commentsAndReplies: z.boolean().optional(),
     reshares: z.boolean().optional(),
+    quotes: z.boolean().optional(),
     newFollowers: z.boolean().optional(),
     workspaceActivity: z.boolean().optional()
   }).strict().refine((changes) => Object.values(changes).some((value) => value !== undefined), {

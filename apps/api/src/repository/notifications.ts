@@ -47,6 +47,7 @@ type NotificationPreferencesRow = {
   likes: boolean;
   commentsAndReplies: boolean;
   reshares: boolean;
+  quotes: boolean;
   newFollowers: boolean;
   workspaceActivity: boolean;
   revision: number;
@@ -130,6 +131,7 @@ const projectNotificationPreferences = (
   likes: row.likes,
   commentsAndReplies: row.commentsAndReplies,
   reshares: row.reshares,
+  quotes: row.quotes,
   newFollowers: row.newFollowers,
   workspaceActivity: row.workspaceActivity,
   revision: row.revision,
@@ -141,6 +143,7 @@ const notificationPreferencesSelect = `
   likes,
   comments_and_replies AS "commentsAndReplies",
   reshares,
+  quotes,
   new_followers AS "newFollowers",
   workspace_activity AS "workspaceActivity",
   revision,
@@ -204,6 +207,7 @@ export const updateNotificationPreferences = async (rawInput: unknown, actor: Ac
       && next.likes === existing.likes
       && next.commentsAndReplies === existing.commentsAndReplies
       && next.reshares === existing.reshares
+      && next.quotes === existing.quotes
       && next.newFollowers === existing.newFollowers
       && next.workspaceActivity === existing.workspaceActivity
     );
@@ -211,14 +215,15 @@ export const updateNotificationPreferences = async (rawInput: unknown, actor: Ac
     const updated = await client.query<NotificationPreferencesRow>(
       `INSERT INTO notification_preferences (
          profile_handle, activity_enabled, likes, comments_and_replies,
-         reshares, new_followers, workspace_activity, revision, updated_at
+         reshares, quotes, new_followers, workspace_activity, revision, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 2, now())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 2, now())
        ON CONFLICT (profile_handle) DO UPDATE SET
          activity_enabled = EXCLUDED.activity_enabled,
          likes = EXCLUDED.likes,
          comments_and_replies = EXCLUDED.comments_and_replies,
          reshares = EXCLUDED.reshares,
+         quotes = EXCLUDED.quotes,
          new_followers = EXCLUDED.new_followers,
          workspace_activity = EXCLUDED.workspace_activity,
          revision = notification_preferences.revision + 1,
@@ -230,6 +235,7 @@ export const updateNotificationPreferences = async (rawInput: unknown, actor: Ac
         next.likes,
         next.commentsAndReplies,
         next.reshares,
+        next.quotes,
         next.newFollowers,
         next.workspaceActivity
       ]

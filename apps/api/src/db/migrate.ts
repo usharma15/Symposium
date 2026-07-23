@@ -2405,6 +2405,33 @@ const migrations: Migration[] = [
         )
         WHERE quote IS NOT NULL AND deleted_at IS NULL;
     `
+  },
+  {
+    id: "0048_quote_notification_preference",
+    sql: `
+      ALTER TABLE notification_preferences
+        ADD COLUMN IF NOT EXISTS quotes BOOLEAN;
+
+      UPDATE notification_preferences
+      SET quotes = reshares
+      WHERE quotes IS NULL;
+
+      ALTER TABLE notification_preferences
+        ALTER COLUMN quotes SET DEFAULT true;
+      ALTER TABLE notification_preferences
+        ALTER COLUMN quotes SET NOT NULL;
+
+      UPDATE notifications
+      SET aggregation_key = CASE
+        WHEN kind = 'post_quote' AND metadata ? 'sourceId'
+          THEN kind || ':post:' || (metadata ->> 'sourceId')
+        WHEN kind = 'comment_quote' AND metadata ? 'sourceId'
+          THEN kind || ':comment:' || (metadata ->> 'sourceId')
+        ELSE aggregation_key
+      END
+      WHERE aggregation_key IS NULL
+        AND kind IN ('post_quote', 'comment_quote');
+    `
   }
 ];
 
