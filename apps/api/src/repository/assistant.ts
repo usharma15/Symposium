@@ -1,9 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import {
+  assistantContextSchema,
+  assistantContextUpdateInputSchema,
+  assistantConversationListQuerySchema,
   assistantMessageInputSchema,
+  assistantThreadSourceSchema,
+  type AssistantContextContract,
+  type AssistantContextUpdateResultContract,
   type AssistantQuotaStatusContract,
-  type AssistantResponseContract
+  type AssistantResponseContract,
+  type AssistantThreadDetailContract,
+  type AssistantThreadPageContract,
+  type AssistantThreadSourceContract,
+  type AssistantThreadStateContract
 } from "../../../../packages/contracts/src";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
@@ -26,6 +36,17 @@ import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
 type ParsedInput = ReturnType<typeof assistantMessageInputSchema.parse>;
 type HistoryMessage = { role: "user" | "assistant"; body: string };
+type ConversationRow = {
+  id: string;
+  title: string;
+  contextType: string;
+  contextId: string | null;
+  contextSources: unknown;
+  activeContextKey: string | null;
+  contextRevision: number;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+};
 
 type PreparedAssistant = {
   owner: string;
@@ -33,9 +54,64 @@ type PreparedAssistant = {
   usageId: string;
   reservedCostMicros: number;
   history: HistoryMessage[];
+  context: AssistantContextContract;
+  attachedContexts: AssistantContextContract[];
+  thread: AssistantThreadStateContract;
   input: ParsedInput;
   dailyLimit: number;
   remainingToday: number;
+};
+
+const assistantContextKey = (context: AssistantContextContract) =>
+  `${context.surface}:${context.entityId?.trim() || context.route.trim() || "/"}`.slice(0, 800);
+
+const assistantThreadSources = (value: unknown): AssistantThreadSourceContract[] => {
+  const parsed = assistantThreadSourceSchema.array().max(12).safeParse(value);
+  return parsed.success ? parsed.data : [];
+};
+
+const isoString = (value: Date | string) => new Date(value).toISOString();
+
+const assistantThreadState = (row: ConversationRow): AssistantThreadStateContract => {
+  const sources = assistantThreadSources(row.contextSources);
+  return {
+    id: row.id,
+    title: row.title,
+    contextType: row.contextType,
+    contextId: row.contextId,
+    activeContextKey: row.activeContextKey,
+    contextRevision: row.contextRevision,
+    sourceCount: sources.length,
+    sources,
+    createdAt: isoString(row.createdAt),
+    updatedAt: isoString(row.updatedAt)
+  };
+};
+
+const sourceForContext = (
+  context: AssistantContextContract,
+  attachedAt = new Date().toISOString()
+): AssistantThreadSourceContract => ({
+  key: assistantContextKey(context),
+  context,
+  attachedAt
+});
+
+type AssistantCursor = { updatedAt: string; id: string };
+
+const encodeAssistantCursor = (row: { updatedAt: Date | string; id: string }) =>
+  Buffer.from(JSON.stringify({ updatedAt: isoString(row.updatedAt), id: row.id } satisfies AssistantCursor)).toString("base64url");
+
+const parseAssistantCursor = (cursor: string): AssistantCursor => {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<AssistantCursor>;
+    if (typeof value.updatedAt !== "string" || Number.isNaN(Date.parse(value.updatedAt)) || typeof value.id !== "string") {
+      throw new Error("Invalid cursor.");
+    }
+    return value as AssistantCursor;
+  } catch {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "The research-thread cursor is invalid." });
+  }
 };
 
 const unavailableResponse = (
@@ -91,6 +167,215 @@ export const getAssistantQuota = async (actor: Actor): Promise<AssistantQuotaSta
   };
 };
 
+export const listAssistantConversations = async (
+  rawQuery: unknown,
+  actor: Actor
+): Promise<AssistantThreadPageContract> => {
+  const query = assistantConversationListQuerySchema.parse(rawQuery);
+  if (!hasDatabase()) return { threads: [], nextCursor: null };
+  const owner = await ensureProfileHandle(actorHandle(actor));
+  await ensureLiveData();
+  const cursor = query.cursor ? parseAssistantCursor(query.cursor) : null;
+  const values: unknown[] = [owner];
+  const clauses = ["owner_handle = $1"];
+  if (cursor) {
+    values.push(cursor.updatedAt, cursor.id);
+    clauses.push(`(updated_at, id) < ($${values.length - 1}::timestamptz, $${values.length}::uuid)`);
+  }
+  if (query.contextKey) {
+    values.push(JSON.stringify([{ key: query.contextKey }]));
+    clauses.push(`context_sources @> $${values.length}::jsonb`);
+  }
+  values.push(query.limit + 1);
+  const result = await getPool().query<ConversationRow>(
+    `SELECT
+       id,
+       title,
+       context_type AS "contextType",
+       context_id AS "contextId",
+       context_sources AS "contextSources",
+       active_context_key AS "activeContextKey",
+       context_revision AS "contextRevision",
+       created_at AS "createdAt",
+       updated_at AS "updatedAt"
+     FROM ai_conversations
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY updated_at DESC, id DESC
+     LIMIT $${values.length}`,
+    values
+  );
+  const hasMore = result.rows.length > query.limit;
+  const rows = result.rows.slice(0, query.limit);
+  const last = rows.at(-1);
+  return {
+    threads: rows.map((row) => {
+      const state = assistantThreadState(row);
+      const { sources: _sources, ...summary } = state;
+      return summary;
+    }),
+    nextCursor: hasMore && last ? encodeAssistantCursor(last) : null
+  };
+};
+
+export const getAssistantConversation = async (
+  conversationId: string,
+  actor: Actor
+): Promise<AssistantThreadDetailContract> => {
+  if (!hasDatabase()) throw new TRPCError({ code: "NOT_FOUND", message: "Research thread not found." });
+  const owner = await ensureProfileHandle(actorHandle(actor));
+  await ensureLiveData();
+  const conversation = await getPool().query<ConversationRow>(
+    `SELECT
+       id,
+       title,
+       context_type AS "contextType",
+       context_id AS "contextId",
+       context_sources AS "contextSources",
+       active_context_key AS "activeContextKey",
+       context_revision AS "contextRevision",
+       created_at AS "createdAt",
+       updated_at AS "updatedAt"
+     FROM ai_conversations
+     WHERE id = $1 AND owner_handle = $2`,
+    [conversationId, owner]
+  );
+  const row = conversation.rows[0];
+  if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Research thread not found." });
+  const messages = await getPool().query<{
+    id: string;
+    conversationId: string;
+    role: "user" | "assistant" | "system";
+    body: string;
+    createdAt: Date | string;
+  }>(
+    `SELECT id, conversation_id AS "conversationId", role, body, created_at AS "createdAt"
+     FROM (
+       SELECT id, conversation_id, role, body, created_at
+       FROM ai_messages
+       WHERE conversation_id = $1
+       ORDER BY created_at DESC, id DESC
+       LIMIT 100
+     ) recent
+     ORDER BY created_at ASC, id ASC`,
+    [conversationId]
+  );
+  return {
+    ...assistantThreadState(row),
+    messages: messages.rows.map((message) => ({ ...message, createdAt: isoString(message.createdAt) }))
+  };
+};
+
+export const updateAssistantConversationContext = async (
+  conversationId: string,
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+): Promise<AssistantContextUpdateResultContract> => {
+  const input = assistantContextUpdateInputSchema.parse(rawInput);
+  if (!hasDatabase()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Research threads require the live database." });
+  const owner = await ensureProfileHandle(actorHandle(actor));
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<AssistantContextUpdateResultContract>(client, owner, mutation);
+    if (claim.replayed) return { value: claim.response };
+    const conversation = await client.query<ConversationRow>(
+      `SELECT
+         id,
+         title,
+         context_type AS "contextType",
+         context_id AS "contextId",
+         context_sources AS "contextSources",
+         active_context_key AS "activeContextKey",
+         context_revision AS "contextRevision",
+         created_at AS "createdAt",
+         updated_at AS "updatedAt"
+       FROM ai_conversations
+       WHERE id = $1 AND owner_handle = $2
+       FOR UPDATE`,
+      [conversationId, owner]
+    );
+    const row = conversation.rows[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Research thread not found." });
+    if (row.contextRevision !== input.expectedRevision) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "This research thread changed elsewhere. Reload it before changing its sources."
+      });
+    }
+
+    const source = sourceForContext(input.context);
+    let sources = assistantThreadSources(row.contextSources).filter((entry) => entry.key !== source.key);
+    sources.push(source);
+    const protectedKeys = new Set([source.key, input.mode === "attach" ? row.activeContextKey : source.key].filter(Boolean));
+    while (sources.length > 12) {
+      const removable = sources.findIndex((entry) => !protectedKeys.has(entry.key));
+      sources.splice(removable >= 0 ? removable : 0, 1);
+    }
+    const activeContextKey = input.mode === "use" || !row.activeContextKey ? source.key : row.activeContextKey;
+    const updated = await client.query<ConversationRow>(
+      `UPDATE ai_conversations
+       SET context_sources = $3::jsonb,
+           active_context_key = $4,
+           context_revision = context_revision + 1,
+           context_id = CASE WHEN $5 = 'use' THEN $6 ELSE context_id END,
+           updated_at = now()
+       WHERE id = $1 AND owner_handle = $2
+       RETURNING
+         id,
+         title,
+         context_type AS "contextType",
+         context_id AS "contextId",
+         context_sources AS "contextSources",
+         active_context_key AS "activeContextKey",
+         context_revision AS "contextRevision",
+         created_at AS "createdAt",
+         updated_at AS "updatedAt"`,
+      [conversationId, owner, JSON.stringify(sources), activeContextKey, input.mode, input.context.entityId ?? null]
+    );
+    const systemBody = input.mode === "use"
+      ? `Active view changed to ${input.context.title || "the current view"}.`
+      : `Added ${input.context.title || "the current view"} as a source.`;
+    const messageResult = await client.query<{
+      id: string;
+      conversationId: string;
+      role: "system";
+      body: string;
+      createdAt: Date | string;
+    }>(
+      `INSERT INTO ai_messages (conversation_id, role, body, metadata)
+       VALUES ($1, 'system', $2, $3)
+       RETURNING id, conversation_id AS "conversationId", role, body, created_at AS "createdAt"`,
+      [conversationId, systemBody, JSON.stringify({ event: "context_update", mode: input.mode, contextKey: source.key })]
+    );
+    const message = messageResult.rows[0]!;
+    const response: AssistantContextUpdateResultContract = {
+      thread: assistantThreadState(updated.rows[0]!),
+      message: { ...message, createdAt: isoString(message.createdAt) }
+    };
+    await stageAuditLog(client, {
+      actorHandle: owner,
+      action: "assistant.context.update",
+      subjectType: "ai_conversation",
+      subjectId: conversationId,
+      metadata: mutationAuditMetadata(mutation, {
+        mode: input.mode,
+        contextKey: source.key,
+        contextRevision: response.thread.contextRevision
+      })
+    });
+    await completeMutation(client, owner, mutation, response);
+    const event = await stageEvent(client, {
+      kind: "assistant.context.updated",
+      actorHandle: owner,
+      subjectType: "ai_conversation",
+      subjectId: conversationId,
+      visibility: "private",
+      payload: { mode: input.mode, contextKey: source.key, contextRevision: response.thread.contextRevision }
+    });
+    return { value: response, events: [event] };
+  });
+};
+
 const prepareAssistant = async (
   input: ParsedInput,
   owner: string,
@@ -101,20 +386,59 @@ const prepareAssistant = async (
 
   let conversationId = input.conversationId;
   let history: HistoryMessage[] = [];
+  let conversationRow: ConversationRow;
   if (!conversationId) {
-    const conversation = await client.query<{ id: string }>(
-      `INSERT INTO ai_conversations (owner_handle, title, context_type, context_id)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id`,
-      [owner, input.message.slice(0, 80), input.contextType, input.contextId ?? input.context.entityId ?? null]
+    const source = sourceForContext(input.context);
+    const conversation = await client.query<ConversationRow>(
+      `INSERT INTO ai_conversations (
+         owner_handle,
+         title,
+         context_type,
+         context_id,
+         context_sources,
+         active_context_key
+       )
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+       RETURNING
+         id,
+         title,
+         context_type AS "contextType",
+         context_id AS "contextId",
+         context_sources AS "contextSources",
+         active_context_key AS "activeContextKey",
+         context_revision AS "contextRevision",
+         created_at AS "createdAt",
+         updated_at AS "updatedAt"`,
+      [
+        owner,
+        input.message.slice(0, 80),
+        input.contextType,
+        input.contextId ?? input.context.entityId ?? null,
+        JSON.stringify([source]),
+        source.key
+      ]
     );
-    conversationId = conversation.rows[0]!.id;
+    conversationRow = conversation.rows[0]!;
+    conversationId = conversationRow.id;
   } else {
-    const ownedConversation = await client.query(
-      "SELECT id FROM ai_conversations WHERE id = $1 AND owner_handle = $2 FOR SHARE",
+    const ownedConversation = await client.query<ConversationRow>(
+      `SELECT
+         id,
+         title,
+         context_type AS "contextType",
+         context_id AS "contextId",
+         context_sources AS "contextSources",
+         active_context_key AS "activeContextKey",
+         context_revision AS "contextRevision",
+         created_at AS "createdAt",
+         updated_at AS "updatedAt"
+       FROM ai_conversations
+       WHERE id = $1 AND owner_handle = $2
+       FOR SHARE`,
       [conversationId, owner]
     );
     if (!ownedConversation.rowCount) throw new TRPCError({ code: "NOT_FOUND", message: "AI conversation not found." });
+    conversationRow = ownedConversation.rows[0]!;
     const historyResult = await client.query<HistoryMessage>(
       `SELECT role, body FROM (
          SELECT role, body, created_at
@@ -128,9 +452,40 @@ const prepareAssistant = async (
     history = historyResult.rows;
   }
 
+  let sources = assistantThreadSources(conversationRow.contextSources);
+  let activeSource = sources.find((source) => source.key === conversationRow.activeContextKey);
+  if (!activeSource) {
+    activeSource = sourceForContext(input.context);
+    sources = [...sources.filter((source) => source.key !== activeSource!.key), activeSource].slice(-12);
+    const hydrated = await client.query<ConversationRow>(
+      `UPDATE ai_conversations
+       SET context_sources = $3::jsonb,
+           active_context_key = $4,
+           context_revision = context_revision + 1
+       WHERE id = $1 AND owner_handle = $2
+       RETURNING
+         id,
+         title,
+         context_type AS "contextType",
+         context_id AS "contextId",
+         context_sources AS "contextSources",
+         active_context_key AS "activeContextKey",
+         context_revision AS "contextRevision",
+         created_at AS "createdAt",
+         updated_at AS "updatedAt"`,
+      [conversationId, owner, JSON.stringify(sources), activeSource.key]
+    );
+    conversationRow = hydrated.rows[0]!;
+  }
+  const context = assistantContextSchema.parse(activeSource.context);
+  const attachedContexts = sources
+    .filter((source) => source.key !== activeSource!.key)
+    .slice(-4)
+    .map((source) => source.context);
   const renderedInput = assistantRenderedInput({
     history,
-    context: input.context,
+    context,
+    attachedContexts,
     message: input.message,
     intent: input.intent,
     targetLanguage: input.targetLanguage
@@ -144,7 +499,13 @@ const prepareAssistant = async (
   await client.query(
     `INSERT INTO ai_messages (conversation_id, role, body, metadata)
      VALUES ($1, 'user', $2, $3)`,
-    [conversationId, input.message, JSON.stringify({ context: input.context, contextType: input.contextType, contextId: input.contextId ?? null })]
+    [conversationId, input.message, JSON.stringify({
+      context,
+      contextKey: activeSource.key,
+      attachedContextKeys: sources.filter((source) => source.key !== activeSource!.key).map((source) => source.key),
+      contextType: conversationRow.contextType,
+      contextId: conversationRow.contextId
+    })]
   );
   return {
     value: {
@@ -153,6 +514,9 @@ const prepareAssistant = async (
       usageId: reservation.usageId,
       reservedCostMicros: reservation.reservedCostMicros,
       history,
+      context,
+      attachedContexts,
+      thread: assistantThreadState({ ...conversationRow, contextSources: sources }),
       input,
       dailyLimit: reservation.dailyLimit,
       remainingToday: reservation.remainingToday
@@ -173,23 +537,23 @@ const finalizeAssistant = async (
         ...result.translation,
         targetLanguage: prepared.input.targetLanguage,
         source: {
-          surface: prepared.input.context.surface,
-          route: prepared.input.context.route.startsWith("/") ? prepared.input.context.route : "/",
-          title: prepared.input.context.title.trim() || "Current view",
-          ...(prepared.input.context.entityType ? { entityType: prepared.input.context.entityType } : {}),
-          ...(prepared.input.context.entityId ? { entityId: prepared.input.context.entityId } : {})
+          surface: prepared.context.surface,
+          route: prepared.context.route.startsWith("/") ? prepared.context.route : "/",
+          title: prepared.context.title.trim() || "Current view",
+          ...(prepared.context.entityType ? { entityType: prepared.context.entityType } : {}),
+          ...(prepared.context.entityId ? { entityId: prepared.context.entityId } : {})
         }
       }
     : undefined;
   const quickNote = result?.quickNote
-    ? {
+      ? {
         ...result.quickNote,
         source: {
-          surface: prepared.input.context.surface,
-          route: prepared.input.context.route.startsWith("/") ? prepared.input.context.route : "/",
-          title: prepared.input.context.title.trim() || "Current view",
-          ...(prepared.input.context.entityType ? { entityType: prepared.input.context.entityType } : {}),
-          ...(prepared.input.context.entityId ? { entityId: prepared.input.context.entityId } : {})
+          surface: prepared.context.surface,
+          route: prepared.context.route.startsWith("/") ? prepared.context.route : "/",
+          title: prepared.context.title.trim() || "Current view",
+          ...(prepared.context.entityType ? { entityType: prepared.context.entityType } : {}),
+          ...(prepared.context.entityId ? { entityId: prepared.context.entityId } : {})
         }
       }
     : undefined;
@@ -227,10 +591,22 @@ const finalizeAssistant = async (
     providerResponseId: result?.providerResponseId,
     errorCode: failure?.code
   });
-  await client.query("UPDATE ai_conversations SET updated_at = now() WHERE id = $1 AND owner_handle = $2", [
-    prepared.conversationId,
-    prepared.owner
-  ]);
+  const updatedConversation = await client.query<ConversationRow>(
+    `UPDATE ai_conversations
+     SET updated_at = now()
+     WHERE id = $1 AND owner_handle = $2
+     RETURNING
+       id,
+       title,
+       context_type AS "contextType",
+       context_id AS "contextId",
+       context_sources AS "contextSources",
+       active_context_key AS "activeContextKey",
+       context_revision AS "contextRevision",
+       created_at AS "createdAt",
+       updated_at AS "updatedAt"`,
+    [prepared.conversationId, prepared.owner]
+  );
   const row = assistantMessage.rows[0]!;
   const response: AssistantResponseContract = {
     conversationId: prepared.conversationId,
@@ -238,6 +614,12 @@ const finalizeAssistant = async (
     status: providerError ? "provider_error" : "answered",
     model: result?.model ?? env.SYMPOSIUM_AI_MODEL,
     quota: assistantQuota(prepared.dailyLimit, prepared.remainingToday),
+    thread: assistantThreadState(updatedConversation.rows[0] ?? {
+      ...prepared.thread,
+      contextSources: prepared.thread.sources,
+      createdAt: prepared.thread.createdAt,
+      updatedAt: new Date().toISOString()
+    }),
     message: { ...row, createdAt: new Date(row.createdAt).toISOString() },
     ...(translation ? { translation } : {}),
     ...(quickNote ? { quickNote } : {})
@@ -250,7 +632,7 @@ const finalizeAssistant = async (
     metadata: mutationAuditMetadata(mutation, {
       contextId: prepared.input.contextId,
       contextType: prepared.input.contextType,
-      surface: prepared.input.context.surface,
+      surface: prepared.context.surface,
       intent: prepared.input.intent,
       targetLanguage: prepared.input.targetLanguage,
       model: response.model,
@@ -297,7 +679,8 @@ export const askAssistant = async (
     result = await callAssistantModel({
       ownerHandle: owner,
       history: prepared.history,
-      context: input.context,
+      context: prepared.context,
+      attachedContexts: prepared.attachedContexts,
       message: input.message,
       intent: input.intent,
       targetLanguage: input.targetLanguage

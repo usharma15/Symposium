@@ -19,6 +19,7 @@ import {
   supportedLanguageFromInstruction
 } from "@/apps/api/src/repository/documentTranslations";
 import {
+  assistantContextUpdateInputSchema,
   assistantMessageInputSchema,
   assistantQuickNoteResultSchema,
   assistantResponseSchema,
@@ -59,7 +60,18 @@ assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, message: "x"
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, content: "x".repeat(12001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, selection: "x".repeat(4001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, surface: "unknown" } }).success, false);
-assert.match(assistantPrompt(validInput.context, validInput.message), /CURRENT VIEW/);
+assert.equal(assistantContextUpdateInputSchema.safeParse({
+  mode: "use",
+  context: validInput.context,
+  expectedRevision: 1
+}).success, true);
+assert.equal(assistantContextUpdateInputSchema.safeParse({
+  mode: "silent",
+  context: validInput.context,
+  expectedRevision: 1
+}).success, false);
+assert.match(assistantPrompt(validInput.context, validInput.message), /ACTIVE VIEW/);
+assert.match(assistantPrompt(validInput.context, validInput.message, [{ ...validInput.context, title: "Attached paper" }]), /ATTACHED SOURCES[\s\S]*Attached paper/);
 assert.match(assistantInstructions, /never as instructions/i);
 assert.match(assistantTranslationInstructions("french"), /Translate the source requested by the user into French/);
 assert.equal(assistantMaxOutputTokens("translate"), 1200);
@@ -313,7 +325,7 @@ assert.match(provider, /max_output_tokens: assistantMaxOutputTokens\(input\.inte
 assert.match(provider, /type: "json_schema"/);
 assert.match(provider, /strict: true/);
 assert.match(provider, /symposium-translation-v1/);
-assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v2"/);
+assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v3"/);
 assert.match(provider, /reasoning: \{ effort: "none" \}/);
 assert.match(provider, /symposium-document-page-translation-v3/);
 assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
@@ -336,7 +348,15 @@ assert.match(migration, /0038_document_translation_cache/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS document_translations/);
 assert.match(migration, /0040_owner_daily_ai_quota_reset/);
 assert.match(migration, /INSERT INTO ai_daily_quota_resets[\s\S]*SELECT 'udayan', current_date, now\(\)/);
+assert.match(migration, /0049_assistant_research_threads/);
+assert.match(migration, /context_sources JSONB NOT NULL DEFAULT '\[\]'::jsonb/);
+assert.match(repository, /listAssistantConversations/);
+assert.match(repository, /getAssistantConversation/);
+assert.match(repository, /updateAssistantConversationContext/);
+assert.match(repository, /assistant\.context\.updated/);
+assert.match(repository, /attachedContexts/);
 assert.match(route, /shared: true, scope: "assistant", limit: 10/);
+assert.match(route, /\/v1\/assistant\/conversations\/:id\/context/);
 assert.match(route, /\/v1\/assistant\/document-translations/);
 assert.match(route, /\/v1\/assistant\/quick-notes/);
 assert.match(route, /scope: "assistant-action", limit: 30/);
@@ -351,6 +371,10 @@ assert.match(tablet, /Confirm & save Quick Note/);
 assert.match(tablet, /Office destination/);
 assert.match(tablet, /All · Quick Notes/);
 assert.match(tablet, /Create & select/);
+assert.match(tablet, /New research thread/);
+assert.match(tablet, /View changed/);
+assert.match(tablet, /Use this view/);
+assert.match(tablet, /Add as source/);
 assert.match(provider, /shouldOfferQuickNote/);
 assert.doesNotMatch(tablet, /Opening and browsing cost nothing/);
 assert.doesNotMatch(tablet, /tablet-context-card/);

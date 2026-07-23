@@ -1,8 +1,15 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { withReadActor, withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
 import { mutationContextFromRequest } from "../services/mutations";
-import { askAssistant, getAssistantQuota } from "../repository/assistant";
+import {
+  askAssistant,
+  getAssistantConversation,
+  getAssistantQuota,
+  listAssistantConversations,
+  updateAssistantConversationContext
+} from "../repository/assistant";
 import { translateDocument } from "../repository/documentTranslations";
 import { createOpportunity, listOpportunities } from "../repository/opportunities";
 import { saveNoteBlock } from "../repository/workspace";
@@ -41,6 +48,7 @@ import {
 } from "../repository/workspaceScribbles";
 import { publishNote } from "../services/notePublishing";
 import { createPrivateDownloadUrl } from "../services/storage";
+import type { RouteParams } from "./types";
 
 export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.get("/v1/opportunities", async (request, reply) => {
@@ -461,6 +469,39 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.get("/v1/assistant/quota", async (request, reply) => {
     try {
       return reply.send(await getAssistantQuota(await withReadActor(request)));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/assistant/conversations", async (request, reply) => {
+    try {
+      return reply.send(await listAssistantConversations(request.query, await withReadActor(request)));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: RouteParams }>("/v1/assistant/conversations/:id", async (request, reply) => {
+    try {
+      return reply.send(await getAssistantConversation(
+        z.string().uuid().parse(request.params.id),
+        await withReadActor(request)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post<{ Params: RouteParams }>("/v1/assistant/conversations/:id/context", async (request, reply) => {
+    try {
+      const conversationId = z.string().uuid().parse(request.params.id);
+      return reply.send(await updateAssistantConversationContext(
+        conversationId,
+        request.body,
+        await withWriteActor(request, { shared: true, scope: "assistant-action", limit: 30 }),
+        mutationContextFromRequest(request, "assistant.context.update", { conversationId, body: request.body })
+      ));
     } catch (error) {
       return sendError(app, reply, error);
     }

@@ -2432,6 +2432,64 @@ const migrations: Migration[] = [
       WHERE aggregation_key IS NULL
         AND kind IN ('post_quote', 'comment_quote');
     `
+  },
+  {
+    id: "0049_assistant_research_threads",
+    sql: `
+      ALTER TABLE ai_conversations
+        ADD COLUMN IF NOT EXISTS context_sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS active_context_key TEXT,
+        ADD COLUMN IF NOT EXISTS context_revision INTEGER NOT NULL DEFAULT 1;
+
+      WITH first_context AS (
+        SELECT DISTINCT ON (conversation_id)
+          conversation_id,
+          metadata -> 'context' AS context,
+          created_at
+        FROM ai_messages
+        WHERE jsonb_typeof(metadata -> 'context') = 'object'
+        ORDER BY conversation_id, created_at ASC
+      ),
+      normalized_context AS (
+        SELECT
+          conversation_id,
+          context,
+          created_at,
+          COALESCE(NULLIF(context ->> 'surface', ''), 'workspace')
+            || ':'
+            || COALESCE(NULLIF(context ->> 'entityId', ''), NULLIF(context ->> 'route', ''), '/') AS context_key
+        FROM first_context
+      )
+      UPDATE ai_conversations conversation
+      SET
+        context_sources = jsonb_build_array(jsonb_build_object(
+          'key', normalized.context_key,
+          'context', normalized.context,
+          'attachedAt', to_jsonb(normalized.created_at)
+        )),
+        active_context_key = normalized.context_key
+      FROM normalized_context normalized
+      WHERE conversation.id = normalized.conversation_id
+        AND conversation.context_sources = '[]'::jsonb;
+
+      CREATE INDEX IF NOT EXISTS ai_conversations_owner_updated_idx
+        ON ai_conversations (owner_handle, updated_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS ai_conversations_context_sources_idx
+        ON ai_conversations USING GIN (context_sources jsonb_path_ops);
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'ai_conversations_context_revision_check'
+        ) THEN
+          ALTER TABLE ai_conversations
+            ADD CONSTRAINT ai_conversations_context_revision_check
+            CHECK (context_revision >= 1);
+        END IF;
+      END $$;
+    `
   }
 ];
 

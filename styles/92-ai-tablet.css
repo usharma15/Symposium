@@ -34,6 +34,66 @@
 .tablet-header small { color: var(--muted); font-size: 0.65rem; line-height: 1.2; }
 .tablet-header button { align-items: center; display: inline-flex; justify-content: center; min-height: 1.75rem; min-width: 1.75rem; padding: 0.25rem; }
 
+.tablet-thread-bar {
+  align-items: stretch;
+  background: var(--document-surface-solid);
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.35rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0.4rem 0.5rem;
+  position: relative;
+}
+.tablet-thread-bar > button { align-items: center; display: flex; justify-content: center; min-height: 2.1rem; min-width: 2.1rem; padding: 0.34rem; }
+.tablet-thread-current { gap: 0.38rem; justify-content: start !important; min-width: 0; text-align: left; }
+.tablet-thread-current > span { display: grid; gap: 0.06rem; min-width: 0; }
+.tablet-thread-current strong,
+.tablet-thread-current small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tablet-thread-current strong { font-size: 0.68rem; }
+.tablet-thread-current small { color: var(--muted); font-size: 0.57rem; }
+.tablet-thread-menu {
+  background: var(--document-surface-solid);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+  display: grid;
+  gap: 0.18rem;
+  grid-column: 1 / -1;
+  left: 0.5rem;
+  max-height: 13rem;
+  overflow-y: auto;
+  padding: 0.28rem;
+  position: absolute;
+  right: 0.5rem;
+  top: calc(100% - 0.2rem);
+  z-index: 2;
+}
+.tablet-thread-menu button { display: grid; gap: 0.1rem; padding: 0.4rem 0.46rem; text-align: left; }
+.tablet-thread-menu button.active { background: color-mix(in srgb, var(--aqua) 16%, var(--document-control-solid)); }
+.tablet-thread-menu strong { font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tablet-thread-menu small { color: var(--muted); font-size: 0.55rem; }
+.tablet-thread-menu p { color: var(--muted); font-size: 0.62rem; margin: 0; padding: 0.5rem; }
+
+.tablet-context-change {
+  background: color-mix(in srgb, var(--aqua) 10%, var(--document-control-solid));
+  border-bottom: 1px solid color-mix(in srgb, var(--aqua) 32%, var(--line));
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.4rem;
+  padding: 0.45rem 0.55rem;
+}
+.tablet-context-change > div:first-child { align-items: start; display: grid; gap: 0.36rem; grid-template-columns: auto minmax(0, 1fr); }
+.tablet-context-change > div:first-child > svg { color: var(--bronze); margin-top: 0.08rem; }
+.tablet-context-change span { display: grid; gap: 0.08rem; }
+.tablet-context-change strong { font-size: 0.67rem; }
+.tablet-context-change small { color: var(--muted); font-size: 0.59rem; line-height: 1.3; }
+.tablet-context-change > div:last-child { display: grid; gap: 0.3rem; grid-template-columns: 1fr 1fr; }
+.tablet-context-change button { align-items: center; display: flex; font-size: 0.6rem; gap: 0.25rem; justify-content: center; min-height: 1.8rem; padding: 0.28rem 0.35rem; }
+.tablet-active-source { align-items: baseline; background: color-mix(in srgb, var(--aqua) 6%, var(--document-surface-solid)); border-bottom: 1px solid var(--line); display: flex; flex: 0 0 auto; gap: 0.3rem; min-width: 0; padding: 0.3rem 0.55rem; }
+.tablet-active-source span { color: var(--muted); font-size: 0.55rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.tablet-active-source strong { font-size: 0.61rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .tablet-limit-notice {
   align-items: start;
   background: color-mix(in srgb, #d49a2b 13%, var(--document-control-solid));
@@ -74,6 +134,9 @@
   white-space: pre-wrap;
 }
 .tablet-message.user > p { background: color-mix(in srgb, var(--aqua) 16%, var(--document-control-solid)); }
+.tablet-message.system { align-self: center; max-width: 100%; width: 100%; }
+.tablet-message.system > span { text-align: center; }
+.tablet-message.system > p { background: transparent; border-style: dashed; color: var(--muted); font-size: 0.62rem; padding: 0.34rem 0.45rem; text-align: center; }
 .tablet-message.pending > p { color: var(--muted); }
 
 .tablet-translation-card { background: var(--document-surface-solid); border: 1px solid color-mix(in srgb, var(--aqua) 34%, var(--line)); border-radius: 0.64rem; display: grid; margin-top: 0.22rem; overflow: hidden; }

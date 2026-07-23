@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, Folder, FolderPlus, Languages, LoaderCircle, Save, Send, X } from "lucide-react";
+import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, Folder, FolderPlus, History, Languages, Link2, LoaderCircle, Plus, RefreshCw, Save, Send, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import type {
   AssistantQuickNoteResultContract,
@@ -9,6 +9,11 @@ import type {
   AssistantMessageInputContract,
   AssistantQuotaStatusContract,
   AssistantResponseContract,
+  AssistantContextUpdateResultContract,
+  AssistantThreadDetailContract,
+  AssistantThreadPageContract,
+  AssistantThreadStateContract,
+  AssistantThreadSummaryContract,
   AssistantTranslationContract,
   AssistantTranslationLanguageContract
 } from "@/packages/contracts/src";
@@ -17,11 +22,16 @@ import type { ScribbleSnapshot } from "@/lib/workspaceTypes";
 type TabletContext = AssistantMessageInputContract["context"];
 type TabletMessage = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   body: string;
   conversationId?: string;
   translation?: AssistantTranslationContract;
   quickNote?: AssistantQuickNoteContract;
+};
+
+const threadSummary = (thread: AssistantThreadStateContract): AssistantThreadSummaryContract => {
+  const { sources: _sources, ...summary } = thread;
+  return summary;
 };
 
 const translationLanguageLabels: Record<AssistantTranslationLanguageContract, string> = {
@@ -238,6 +248,10 @@ export function TabletPanel({
 }) {
   const contextKey = `${context.surface}:${context.entityId ?? context.route}`;
   const [conversationId, setConversationId] = useState<string | undefined>();
+  const [thread, setThread] = useState<AssistantThreadStateContract | null>(null);
+  const [threads, setThreads] = useState<AssistantThreadSummaryContract[]>([]);
+  const [threadsOpen, setThreadsOpen] = useState(false);
+  const [threadLoading, setThreadLoading] = useState(true);
   const [messages, setMessages] = useState<TabletMessage[]>(() => [initialMessage(context)]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -247,6 +261,34 @@ export function TabletPanel({
   const [remainingToday, setRemainingToday] = useState(0);
   const [monthlyBudgetUsd, setMonthlyBudgetUsd] = useState(40);
   const transcriptRef = useRef<HTMLDivElement>(null);
+
+  const openThread = async (id: string) => {
+    setThreadLoading(true);
+    setError("");
+    try {
+      const detail = await symposiumApi.request<AssistantThreadDetailContract>(
+        `/api/assistant/conversations/${encodeURIComponent(id)}?actorHandle=${encodeURIComponent(actorHandle)}`,
+        { cache: "no-store" }
+      );
+      setConversationId(detail.id);
+      setThread(detail);
+      setMessages(detail.messages);
+      setThreadsOpen(false);
+    } catch (caught) {
+      setError(caught instanceof SymposiumApiError ? caught.message : "That research thread could not be loaded.");
+    } finally {
+      setThreadLoading(false);
+    }
+  };
+
+  const startNewThread = () => {
+    setConversationId(undefined);
+    setThread(null);
+    setMessages([initialMessage(context)]);
+    setDraft("");
+    setError("");
+    setThreadsOpen(false);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -272,6 +314,38 @@ export function TabletPanel({
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    setThreadLoading(true);
+    void symposiumApi.request<AssistantThreadPageContract>(
+      `/api/assistant/conversations?actorHandle=${encodeURIComponent(actorHandle)}&limit=20`,
+      { cache: "no-store" }
+    ).then(async (page) => {
+      if (cancelled) return;
+      setThreads(page.threads);
+      const matching = page.threads.find((candidate) => candidate.activeContextKey === contextKey);
+      if (!matching) {
+        setMessages([initialMessage(context)]);
+        return;
+      }
+      const detail = await symposiumApi.request<AssistantThreadDetailContract>(
+        `/api/assistant/conversations/${encodeURIComponent(matching.id)}?actorHandle=${encodeURIComponent(actorHandle)}`,
+        { cache: "no-store" }
+      );
+      if (cancelled) return;
+      setConversationId(detail.id);
+      setThread(detail);
+      setMessages(detail.messages);
+    }).catch((caught) => {
+      if (!cancelled) {
+        setError(caught instanceof SymposiumApiError ? caught.message : "Research-thread history could not be loaded.");
+      }
+    }).finally(() => {
+      if (!cancelled) setThreadLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [actorHandle]);
+
+  useEffect(() => {
     const updateQuota = (event: Event) => {
       const quota = (event as CustomEvent<AssistantQuotaStatusContract["quota"]>).detail;
       if (!quota) return;
@@ -284,11 +358,8 @@ export function TabletPanel({
   }, []);
 
   useEffect(() => {
-    setConversationId(undefined);
-    setMessages([initialMessage(context)]);
-    setDraft("");
-    setError("");
-  }, [contextKey]);
+    if (!conversationId) setMessages([initialMessage(context)]);
+  }, [contextKey, conversationId]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -298,10 +369,42 @@ export function TabletPanel({
     return () => window.cancelAnimationFrame(frame);
   }, [busy, messages.length]);
 
+  const changeThreadContext = async (mode: "use" | "attach") => {
+    if (!conversationId || !thread || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await symposiumApi.request<AssistantContextUpdateResultContract>(
+        `/api/assistant/conversations/${encodeURIComponent(conversationId)}/context`,
+        {
+          method: "POST",
+          idempotencyKey: createClientMutationId(`assistant-context-${mode}`),
+          body: {
+            actorHandle,
+            mode,
+            context,
+            expectedRevision: thread.contextRevision
+          }
+        }
+      );
+      setThread(result.thread);
+      setThreads((current) => [
+        threadSummary(result.thread),
+        ...current.filter((candidate) => candidate.id !== result.thread.id)
+      ]);
+      setMessages((current) => [...current, result.message]);
+    } catch (caught) {
+      setError(caught instanceof SymposiumApiError ? caught.message : "The research thread context could not be changed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const currentViewAttached = Boolean(thread?.sources.some((source) => source.key === contextKey));
+
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
     const message = draft.trim();
-    if (!message || busy || quotaLoading || remainingToday <= 0) return;
+    if (!message || busy || threadLoading || quotaLoading || remainingToday <= 0) return;
     const userMessage: TabletMessage = {
       id: createClientMutationId("assistant-user"),
       role: "user",
@@ -325,6 +428,13 @@ export function TabletPanel({
         }
       });
       setConversationId(response.conversationId);
+      if (response.thread) {
+        setThread(response.thread);
+        setThreads((current) => [
+          threadSummary(response.thread!),
+          ...current.filter((candidate) => candidate.id !== response.thread!.id)
+        ]);
+      }
       setRemainingToday(response.quota?.remainingToday ?? Math.max(0, remainingToday - 1));
       if (response.quota) {
         window.dispatchEvent(new CustomEvent("symposium-ai-quota-change", { detail: response.quota }));
@@ -357,6 +467,59 @@ export function TabletPanel({
         <button type="button" title="Close AI Tablet" onClick={onClose}><X size={16} /></button>
       </header>
 
+      <section className="tablet-thread-bar" aria-label="Research thread controls">
+        <button
+          type="button"
+          className="tablet-thread-current"
+          aria-expanded={threadsOpen}
+          onClick={() => setThreadsOpen((open) => !open)}
+        >
+          <History size={14} />
+          <span>
+            <strong>{thread?.title ?? "New research thread"}</strong>
+            <small>{thread ? `${thread.sourceCount} source${thread.sourceCount === 1 ? "" : "s"} · saved history` : "Starts when you send"}</small>
+          </span>
+        </button>
+        <button type="button" title="Start a new research thread" onClick={startNewThread}>
+          <Plus size={15} />
+        </button>
+        {threadsOpen ? (
+          <div className="tablet-thread-menu">
+            {threads.length ? threads.map((candidate) => (
+              <button
+                type="button"
+                className={candidate.id === conversationId ? "active" : undefined}
+                key={candidate.id}
+                onClick={() => void openThread(candidate.id)}
+              >
+                <strong>{candidate.title}</strong>
+                <small>{candidate.sourceCount} source{candidate.sourceCount === 1 ? "" : "s"} · {new Date(candidate.updatedAt).toLocaleDateString()}</small>
+              </button>
+            )) : <p>No saved research threads yet.</p>}
+          </div>
+        ) : null}
+      </section>
+
+      {thread && thread.activeContextKey !== contextKey ? (
+        <section className="tablet-context-change" aria-label="Current view changed">
+          <div>
+            <RefreshCw size={14} />
+            <span><strong>View changed</strong><small>This thread is still using {thread.sources.find((source) => source.key === thread.activeContextKey)?.context.title ?? "its previous view"}.</small></span>
+          </div>
+          <div>
+            <button type="button" disabled={busy} onClick={() => void changeThreadContext("use")}>Use this view</button>
+            <button type="button" disabled={busy || currentViewAttached} onClick={() => void changeThreadContext("attach")}>
+              <Link2 size={12} />{currentViewAttached ? "Source attached" : "Add as source"}
+            </button>
+          </div>
+        </section>
+      ) : thread ? (
+        <section className="tablet-active-source">
+          <span>Using</span>
+          <strong>{thread.sources.find((source) => source.key === thread.activeContextKey)?.context.title ?? context.title}</strong>
+        </section>
+      ) : null}
+
       <section className="tablet-limit-notice" aria-label="AI usage limits">
         <AlertTriangle size={15} />
         <div>
@@ -366,9 +529,10 @@ export function TabletPanel({
       </section>
 
       <div className="tablet-transcript" aria-live="polite" ref={transcriptRef}>
+        {threadLoading ? <article className="tablet-message assistant pending"><span>Tablet</span><p>Loading research threads…</p></article> : null}
         {messages.map((message) => (
           <article className={`tablet-message ${message.role}${message.translation ? " has-translation" : ""}`} key={message.id}>
-            <span>{message.role === "assistant" ? "Tablet" : "You"}</span>
+            <span>{message.role === "assistant" ? "Tablet" : message.role === "system" ? "Context" : "You"}</span>
             <p>{message.body}</p>
             {message.role === "assistant" && message.translation && message.conversationId ? (
               <TranslationCard
@@ -405,9 +569,9 @@ export function TabletPanel({
           maxLength={2000}
           rows={2}
           placeholder={quotaLoading ? "Loading AI allowance" : remainingToday > 0 ? "Ask about this view" : "Daily AI limit reached"}
-          disabled={busy || quotaLoading || remainingToday <= 0}
+          disabled={busy || threadLoading || quotaLoading || remainingToday <= 0}
         />
-        <button type="submit" className="primary" disabled={busy || quotaLoading || !draft.trim() || remainingToday <= 0} title="Send one limited AI request">
+        <button type="submit" className="primary" disabled={busy || threadLoading || quotaLoading || !draft.trim() || remainingToday <= 0} title="Send one limited AI request">
           <Send size={15} /><span>Send · uses 1</span>
         </button>
       </form>

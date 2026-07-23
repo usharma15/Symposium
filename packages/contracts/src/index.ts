@@ -1286,6 +1286,18 @@ export const assistantAnswerDraftSchema = z.object({
   }
 });
 
+export const assistantContextSchema = z.object({
+  surface: assistantSurfaceSchema,
+  route: z.string().trim().max(500),
+  title: z.string().trim().max(300),
+  summary: z.string().trim().max(3000).default(""),
+  content: z.string().trim().max(12000).default(""),
+  entityType: z.string().trim().max(80).optional(),
+  entityId: z.string().trim().max(240).optional(),
+  selection: z.string().trim().max(4000).optional(),
+  metadata: z.record(z.string().max(80), z.union([z.string().max(1000), z.number(), z.boolean(), z.null()])).default({})
+});
+
 export const assistantMessageInputSchema = z.object({
   conversationId: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(2000),
@@ -1293,21 +1305,23 @@ export const assistantMessageInputSchema = z.object({
   targetLanguage: assistantTranslationLanguageSchema.optional(),
   contextType: z.enum(["general", "room", "post", "community", "note"]).default("general"),
   contextId: z.string().trim().min(1).max(240).optional(),
-  context: z.object({
-    surface: assistantSurfaceSchema,
-    route: z.string().trim().max(500),
-    title: z.string().trim().max(300),
-    summary: z.string().trim().max(3000).default(""),
-    content: z.string().trim().max(12000).default(""),
-    entityType: z.string().trim().max(80).optional(),
-    entityId: z.string().trim().max(240).optional(),
-    selection: z.string().trim().max(4000).optional(),
-    metadata: z.record(z.string().max(80), z.union([z.string().max(1000), z.number(), z.boolean(), z.null()])).default({})
-  })
+  context: assistantContextSchema
 }).superRefine((input, context) => {
   if (input.intent === "translate" && !input.targetLanguage) {
     context.addIssue({ code: "custom", path: ["targetLanguage"], message: "Choose a translation language." });
   }
+});
+
+export const assistantConversationListQuerySchema = z.object({
+  cursor: z.string().trim().max(500).optional(),
+  limit: z.coerce.number().int().positive().max(50).default(20),
+  contextKey: z.string().trim().max(800).optional()
+});
+
+export const assistantContextUpdateInputSchema = z.object({
+  mode: z.enum(["use", "attach"]),
+  context: assistantContextSchema,
+  expectedRevision: z.number().int().positive()
 });
 
 const documentTranslationImageDataUrlSchema = z.string()
@@ -1753,6 +1767,42 @@ export const assistantMessageSchema = z.object({
   createdAt: z.string().optional()
 });
 
+export const assistantThreadSourceSchema = z.object({
+  key: z.string().trim().min(1).max(800),
+  context: assistantContextSchema,
+  attachedAt: z.string().datetime()
+});
+
+export const assistantThreadSummarySchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().trim().min(1).max(300),
+  contextType: z.string().trim().min(1).max(80),
+  contextId: z.string().trim().max(240).nullable(),
+  activeContextKey: z.string().trim().max(800).nullable(),
+  contextRevision: z.number().int().positive(),
+  sourceCount: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const assistantThreadStateSchema = assistantThreadSummarySchema.extend({
+  sources: z.array(assistantThreadSourceSchema).max(12)
+});
+
+export const assistantThreadDetailSchema = assistantThreadStateSchema.extend({
+  messages: z.array(assistantMessageSchema).max(100)
+});
+
+export const assistantThreadPageSchema = z.object({
+  threads: z.array(assistantThreadSummarySchema),
+  nextCursor: z.string().nullable()
+});
+
+export const assistantContextUpdateResultSchema = z.object({
+  thread: assistantThreadStateSchema,
+  message: assistantMessageSchema
+});
+
 export const assistantQuotaSchema = z.object({
   dailyLimit: z.number().int().positive(),
   remainingToday: z.number().int().nonnegative(),
@@ -1774,6 +1824,7 @@ export const assistantResponseSchema = z.object({
   status: z.enum(["answered", "provider_not_configured", "disabled", "provider_error"]),
   model: z.string().optional(),
   quota: assistantQuotaSchema.optional(),
+  thread: assistantThreadStateSchema.optional(),
   translation: assistantTranslationSchema.optional(),
   quickNote: assistantQuickNoteSchema.optional()
 });
@@ -1952,7 +2003,16 @@ export type AssistantTranslationContract = z.infer<typeof assistantTranslationSc
 export type AssistantQuickNoteDraftContract = z.infer<typeof assistantQuickNoteDraftSchema>;
 export type AssistantQuickNoteContract = z.infer<typeof assistantQuickNoteSchema>;
 export type AssistantAnswerDraftContract = z.infer<typeof assistantAnswerDraftSchema>;
+export type AssistantContextContract = z.infer<typeof assistantContextSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
+export type AssistantConversationListQueryContract = z.infer<typeof assistantConversationListQuerySchema>;
+export type AssistantContextUpdateInputContract = z.infer<typeof assistantContextUpdateInputSchema>;
+export type AssistantThreadSourceContract = z.infer<typeof assistantThreadSourceSchema>;
+export type AssistantThreadSummaryContract = z.infer<typeof assistantThreadSummarySchema>;
+export type AssistantThreadStateContract = z.infer<typeof assistantThreadStateSchema>;
+export type AssistantThreadDetailContract = z.infer<typeof assistantThreadDetailSchema>;
+export type AssistantThreadPageContract = z.infer<typeof assistantThreadPageSchema>;
+export type AssistantContextUpdateResultContract = z.infer<typeof assistantContextUpdateResultSchema>;
 export type AssistantQuotaStatusContract = z.infer<typeof assistantQuotaStatusSchema>;
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;
 export type SaveAssistantQuickNoteInputContract = z.infer<typeof saveAssistantQuickNoteInputSchema>;

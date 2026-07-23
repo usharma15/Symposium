@@ -16,6 +16,7 @@ import {
   uuid
 } from "drizzle-orm/pg-core";
 import type {
+  AssistantThreadSourceContract,
   ContentQuoteContract,
   ContentKindContract,
   InquiryItemContract,
@@ -788,12 +789,17 @@ export const aiConversations = pgTable(
     title: text("title").notNull(),
     contextType: text("context_type").default("general").notNull(),
     contextId: text("context_id"),
+    contextSources: jsonb("context_sources").$type<AssistantThreadSourceContract[]>().default(jsonArray).notNull(),
+    activeContextKey: text("active_context_key"),
+    contextRevision: integer("context_revision").default(1).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
   (table) => [
     index("ai_conversations_owner_idx").on(table.ownerHandle),
-    index("ai_conversations_context_idx").on(table.contextType, table.contextId)
+    index("ai_conversations_context_idx").on(table.contextType, table.contextId),
+    index("ai_conversations_owner_updated_idx").on(table.ownerHandle, table.updatedAt.desc(), table.id.desc()),
+    check("ai_conversations_context_revision_check", sql`${table.contextRevision} >= 1`)
   ]
 );
 
