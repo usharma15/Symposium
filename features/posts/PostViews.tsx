@@ -90,6 +90,12 @@ import { postToneClassName, postToneForItem } from "@/lib/postTone";
 import { itemHasPostType } from "@/lib/postSemantics";
 import { communityPostIsInteractive } from "@/features/communities/communityPolicy";
 import { ContentAnalyticsDialog } from "@/features/analytics/ContentAnalyticsDialog";
+import {
+  clearPendingContentAnalytics,
+  consumePendingContentAnalytics,
+  isPendingContentAnalytics,
+  openContentAnalyticsEvent
+} from "@/features/analytics/contentAnalyticsNavigation";
 import type { ContentAnalyticsViewContract } from "@/packages/contracts/src";
 import {
   attachmentScribbleSource,
@@ -585,23 +591,11 @@ function PostOwnerControls({
   const mayDelete = isAuthor || governance.canModeratePost(item);
   const [analyticsView, setAnalyticsView] = useState<ContentAnalyticsViewContract | null>(() => {
     if (typeof window === "undefined" || !isAuthor) return null;
-    try {
-      const pending = JSON.parse(window.sessionStorage.getItem("symposium:pending-content-analytics") ?? "null") as {
-        postId?: string;
-        subjectType?: string;
-        view?: string;
-      } | null;
-      if (
-        pending?.postId === item.id &&
-        pending.subjectType === "post" &&
-        (pending.view === "likes" || pending.view === "reshares" || pending.view === "quotes" || pending.view === "overview")
-      ) {
-        window.sessionStorage.removeItem("symposium:pending-content-analytics");
-        return pending.view;
-      }
-    } catch {
-      window.sessionStorage.removeItem("symposium:pending-content-analytics");
-    }
+    const pending = consumePendingContentAnalytics({
+      subjectType: "post",
+      postId: item.id
+    });
+    if (pending) return pending;
     const pathMatches = window.location.pathname === `/posts/${encodeURIComponent(item.id)}`;
     const value = new URLSearchParams(window.location.search).get("analytics");
     return pathMatches && (value === "likes" || value === "reshares" || value === "quotes" || value === "overview")
@@ -616,14 +610,13 @@ function PostOwnerControls({
         subjectType?: string;
         view?: string;
       }>).detail;
+      if (!isPendingContentAnalytics(detail)) return;
       if (detail?.postId !== item.id || detail.subjectType !== "post") return;
-      if (detail.view === "likes" || detail.view === "reshares" || detail.view === "quotes" || detail.view === "overview") {
-        window.sessionStorage.removeItem("symposium:pending-content-analytics");
-        setAnalyticsView(detail.view);
-      }
+      clearPendingContentAnalytics();
+      setAnalyticsView(detail.view);
     };
-    window.addEventListener("symposium:open-content-analytics", onOpenAnalytics);
-    return () => window.removeEventListener("symposium:open-content-analytics", onOpenAnalytics);
+    window.addEventListener(openContentAnalyticsEvent, onOpenAnalytics);
+    return () => window.removeEventListener(openContentAnalyticsEvent, onOpenAnalytics);
   }, [isAuthor, item.id]);
   if (isDeletedPost(item) || (!isAuthor && !mayDelete)) return null;
 

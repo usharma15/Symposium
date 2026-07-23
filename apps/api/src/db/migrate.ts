@@ -2379,6 +2379,32 @@ const migrations: Migration[] = [
         ON notifications (archived_at)
         WHERE archived_at IS NOT NULL;
     `
+  },
+  {
+    id: "0047_content_analytics_live",
+    sql: `
+      CREATE INDEX IF NOT EXISTS post_actions_content_analytics_idx
+        ON post_actions (post_id, action, active, updated_at DESC, actor_handle DESC);
+      CREATE INDEX IF NOT EXISTS comment_actions_content_analytics_idx
+        ON comment_actions (comment_id, action, active, updated_at DESC, actor_handle DESC);
+
+      CREATE INDEX IF NOT EXISTS posts_quote_analytics_idx
+        ON posts (
+          (quote ->> 'sourceType'),
+          (quote ->> 'sourceId'),
+          created_at DESC,
+          id DESC
+        )
+        WHERE quote IS NOT NULL AND deleted_at IS NULL;
+      CREATE INDEX IF NOT EXISTS comments_quote_analytics_idx
+        ON comments (
+          (quote ->> 'sourceType'),
+          (quote ->> 'sourceId'),
+          created_at DESC,
+          id DESC
+        )
+        WHERE quote IS NOT NULL AND deleted_at IS NULL;
+    `
   }
 ];
 

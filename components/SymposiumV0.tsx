@@ -84,6 +84,19 @@ import { useLiveEventStream } from "@/features/live-sync/useLiveEventStream";
 import { useCoalescedRefresh } from "@/features/live-sync/useCoalescedRefresh";
 import { recordPassiveView } from "@/features/live-sync/recordPassiveView";
 import {
+  contentAnalyticsInvalidationFromLiveEvent,
+  contentAnalyticsSyncChannel,
+  contentAnalyticsSyncStorageKey,
+  dispatchContentAnalyticsInvalidation,
+  isContentAnalyticsInvalidation,
+  type ContentAnalyticsInvalidation
+} from "@/features/analytics/contentAnalyticsSync";
+import {
+  dispatchPendingContentAnalytics,
+  queuePendingContentAnalytics,
+  type PendingContentAnalytics
+} from "@/features/analytics/contentAnalyticsNavigation";
+import {
   createClientMutationId,
   createRetryMutationRegistry,
   shouldRetainRetryMutation,
@@ -1092,6 +1105,14 @@ function SymposiumExperience({
     storageKey: "symposium-cross-tab-profile"
   });
 
+  const publishContentAnalyticsInvalidation =
+    useCrossTabItemTransport<ContentAnalyticsInvalidation>({
+      channelName: contentAnalyticsSyncChannel,
+      isMessage: isContentAnalyticsInvalidation,
+      onMessage: dispatchContentAnalyticsInvalidation,
+      storageKey: contentAnalyticsSyncStorageKey
+    });
+
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (!event.key || !event.newValue) return;
@@ -1666,6 +1687,11 @@ function SymposiumExperience({
 
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
     const payload = event.payload ?? {};
+    const analyticsInvalidation = contentAnalyticsInvalidationFromLiveEvent(event);
+    if (analyticsInvalidation) {
+      dispatchContentAnalyticsInvalidation(analyticsInvalidation);
+      publishContentAnalyticsInvalidation(analyticsInvalidation);
+    }
     if (
       event.kind.startsWith("notification.")
     ) {
@@ -4392,17 +4418,14 @@ function SymposiumExperience({
                 postId &&
                 (analyticsView === "likes" || analyticsView === "reshares" || analyticsView === "quotes" || analyticsView === "overview")
               ) {
-                const detail = {
+                const detail: PendingContentAnalytics = {
                   postId,
                   ...(commentId ? { commentId, subjectType: "comment" } : { subjectType: "post" }),
                   view: analyticsView
                 };
-                window.sessionStorage.setItem(
-                  "symposium:pending-content-analytics",
-                  JSON.stringify(detail)
-                );
+                queuePendingContentAnalytics(detail);
                 window.setTimeout(() => {
-                  window.dispatchEvent(new CustomEvent("symposium:open-content-analytics", { detail }));
+                  dispatchPendingContentAnalytics(detail);
                 }, 80);
               }
             }}

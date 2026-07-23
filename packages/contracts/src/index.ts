@@ -1653,7 +1653,7 @@ export const contentAnalyticsActorSchema = z.object({
 });
 
 export const contentAnalyticsQuoteSchema = z.object({
-  id: z.string().min(1).max(240),
+  id: z.string().min(1).max(260),
   title: z.string().min(1).max(300),
   authorHandle: z.string().min(1).max(80),
   authorName: z.string().min(1).max(200),

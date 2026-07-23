@@ -151,6 +151,31 @@ export const sameQuoteSource = (
   left.sourceId === right.sourceId
 );
 
+export const quoteAnalyticsSubjects = (
+  ...quotes: Array<ContentQuoteContract | null | undefined>
+) => {
+  const subjects = new Map<string, {
+    subjectType: "post" | "comment";
+    postId: string;
+    commentId?: string;
+  }>();
+  for (const quote of quotes) {
+    if (!quote) continue;
+    const subject = quote.sourceType === "post"
+      ? { subjectType: "post" as const, postId: quote.sourceId }
+      : {
+          subjectType: "comment" as const,
+          postId: quote.sourcePostId,
+          commentId: quote.sourceId
+        };
+    const key = subject.subjectType === "post"
+      ? `post:${subject.postId}`
+      : `comment:${subject.postId}:${subject.commentId}`;
+    subjects.set(key, subject);
+  }
+  return [...subjects.values()];
+};
+
 export const quoteNotificationInput = (
   input: QuoteNotificationInput
 ): CreateNotificationInput | null => {

@@ -32,13 +32,16 @@ const decodeCursor = (cursor?: string): AnalyticsCursor | null => {
       !value.occurredAt ||
       Number.isNaN(Date.parse(value.occurredAt)) ||
       !value.id ||
-      value.id.length > 240
+      value.id.length > 260
     ) return null;
     return { occurredAt: new Date(value.occurredAt).toISOString(), id: value.id };
   } catch {
     return null;
   }
 };
+
+export const escapeContentAnalyticsSearchPattern = (value: string) =>
+  value.replace(/[\\%_]/g, "\\$&");
 
 const metricNumber = (metrics: Record<string, unknown> | null, key: string) => {
   const value = Number(metrics?.[key] ?? 0);
@@ -166,7 +169,10 @@ export const getContentAnalytics = async (
 
   if (query.view === "likes" || query.view === "reshares") {
     const action = query.view === "likes" ? "signal" : "fork";
-    const values: unknown[] = [subject.subjectId, action, query.query || null];
+    const searchPattern = query.query
+      ? `%${escapeContentAnalyticsSearchPattern(query.query)}%`
+      : null;
+    const values: unknown[] = [subject.subjectId, action, searchPattern];
     const cursorCondition = cursor
       ? `AND (activity.updated_at, activity.actor_handle) < ($4::timestamptz, $5::text)`
       : "";
@@ -185,7 +191,11 @@ export const getContentAnalytics = async (
        WHERE activity.${subjectColumn} = $1
          AND activity.action = $2
          AND activity.active = true
-         AND ($3::text IS NULL OR profile.name ILIKE '%' || $3 || '%' OR profile.handle ILIKE '%' || $3 || '%')
+         AND (
+           $3::text IS NULL
+           OR profile.name ILIKE $3 ESCAPE E'\\\\'
+           OR profile.handle ILIKE $3 ESCAPE E'\\\\'
+         )
          ${cursorCondition}
        ORDER BY activity.updated_at DESC, activity.actor_handle DESC
        LIMIT $${values.length}`,
@@ -204,11 +214,14 @@ export const getContentAnalytics = async (
   }
 
   if (query.view === "quotes") {
+    const searchPattern = query.query
+      ? `%${escapeContentAnalyticsSearchPattern(query.query)}%`
+      : null;
     const values: unknown[] = [
       subject.subjectId,
       handle,
       query.subjectType,
-      query.query || null
+      searchPattern
     ];
     const cursorCondition = cursor
       ? `WHERE (quote_rows."occurredAt", quote_rows.id) < ($5::timestamptz, $6::text)`
@@ -221,14 +234,15 @@ export const getContentAnalytics = async (
       authorHandle: string;
       authorName: string;
       avatarUrl: string | null;
-      href: string;
+      postId: string;
+      commentId: string | null;
       occurredAt: Date | string;
     }>(
       `WITH quote_rows AS (
-         SELECT quoted_post.id, quoted_post.title,
+         SELECT ('post:' || quoted_post.id) AS id, quoted_post.title,
            profile.handle AS "authorHandle", profile.name AS "authorName",
            profile.avatar_url AS "avatarUrl",
-           ('/posts/' || quoted_post.id) AS href,
+           quoted_post.id AS "postId", NULL::text AS "commentId",
            quoted_post.created_at AS "occurredAt"
          FROM posts quoted_post
          INNER JOIN profiles profile ON profile.handle = quoted_post.author_handle
@@ -238,14 +252,19 @@ export const getContentAnalytics = async (
            AND quoted_post.kind <> 'draft'
            AND quoted_post.quote ->> 'sourceType' = $3
            AND quoted_post.quote ->> 'sourceId' = $1
-           AND ($4::text IS NULL OR profile.name ILIKE '%' || $4 || '%' OR profile.handle ILIKE '%' || $4 || '%' OR quoted_post.title ILIKE '%' || $4 || '%')
+           AND (
+             $4::text IS NULL
+             OR profile.name ILIKE $4 ESCAPE E'\\\\'
+             OR profile.handle ILIKE $4 ESCAPE E'\\\\'
+             OR quoted_post.title ILIKE $4 ESCAPE E'\\\\'
+           )
            ${quoteAccessSql}
          UNION ALL
-         SELECT quoted_comment.id,
-           left(quoted_comment.body, 300) AS title,
+         SELECT ('comment:' || quoted_comment.id) AS id,
+           COALESCE(NULLIF(left(btrim(quoted_comment.body), 300), ''), 'Quoted comment') AS title,
            profile.handle AS "authorHandle", profile.name AS "authorName",
            profile.avatar_url AS "avatarUrl",
-           ('/posts/' || quoted_post.id || '?comment=' || quoted_comment.id) AS href,
+           quoted_post.id AS "postId", quoted_comment.id AS "commentId",
            quoted_comment.created_at AS "occurredAt"
          FROM comments quoted_comment
          INNER JOIN posts quoted_post ON quoted_post.id = quoted_comment.post_id
@@ -257,7 +276,12 @@ export const getContentAnalytics = async (
            AND quoted_post.kind <> 'draft'
            AND quoted_comment.quote ->> 'sourceType' = $3
            AND quoted_comment.quote ->> 'sourceId' = $1
-           AND ($4::text IS NULL OR profile.name ILIKE '%' || $4 || '%' OR profile.handle ILIKE '%' || $4 || '%' OR quoted_comment.body ILIKE '%' || $4 || '%')
+           AND (
+             $4::text IS NULL
+             OR profile.name ILIKE $4 ESCAPE E'\\\\'
+             OR profile.handle ILIKE $4 ESCAPE E'\\\\'
+             OR quoted_comment.body ILIKE $4 ESCAPE E'\\\\'
+           )
            ${quoteAccessSql}
        )
        SELECT *
@@ -275,7 +299,9 @@ export const getContentAnalytics = async (
       authorHandle: row.authorHandle,
       authorName: row.authorName,
       ...(row.avatarUrl ? { avatarUrl: row.avatarUrl } : {}),
-      href: row.href,
+      href: `/posts/${encodeURIComponent(row.postId)}${
+        row.commentId ? `?comment=${encodeURIComponent(row.commentId)}` : ""
+      }`,
       occurredAt: new Date(row.occurredAt).toISOString()
     }));
     const last = rows.at(-1);

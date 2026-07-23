@@ -299,7 +299,15 @@ export const posts = pgTable(
       sql`${table.postType} IS NULL OR (${table.postType} = 'proposal' AND ${table.room} = 'funding') OR (${table.postType} = 'opportunity' AND ${table.room} = 'opportunities') OR (${table.postType} IN ('paper', 'thought') AND ${table.room} NOT IN ('office', 'funding', 'opportunities'))`
     ),
     index("posts_quote_source_post_idx").on(sql`(${table.quote}->>'sourcePostId')`).where(sql`${table.quote} IS NOT NULL`),
-    index("posts_quote_comment_source_idx").on(sql`(${table.quote}->>'sourceId')`).where(sql`${table.quote}->>'sourceType' = 'comment'`)
+    index("posts_quote_comment_source_idx").on(sql`(${table.quote}->>'sourceId')`).where(sql`${table.quote}->>'sourceType' = 'comment'`),
+    index("posts_quote_analytics_idx")
+      .on(
+        sql`(${table.quote}->>'sourceType')`,
+        sql`(${table.quote}->>'sourceId')`,
+        table.createdAt.desc(),
+        table.id.desc()
+      )
+      .where(sql`${table.quote} IS NOT NULL AND ${table.deletedAt} IS NULL`)
   ]
 );
 
@@ -408,7 +416,15 @@ export const comments = pgTable(
     index("comments_search_body_idx").using("gin", sql`to_tsvector('english', ${table.body})`),
     index("comments_search_prefix_idx").using("gin", sql`to_tsvector('simple', ${table.body})`),
     index("comments_quote_source_post_idx").on(sql`(${table.quote}->>'sourcePostId')`).where(sql`${table.quote} IS NOT NULL`),
-    index("comments_quote_comment_source_idx").on(sql`(${table.quote}->>'sourceId')`).where(sql`${table.quote}->>'sourceType' = 'comment'`)
+    index("comments_quote_comment_source_idx").on(sql`(${table.quote}->>'sourceId')`).where(sql`${table.quote}->>'sourceType' = 'comment'`),
+    index("comments_quote_analytics_idx")
+      .on(
+        sql`(${table.quote}->>'sourceType')`,
+        sql`(${table.quote}->>'sourceId')`,
+        table.createdAt.desc(),
+        table.id.desc()
+      )
+      .where(sql`${table.quote} IS NOT NULL AND ${table.deletedAt} IS NULL`)
   ]
 );
 
@@ -435,6 +451,8 @@ export const postActions = pgTable(
     index("post_actions_activity_idx").on(table.actorHandle, table.updatedAt, table.action, table.active),
     index("post_actions_profile_timeline_idx").on(table.actorHandle, table.action, table.updatedAt, table.postId),
     index("post_actions_viewer_active_idx").on(table.actorHandle, table.action, table.active, table.postId),
+    index("post_actions_content_analytics_idx")
+      .on(table.postId, table.action, table.active, table.updatedAt.desc(), table.actorHandle.desc()),
     check("post_actions_action_check", sql`${table.action} IN ('save', 'signal', 'fork', 'read')`),
     check("post_actions_count_check", sql`${table.count} >= 0`),
     check("post_actions_revision_check", sql`${table.revision} >= 1`)
@@ -468,6 +486,8 @@ export const commentActions = pgTable(
     index("comment_actions_activity_idx").on(table.actorHandle, table.updatedAt, table.action, table.active),
     index("comment_actions_profile_timeline_idx").on(table.actorHandle, table.action, table.updatedAt, table.commentId),
     index("comment_actions_viewer_active_idx").on(table.actorHandle, table.action, table.active, table.commentId),
+    index("comment_actions_content_analytics_idx")
+      .on(table.commentId, table.action, table.active, table.updatedAt.desc(), table.actorHandle.desc()),
     check("comment_actions_action_check", sql`${table.action} IN ('save', 'signal', 'fork')`),
     check("comment_actions_count_check", sql`${table.count} >= 0`),
     check("comment_actions_revision_check", sql`${table.revision} >= 1`)

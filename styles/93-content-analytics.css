@@ -116,8 +116,13 @@
 }
 
 .content-analytics-loader {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin: 90px auto;
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .content-analytics-metrics {
@@ -224,6 +229,21 @@
   text-align: center;
 }
 
+.content-analytics-refresh-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  border: 1px solid color-mix(in srgb, var(--warning, #a96f18) 45%, var(--line));
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: color-mix(in srgb, var(--warning, #a96f18) 10%, transparent);
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.content-analytics-refresh-error button,
 .content-analytics-error button,
 .content-analytics-more {
   border: 1px solid var(--line);

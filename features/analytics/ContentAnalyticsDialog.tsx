@@ -3,6 +3,13 @@
 import { BarChart3, LoaderCircle, Search, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  contentAnalyticsInvalidationEvent,
+  contentAnalyticsTargetMatches,
+  isContentAnalyticsInvalidation,
+  rememberContentAnalyticsInvalidationKey,
+  type ContentAnalyticsTarget
+} from "@/features/analytics/contentAnalyticsSync";
 import type {
   ContentAnalyticsPageContract,
   ContentAnalyticsViewContract
@@ -28,6 +35,10 @@ const metricLabels = {
 const profileHref = (handle: string) =>
   `/profiles/${encodeURIComponent(handle.replace(/^@/, ""))}`;
 
+type AnalyticsLoadOptions = {
+  background?: boolean;
+};
+
 export function ContentAnalyticsDialog({
   actorHandle,
   postId,
@@ -49,15 +60,30 @@ export function ContentAnalyticsDialog({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const [refreshError, setRefreshError] = useState("");
   const requestEpoch = useRef(0);
+  const pageRef = useRef<ContentAnalyticsPageContract | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
+  const processedInvalidationKeysRef = useRef<string[]>([]);
+  const loadRef = useRef<(
+    cursor?: string | null,
+    options?: AnalyticsLoadOptions
+  ) => Promise<void>>(async () => {});
 
-  const load = useCallback(async (cursor?: string | null) => {
+  const load = useCallback(async (
+    cursor?: string | null,
+    options: AnalyticsLoadOptions = {}
+  ) => {
     const append = Boolean(cursor);
+    const background = Boolean(options.background && pageRef.current);
     const epoch = requestEpoch.current + 1;
     requestEpoch.current = epoch;
     if (append) setLoadingMore(true);
     else setLoading(true);
-    setError("");
+    if (background || append) setRefreshError("");
+    else setError("");
     try {
       const parameters = new URLSearchParams({
         actorHandle,
@@ -73,14 +99,28 @@ export function ContentAnalyticsDialog({
         { cache: "no-store" }
       );
       if (epoch !== requestEpoch.current) return;
-      setPage((current) => append && current ? {
-        ...result,
-        actors: [...current.actors, ...result.actors],
-        quotes: [...current.quotes, ...result.quotes]
-      } : result);
+      setPage((current) => {
+        const nextPage = append && current ? {
+          ...result,
+          actors: [...current.actors, ...result.actors],
+          quotes: [...current.quotes, ...result.quotes]
+        } : result;
+        pageRef.current = nextPage;
+        return nextPage;
+      });
+      setError("");
+      setRefreshError("");
     } catch (reason) {
       if (epoch !== requestEpoch.current) return;
-      setError(reason instanceof Error ? reason.message : "Analytics could not be loaded.");
+      if (pageRef.current) {
+        setRefreshError(
+          append
+            ? "More results could not load. Your current results are still available."
+            : "Analytics could not refresh. Showing the latest available results."
+        );
+      } else {
+        setError(reason instanceof Error ? reason.message : "Analytics could not be loaded.");
+      }
     } finally {
       if (epoch === requestEpoch.current) {
         setLoading(false);
@@ -88,6 +128,17 @@ export function ContentAnalyticsDialog({
       }
     }
   }, [actorHandle, commentId, postId, query, subjectType, view]);
+  loadRef.current = load;
+
+  useEffect(() => {
+    requestEpoch.current += 1;
+    pageRef.current = null;
+    setPage(null);
+    setQuery("");
+    setError("");
+    setRefreshError("");
+    setView(initialView);
+  }, [commentId, initialView, postId, subjectType]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), query ? 220 : 0);
@@ -96,17 +147,94 @@ export function ContentAnalyticsDialog({
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     document.body.style.overflow = "hidden";
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )].filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+      if (!focusable.length) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     return () => {
       requestEpoch.current += 1;
+      window.cancelAnimationFrame(focusFrame);
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
+      if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [onClose]);
+
+  useEffect(() => {
+    const target: ContentAnalyticsTarget = {
+      subjectType,
+      postId,
+      ...(subjectType === "comment" && commentId ? { commentId } : {})
+    };
+    const scheduleRefresh = () => {
+      if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => {
+        refreshTimerRef.current = null;
+        void loadRef.current(null, { background: true });
+      }, 120);
+    };
+    const onInvalidation = (event: Event) => {
+      const message = (event as CustomEvent<unknown>).detail;
+      if (!isContentAnalyticsInvalidation(message)) return;
+      if (
+        !message.all
+        && !message.targets.some((candidate) => contentAnalyticsTargetMatches(candidate, target))
+      ) {
+        return;
+      }
+      const remembered = rememberContentAnalyticsInvalidationKey(
+        processedInvalidationKeysRef.current,
+        message.eventKey
+      );
+      processedInvalidationKeysRef.current = remembered.keys;
+      if (remembered.seen) return;
+      scheduleRefresh();
+    };
+    const onResume = () => {
+      if (document.visibilityState === "visible") scheduleRefresh();
+    };
+    window.addEventListener(contentAnalyticsInvalidationEvent, onInvalidation);
+    window.addEventListener("focus", onResume);
+    window.addEventListener("online", onResume);
+    document.addEventListener("visibilitychange", onResume);
+    return () => {
+      window.removeEventListener(contentAnalyticsInvalidationEvent, onInvalidation);
+      window.removeEventListener("focus", onResume);
+      window.removeEventListener("online", onResume);
+      document.removeEventListener("visibilitychange", onResume);
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, [commentId, postId, subjectType]);
 
   const listEmpty = !loading && !error && page && (
     view === "quotes" ? !page.quotes.length : view !== "overview" && !page.actors.length
@@ -121,10 +249,12 @@ export function ContentAnalyticsDialog({
       }}
     >
       <section
+        ref={dialogRef}
         className="content-analytics-dialog"
         role="dialog"
         aria-modal="true"
         aria-label={`${subjectType === "post" ? "Post" : "Comment"} analytics`}
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <header>
@@ -132,10 +262,19 @@ export function ContentAnalyticsDialog({
             <BarChart3 size={19} />
             <span>
               <strong>{subjectType === "post" ? "Post analytics" : "Comment analytics"}</strong>
-              <small>{page?.title ?? "Private author view"}</small>
+              <small aria-live="polite">
+                {page?.title ?? "Private author view"}
+                {loading && page ? " · Updating…" : ""}
+              </small>
             </span>
           </span>
-          <button type="button" title="Close analytics" aria-label="Close analytics" onClick={onClose}>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            title="Close analytics"
+            aria-label="Close analytics"
+            onClick={onClose}
+          >
             <X size={17} />
           </button>
         </header>
@@ -150,7 +289,9 @@ export function ContentAnalyticsDialog({
               onClick={() => {
                 setView(tab.id);
                 setQuery("");
+                pageRef.current = null;
                 setPage(null);
+                setRefreshError("");
               }}
             >
               {tab.label}
@@ -172,11 +313,27 @@ export function ContentAnalyticsDialog({
         ) : null}
 
         <div className="content-analytics-body" aria-busy={loading}>
-          {loading && !page ? <LoaderCircle className="spin content-analytics-loader" size={20} /> : null}
+          {loading && !page ? (
+            <div className="content-analytics-loader" role="status">
+              <LoaderCircle className="spin" size={20} />
+              <span>Loading analytics…</span>
+            </div>
+          ) : null}
           {error ? (
             <div className="content-analytics-error">
               <p>{error}</p>
               <button type="button" onClick={() => void load()}>Try again</button>
+            </div>
+          ) : null}
+          {refreshError ? (
+            <div className="content-analytics-refresh-error" role="status">
+              <span>{refreshError}</span>
+              <button
+                type="button"
+                onClick={() => void load(null, { background: true })}
+              >
+                Retry
+              </button>
             </div>
           ) : null}
           {view === "overview" && page ? (

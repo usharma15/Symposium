@@ -24,6 +24,7 @@ import { claimMutation, completeMutation, type MutationContext } from "../servic
 import { markQuotedPostUnavailable, resolveContentQuote } from "../services/contentQuotes";
 import {
   contentMentionNotificationInputs,
+  quoteAnalyticsSubjects,
   quoteNotificationInput,
   sameQuoteSource
 } from "../services/contentNotifications";
@@ -252,7 +253,13 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       subjectId: item.id,
       visibility: item.room === "office" || item.kind === "draft" ? "private" : eventScope.visibility,
       audienceHandles: item.room === "office" || item.kind === "draft" ? [handle] : eventScope.audienceHandles,
-      payload: { item, room: item.room, kind: item.kind, title: item.title }
+      payload: {
+        item,
+        room: item.room,
+        kind: item.kind,
+        title: item.title,
+        analyticsSubjects: quoteAnalyticsSubjects(item.quote)
+      }
     }));
     if (item.room !== "office" && item.kind !== "draft") {
       const mentionNotifications = await contentMentionNotificationInputs(client, {
@@ -763,6 +770,10 @@ export const updatePost = async (
     });
     await completeMutation(client, handle, mutation, updated);
     const eventScope = await communityEventScope(client, updated.postType === "paper" ? null : updated.communityId);
+    const quoteChanged = !sameQuoteSource(row.quote, quote);
+    const analyticsSubjects = quoteChanged
+      ? quoteAnalyticsSubjects(row.quote, quote)
+      : [];
     stagedEvents.push(await stageEvent(client, {
       kind: "post.updated",
       actorHandle: handle,
@@ -772,8 +783,8 @@ export const updatePost = async (
       audienceHandles: updated.room === "office" || updated.kind === "draft" ? [handle] : eventScope.audienceHandles,
       payload:
         updated.room === "office" || updated.kind === "draft"
-          ? { item: updated }
-          : { itemId: postId }
+          ? { item: updated, analyticsSubjects }
+          : { itemId: postId, analyticsSubjects }
     }));
     if (updated.room !== "office" && updated.kind !== "draft") {
       const mentionNotifications = await contentMentionNotificationInputs(client, {
@@ -800,7 +811,6 @@ export const updatePost = async (
         });
         stagedEvents.push(...resolvedMentions.events);
       }
-      const quoteChanged = !sameQuoteSource(row.quote, quote);
       if (quoteChanged && row.quote) {
         const resolvedQuote = await resolveNotifications(client, {
           kinds: [row.quote.sourceType === "post" ? "post_quote" : "comment_quote"],
@@ -1078,8 +1088,15 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
         audienceHandles: deleted.room === "office" || deleted.kind === "draft" ? [handle] : eventScope.audienceHandles,
         payload:
           deleted.room === "office" || deleted.kind === "draft"
-            ? { itemId: postId, item: deleted }
-            : { itemId: postId }
+            ? {
+                itemId: postId,
+                item: deleted,
+                analyticsSubjects: quoteAnalyticsSubjects(existing.quote)
+              }
+            : {
+                itemId: postId,
+                analyticsSubjects: quoteAnalyticsSubjects(existing.quote)
+              }
       }));
       await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
       await completeMutation(client, handle, mutation, deleted);

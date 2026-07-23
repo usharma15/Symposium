@@ -62,6 +62,12 @@ import {
 } from "@/features/scribble/ScribbleContext";
 import { useCommunityGovernance } from "@/features/communities/CommunityGovernanceContext";
 import { ContentAnalyticsDialog } from "@/features/analytics/ContentAnalyticsDialog";
+import {
+  clearPendingContentAnalytics,
+  consumePendingContentAnalytics,
+  isPendingContentAnalytics,
+  openContentAnalyticsEvent
+} from "@/features/analytics/contentAnalyticsNavigation";
 import type { ContentAnalyticsViewContract } from "@/packages/contracts/src";
 
 export type CommentSegmentStacks = Record<string, string[]>;
@@ -128,25 +134,12 @@ export function CommentOwnerControls({
   const mayDelete = isAuthor || governance.canModerateComment(itemId);
   const [analyticsView, setAnalyticsView] = useState<ContentAnalyticsViewContract | null>(() => {
     if (typeof window === "undefined" || !isAuthor || !comment.id) return null;
-    try {
-      const pending = JSON.parse(window.sessionStorage.getItem("symposium:pending-content-analytics") ?? "null") as {
-        postId?: string;
-        commentId?: string;
-        subjectType?: string;
-        view?: string;
-      } | null;
-      if (
-        pending?.postId === itemId &&
-        pending.commentId === comment.id &&
-        pending.subjectType === "comment" &&
-        (pending.view === "likes" || pending.view === "reshares" || pending.view === "quotes" || pending.view === "overview")
-      ) {
-        window.sessionStorage.removeItem("symposium:pending-content-analytics");
-        return pending.view;
-      }
-    } catch {
-      window.sessionStorage.removeItem("symposium:pending-content-analytics");
-    }
+    const pending = consumePendingContentAnalytics({
+      subjectType: "comment",
+      postId: itemId,
+      commentId: comment.id
+    });
+    if (pending) return pending;
     const parameters = new URLSearchParams(window.location.search);
     const value = parameters.get("analytics");
     return window.location.pathname === `/posts/${encodeURIComponent(itemId)}`
@@ -164,14 +157,13 @@ export function CommentOwnerControls({
         subjectType?: string;
         view?: string;
       }>).detail;
+      if (!isPendingContentAnalytics(detail)) return;
       if (detail?.postId !== itemId || detail.commentId !== comment.id || detail.subjectType !== "comment") return;
-      if (detail.view === "likes" || detail.view === "reshares" || detail.view === "quotes" || detail.view === "overview") {
-        window.sessionStorage.removeItem("symposium:pending-content-analytics");
-        setAnalyticsView(detail.view);
-      }
+      clearPendingContentAnalytics();
+      setAnalyticsView(detail.view);
     };
-    window.addEventListener("symposium:open-content-analytics", onOpenAnalytics);
-    return () => window.removeEventListener("symposium:open-content-analytics", onOpenAnalytics);
+    window.addEventListener(openContentAnalyticsEvent, onOpenAnalytics);
+    return () => window.removeEventListener(openContentAnalyticsEvent, onOpenAnalytics);
   }, [comment.id, isAuthor, itemId]);
   if (
     !comment.id ||
