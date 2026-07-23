@@ -31,6 +31,7 @@ import {
 } from "@/apps/api/src/services/contentNotifications";
 import {
   defaultNotificationPreferences,
+  groupedNotificationTitle,
   inferNotificationAggregationKey,
   notificationAllowedByPreferences,
   notificationActionLabel,
@@ -189,6 +190,31 @@ const main = async () => {
   assert.equal(commentReshareGroup, "comment_reshare:comment:comment-1");
   assert.equal(commentQuoteGroup, "comment_quote:comment:comment-1");
   assert.notEqual(commentReshareGroup, commentQuoteGroup);
+  const crowdedActorNames = [
+    "Alexandria-Catherine-the-Third",
+    "研究者"
+  ];
+  const crowdedQuoteTitle = groupedNotificationTitle({
+    kind: "post_quote",
+    title: "Someone quoted your post",
+    metadata: { sourceId: "shared-source" },
+    groupCount: 987
+  }, crowdedActorNames, 987);
+  const crowdedReshareTitle = groupedNotificationTitle({
+    kind: "post_reshare",
+    title: "Someone reshared your paper",
+    metadata: { postId: "shared-source", subjectLabel: "paper" },
+    groupCount: 986
+  }, crowdedActorNames, 986);
+  assert.equal(
+    crowdedQuoteTitle,
+    "Alexandria-Catherine-the-Third, 研究者, and 985 others quoted your post"
+  );
+  assert.equal(
+    crowdedReshareTitle,
+    "Alexandria-Catherine-the-Third, 研究者, and 984 others reshared your paper"
+  );
+  assert.notEqual(crowdedQuoteTitle, crowdedReshareTitle);
 
   const mentionDocument = {
     version: 1 as const,
@@ -396,6 +422,35 @@ const main = async () => {
   assert.equal(legacyNotification.priority, "activity");
   assert.equal(legacyNotification.actionLabel, null);
   assert.equal(legacyNotification.resolvedAt, null);
+  const boundaryNotificationInput = {
+    id: "00000000-0000-4000-8000-000000000098",
+    groupKey: "g".repeat(500),
+    groupCount: 2_147_483_647,
+    actorHandles: Array.from({ length: 24 }, (_, index) => `@actor-${index}-${"a".repeat(60)}`),
+    priority: "action",
+    actionLabel: "A".repeat(80),
+    kind: "k".repeat(80),
+    title: "T".repeat(200),
+    body: "Multilingual विज्ञान فلسفة 科学 🧬 ".repeat(40).slice(0, 1000),
+    href: `/${"h".repeat(499)}`,
+    readAt: null,
+    resolvedAt: null,
+    metadata: { sourceId: "shared-source" },
+    createdAt: "2026-07-23T10:00:00.000Z"
+  };
+  assert.equal(notificationSchema.safeParse(boundaryNotificationInput).success, true);
+  assert.equal(notificationSchema.safeParse({
+    ...boundaryNotificationInput,
+    title: "T".repeat(201)
+  }).success, false);
+  assert.equal(notificationSchema.safeParse({
+    ...boundaryNotificationInput,
+    body: "B".repeat(1001)
+  }).success, false);
+  assert.equal(notificationSchema.safeParse({
+    ...boundaryNotificationInput,
+    actorHandles: [...boundaryNotificationInput.actorHandles, "@one-too-many"]
+  }).success, false);
 
   const lifecycleTimestamp = "2026-07-23T12:00:00.000Z";
   for (const [kind, priority] of notificationKindMatrix) {
@@ -783,6 +838,7 @@ const main = async () => {
   const contentNotifications = readFileSync("apps/api/src/services/contentNotifications.ts", "utf8");
   const maintenance = readFileSync("apps/api/src/services/maintenance.ts", "utf8");
   const messageRoutes = readFileSync("apps/api/src/routes/messageRoutes.ts", "utf8");
+  const messageStyles = readFileSync("styles/89-messages.css", "utf8");
   const posts = readFileSync("apps/api/src/repository/posts.ts", "utf8");
   const workspaceComments = readFileSync("apps/api/src/repository/workspaceComments.ts", "utf8");
   const notificationProducerSources = [
@@ -919,8 +975,17 @@ const main = async () => {
   assert.match(panel, /key: "reshares",\s+label: "Reshares"/);
   assert.match(panel, /key: "quotes",\s+label: "Quotes"/);
   assert.doesNotMatch(panel, /Reshares & quotes/);
+  assert.match(panel, /new Intl\.NumberFormat\(\)\.format\(count\)/);
   assert.match(delivery, /quotes,/);
   assert.match(delivery, /quotes: row\.quotes/);
+  assert.match(messageStyles, /\.topbar:has\(\.notifications-panel\)/);
+  assert.match(messageStyles, /\.notification-card-main :is\(strong, p\)[\s\S]*?overflow-wrap: anywhere/);
+  assert.match(messageStyles, /\.notification-card-main strong[\s\S]*?-webkit-line-clamp: 2/);
+  assert.match(messageStyles, /\.notification-card-main p[\s\S]*?-webkit-line-clamp: 2/);
+  assert.match(messageStyles, /\.notifications-panel\.expanded \.notification-card-main p[\s\S]*?-webkit-line-clamp: 3/);
+  assert.match(messageStyles, /\.notifications-panel\.expanded \.notifications-list/);
+  assert.match(messageStyles, /@media \(max-width: 360px\)/);
+  assert.match(messageStyles, /\.symposium-shell\.night \.notifications-section-label[\s\S]*?background: #181919/);
 
   const app = await buildApp({ logger: false });
   try {

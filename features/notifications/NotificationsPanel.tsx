@@ -81,6 +81,9 @@ const displayNotificationTime = (value: string) => {
   return new Date(value).toLocaleDateString([], { month: "short", day: "numeric" });
 };
 
+const displayNotificationGroupCount = (count: number) =>
+  new Intl.NumberFormat().format(count);
+
 const liveEventKey = (event: NotificationLiveEvent) =>
   event.id ?? event.cursor ?? `${event.kind}:${event.subjectId}:${event.createdAt ?? ""}`;
 
@@ -509,7 +512,7 @@ export function NotificationsControl({
           <span className="notification-card-meta">
             {notification.groupCount > 1 ? (
               <small className="notification-group-count">
-                {notification.groupCount} updates
+                {displayNotificationGroupCount(notification.groupCount)} updates
               </small>
             ) : null}
             <time dateTime={notification.createdAt} title={new Date(notification.createdAt).toLocaleString()}>

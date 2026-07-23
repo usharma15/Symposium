@@ -1725,6 +1725,10 @@
   position: relative;
 }
 
+.topbar:has(.notifications-panel) {
+  z-index: 61;
+}
+
 .notifications-button,
 .quick-messages-button {
   position: relative;
@@ -1810,6 +1814,10 @@
   max-height: calc(min(72vh, 650px) - 54px);
   overflow: auto;
   scrollbar-width: thin;
+}
+
+.notifications-panel.expanded .notifications-list {
+  max-height: calc(min(78vh, 760px) - 54px);
 }
 
 .notification-preferences {
@@ -1937,7 +1945,7 @@
   margin: 0;
   border-bottom: 1px solid rgba(20, 32, 31, 0.08);
   padding: 7px 11px 6px 26px;
-  background: color-mix(in srgb, var(--panel-strong) 96%, transparent);
+  background: #fffdf5;
   color: var(--muted);
   font-size: 0.65rem;
   font-weight: 820;
@@ -1956,7 +1964,7 @@
   gap: 8px;
   width: 100%;
   border: 0;
-  padding: 11px 42px 11px 11px;
+  padding: 11px 48px 11px 11px;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -1990,16 +1998,36 @@
 .notification-card-main > span:last-child {
   display: grid;
   gap: 3px;
+  min-width: 0;
+}
+
+.notification-card-main :is(strong, p) {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+}
+
+.notification-card-main strong {
+  -webkit-line-clamp: 2;
+}
+
+.notification-card-main p {
+  -webkit-line-clamp: 2;
+}
+
+.notifications-panel.expanded .notification-card-main p {
+  -webkit-line-clamp: 3;
 }
 
 .notification-archive-action {
   position: absolute;
-  top: 9px;
-  right: 9px;
+  top: 8px;
+  right: 8px;
   display: grid;
   place-items: center;
-  width: 27px;
-  height: 27px;
+  width: 32px;
+  height: 32px;
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
@@ -2111,12 +2139,45 @@
     max-height: calc(100dvh - 92px);
   }
 
-  .notifications-list {
+  .notifications-list,
+  .notifications-panel.expanded .notifications-list {
     max-height: calc(100dvh - 146px);
   }
 
   .notification-preferences {
     max-height: calc(100dvh - 146px);
+  }
+}
+
+@media (max-width: 360px) {
+  .notifications-panel > header {
+    gap: 4px;
+    min-height: 50px;
+    padding: 7px;
+  }
+
+  .notifications-panel > header > span {
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .notifications-panel > header > span:first-child strong {
+    overflow: hidden;
+    font-size: 0.88rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .notifications-panel > header button {
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+  }
+
+  .notifications-list,
+  .notifications-panel.expanded .notifications-list,
+  .notification-preferences {
+    max-height: calc(100dvh - 142px);
   }
 }
 
@@ -2325,6 +2386,10 @@
 
 .symposium-shell.night .notification-card.unread {
   background: rgba(35, 103, 108, 0.34);
+}
+
+.symposium-shell.night .notifications-section-label {
+  background: #181919;
 }
 
 .symposium-shell.night .notification-archive-action:hover,
