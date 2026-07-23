@@ -2926,7 +2926,11 @@ function SymposiumExperience({
     flushPendingActivityRecency();
     navigateView({ profileSocialView: null, profileTab: tab }, null);
   };
-  const openTablet = () => {
+  const toggleTablet = () => {
+    if (tabletOpen) {
+      setTabletOpen(false);
+      return;
+    }
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
@@ -4610,10 +4614,11 @@ function SymposiumExperience({
       <ScribbleLauncher />
 
       <button
-        className="pocket pocket-right bottom-action bottom-action-tablet"
+        className={`pocket pocket-right bottom-action bottom-action-tablet tablet-launcher${tabletOpen ? " active" : ""}`}
         type="button"
-        title="AI tablet"
-        onClick={openTablet}
+        title={tabletOpen ? "Close AI tablet" : "Open AI tablet"}
+        aria-expanded={tabletOpen}
+        onClick={toggleTablet}
       >
         <BrainCircuit size={18} />
         <span>AI Tablet</span>

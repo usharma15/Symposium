@@ -511,7 +511,7 @@ const main = async () => {
   assert.match(styles, /minmax\(0,\s*var\(--messages-aligned-side-width\)\)[\s\S]*?minmax\(410px,\s*1fr\)[\s\S]*?minmax\(0,\s*var\(--messages-aligned-side-width\)\)/);
   assert.match(routes, /createPrivateDownloadUrl\(attachment\.objectKey,\s*15 \* 60\)/);
   assert.match(styles, /grid-area: previews/);
-  assert.match(styles, /--messages-panel-top-clearance:\s*20px/);
+  assert.match(styles, /--messages-panel-top-clearance:\s*calc\([\s\S]*?var\(--symposium-side-tool-top\)\s*-\s*var\(--messages-stage-top\)/);
   assert.match(styles, /--messages-center-bottom-clearance:\s*8px/);
   assert.match(styles, /--messages-side-controls-clearance:\s*126px/);
   assert.doesNotMatch(styles, /--messages-info-status-clearance/);

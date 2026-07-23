@@ -23,12 +23,28 @@
     268px,
     calc((100vw - min(var(--symposium-feed-width), calc(100vw - 28px))) / 2)
   );
+  --symposium-side-tool-top: 104px;
+  --symposium-side-tool-bottom: 84px;
+  --symposium-side-tool-launcher-clearance: 60px;
   --symposium-shell-edge: 24px;
   --symposium-detail-top: 120px;
   --symposium-topbar-brand-slot: 112px;
   --symposium-view-nav-width: 156px;
   --symposium-left-rail-width: calc(var(--symposium-topbar-brand-slot) + 8px + var(--symposium-view-nav-width));
   --symposium-side-rail-bottom-clearance: 154px;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --symposium-side-tool-bottom: 76px;
+    --symposium-side-tool-launcher-clearance: 62px;
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --symposium-side-tool-top: 88px;
+  }
 }
 
 * {

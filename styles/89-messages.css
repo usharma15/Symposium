@@ -1,9 +1,10 @@
 /* Messaging and notification surfaces reuse the Symposium glass, ink and aqua language. */
 
 .symposium-shell[data-view="messages"] .stage {
+  --messages-stage-top: 88px;
   height: 100dvh;
   min-height: 650px;
-  padding: 88px 16px 16px;
+  padding: var(--messages-stage-top) 16px 16px;
   overflow: hidden;
 }
 
@@ -46,7 +47,9 @@
 
 .symposium-shell[data-view="messages"] .messaging-experience.full {
   --messages-panel-gap: 12px;
-  --messages-panel-top-clearance: 20px;
+  --messages-panel-top-clearance: calc(
+    var(--symposium-side-tool-top) - var(--messages-stage-top)
+  );
   --messages-center-bottom-clearance: 8px;
   --messages-side-controls-clearance: 126px;
   align-items: start;
@@ -2098,8 +2101,9 @@
 
 @media (max-width: 760px) {
   .symposium-shell[data-view="messages"] .stage {
+    --messages-stage-top: 88px;
     min-height: 600px;
-    padding: 82px 7px 80px;
+    padding: var(--messages-stage-top) 7px 80px;
   }
 
   .symposium-shell[data-view="messages"] :is(
@@ -2272,6 +2276,9 @@
   .symposium-shell[data-view="messages"] .messaging-experience.full > .messages-info-panel {
     height: calc(100% - var(--messages-panel-top-clearance));
   }
+
+  .symposium-shell[data-view="messages"] .scribble-footer { padding-bottom: 0.42rem; }
+  .symposium-shell[data-view="messages"] .tablet-composer { padding-bottom: 0.48rem; }
 }
 
 @media (max-width: 480px) {
