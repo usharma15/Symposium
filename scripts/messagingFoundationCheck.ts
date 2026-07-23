@@ -298,6 +298,9 @@ const main = async () => {
   assert.match(client, /Transfer ownership/);
   assert.match(client, /Leave group/);
   assert.match(client, /messages\/\$\{messageId\}\/context/);
+  assert.doesNotMatch(client, /\}, 80\)/);
+  assert.match(client, /shouldRefreshConversations/);
+  assert.match(client, /liveRefreshConversationIdRef/);
   assert.match(client, /mergeCanonicalMessage/);
   assert.match(client, /processedLiveEventKeySetRef/);
   assert.match(client, /setSendingCount/);
@@ -341,7 +344,7 @@ const main = async () => {
   assert.match(shell, /data-view=\{messagesOpen \? "messages"/);
   assert.match(shell, /onMessage=\{/);
   assert.match(shell, /notificationRevision/);
-  assert.match(shell, /setMessagingEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-100\)\)/);
+  assert.match(shell, /setMessagingEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);
   assert.doesNotMatch(shell, /event\.kind === "conversation\.invited"/);
   assert.match(shell, /event\.kind === "note\.access\.granted"/);
   assert.match(routes, /\/v1\/conversations\/:id\/participants/);
@@ -350,6 +353,7 @@ const main = async () => {
   assert.match(routes, /\/v1\/conversations\/unread/);
   assert.match(repository, /SELECT count\(\*\)::int AS "unreadCount"[\s\S]*?viewer\.hidden_at IS NULL[\s\S]*?message\.sender_handle IS DISTINCT FROM \$1/);
   assert.match(unreadButton, /\/api\/conversations\/unread/);
+  assert.doesNotMatch(unreadButton, /\}, 80\)/);
   assert.match(unreadButton, /latestUnreadChangingEventKey/);
   assert.match(unreadButton, /window\.addEventListener\("focus", refreshWhenActive\)/);
   assert.match(unreadButton, /window\.addEventListener\("online", refreshWhenActive\)/);

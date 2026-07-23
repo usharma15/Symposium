@@ -23,8 +23,10 @@ const limitFromQuery = (value?: string) => {
 
 const activeStreamsByClient = new Map<string, number>();
 let activeStreamCount = 0;
-const maxStreamsPerClient = 5;
+const maxStreamsPerClient = 12;
 const maxStreamsPerProcess = 500;
+const replayPageSize = 100;
+const maxReplayEventsPerConnection = 1000;
 
 const acquireStream = (clientKey: string) => {
   const clientCount = activeStreamsByClient.get(clientKey) ?? 0;
@@ -69,7 +71,7 @@ export const registerEventRoutes = (app: FastifyInstance) => {
     }
     const actor = await getActorFromRequest(request);
     const actorHandle = actor.handle ? cleanHandle(actor.handle) : null;
-    const clientKey = request.ip;
+    const clientKey = actorHandle ? `actor:${actorHandle}` : `ip:${request.ip}`;
     if (!acquireStream(clientKey)) {
       return reply.status(429).send({ error: "Too many live event streams.", requestId: request.id });
     }
@@ -77,34 +79,54 @@ export const registerEventRoutes = (app: FastifyInstance) => {
 
     const stream = reply.raw;
     let closed = false;
+    let replaying = true;
+    const pendingLiveEvents: StoredLiveEvent[] = [];
 
     const send = (eventName: string, data: unknown, id?: string) => {
-      if (closed || stream.destroyed) return;
-      if (stream.writableLength > 1024 * 1024) {
-        stream.destroy();
-        return;
-      }
+      if (closed || stream.destroyed || stream.writableEnded) return false;
       try {
-        if (id) stream.write(`id: ${id}\n`);
-        stream.write(`event: ${eventName}\n`);
-        stream.write(`data: ${JSON.stringify(data)}\n\n`);
+        const frame = `${id ? `id: ${id}\n` : ""}event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+        if (!stream.write(frame)) {
+          stream.destroy();
+          return false;
+        }
+        return true;
       } catch {
         stream.destroy();
+        return false;
       }
     };
 
     const sendLiveEvent = (event: StoredLiveEvent) => {
-      if (!eventIsAfterCursor(event, cursor)) return;
+      if (!eventIsAfterCursor(event, cursor)) return true;
+      if (!send("symposium-event", event, event.cursor)) return false;
       cursor = event.cursor;
-      send("symposium-event", event, event.cursor);
+      return true;
     };
 
     const flushMissedEvents = async () => {
-      if (closed) return;
-      const events = await listEventsSince(cursor, limitFromQuery(request.query.limit), actorHandle);
-      for (const event of events) sendLiveEvent(event);
+      let replayed = 0;
+      const requestedPageSize = request.query.limit
+        ? Math.max(25, limitFromQuery(request.query.limit))
+        : replayPageSize;
+      while (!closed && replayed < maxReplayEventsPerConnection) {
+        const pageLimit = Math.min(
+          replayPageSize,
+          maxReplayEventsPerConnection - replayed,
+          requestedPageSize
+        );
+        const events = await listEventsSince(cursor, pageLimit, actorHandle);
+        for (const event of events) {
+          if (!sendLiveEvent(event)) return false;
+          replayed += 1;
+        }
+        if (events.length < pageLimit) return true;
+      }
+      if (!closed) stream.end();
+      return false;
     };
 
+    stream.socket?.setNoDelay(true);
     stream.writeHead(200, {
       ...(reply.getHeaders() as OutgoingHttpHeaders),
       "Content-Type": "text/event-stream; charset=utf-8",
@@ -114,21 +136,26 @@ export const registerEventRoutes = (app: FastifyInstance) => {
       "X-Content-Type-Options": "nosniff",
       "X-Accel-Buffering": "no"
     });
-    stream.write("retry: 2000\n\n");
+    stream.flushHeaders();
+    stream.write(`: ${" ".repeat(2048)}\nretry: 750\n\n`);
+
+    const visibleToActor = (event: StoredLiveEvent) => {
+      const visibility = event.visibility ?? "public";
+      return visibility === "public" || Boolean(
+        (visibility === "private" || visibility === "community") &&
+        actorHandle &&
+        (event.audienceHandles ?? []).some((handle) => cleanHandle(handle) === actorHandle)
+      );
+    };
 
     const unsubscribe = subscribeLocalLiveEvents((event) => {
-      const visibility = event.visibility ?? "public";
-      if (
-        visibility !== "public" &&
-        !(
-          (visibility === "private" || visibility === "community") &&
-          actorHandle &&
-          (event.audienceHandles ?? []).some((handle) => cleanHandle(handle) === actorHandle)
-        )
-      ) {
-        return;
+      if (!visibleToActor(event)) return;
+      if (replaying) {
+        pendingLiveEvents.push(event);
+        if (pendingLiveEvents.length > maxReplayEventsPerConnection) stream.destroy();
+      } else {
+        sendLiveEvent(event);
       }
-      sendLiveEvent(event);
     });
     const heartbeat = setInterval(() => {
       send("symposium-heartbeat", { ok: true, cursor, time: new Date().toISOString() });
@@ -145,9 +172,18 @@ export const registerEventRoutes = (app: FastifyInstance) => {
     request.raw.on("close", cleanup);
     stream.on("error", cleanup);
 
-    await flushMissedEvents().catch((error) => {
+    const replayComplete = await flushMissedEvents().catch((error) => {
       app.log.warn(error, "Could not send initial live events.");
+      stream.destroy();
+      return false;
     });
+    if (!replayComplete || closed || stream.destroyed || stream.writableEnded) return;
+    replaying = false;
+    pendingLiveEvents.sort((left, right) => left.cursor.localeCompare(right.cursor));
+    for (const event of pendingLiveEvents) {
+      if (!sendLiveEvent(event)) return;
+    }
+    pendingLiveEvents.length = 0;
     send("symposium-ready", { ok: true, cursor });
   });
 };

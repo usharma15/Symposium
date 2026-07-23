@@ -834,6 +834,7 @@ export function MessagingExperience({
   const draftStateRef = useRef<MessageDraftState>(draftState);
   const draftSaveTimerRef = useRef<number | null>(null);
   const liveRefreshTimerRef = useRef<number | null>(null);
+  const liveRefreshConversationIdRef = useRef<string | null>(null);
   const readReceiptTimerRef = useRef<number | null>(null);
   const readReceiptConversationRef = useRef<string | null>(null);
   const readReceiptInFlightRef = useRef(false);
@@ -1076,12 +1077,13 @@ export function MessagingExperience({
   }, [actor.handle, scheduleReadReceipt]);
 
   useEffect(() => {
+    let shouldRefreshConversations = false;
     for (const liveEvent of liveEvents) {
       const eventKey = messagingLiveEventKey(liveEvent);
       if (processedLiveEventKeySetRef.current.has(eventKey)) continue;
       processedLiveEventKeySetRef.current.add(eventKey);
       processedLiveEventKeysRef.current.push(eventKey);
-      if (processedLiveEventKeysRef.current.length > 500) {
+      if (processedLiveEventKeysRef.current.length > 1000) {
         const discardedKey = processedLiveEventKeysRef.current.shift();
         if (discardedKey) processedLiveEventKeySetRef.current.delete(discardedKey);
       }
@@ -1118,30 +1120,35 @@ export function MessagingExperience({
         continue;
       }
       if (liveEvent.kind === "conversation.draft.updated" || liveEvent.kind === "conversation.read") {
-        if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
-        liveRefreshTimerRef.current = window.setTimeout(() => {
-          liveRefreshTimerRef.current = null;
-          void loadConversations(false);
-        }, 80);
+        shouldRefreshConversations = true;
         continue;
       }
       if (!messagingEventRequiresRefresh(liveEvent)) continue;
-      if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
+      shouldRefreshConversations = true;
+      const eventConversationId = liveEventConversationId(liveEvent);
+      const activeConversationId = selectedRef.current;
+      if (activeConversationId && activeConversationId === eventConversationId && messageIdPattern.test(activeConversationId)) {
+        liveRefreshConversationIdRef.current = activeConversationId;
+      }
+    }
+    if (shouldRefreshConversations && liveRefreshTimerRef.current === null) {
       liveRefreshTimerRef.current = window.setTimeout(() => {
         liveRefreshTimerRef.current = null;
         void loadConversations(false);
-        const eventConversationId = liveEventConversationId(liveEvent);
-        const activeConversationId = selectedRef.current;
-        if (activeConversationId && activeConversationId === eventConversationId && messageIdPattern.test(activeConversationId)) {
-          void loadConversation(activeConversationId, { quiet: true });
+        const conversationId = liveRefreshConversationIdRef.current;
+        liveRefreshConversationIdRef.current = null;
+        if (conversationId && selectedRef.current === conversationId) {
+          void loadConversation(conversationId, { quiet: true });
         }
-      }, 80);
+      }, 0);
     }
-    return () => {
-      if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
-      liveRefreshTimerRef.current = null;
-    };
   }, [liveEvents]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => {
+    if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
+    liveRefreshTimerRef.current = null;
+    liveRefreshConversationIdRef.current = null;
+  }, []);
 
   useEffect(() => {
     for (const attachment of pendingAttachmentsRef.current) void discardPendingAttachment(attachment, actor.handle);

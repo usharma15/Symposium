@@ -2,6 +2,9 @@
   "name": "symposium",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "action:check": "tsx scripts/actionLedgerCheck.ts",
     "action-state:check": "tsx scripts/actionStateGuardCheck.ts",
@@ -65,7 +68,10 @@
     "verify": "npm run architecture:check && npm run platform:check && npm run styles:check && npm run post-tone:check && npm run post-semantics:check && npm run historical-world:check && npm run security:check && npm run infrastructure:check && npm run provider-cost:check && npm run bounded-read:check && npm run routing:check && npm run entities:check && npm run entity-revision:check && npm run follow-reconciliation:check && npm run api-client:check && npm run live-transport:check && npm run core:check && npm run action:check && npm run action-state:check && npm run reconciliation:check && npm run identity:check && npm run item-mutation:check && npm run cross-tab:check && npm run attachment:check && npm run attachment-preview:check && npm run comment-attachment:check && npm run community:check && npm run document-editor:check && npm run quote:check && npm run storage-deletion:check && npm run mutation:check && npm run messaging:check && npm run note-revision:check && npm run workspace:check && npm run workspace-collaboration:check && npm run scribble:check && npm run assistant:check && npm run patronage:check && npm run opportunity:check && npm run profile:check && npm run post-publishing:check && npm run entry-session:check && npm run typecheck:all && npm run build"
   },
   "overrides": {
-    "postcss": "8.5.15"
+    "postcss": "8.5.15",
+    "next": {
+      "sharp": "0.35.3"
+    }
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1075.0",
@@ -88,11 +94,11 @@
     "dotenv": "17.4.2",
     "drizzle-kit": "1.0.0-rc.4",
     "drizzle-orm": "1.0.0-rc.4",
-    "fastify": "5.9.0",
+    "fastify": "5.10.0",
     "jszip": "^3.10.1",
     "katex": "^0.16.22",
     "lucide-react": "^1.18.0",
-    "next": "^16.2.9",
+    "next": "16.2.11",
     "pdfjs-dist": "6.1.200",
     "pg": "^8.21.0",
     "react": "^19.2.7",

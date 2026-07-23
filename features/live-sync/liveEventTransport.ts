@@ -4,6 +4,9 @@ export type ServerSentEvent = {
   id?: string;
 };
 
+export const liveEventCursorIsAfter = (candidate: string, current: string) =>
+  Boolean(candidate) && (!current || candidate > current);
+
 export const createServerSentEventParser = (onEvent: (event: ServerSentEvent) => void) => {
   let buffer = "";
   let dataLines: string[] = [];
@@ -85,6 +88,9 @@ export const consumeLiveEventStream = async ({
     signal
   });
   if (!response.ok) throw new Error(`Live event stream failed (${response.status}).`);
+  if (!(response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream")) {
+    throw new Error("Live event stream returned an unexpected content type.");
+  }
   if (!response.body) throw new Error("Live event stream did not provide a response body.");
 
   onOpen();

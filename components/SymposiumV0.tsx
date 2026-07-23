@@ -1647,7 +1647,7 @@ function SymposiumExperience({
       event.kind === "profile.blocked" ||
       event.kind === "profile.unblocked"
     ) {
-      setMessagingEvents((current) => [...current, event].slice(-100));
+      setMessagingEvents((current) => [...current, event].slice(-1000));
       return;
     }
     if (payload.action && payload.metrics && !isLiveInquiryItem(payload.item)) {

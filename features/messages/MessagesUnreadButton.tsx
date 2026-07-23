@@ -90,7 +90,7 @@ export function MessagesUnreadButton({
     refreshTimerRef.current = window.setTimeout(() => {
       refreshTimerRef.current = null;
       void loadUnreadCount();
-    }, 80);
+    }, 0);
     return () => {
       if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = null;
