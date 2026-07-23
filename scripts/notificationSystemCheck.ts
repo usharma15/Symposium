@@ -16,15 +16,18 @@ import {
   compactNotificationCount,
   latestNotificationEventKey,
   mergeNotificationPage,
+  notificationAttentionRank,
   partitionNotificationInbox
 } from "@/features/notifications/notificationState";
 import {
   defaultNotificationPreferences,
   notificationAllowedByPreferences,
   notificationActionLabel,
+  notificationDestination,
   notificationPreferenceCategory,
   notificationPriority
 } from "@/apps/api/src/services/notificationAggregation";
+import { notificationRelationshipKey } from "@/apps/api/src/services/notificationDelivery";
 import {
   hasNotificationPreferenceChanges,
   notificationPreferenceChanges,
@@ -55,6 +58,7 @@ const notification = (
   body: "A durable notification",
   href: "/posts/post-1",
   readAt,
+  resolvedAt: null,
   metadata: { postId: "post-1" },
   createdAt
 });
@@ -76,7 +80,51 @@ const main = async () => {
   assert.equal(notificationPriority("post_signal"), "activity");
   assert.equal(notificationActionLabel("community_join_request", "/communities/community-1"), "Review requests");
   assert.equal(notificationActionLabel("post_signal", "/posts/post-1?analytics=likes"), "View likes");
+  assert.equal(notificationActionLabel("community_join_request", "/communities/community-1", "2026-07-23T00:00:00.000Z"), "Open community");
+  assert.equal(notificationActionLabel("opportunity_application_received", "/posts/post-1/applications", "2026-07-23T00:00:00.000Z"), "View applications");
+  assert.equal(notificationActionLabel("post_signal", "/posts/post-1", "2026-07-23T00:00:00.000Z"), null);
   assert.equal(notificationActionLabel("unknown", null), null);
+  assert.equal(notificationDestination({
+    kind: "profile_followed",
+    href: "/profiles/follower",
+    metadata: { followerHandle: "@follower" },
+    profileHandle: "@owner"
+  }), "/profiles/owner/followers");
+  assert.equal(notificationDestination({
+    kind: "community_join_request",
+    href: "/communities/community-1?requests=pending",
+    metadata: { communityId: "community-1" },
+    profileHandle: "@owner",
+    resolvedAt: "2026-07-23T00:00:00.000Z"
+  }), "/communities/community-1");
+  assert.equal(notificationDestination({
+    kind: "opportunity_application_received",
+    href: "/posts/post-1/applications?application=application-1",
+    metadata: { postId: "post-1" },
+    profileHandle: "@owner",
+    resolvedAt: "2026-07-23T00:00:00.000Z"
+  }), "/posts/post-1/applications");
+  assert.equal(notificationDestination({
+    kind: "post_signal",
+    href: "/posts/post-1?analytics=likes",
+    metadata: { postId: "post-1" },
+    profileHandle: "@owner",
+    resolvedAt: "2026-07-23T00:00:00.000Z"
+  }), null);
+  assert.equal(notificationDestination({
+    kind: "opportunity_application_received",
+    href: "/posts/post-1/applications",
+    metadata: { postId: "post-1", resolution: "source_post_deleted" },
+    profileHandle: "@owner",
+    resolvedAt: "2026-07-23T00:00:00.000Z"
+  }), null);
+  assert.equal(notificationDestination({
+    kind: "profile_followed",
+    href: "/profiles/owner/followers",
+    metadata: { followerHandle: "@former-follower", resolution: "profile_unfollowed" },
+    profileHandle: "@owner",
+    resolvedAt: "2026-07-23T00:00:00.000Z"
+  }), null);
   const notificationKindMatrix = [
     ["comment_reply", "activity", "View reply"],
     ["comment_reshare", "activity", "View reshares"],
@@ -96,7 +144,7 @@ const main = async () => {
     ["post_comment", "activity", "View comments"],
     ["post_reshare", "activity", "View reshares"],
     ["post_signal", "activity", "View likes"],
-    ["profile_followed", "activity", "View profile"],
+    ["profile_followed", "activity", "View followers"],
     ["workspace_access_granted", "important", "Open workspace"],
     ["workspace_access_revoked", "important", "Open workspace"],
     ["workspace_access_updated", "important", "Open workspace"],
@@ -108,6 +156,23 @@ const main = async () => {
     assert.equal(notificationPriority(kind), expectedPriority, `${kind} priority`);
     assert.equal(notificationActionLabel(kind, "/destination"), expectedAction, `${kind} action`);
   }
+  const relationshipHandles = Array.from({ length: 64 }, (_, index) => `@person-${index}`);
+  const relationshipKeys = new Set<string>();
+  for (const left of relationshipHandles) {
+    for (const right of relationshipHandles) {
+      assert.equal(
+        notificationRelationshipKey(left, right),
+        notificationRelationshipKey(right, left),
+        "Block filtering must be symmetric."
+      );
+      if (left !== right) relationshipKeys.add(notificationRelationshipKey(left, right));
+    }
+  }
+  assert.equal(
+    relationshipKeys.size,
+    relationshipHandles.length * (relationshipHandles.length - 1) / 2,
+    "Every unordered profile relationship must retain a unique block-filter key."
+  );
   const preferenceScenarios: NotificationPreferencesContract[] = Array.from(
     { length: 2 ** notificationPreferenceKeys.length },
     (_, mask) => ({
@@ -234,6 +299,41 @@ const main = async () => {
   });
   assert.equal(legacyNotification.priority, "activity");
   assert.equal(legacyNotification.actionLabel, null);
+  assert.equal(legacyNotification.resolvedAt, null);
+
+  const lifecycleTimestamp = "2026-07-23T12:00:00.000Z";
+  for (const [kind, priority] of notificationKindMatrix) {
+    for (const readAt of [null, lifecycleTimestamp]) {
+      for (const resolvedAt of [null, lifecycleTimestamp]) {
+        const lifecycleNotification = {
+          ...notification(
+            "00000000-0000-4000-8000-000000000099",
+            "2026-07-23T11:00:00.000Z",
+            readAt,
+            `${kind}:lifecycle`
+          ),
+          kind,
+          priority,
+          resolvedAt
+        };
+        const expectedRank = resolvedAt
+          ? 0
+          : priority === "action"
+            ? 2
+            : priority === "important" && !readAt
+              ? 1
+              : 0;
+        assert.equal(
+          notificationAttentionRank(lifecycleNotification),
+          expectedRank,
+          `${kind}, read=${Boolean(readAt)}, resolved=${Boolean(resolvedAt)}`
+        );
+        const lifecyclePartition = partitionNotificationInbox([lifecycleNotification], true);
+        assert.equal(lifecyclePartition.needsAttention.length, Number(expectedRank > 0));
+        assert.equal(lifecyclePartition.recent.length, Number(expectedRank === 0));
+      }
+    }
+  }
 
   const older = notification("00000000-0000-4000-8000-000000000001", "2026-07-20T10:00:00.000Z");
   const newer = notification("00000000-0000-4000-8000-000000000002", "2026-07-21T10:00:00.000Z");
@@ -338,6 +438,139 @@ const main = async () => {
     compactNotificationLimit
   );
 
+  const readAction = {
+    ...olderAttention,
+    readAt: "2026-07-23T12:05:00.000Z"
+  };
+  assert.equal(partitionNotificationInbox([readAction], true).needsAttention.length, 1);
+  const resolvedAction = {
+    ...readAction,
+    resolvedAt: "2026-07-23T12:06:00.000Z"
+  };
+  assert.equal(partitionNotificationInbox([resolvedAction], true).needsAttention.length, 0);
+  assert.equal(partitionNotificationInbox([resolvedAction], true).recent.length, 1);
+
+  const resolutionSource = {
+    ...notification(
+      "20000000-0000-4000-8000-000000000001",
+      "2026-07-23T12:10:00.000Z",
+      null,
+      "community_join_request:community:community-1"
+    ),
+    kind: "community_join_request",
+    priority: "action" as const,
+    actionLabel: "Review requests"
+  };
+  const resolutionCanonical = {
+    ...resolutionSource,
+    readAt: "2026-07-23T12:11:00.000Z",
+    resolvedAt: "2026-07-23T12:11:00.000Z",
+    href: "/communities/community-1",
+    actionLabel: "Open community"
+  };
+  const resolvedLive = applyNotificationLiveEvent(
+    { notifications: [resolutionSource], unreadCount: 1 },
+    {
+      id: "event-resolved",
+      kind: "notification.resolved",
+      subjectId: resolutionCanonical.id,
+      createdAt: "2026-07-23T12:11:00.000Z",
+      payload: { notification: resolutionCanonical, reason: "community_request_approved" }
+    }
+  );
+  assert.equal(resolvedLive.unreadCount, 0);
+  assert.deepEqual(resolvedLive.notifications, [resolutionCanonical]);
+  assert.equal(partitionNotificationInbox(resolvedLive.notifications, true).needsAttention.length, 0);
+  assert.equal(applyNotificationLiveEvent(resolvedLive, {
+    id: "event-resolved",
+    kind: "notification.resolved",
+    subjectId: resolutionCanonical.id,
+    payload: { notification: resolutionCanonical }
+  }).unreadCount, 0);
+
+  let lifecycleState = { notifications: [] as NotificationContract[], unreadCount: 0 };
+  const lifecycleExpected = new Map<string, NotificationContract>();
+  let lifecycleSeed = 0x5eed1234;
+  let lifecycleId = 1_000;
+  const nextRandom = () => {
+    lifecycleSeed = (Math.imul(lifecycleSeed, 1_664_525) + 1_013_904_223) >>> 0;
+    return lifecycleSeed;
+  };
+  for (let step = 0; step < 60_000; step += 1) {
+    const matrixEntry = notificationKindMatrix[nextRandom() % notificationKindMatrix.length]!;
+    const groupIndex = nextRandom() % 96;
+    const groupKey = `${matrixEntry[0]}:state-machine:${groupIndex}`;
+    const existing = lifecycleExpected.get(groupKey);
+    const operation = nextRandom() % 7;
+    if (!existing || operation <= 2) {
+      lifecycleId += 1;
+      const createdAt = new Date(Date.UTC(2026, 6, 23, 12, 0, 0) + step).toISOString();
+      const next = {
+        ...notification(
+          `30000000-0000-4000-8000-${String(lifecycleId).padStart(12, "0")}`,
+          createdAt,
+          null,
+          groupKey,
+          1 + (nextRandom() % 200)
+        ),
+        kind: matrixEntry[0],
+        priority: matrixEntry[1],
+        actionLabel: matrixEntry[2],
+        resolvedAt: null
+      };
+      lifecycleState = applyNotificationLiveEvent(lifecycleState, {
+        id: `state-created-${step}`,
+        kind: "notification.created",
+        subjectId: next.id,
+        createdAt,
+        payload: { notification: next }
+      });
+      lifecycleExpected.set(groupKey, next);
+    } else if (operation <= 4) {
+      const readAt = new Date(Date.UTC(2026, 6, 23, 13, 0, 0) + step).toISOString();
+      lifecycleState = applyNotificationLiveEvent(lifecycleState, {
+        id: `state-read-${step}`,
+        kind: "notification.read",
+        subjectId: existing.id,
+        createdAt: readAt,
+        payload: { groupKey }
+      });
+      lifecycleExpected.set(groupKey, existing.readAt ? existing : { ...existing, readAt });
+    } else {
+      const resolvedAt = new Date(Date.UTC(2026, 6, 23, 14, 0, 0) + step).toISOString();
+      const canonical = {
+        ...existing,
+        readAt: existing.readAt ?? resolvedAt,
+        resolvedAt,
+        actionLabel: existing.priority === "action" ? "Open" : null,
+        href: existing.priority === "action" ? existing.href : null
+      };
+      lifecycleState = applyNotificationLiveEvent(lifecycleState, {
+        id: `state-resolved-${step}`,
+        kind: "notification.resolved",
+        subjectId: canonical.id,
+        createdAt: resolvedAt,
+        payload: { notification: canonical }
+      });
+      lifecycleExpected.set(groupKey, canonical);
+    }
+    if (step % 97 === 0) {
+      assert.equal(
+        lifecycleState.unreadCount,
+        [...lifecycleExpected.values()].filter((entry) => !entry.readAt).length,
+        `Unread reconciliation at state-machine step ${step}`
+      );
+      assert.equal(lifecycleState.notifications.length, lifecycleExpected.size);
+      const partitioned = partitionNotificationInbox(lifecycleState.notifications, true);
+      assert.ok(partitioned.needsAttention.every((entry) => notificationAttentionRank(entry) > 0));
+      assert.ok(partitioned.recent.every((entry) => notificationAttentionRank(entry) === 0));
+    }
+  }
+  assert.equal(
+    lifecycleState.unreadCount,
+    [...lifecycleExpected.values()].filter((entry) => !entry.readAt).length
+  );
+
   const read = applyNotificationLiveEvent(created, {
     id: "event-read",
     kind: "notification.read",
@@ -407,12 +640,16 @@ const main = async () => {
   assert.match(delivery, /FROM notification_preferences/);
   assert.match(delivery, /notificationAllowedByPreferences/);
   assert.match(delivery, /kind: "notification\.created"/);
+  assert.match(delivery, /kind: "notification\.resolved"/);
   assert.match(delivery, /audienceHandles: \[row\.profileHandle\]/);
+  assert.match(delivery, /FROM profile_blocks/);
+  assert.match(delivery, /jsonb_array_elements/);
+  assert.match(delivery, /resolved_at = now\(\)/);
   assert.match(repository, /WITH grouped AS/);
   assert.match(repository, /"attentionRank"/);
   assert.match(repository, /kind = ANY\(\$2::text\[\]\)/);
   assert.match(repository, /count\(\*\) FILTER \(WHERE read_at IS NULL\)/);
-  assert.match(repository, /unreadGroupKeys/);
+  assert.match(repository, /activeGroupKeys/);
   assert.match(repository, /COALESCE\(aggregation_key, 'notification:' \|\| id::text\)/);
   assert.match(repository, /LEFT JOIN page ON true/);
   assert.match(repository, /AND COALESCE\(aggregation_key, 'notification:' \|\| id::text\) = \$2/);
@@ -429,10 +666,16 @@ const main = async () => {
   assert.match(conversations, /\.\.\.createdNotifications\.events/);
   assert.match(comments, /kind: "comment_reply"/);
   assert.match(comments, /kind: "post_comment"/);
+  assert.match(comments, /reason: "source_comment_deleted"/);
   assert.match(profiles, /kind: "profile_followed"/);
+  assert.match(profiles, /reason: "profile_unfollowed"/);
   assert.match(communities, /kind: "community_join_request"/);
   assert.match(communities, /\?requests=pending/);
+  assert.match(communities, /reason: "community_request_withdrawn"/);
+  assert.match(communityRequests, /community_request_\$\{input\.decision\}/);
   assert.match(opportunityApplications, /kind: "opportunity_application_received"/);
+  assert.match(opportunityApplications, /reason: "opportunity_application_reviewed"/);
+  assert.match(conversations, /reason: "profile_relationship_blocked"/);
 
   assert.match(panel, /requestEpochRef/);
   assert.match(panel, /retryTimerRef/);
@@ -461,12 +704,16 @@ const main = async () => {
 
   assert.match(migration, /0043_notification_aggregation/);
   assert.match(migration, /0044_notification_preferences/);
+  assert.match(migration, /0045_notification_resolution/);
+  assert.match(migration, /migrated_source_inactive/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS notification_preferences/);
   assert.match(migration, /notifications_profile_page_idx/);
   assert.match(migration, /notifications_profile_unread_idx/);
   assert.match(schema, /notifications_profile_page_idx/);
   assert.match(schema, /notifications_profile_unread_idx/);
   assert.match(schema, /notifications_profile_aggregation_idx/);
+  assert.match(schema, /notifications_profile_open_action_idx/);
+  assert.match(schema, /resolvedAt: timestamp\("resolved_at"/);
   assert.match(schema, /export const notificationPreferences/);
 
   const app = await buildApp({ logger: false });

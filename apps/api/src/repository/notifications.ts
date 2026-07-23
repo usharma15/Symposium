@@ -13,11 +13,13 @@ import { stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";
 import { runAtomic } from "../services/transactions";
 import {
-  attentionNotificationKinds,
+  actionRequiredNotificationKinds,
   defaultNotificationPreferences,
   groupedNotificationTitle,
+  importantNotificationKinds,
   notificationActionLabel,
   notificationActorHandle,
+  notificationDestination,
   notificationPriority
 } from "../services/notificationAggregation";
 import { actorHandle, ensureLiveData } from "./foundation";
@@ -35,6 +37,7 @@ type NotificationRow = {
   metadata: Record<string, unknown> | null;
   createdAt: Date | string | null;
   readAt: Date | string | null;
+  resolvedAt: Date | string | null;
   attentionRank: number | null;
 };
 
@@ -78,7 +81,7 @@ const decodeCursor = (cursor?: string | null): NotificationCursor | null => {
       value.groupKey.length > 500
     ) return null;
     const attentionRank = typeof value.attentionRank === "number" && Number.isInteger(value.attentionRank)
-      ? Math.max(0, Math.min(1, value.attentionRank))
+      ? Math.max(0, Math.min(2, value.attentionRank))
       : 0;
     return { attentionRank, createdAt: new Date(value.createdAt).toISOString(), groupKey: value.groupKey };
   } catch {
@@ -89,22 +92,35 @@ const decodeCursor = (cursor?: string | null): NotificationCursor | null => {
 const projectNotification = (
   row: PresentNotificationRow,
   actorHandles: string[],
-  actorNames: string[]
-): NotificationContract => ({
-  id: row.id,
-  groupKey: row.groupKey,
-  groupCount: row.groupCount,
-  actorHandles,
-  priority: notificationPriority(row.kind),
-  actionLabel: notificationActionLabel(row.kind, row.href ?? null),
-  kind: row.kind,
-  title: groupedNotificationTitle(row, actorNames, row.actorCount),
-  body: row.body,
-  href: row.href ?? null,
-  readAt: row.readAt ? new Date(row.readAt).toISOString() : null,
-  createdAt: new Date(row.createdAt).toISOString(),
-  metadata: row.metadata && typeof row.metadata === "object" ? row.metadata : {}
-});
+  actorNames: string[],
+  profileHandle: string
+): NotificationContract => {
+  const resolvedAt = row.resolvedAt ? new Date(row.resolvedAt).toISOString() : null;
+  const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const href = notificationDestination({
+    kind: row.kind,
+    href: row.href ?? null,
+    metadata,
+    profileHandle,
+    resolvedAt
+  });
+  return {
+    id: row.id,
+    groupKey: row.groupKey,
+    groupCount: row.groupCount,
+    actorHandles,
+    priority: notificationPriority(row.kind),
+    actionLabel: notificationActionLabel(row.kind, href, resolvedAt),
+    kind: row.kind,
+    title: groupedNotificationTitle(row, actorNames, row.actorCount),
+    body: row.body,
+    href,
+    readAt: row.readAt ? new Date(row.readAt).toISOString() : null,
+    resolvedAt,
+    createdAt: new Date(row.createdAt).toISOString(),
+    metadata
+  };
+};
 
 const projectNotificationPreferences = (
   row: NotificationPreferencesRow
@@ -264,9 +280,13 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
   if (!hasDatabase()) return { notifications: [], unreadCount: 0, nextCursor: null };
   await ensureLiveData();
 
-  const values: unknown[] = [handle, attentionNotificationKinds];
+  const values: unknown[] = [
+    handle,
+    actionRequiredNotificationKinds,
+    importantNotificationKinds
+  ];
   const cursorCondition = cursor
-    ? `WHERE ("attentionRank", "createdAt", "groupKey") < ($3::int, $4::timestamptz, $5::text)`
+    ? `WHERE ("attentionRank", "createdAt", "groupKey") < ($4::int, $5::timestamptz, $6::text)`
     : "";
   if (cursor) values.push(cursor.attentionRank, cursor.createdAt, cursor.groupKey);
   values.push(query.limit + 1);
@@ -275,33 +295,63 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
        SELECT
          COALESCE(aggregation_key, 'notification:' || id::text) AS "groupKey",
          CASE
+           WHEN bool_or(kind = ANY($2::text[]) AND resolved_at IS NULL)
+             THEN (count(*) FILTER (
+               WHERE kind = ANY($2::text[]) AND resolved_at IS NULL
+             ))::int
            WHEN bool_or(read_at IS NULL)
              THEN (count(*) FILTER (WHERE read_at IS NULL))::int
+           WHEN bool_or(resolved_at IS NULL)
+             THEN (count(*) FILTER (WHERE resolved_at IS NULL))::int
            ELSE count(*)::int
          END AS "groupCount",
          CASE
-           WHEN bool_or(read_at IS NULL) THEN count(DISTINCT CASE
-             WHEN read_at IS NULL THEN COALESCE(
+           WHEN bool_or(kind = ANY($2::text[]) AND resolved_at IS NULL)
+             THEN count(DISTINCT CASE
+               WHEN kind = ANY($2::text[]) AND resolved_at IS NULL THEN COALESCE(
+                 metadata ->> 'actorHandle',
+                 metadata ->> 'followerHandle',
+                 metadata ->> 'requesterHandle',
+                 metadata ->> 'applicantHandle'
+               )
+             END)::int
+           WHEN bool_or(read_at IS NULL)
+             THEN count(DISTINCT CASE
+               WHEN read_at IS NULL THEN COALESCE(
+                 metadata ->> 'actorHandle',
+                 metadata ->> 'followerHandle',
+                 metadata ->> 'requesterHandle',
+                 metadata ->> 'applicantHandle'
+               )
+             END)::int
+           WHEN bool_or(resolved_at IS NULL)
+             THEN count(DISTINCT CASE
+               WHEN resolved_at IS NULL THEN COALESCE(
+                 metadata ->> 'actorHandle',
+                 metadata ->> 'followerHandle',
+                 metadata ->> 'requesterHandle',
+                 metadata ->> 'applicantHandle'
+               )
+             END)::int
+           ELSE count(DISTINCT COALESCE(
                metadata ->> 'actorHandle',
                metadata ->> 'followerHandle',
                metadata ->> 'requesterHandle',
                metadata ->> 'applicantHandle'
-             )
-           END)::int
-           ELSE count(DISTINCT COALESCE(
-             metadata ->> 'actorHandle',
-             metadata ->> 'followerHandle',
-             metadata ->> 'requesterHandle',
-             metadata ->> 'applicantHandle'
            ))::int
          END AS "actorCount",
-         max(created_at) AS "createdAt",
+         COALESCE(
+           max(created_at) FILTER (WHERE resolved_at IS NULL),
+           max(created_at)
+         ) AS "createdAt",
          bool_or(read_at IS NULL) AS unread,
          CASE
-           WHEN bool_or(read_at IS NULL) AND bool_or(kind = ANY($2::text[])) THEN 1
+           WHEN bool_or(kind = ANY($2::text[]) AND resolved_at IS NULL) THEN 2
+           WHEN bool_or(read_at IS NULL AND kind = ANY($3::text[])) THEN 1
            ELSE 0
          END AS "attentionRank",
-         CASE WHEN bool_or(read_at IS NULL) THEN NULL ELSE max(read_at) END AS "readAt"
+         CASE WHEN bool_or(read_at IS NULL) THEN NULL ELSE max(read_at) END AS "readAt",
+         CASE WHEN bool_or(resolved_at IS NULL) THEN NULL ELSE max(resolved_at) END AS "resolvedAt"
        FROM notifications
        WHERE profile_handle = $1 AND kind <> 'message'
        GROUP BY COALESCE(aggregation_key, 'notification:' || id::text)
@@ -320,7 +370,7 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
      )
      SELECT latest.id::text, page."groupKey", page."groupCount", page."actorCount",
        page."attentionRank", latest.kind,
-       latest.title, latest.body, latest.href, page."readAt", latest.metadata,
+       latest.title, latest.body, latest.href, page."readAt", page."resolvedAt", latest.metadata,
        page."createdAt", unread.total AS "unreadTotal"
      FROM unread
      LEFT JOIN page ON true
@@ -329,7 +379,8 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
        FROM notifications notification
        WHERE notification.profile_handle = $1
          AND COALESCE(notification.aggregation_key, 'notification:' || notification.id::text) = page."groupKey"
-       ORDER BY notification.created_at DESC, notification.id DESC
+       ORDER BY (notification.resolved_at IS NULL) DESC,
+         notification.created_at DESC, notification.id DESC
        LIMIT 1
      ) latest ON true
      ORDER BY page."attentionRank" DESC NULLS LAST,
@@ -343,7 +394,7 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
   const hasMore = rowsWithNotifications.length > query.limit;
   const rows = rowsWithNotifications.slice(0, query.limit);
   const groupKeys = rows.map((row) => row.groupKey);
-  const unreadGroupKeys = rows.filter((row) => !row.readAt).map((row) => row.groupKey);
+  const activeGroupKeys = rows.filter((row) => !row.resolvedAt).map((row) => row.groupKey);
   const actorRows = groupKeys.length
     ? await getPool().query<{
         groupKey: string;
@@ -363,14 +414,14 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
              AND COALESCE(aggregation_key, 'notification:' || id::text) = ANY($2::text[])
              AND (
                NOT (COALESCE(aggregation_key, 'notification:' || id::text) = ANY($3::text[]))
-               OR read_at IS NULL
+               OR resolved_at IS NULL
              )
          )
          SELECT "groupKey", metadata
          FROM ranked
          WHERE position <= 80
          ORDER BY "groupKey", position`,
-        [handle, groupKeys, unreadGroupKeys]
+        [handle, groupKeys, activeGroupKeys]
       )
     : { rows: [] };
   const actorsByGroup = new Map<string, { handles: string[]; names: string[] }>();
@@ -389,7 +440,7 @@ export const listNotifications = async (rawQuery: unknown, actor: Actor): Promis
   return {
     notifications: rows.map((row) => {
       const actors = actorsByGroup.get(row.groupKey) ?? { handles: [], names: [] };
-      return projectNotification(row, actors.handles, actors.names);
+      return projectNotification(row, actors.handles, actors.names, handle);
     }),
     unreadCount: result.rows[0]?.unreadTotal ?? 0,
     nextCursor: hasMore && last ? encodeCursor(last) : null

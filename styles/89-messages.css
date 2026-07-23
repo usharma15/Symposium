@@ -2025,6 +2025,21 @@
   line-height: 1.45;
 }
 
+.notification-resolved {
+  width: fit-content;
+  border: 1px solid color-mix(in srgb, var(--muted) 26%, transparent);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--muted);
+  font-size: 0.63rem;
+  font-weight: 760;
+  line-height: 1.45;
+}
+
+.notifications-list > button[data-resolved="true"] .notification-marker {
+  background: color-mix(in srgb, var(--muted) 42%, transparent);
+}
+
 .notifications-more,
 .notifications-retry {
   width: 100%;

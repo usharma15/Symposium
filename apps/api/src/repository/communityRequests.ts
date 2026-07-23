@@ -10,7 +10,7 @@ import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { runAtomic } from "../services/transactions";
-import { createNotifications } from "../services/notificationDelivery";
+import { createNotifications, resolveNotifications } from "../services/notificationDelivery";
 import { assertCommunityManager } from "./communityAuthorization";
 import { actorHandle, ensureLiveData, ensureProfileHandle, getCommunity, publicCommunity } from "./foundation";
 
@@ -87,6 +87,11 @@ export const resolveCommunityRequest = async (rawInput: unknown, actor: Actor, m
       metadata: mutationAuditMetadata(mutation, { communityId: community.id, decision: input.decision })
     });
     await completeMutation(client, handle, mutation, response);
+    const resolvedNotifications = await resolveNotifications(client, {
+      kinds: ["community_join_request"],
+      metadataMatches: [{ communityId: community.id, requesterHandle: memberHandle }],
+      reason: `community_request_${input.decision}d`
+    });
     const createdNotifications = await createNotifications(client, [{
       profileHandle: memberHandle,
       kind: input.decision === "approve" ? "community_request_approved" : "community_request_declined",
@@ -118,6 +123,9 @@ export const resolveCommunityRequest = async (rawInput: unknown, actor: Actor, m
       audienceHandles,
       payload: { communityId: community.id, memberHandle, decision: input.decision, revision: value.revision }
     });
-    return { value: response, events: [...createdNotifications.events, event] };
+    return {
+      value: response,
+      events: [...resolvedNotifications.events, ...createdNotifications.events, event]
+    };
   });
 };

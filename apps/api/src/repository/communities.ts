@@ -23,6 +23,7 @@ import { runAtomic } from "../services/transactions";
 import {
   createNotifications,
   notificationActorName,
+  resolveNotifications,
   type CreateNotificationInput
 } from "../services/notificationDelivery";
 import { assertCommunityManager } from "./communityAuthorization";
@@ -584,6 +585,13 @@ export const leaveCommunity = async (rawInput: unknown, actor: Actor) => {
       subjectType: "community",
       subjectId: community.id
     });
+    const resolvedNotifications = existing.rows[0]?.status === "requested"
+      ? await resolveNotifications(client, {
+          kinds: ["community_join_request"],
+          metadataMatches: [{ communityId: community.id, requesterHandle: handle }],
+          reason: "community_request_withdrawn"
+        })
+      : { notifications: [], events: [] };
     const event = await stageEvent(client, {
       kind: "community.left",
       actorHandle: handle,
@@ -593,7 +601,10 @@ export const leaveCommunity = async (rawInput: unknown, actor: Actor) => {
       audienceHandles: [handle],
       payload: { communityId: community.id, status: "left" }
     });
-    return { value: { community: updatedCommunity, status: "left" as const }, events: [event] };
+    return {
+      value: { community: updatedCommunity, status: "left" as const },
+      events: [...resolvedNotifications.events, event]
+    };
   });
 };
 

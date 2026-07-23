@@ -19,6 +19,7 @@ import { runAtomic } from "../services/transactions";
 import {
   createNotifications,
   notificationActorName,
+  resolveNotifications,
   type CreateNotificationInput
 } from "../services/notificationDelivery";
 import { resolveActionTransition } from "./actions";
@@ -421,6 +422,14 @@ export const deleteWorkspaceComment = async (
     if (!deleted.rowCount) throw new TRPCError({ code: "CONFLICT", message: "This comment changed or is no longer available." });
     removedAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(client, "note_comment", commentId, "workspace_comment_deleted");
     const value = { ...(await responseFor(client, noteId, handle, commentId)), removedAttachmentIds };
+    const resolvedNotifications = await resolveNotifications(client, {
+      kinds: ["workspace_comment", "workspace_comment_reply", "workspace_comment_signal"],
+      metadataMatches: [
+        { noteId, commentId },
+        { noteId, parentCommentId: commentId }
+      ],
+      reason: "source_workspace_comment_deleted"
+    });
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "workspace.comment.delete",
@@ -438,7 +447,7 @@ export const deleteWorkspaceComment = async (
       visibility: "private",
       payload: { noteId, commentId }
     });
-    return { value, events: [event] };
+    return { value, events: [...resolvedNotifications.events, event] };
   });
   if (removedAttachmentIds.length) await triggerStorageDeletion(removedAttachmentIds);
   return result;
@@ -535,6 +544,14 @@ export const applyWorkspaceCommentAction = async (
           metadata: { noteId, commentId, actorHandle: handle }
         }])
       : { notifications: [], events: [] };
+    const resolvedNotifications = input.action === "signal" && !active && comment.rows[0]?.authorHandle && comment.rows[0].authorHandle !== handle
+      ? await resolveNotifications(client, {
+          kinds: ["workspace_comment_signal"],
+          metadataMatches: [{ noteId, commentId, actorHandle: handle }],
+          profileHandles: [comment.rows[0].authorHandle],
+          reason: "workspace_comment_like_removed"
+        })
+      : { notifications: [], events: [] };
     const event = await stageEvent(client, {
       kind: `note.comment.${input.action}`,
       actorHandle: handle,
@@ -544,6 +561,9 @@ export const applyWorkspaceCommentAction = async (
       visibility: "private",
       payload: { noteId, commentId, action: input.action, active }
     });
-    return { value, events: [...createdNotifications.events, event] };
+    return {
+      value,
+      events: [...createdNotifications.events, ...resolvedNotifications.events, event]
+    };
   });
 };

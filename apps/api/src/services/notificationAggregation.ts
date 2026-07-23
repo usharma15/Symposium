@@ -14,6 +14,7 @@ type NotificationGroupRow = {
   metadata: Record<string, unknown> | null;
   createdAt: Date | string;
   readAt: Date | string | null;
+  resolvedAt: Date | string | null;
   groupCount: number;
   actorCount: number;
 };
@@ -105,15 +106,56 @@ export const notificationAllowedByPreferences = (
   return preferences.activityEnabled && preferences[category];
 };
 
-export const notificationActionLabel = (kind: string, href: string | null) => {
+export const notificationDestination = ({
+  kind,
+  href,
+  metadata,
+  profileHandle,
+  resolvedAt
+}: {
+  kind: string;
+  href: string | null;
+  metadata?: Record<string, unknown>;
+  profileHandle: string;
+  resolvedAt?: string | null;
+}) => {
+  if (resolvedAt) {
+    const resolution = metadataString(metadata, "resolution");
+    if (resolution === "source_post_deleted") return null;
+    const communityId = metadataString(metadata, "communityId");
+    if (kind === "community_join_request" && communityId) {
+      return `/communities/${encodeURIComponent(communityId)}`;
+    }
+    const postId = metadataString(metadata, "postId");
+    if (kind === "opportunity_application_received" && postId) {
+      return `/posts/${encodeURIComponent(postId)}/applications`;
+    }
+    return null;
+  }
+  if (kind === "profile_followed") {
+    return `/profiles/${encodeURIComponent(profileHandle.replace(/^@/, ""))}/followers`;
+  }
+  return href;
+};
+
+export const notificationActionLabel = (
+  kind: string,
+  href: string | null,
+  resolvedAt: string | null = null
+) => {
   if (!href) return null;
+  if (resolvedAt) {
+    if (kind === "community_join_request") return "Open community";
+    if (kind === "opportunity_application_received") return "View applications";
+    return null;
+  }
   if (kind === "community_join_request") return "Review requests";
   if (kind === "opportunity_application_received") return "Review applications";
   if (kind === "post_signal" || kind === "comment_signal") return "View likes";
   if (kind === "post_reshare" || kind === "comment_reshare") return "View reshares";
   if (kind === "post_comment") return "View comments";
   if (kind === "comment_reply") return "View reply";
-  if (kind === "profile_followed") return "View profile";
+  if (kind === "profile_followed") return "View followers";
   if (kind === "workspace_comment") return "Open comment";
   if (kind === "workspace_comment_reply") return "View reply";
   if (kind === "workspace_comment_signal") return "View likes";
@@ -222,49 +264,82 @@ export const projectNotificationGroup = async (
      `WITH summary AS (
        SELECT
          CASE
+           WHEN bool_or(kind = ANY($3::text[]) AND resolved_at IS NULL)
+             THEN (count(*) FILTER (
+               WHERE kind = ANY($3::text[]) AND resolved_at IS NULL
+             ))::int
            WHEN bool_or(read_at IS NULL)
              THEN (count(*) FILTER (WHERE read_at IS NULL))::int
+           WHEN bool_or(resolved_at IS NULL)
+             THEN (count(*) FILTER (WHERE resolved_at IS NULL))::int
            ELSE count(*)::int
          END AS "groupCount",
          CASE
-           WHEN bool_or(read_at IS NULL) THEN count(DISTINCT CASE
-             WHEN read_at IS NULL THEN COALESCE(
+           WHEN bool_or(kind = ANY($3::text[]) AND resolved_at IS NULL)
+             THEN count(DISTINCT CASE
+               WHEN kind = ANY($3::text[]) AND resolved_at IS NULL THEN COALESCE(
+                 metadata ->> 'actorHandle',
+                 metadata ->> 'followerHandle',
+                 metadata ->> 'requesterHandle',
+                 metadata ->> 'applicantHandle'
+               )
+             END)::int
+           WHEN bool_or(read_at IS NULL)
+             THEN count(DISTINCT CASE
+               WHEN read_at IS NULL THEN COALESCE(
+                 metadata ->> 'actorHandle',
+                 metadata ->> 'followerHandle',
+                 metadata ->> 'requesterHandle',
+                 metadata ->> 'applicantHandle'
+               )
+             END)::int
+           WHEN bool_or(resolved_at IS NULL)
+             THEN count(DISTINCT CASE
+               WHEN resolved_at IS NULL THEN COALESCE(
+                 metadata ->> 'actorHandle',
+                 metadata ->> 'followerHandle',
+                 metadata ->> 'requesterHandle',
+                 metadata ->> 'applicantHandle'
+               )
+             END)::int
+           ELSE count(DISTINCT COALESCE(
                metadata ->> 'actorHandle',
                metadata ->> 'followerHandle',
                metadata ->> 'requesterHandle',
                metadata ->> 'applicantHandle'
-             )
-           END)::int
-           ELSE count(DISTINCT COALESCE(
-             metadata ->> 'actorHandle',
-             metadata ->> 'followerHandle',
-             metadata ->> 'requesterHandle',
-             metadata ->> 'applicantHandle'
            ))::int
          END AS "actorCount",
          CASE
            WHEN bool_or(read_at IS NULL) THEN NULL
            ELSE max(read_at)
-         END AS "readAt"
+         END AS "readAt",
+         CASE
+           WHEN bool_or(resolved_at IS NULL) THEN NULL
+           ELSE max(resolved_at)
+         END AS "resolvedAt",
+         COALESCE(
+           max(created_at) FILTER (WHERE resolved_at IS NULL),
+           max(created_at)
+         ) AS "createdAt"
        FROM notifications
        WHERE profile_handle = $1
          AND kind <> 'message'
          AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
      )
      SELECT latest.id::text, latest.kind, latest.title, latest.body, latest.href,
-       latest.metadata, latest.created_at AS "createdAt", summary."readAt",
+       latest.metadata, summary."createdAt", summary."readAt", summary."resolvedAt",
        summary."groupCount", summary."actorCount"
      FROM summary
      CROSS JOIN LATERAL (
-       SELECT id, kind, title, body, href, metadata, created_at
+       SELECT id, kind, title, body, href, metadata, created_at, resolved_at
        FROM notifications
        WHERE profile_handle = $1
          AND kind <> 'message'
          AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
-       ORDER BY created_at DESC, id DESC
+       ORDER BY (resolved_at IS NULL) DESC, created_at DESC, id DESC
        LIMIT 1
      ) latest`,
-    [profileHandle, groupKey]
+    [profileHandle, groupKey, actionRequiredNotificationKinds]
   );
   const row = result.rows[0];
   if (!row) return null;
@@ -275,17 +350,17 @@ export const projectNotificationGroup = async (
        AND kind <> 'message'
        AND COALESCE(aggregation_key, 'notification:' || id::text) = $2
        AND (
-         read_at IS NULL
+         resolved_at IS NULL
          OR NOT EXISTS (
            SELECT 1
-           FROM notifications unread
-           WHERE unread.profile_handle = $1
-             AND unread.kind <> 'message'
-             AND COALESCE(unread.aggregation_key, 'notification:' || unread.id::text) = $2
-             AND unread.read_at IS NULL
+           FROM notifications active
+           WHERE active.profile_handle = $1
+             AND active.kind <> 'message'
+             AND COALESCE(active.aggregation_key, 'notification:' || active.id::text) = $2
+             AND active.resolved_at IS NULL
          )
        )
-     ORDER BY created_at DESC, id DESC
+     ORDER BY (resolved_at IS NULL) DESC, created_at DESC, id DESC
      LIMIT 80`,
     [profileHandle, groupKey]
   );
@@ -299,18 +374,27 @@ export const projectNotificationGroup = async (
     actorNames.push(metadataString(metadata, "actorName") ?? handle);
     if (actorHandles.length >= 24) break;
   }
+  const resolvedAt = row.resolvedAt ? new Date(row.resolvedAt).toISOString() : null;
+  const href = notificationDestination({
+    kind: row.kind,
+    href: row.href ?? null,
+    metadata: row.metadata ?? undefined,
+    profileHandle,
+    resolvedAt
+  });
   return {
     id: row.id,
     groupKey,
     groupCount: row.groupCount,
     actorHandles,
     priority: notificationPriority(row.kind),
-    actionLabel: notificationActionLabel(row.kind, row.href ?? null),
+    actionLabel: notificationActionLabel(row.kind, href, resolvedAt),
     kind: row.kind,
     title: groupedNotificationTitle(row, actorNames, row.actorCount),
     body: row.body,
-    href: row.href ?? null,
+    href,
     readAt: row.readAt ? new Date(row.readAt).toISOString() : null,
+    resolvedAt,
     metadata: { ...(row.metadata ?? {}), groupKey },
     createdAt: new Date(row.createdAt).toISOString()
   };

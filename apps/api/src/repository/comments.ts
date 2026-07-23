@@ -35,6 +35,7 @@ import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from 
 import {
   createNotifications,
   notificationActorName,
+  resolveNotifications,
   type CreateNotificationInput
 } from "../services/notificationDelivery";
 import { transitionCommentAction } from "./actions";
@@ -734,6 +735,15 @@ export const deleteComment = async (
         "comment_deleted"
       );
       didDelete = true;
+      const resolvedNotifications = await resolveNotifications(client, {
+        kinds: ["post_comment", "comment_reply", "comment_signal", "comment_reshare"],
+        metadataMatches: [
+          { postId, commentId },
+          { postId, parentCommentId: commentId }
+        ],
+        reason: "source_comment_deleted"
+      });
+      stagedEvents.push(...resolvedNotifications.events);
       await stageAuditLog(client, {
         actorHandle: handle,
         action: "comment.delete",
@@ -974,6 +984,22 @@ export const applyCommentAction = async (
         metadata: { postId, commentId, action: input.action, actorHandle: handle, analyticsView }
       }]);
       stagedEvents.push(...createdNotifications.events);
+    }
+    if (
+      !privatePost &&
+      actionChanged &&
+      activity?.active === false &&
+      (input.action === "signal" || input.action === "fork") &&
+      original.authorHandle &&
+      original.authorHandle !== handle
+    ) {
+      const resolvedNotifications = await resolveNotifications(client, {
+        kinds: [input.action === "signal" ? "comment_signal" : "comment_reshare"],
+        metadataMatches: [{ postId, commentId, actorHandle: handle }],
+        profileHandles: [original.authorHandle],
+        reason: input.action === "signal" ? "comment_like_removed" : "comment_reshare_removed"
+      });
+      stagedEvents.push(...resolvedNotifications.events);
     }
     if (!privatePost) {
       stagedEvents.push(

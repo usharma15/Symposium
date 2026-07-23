@@ -38,7 +38,9 @@ import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData, ensureProfileHandle, type AttachmentRow } from "./foundation";
 import {
   createNotifications,
-  notificationActorName
+  notificationActorName,
+  personalActivityNotificationKinds,
+  resolveNotifications
 } from "../services/notificationDelivery";
 
 const messageEditWindowMs = 15 * 60 * 1000;
@@ -1346,7 +1348,28 @@ export const setProfileBlock = async (rawInput: unknown, actor: Actor) => {
       audienceHandles: [blocker],
       payload: { targetHandle: target, active: input.active }
     });
-    return { value, events: [event] };
+    if (!input.active) return { value, events: [event] };
+    const metadataKeys = ["actorHandle", "followerHandle", "requesterHandle", "applicantHandle"] as const;
+    const notificationsForBlocker = await resolveNotifications(client, {
+      kinds: personalActivityNotificationKinds,
+      metadataMatches: metadataKeys.map((key) => ({ [key]: target })),
+      profileHandles: [blocker],
+      reason: "profile_relationship_blocked"
+    });
+    const notificationsForTarget = await resolveNotifications(client, {
+      kinds: personalActivityNotificationKinds,
+      metadataMatches: metadataKeys.map((key) => ({ [key]: blocker })),
+      profileHandles: [target],
+      reason: "profile_relationship_blocked"
+    });
+    return {
+      value,
+      events: [
+        ...notificationsForBlocker.events,
+        ...notificationsForTarget.events,
+        event
+      ]
+    };
   });
 };
 

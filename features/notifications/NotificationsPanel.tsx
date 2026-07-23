@@ -434,6 +434,7 @@ export function NotificationsControl({
       key={notification.groupKey}
       className={notification.readAt ? "" : "unread"}
       data-priority={notification.priority}
+      data-resolved={notification.resolvedAt ? "true" : "false"}
       onClick={() => markRead(notification)}
     >
       <span className="notification-marker" />
@@ -449,6 +450,7 @@ export function NotificationsControl({
           <time dateTime={notification.createdAt} title={new Date(notification.createdAt).toLocaleString()}>
             {displayNotificationTime(notification.createdAt)}
           </time>
+          {notification.resolvedAt ? <small className="notification-resolved">Resolved</small> : null}
         </span>
         {notification.actionLabel ? (
           <span className="notification-primary-action">

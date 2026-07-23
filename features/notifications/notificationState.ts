@@ -32,6 +32,13 @@ export const latestNotificationEventKey = (events: NotificationLiveEvent[]) => {
 
 export const compactNotificationCount = (count: number) => count > 99 ? "99+" : String(count);
 
+export const notificationAttentionRank = (notification: NotificationContract) => {
+  if (notification.resolvedAt) return 0;
+  if (notification.priority === "action") return 2;
+  if (notification.priority === "important" && !notification.readAt) return 1;
+  return 0;
+};
+
 export const normalizeNotifications = (notifications: unknown[]) =>
   notifications.flatMap((notification) => {
     const parsed = notificationSchema.safeParse(notification);
@@ -55,11 +62,10 @@ export const partitionNotificationInbox = (
   limit = compactNotificationLimit
 ) => {
   const needsAttention = notifications.filter((notification) =>
-    !notification.readAt && notification.priority !== "activity"
+    notificationAttentionRank(notification) > 0
   );
-  const recent = notifications.filter((notification) =>
-    notification.readAt || notification.priority === "activity"
-  );
+  const attentionGroups = new Set(needsAttention.map((notification) => notification.groupKey));
+  const recent = notifications.filter((notification) => !attentionGroups.has(notification.groupKey));
   if (expanded) {
     return { needsAttention, recent, hiddenCount: 0 };
   }
@@ -76,16 +82,17 @@ export const applyNotificationLiveEvent = (
   state: NotificationState,
   event: NotificationLiveEvent
 ): NotificationState => {
-  if (event.kind === "notification.created") {
+  if (event.kind === "notification.created" || event.kind === "notification.resolved") {
     const parsed = notificationSchema.safeParse(event.payload?.notification);
     if (!parsed.success) return state;
     const notification = parsed.data;
     const existing = state.notifications.find((entry) => entry.groupKey === notification.groupKey);
+    const unreadDelta = existing
+      ? Number(!notification.readAt) - Number(!existing.readAt)
+      : Number(!notification.readAt);
     return {
       notifications: mergeNotificationPage(state.notifications, [notification]),
-      unreadCount: notification.readAt || existing?.readAt === null
-        ? state.unreadCount
-        : state.unreadCount + 1
+      unreadCount: Math.max(0, state.unreadCount + unreadDelta)
     };
   }
 

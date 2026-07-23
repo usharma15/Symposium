@@ -16,7 +16,7 @@ import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../service
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { replaceOwnerAttachments } from "../services/attachmentOwnership";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
-import { createNotifications } from "../services/notificationDelivery";
+import { createNotifications, resolveNotifications } from "../services/notificationDelivery";
 import { actorHandle, ensureLiveData, rowToAttachment, type AttachmentRow } from "./foundation";
 
 type ApplicationRow = {
@@ -268,6 +268,13 @@ export const updateOpportunityApplication = async (postId: string, applicationId
     );
     application = (await hydrate(client, [{ ...current, shortlisted: input.shortlisted, ...revision.rows[0] }], handle))[0]!;
     await completeMutation(client, handle, mutation, application);
+    const resolvedNotifications = await resolveNotifications(client, {
+      kinds: ["opportunity_application_received"],
+      metadataMatches: [{ postId, applicationId }],
+      profileHandles: [handle],
+      reason: "opportunity_application_reviewed"
+    });
+    events.push(...resolvedNotifications.events);
     if (current.shortlisted !== input.shortlisted) {
       const createdNotifications = await createNotifications(client, [{
         profileHandle: current.applicantHandle,
@@ -331,6 +338,13 @@ export const deleteOpportunityApplication = async (postId: string, applicationId
     const response = { id: applicationId, postId };
     await stageAuditLog(client, { actorHandle: handle, action: "opportunity.application.delete", subjectType: "opportunity_application", subjectId: applicationId, metadata: { postId, attachmentCount: attachmentIds.length } });
     await completeMutation(client, handle, mutation, response);
+    const resolvedNotifications = await resolveNotifications(client, {
+      kinds: ["opportunity_application_received"],
+      metadataMatches: [{ postId, applicationId }],
+      profileHandles: [handle],
+      reason: "opportunity_application_closed"
+    });
+    events.push(...resolvedNotifications.events);
     const createdNotifications = await createNotifications(client, [{
       profileHandle: existing.rows[0].applicantHandle,
       kind: "opportunity_application_closed",

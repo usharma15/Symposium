@@ -35,7 +35,11 @@ import {
   replaceOwnerAttachments
 } from "../services/attachmentOwnership";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
-import { createNotifications, notificationActorName } from "../services/notificationDelivery";
+import {
+  createNotifications,
+  notificationActorName,
+  resolveNotifications
+} from "../services/notificationDelivery";
 import { assertCanonicalOpportunityUpdate, createOpportunityProjection, opportunityPostStatus, updateOpportunityProjection } from "../services/opportunityPosts";
 import { transitionPostAction } from "./actions";
 import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
@@ -455,6 +459,21 @@ export const applyPostAction = async (
         eventScope.visibility !== "community" ||
         Boolean(updated.authorHandle && eventScope.audienceHandles?.includes(updated.authorHandle))
       );
+    if (
+      actionChanged &&
+      activity?.active === false &&
+      (input.action === "signal" || input.action === "fork") &&
+      updated.authorHandle &&
+      updated.authorHandle !== handle
+    ) {
+      const resolvedNotifications = await resolveNotifications(client, {
+        kinds: [input.action === "signal" ? "post_signal" : "post_reshare"],
+        metadataMatches: [{ postId, actorHandle: handle }],
+        profileHandles: [updated.authorHandle],
+        reason: input.action === "signal" ? "post_like_removed" : "post_reshare_removed"
+      });
+      stagedEvents.push(...resolvedNotifications.events);
+    }
     if (canNotifyAuthor) {
       const actionLabel = input.action === "signal" ? "liked" : "reshared";
       const subjectLabel = updated.postType ?? "post";
@@ -913,6 +932,20 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
       );
       storageAttachmentIds.push(...await queueAttachmentsForOwnerStorageDeletion(client, "opportunity_application", applicationIds, "opportunity_post_deleted"));
       if (applicationIds.length) await client.query(`DELETE FROM opportunity_applications WHERE post_id = $1`, [postId]);
+      const resolvedNotifications = await resolveNotifications(client, {
+        kinds: [
+          "post_signal",
+          "post_reshare",
+          "post_comment",
+          "comment_reply",
+          "comment_signal",
+          "comment_reshare",
+          "opportunity_application_received"
+        ],
+        metadataMatches: [{ postId }],
+        reason: "source_post_deleted"
+      });
+      stagedEvents.push(...resolvedNotifications.events);
       didDelete = true;
       await stageAuditLog(client, {
         actorHandle: handle,

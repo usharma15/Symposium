@@ -2190,6 +2190,162 @@ const migrations: Migration[] = [
         CONSTRAINT notification_preferences_revision_check CHECK (revision >= 1)
       );
     `
+  },
+  {
+    id: "0045_notification_resolution",
+    sql: `
+      ALTER TABLE notifications
+        ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+
+      CREATE INDEX IF NOT EXISTS notifications_profile_open_action_idx
+        ON notifications (profile_handle, kind, created_at DESC, id DESC)
+        WHERE kind IN ('community_join_request', 'opportunity_application_received')
+          AND resolved_at IS NULL;
+
+      UPDATE notifications notification
+      SET resolved_at = now(),
+          read_at = COALESCE(notification.read_at, now()),
+          metadata = notification.metadata || jsonb_build_object(
+            'resolution',
+            'migrated_source_inactive'
+          )
+      WHERE notification.kind <> 'message'
+        AND notification.resolved_at IS NULL
+        AND (
+          (
+            notification.kind = 'community_join_request'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM community_memberships membership
+              WHERE membership.community_id = notification.metadata ->> 'communityId'
+                AND membership.profile_handle = notification.metadata ->> 'requesterHandle'
+                AND membership.status = 'requested'
+            )
+          )
+          OR (
+            notification.kind = 'opportunity_application_received'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM opportunity_applications application
+              WHERE application.id::text = notification.metadata ->> 'applicationId'
+                AND application.post_id = notification.metadata ->> 'postId'
+                AND application.revision = 1
+            )
+          )
+          OR (
+            notification.kind IN ('post_signal', 'post_reshare')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM post_actions action
+              WHERE action.post_id = notification.metadata ->> 'postId'
+                AND action.actor_handle = notification.metadata ->> 'actorHandle'
+                AND action.action = CASE
+                  WHEN notification.kind = 'post_signal' THEN 'signal'
+                  ELSE 'fork'
+                END
+                AND action.active
+            )
+          )
+          OR (
+            notification.kind IN ('comment_signal', 'comment_reshare')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM comment_actions action
+              JOIN comments comment ON comment.id = action.comment_id
+              WHERE action.comment_id = notification.metadata ->> 'commentId'
+                AND action.post_id = notification.metadata ->> 'postId'
+                AND action.actor_handle = notification.metadata ->> 'actorHandle'
+                AND action.action = CASE
+                  WHEN notification.kind = 'comment_signal' THEN 'signal'
+                  ELSE 'fork'
+                END
+                AND action.active
+                AND comment.deleted_at IS NULL
+            )
+          )
+          OR (
+            notification.kind IN ('post_comment', 'comment_reply')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM comments comment
+              WHERE comment.id = notification.metadata ->> 'commentId'
+                AND comment.post_id = notification.metadata ->> 'postId'
+                AND comment.deleted_at IS NULL
+            )
+          )
+          OR (
+            notification.kind = 'profile_followed'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM profile_follows relationship
+              WHERE relationship.follower_handle = notification.metadata ->> 'followerHandle'
+                AND relationship.following_handle = notification.profile_handle
+                AND relationship.status = 'active'
+            )
+          )
+          OR (
+            notification.kind = 'workspace_comment_signal'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM workspace_note_comment_actions action
+              JOIN workspace_note_comments comment ON comment.id = action.comment_id
+              WHERE action.comment_id::text = notification.metadata ->> 'commentId'
+                AND action.note_id::text = notification.metadata ->> 'noteId'
+                AND action.actor_handle = notification.metadata ->> 'actorHandle'
+                AND action.action = 'signal'
+                AND action.active
+                AND comment.deleted_at IS NULL
+            )
+          )
+          OR (
+            notification.kind IN ('workspace_comment', 'workspace_comment_reply')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM workspace_note_comments comment
+              WHERE comment.id::text = notification.metadata ->> 'commentId'
+                AND comment.note_id::text = notification.metadata ->> 'noteId'
+                AND comment.deleted_at IS NULL
+            )
+          )
+          OR (
+            notification.kind IN (
+              'comment_reply',
+              'comment_reshare',
+              'comment_signal',
+              'post_comment',
+              'post_reshare',
+              'post_signal',
+              'profile_followed',
+              'workspace_comment',
+              'workspace_comment_reply',
+              'workspace_comment_signal'
+            )
+            AND EXISTS (
+              SELECT 1
+              FROM profile_blocks block
+              WHERE (
+                block.blocker_handle = notification.profile_handle
+                AND block.blocked_handle = COALESCE(
+                  notification.metadata ->> 'actorHandle',
+                  notification.metadata ->> 'followerHandle'
+                )
+              ) OR (
+                block.blocked_handle = notification.profile_handle
+                AND block.blocker_handle = COALESCE(
+                  notification.metadata ->> 'actorHandle',
+                  notification.metadata ->> 'followerHandle'
+                )
+              )
+            )
+          )
+        );
+
+      UPDATE notifications
+      SET href = '/profiles/' || regexp_replace(profile_handle, '^@', '') || '/followers'
+      WHERE kind = 'profile_followed'
+        AND profile_handle IS NOT NULL
+        AND href IS DISTINCT FROM '/profiles/' || regexp_replace(profile_handle, '^@', '') || '/followers';
+    `
   }
 ];
 

@@ -42,6 +42,7 @@
     "mutation:check": "tsx scripts/mutationEnvelopeCheck.ts",
     "messaging:check": "tsx scripts/messagingFoundationCheck.ts",
     "notifications:check": "tsx scripts/notificationSystemCheck.ts",
+    "notifications:db-check": "tsx scripts/notificationDatabaseCheck.ts",
     "content-analytics:check": "tsx scripts/contentAnalyticsCheck.ts",
     "note-revision:check": "tsx scripts/noteRevisionCheck.ts",
     "patronage:check": "tsx scripts/patronageConstructionCheck.ts",

@@ -7,6 +7,7 @@ import {
   notificationAllowedByPreferences,
   notificationActorHandle,
   notificationPreferenceCategory,
+  notificationPriority,
   projectNotificationGroup
 } from "./notificationAggregation";
 
@@ -51,8 +52,36 @@ export type CreatedNotifications = {
   events: StoredLiveEvent[];
 };
 
+export type ResolveNotificationsInput = {
+  kinds: readonly string[];
+  metadataMatches: ReadonlyArray<Record<string, string | number | boolean | null>>;
+  profileHandles?: readonly string[];
+  reason: string;
+};
+
+type ResolvedNotificationRow = {
+  profileHandle: string;
+  groupKey: string;
+};
+
+export const personalActivityNotificationKinds = [
+  "comment_reply",
+  "comment_reshare",
+  "comment_signal",
+  "post_comment",
+  "post_reshare",
+  "post_signal",
+  "profile_followed",
+  "workspace_comment",
+  "workspace_comment_reply",
+  "workspace_comment_signal"
+] as const;
+
 const truncateNotificationText = (value: string, maximum: number) =>
   Array.from(value).slice(0, maximum).join("");
+
+export const notificationRelationshipKey = (left: string, right: string) =>
+  left < right ? `${left}\u0000${right}` : `${right}\u0000${left}`;
 
 export const notificationActorName = async (client: PoolClient, handle: string) => {
   const result = await client.query<{ name: string }>(
@@ -117,7 +146,37 @@ export const createNotifications = async (
       preferencesByHandle.get(input.profileHandle) ?? defaultNotificationPreferences()
     )
   );
-  const actorHandles = [...new Set(preferenceEligibleInputs
+  const personalPairs = preferenceEligibleInputs.flatMap((input) => {
+    const actor = notificationActorHandle(input.metadata);
+    return actor && actor !== input.profileHandle && notificationPriority(input.kind) === "activity"
+      ? [{ actor, recipient: input.profileHandle }]
+      : [];
+  });
+  const relationshipHandles = [...new Set(personalPairs.flatMap((pair) => [
+    pair.actor,
+    pair.recipient
+  ]))];
+  const blockRows = relationshipHandles.length > 1
+    ? await client.query<{ blockerHandle: string; blockedHandle: string }>(
+        `SELECT
+           blocker_handle AS "blockerHandle",
+           blocked_handle AS "blockedHandle"
+         FROM profile_blocks
+         WHERE blocker_handle = ANY($1::text[])
+           AND blocked_handle = ANY($1::text[])`,
+        [relationshipHandles]
+      )
+    : { rows: [] };
+  const blockedRelationships = new Set(blockRows.rows.map((row) =>
+    notificationRelationshipKey(row.blockerHandle, row.blockedHandle)
+  ));
+  const relationshipEligibleInputs = preferenceEligibleInputs.filter((input) => {
+    const actor = notificationActorHandle(input.metadata);
+    return !actor
+      || notificationPriority(input.kind) !== "activity"
+      || !blockedRelationships.has(notificationRelationshipKey(actor, input.profileHandle));
+  });
+  const actorHandles = [...new Set(relationshipEligibleInputs
     .map((input) => notificationActorHandle(input.metadata))
     .filter((handle): handle is string => Boolean(handle)))];
   const actorNames = actorHandles.length
@@ -127,7 +186,7 @@ export const createNotifications = async (
       )
     : { rows: [] };
   const actorNameByHandle = new Map(actorNames.rows.map((row) => [row.handle, row.name]));
-  const eligibleInputs = preferenceEligibleInputs.map((input) => {
+  const eligibleInputs = relationshipEligibleInputs.map((input) => {
     const actorHandle = notificationActorHandle(input.metadata);
     return {
       ...input,
@@ -185,3 +244,64 @@ export const createNotifications = async (
 
 export const createNotification = async (client: PoolClient, input: CreateNotificationInput) =>
   createNotifications(client, [input]);
+
+export const resolveNotifications = async (
+  client: PoolClient,
+  input: ResolveNotificationsInput
+): Promise<CreatedNotifications> => {
+  if (!input.kinds.length || !input.metadataMatches.length) {
+    return { notifications: [], events: [] };
+  }
+  const result = await client.query<ResolvedNotificationRow>(
+    `UPDATE notifications notification
+     SET resolved_at = now(),
+         read_at = COALESCE(notification.read_at, now()),
+         metadata = notification.metadata || jsonb_build_object('resolution', $4::text)
+     WHERE notification.kind = ANY($1::text[])
+       AND notification.kind <> 'message'
+       AND notification.resolved_at IS NULL
+       AND EXISTS (
+         SELECT 1
+         FROM jsonb_array_elements($2::jsonb) matcher
+         WHERE notification.metadata @> matcher
+       )
+       AND ($3::text[] IS NULL OR notification.profile_handle = ANY($3::text[]))
+     RETURNING
+       notification.profile_handle AS "profileHandle",
+       COALESCE(
+         notification.aggregation_key,
+         'notification:' || notification.id::text
+       ) AS "groupKey"`,
+    [
+      input.kinds,
+      JSON.stringify(input.metadataMatches),
+      input.profileHandles?.length ? [...new Set(input.profileHandles)] : null,
+      truncateNotificationText(input.reason.trim() || "resolved", 80)
+    ]
+  );
+  const groups = new Map<string, ResolvedNotificationRow>();
+  for (const row of result.rows) {
+    if (!row.profileHandle || !row.groupKey) continue;
+    groups.set(`${row.profileHandle}\u0000${row.groupKey}`, row);
+  }
+  const notifications: NotificationContract[] = [];
+  const events: StoredLiveEvent[] = [];
+  for (const group of groups.values()) {
+    const notification = await projectNotificationGroup(
+      client,
+      group.profileHandle,
+      group.groupKey
+    );
+    if (!notification) continue;
+    notifications.push(notification);
+    events.push(await stageEvent(client, {
+      kind: "notification.resolved",
+      subjectType: "notification",
+      subjectId: notification.id,
+      visibility: "private",
+      audienceHandles: [group.profileHandle],
+      payload: { notification, reason: input.reason }
+    }));
+  }
+  return { notifications, events };
+};

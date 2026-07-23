@@ -1554,6 +1554,7 @@ export const notificationSchema = z.object({
   body: z.string().max(1000),
   href: z.string().max(500).nullable(),
   readAt: z.string().datetime().nullable(),
+  resolvedAt: z.string().datetime().nullable().default(null),
   metadata: z.record(z.string(), z.unknown()).default({}),
   createdAt: z.string().datetime()
 }).transform((notification) => ({

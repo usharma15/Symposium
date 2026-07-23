@@ -14,7 +14,11 @@ import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";
 import { runAtomic } from "../services/transactions";
-import { createNotifications, notificationActorName } from "../services/notificationDelivery";
+import {
+  createNotifications,
+  notificationActorName,
+  resolveNotifications
+} from "../services/notificationDelivery";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { decodeActivityCursor, decodeProfileCommentCursor, encodeActivityCursor, encodeProfileCommentCursor, listCanonicalProfileActivity } from "./actions";
 import { actorHandle, ensureLiveData, ensureProfileHandle, getInitialState } from "./foundation";
@@ -208,7 +212,18 @@ export const followProfile = async (rawInput: unknown, actor: Actor, mutation?: 
           metadata: { followerHandle: follower }
         }])
       : { notifications: [], events: [] };
-    return { value, events: [...createdNotifications.events, event] };
+    const resolvedNotifications = input.status !== "active" && previousFollow.rows[0]?.status === "active"
+      ? await resolveNotifications(client, {
+          kinds: ["profile_followed"],
+          metadataMatches: [{ followerHandle: follower }],
+          profileHandles: [following],
+          reason: "profile_unfollowed"
+        })
+      : { notifications: [], events: [] };
+    return {
+      value,
+      events: [...createdNotifications.events, ...resolvedNotifications.events, event]
+    };
   });
 };
 
@@ -275,7 +290,15 @@ export const unfollowProfile = async (rawInput: unknown, actor: Actor, mutation?
         visibility: result.rows[0]?.previousStatus === "active" ? "public" : "private",
         payload: { follow: value }
       });
-      return { value, events: [event] };
+      const resolvedNotifications = result.rows[0]?.previousStatus === "active"
+        ? await resolveNotifications(client, {
+            kinds: ["profile_followed"],
+            metadataMatches: [{ followerHandle: follower }],
+            profileHandles: [following],
+            reason: "profile_unfollowed"
+          })
+        : { notifications: [], events: [] };
+      return { value, events: [...resolvedNotifications.events, event] };
     });
   }
 
