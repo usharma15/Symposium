@@ -507,7 +507,8 @@ const main = async () => {
   assert.match(styles, /\.message-composer\.has-attachments/);
   assert.match(styles, /\.message-attachment-video video/);
   assert.match(styles, /\.return-to-latest-messages/);
-  assert.match(styles, /minmax\(410px,\s*1\.78fr\)\s+minmax\(252px,\s*0\.82fr\)/);
+  assert.match(styles, /--messages-aligned-side-width:\s*calc\([\s\S]*?var\(--symposium-side-tool-width\)[\s\S]*?var\(--messages-root-inline-inset\)/);
+  assert.match(styles, /minmax\(0,\s*var\(--messages-aligned-side-width\)\)[\s\S]*?minmax\(410px,\s*1fr\)[\s\S]*?minmax\(0,\s*var\(--messages-aligned-side-width\)\)/);
   assert.match(routes, /createPrivateDownloadUrl\(attachment\.objectKey,\s*15 \* 60\)/);
   assert.match(styles, /grid-area: previews/);
   assert.match(styles, /--messages-panel-top-clearance:\s*20px/);
@@ -518,7 +519,7 @@ const main = async () => {
   assert.match(styles, /\.messaging-experience\.full > \.messages-conversations-panel\s*\{[^}]*height:\s*calc\(100% - var\(--messages-panel-top-clearance\) - var\(--messages-side-controls-clearance\)\)/);
   assert.match(styles, /\.messaging-experience\.full > :is\([\s\S]*?\.messages-thread-panel,[\s\S]*?\.messages-no-selection[\s\S]*?\)\s*\{[^}]*height:\s*calc\(100% - var\(--messages-panel-top-clearance\) - var\(--messages-center-bottom-clearance\)\)/);
   assert.match(styles, /\.messaging-experience\.full > \.messages-info-panel\s*\{[^}]*height:\s*calc\(100% - var\(--messages-panel-top-clearance\) - var\(--messages-side-controls-clearance\)\)/);
-  assert.match(styles, /@media \(max-width:\s*960px\) and \(min-width:\s*761px\) and \(min-height:\s*761px\)[\s\S]*?\.messaging-experience\.full > :is\([\s\S]*?\.messages-thread-panel,[\s\S]*?\.messages-no-selection[\s\S]*?height:\s*calc\(100% - var\(--messages-panel-top-clearance\) - var\(--messages-side-controls-clearance\)\)/);
+  assert.match(styles, /@media \(max-width:\s*1020px\) and \(min-width:\s*761px\) and \(min-height:\s*761px\)[\s\S]*?\.messaging-experience\.full > :is\([\s\S]*?\.messages-thread-panel,[\s\S]*?\.messages-no-selection[\s\S]*?height:\s*calc\(100% - var\(--messages-panel-top-clearance\) - var\(--messages-side-controls-clearance\)\)/);
   assert.match(styles, /\.symposium-shell\.night :is\([\s\S]*?\.new-conversation-panel > header button,[\s\S]*?\.notifications-panel > header button[\s\S]*?color:\s*#fff8ea/);
   assert.match(styles, /\.symposium-shell\.night \.notifications-more\s*\{[^}]*color:\s*#9bdde1/);
   assert.match(client, /ownerType: "message"/);

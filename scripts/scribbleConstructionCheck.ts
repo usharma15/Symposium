@@ -160,7 +160,7 @@ assert.match(source.workspace, /document\.kind === "quick"/);
 assert.match(source.shell, /<ScribbleProvider/);
 assert.match(source.shell, /<ScribbleLauncher/);
 assert.match(source.shell, /<ScribbleAttachmentPreview/);
-assert.match(source.styles, /width: calc\(\(100vw - min\(var\(--symposium-feed-width\)/);
+assert.match(source.styles, /width:\s*var\(--symposium-side-tool-width\)/);
 assert.match(source.styles, /border-radius: 10px/);
 assert.doesNotMatch(source.styles, /border-left: 0/);
 

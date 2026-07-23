@@ -19,9 +19,17 @@
 }
 
 .messaging-experience {
+  --messages-root-width: min(1480px, calc(100vw - 32px));
+  --messages-root-inline-inset: calc((100vw - var(--messages-root-width)) / 2);
+  --messages-aligned-side-width: calc(
+    var(--symposium-side-tool-width) - var(--messages-root-inline-inset)
+  );
   position: relative;
   display: grid;
-  grid-template-columns: minmax(248px, 0.82fr) minmax(410px, 1.78fr) minmax(252px, 0.82fr);
+  grid-template-columns:
+    minmax(0, var(--messages-aligned-side-width))
+    minmax(410px, 1fr)
+    minmax(0, var(--messages-aligned-side-width));
   width: min(1480px, 100%);
   height: 100%;
   min-height: 520px;
@@ -2067,9 +2075,11 @@
   to { transform: rotate(360deg); }
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1020px) {
   .messaging-experience.full {
-    grid-template-columns: minmax(230px, 0.75fr) minmax(390px, 1.4fr);
+    grid-template-columns:
+      minmax(230px, var(--messages-aligned-side-width))
+      minmax(390px, 1fr);
   }
 
   .messaging-experience.full .messages-info-panel {
@@ -2077,7 +2087,7 @@
   }
 }
 
-@media (max-width: 960px) and (min-width: 761px) and (min-height: 761px) {
+@media (max-width: 1020px) and (min-width: 761px) and (min-height: 761px) {
   .symposium-shell[data-view="messages"] .messaging-experience.full > :is(
     .messages-thread-panel,
     .messages-no-selection

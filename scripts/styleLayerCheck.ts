@@ -123,7 +123,14 @@ const main = async () => {
     sources.get("88-workspace.css") ?? ""
   ].join("\n");
   const responsiveStyles = sources.get("90-immersive-responsive.css") ?? "";
+  const messageStyles = sources.get("89-messages.css") ?? "";
+  const scribbleStyles = sources.get("91-scribble.css") ?? "";
+  const tabletStyles = sources.get("92-ai-tablet.css") ?? "";
   assert.match(foundationStyles, /--symposium-feed-width:\s*840px/);
+  assert.match(foundationStyles, /--symposium-side-tool-width:\s*max\(/);
+  assert.match(scribbleStyles, /\.scribble-panel\s*\{[^}]*width:\s*var\(--symposium-side-tool-width\)/);
+  assert.match(tabletStyles, /\.tablet-panel\s*\{[^}]*width:\s*var\(--symposium-side-tool-width\)/);
+  assert.match(messageStyles, /--messages-aligned-side-width:\s*calc\(/);
   assert.match(shellStyles, /\.symposium-shell[\s\S]*overflow-x:\s*clip/);
   assert.match(immersiveShellStyles, /\.room-hotspots\s*\{[^}]*z-index:\s*3/);
   assert.match(immersiveShellStyles, /\.office-hotspot\s*\{[^}]*clip-path:\s*var\(--office-hotspot-shape/);

@@ -19,6 +19,10 @@
   --small-shadow: 0 12px 34px rgba(15, 29, 31, 0.12);
   --radius: 8px;
   --symposium-feed-width: 840px;
+  --symposium-side-tool-width: max(
+    268px,
+    calc((100vw - min(var(--symposium-feed-width), calc(100vw - 28px))) / 2)
+  );
   --symposium-shell-edge: 24px;
   --symposium-detail-top: 120px;
   --symposium-topbar-brand-slot: 112px;
