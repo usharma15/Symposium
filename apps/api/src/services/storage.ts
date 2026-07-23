@@ -56,11 +56,11 @@ export const storeUploadedObject = async (
   Body: body
 }));
 
-export const createPrivateDownloadUrl = async (objectKey: string) =>
+export const createPrivateDownloadUrl = async (objectKey: string, expiresIn = 60) =>
   getSignedUrl(
     getS3Client(),
     new GetObjectCommand({ Bucket: env.R2_BUCKET!, Key: objectKey }),
-    { expiresIn: 60 }
+    { expiresIn }
   );
 
 const readObjectBytes = async (objectKey: string, range?: string) => {

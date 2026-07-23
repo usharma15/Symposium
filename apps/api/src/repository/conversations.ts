@@ -208,13 +208,13 @@ const getMembership = async (
   client: Pick<PoolClient, "query">,
   conversationId: string,
   handle: string,
-  options: { allowHidden?: boolean; lock?: boolean } = {}
+  options: { allowHidden?: boolean; lock?: boolean | "participant" } = {}
 ) => {
   const result = await client.query<MembershipRow>(
     `${membershipSelect}
      WHERE c.id = $1 AND me.profile_handle = $2
        ${options.allowHidden ? "" : "AND me.hidden_at IS NULL"}
-     ${options.lock ? "FOR UPDATE OF c, me" : ""}`,
+     ${options.lock === "participant" ? "FOR UPDATE OF me" : options.lock ? "FOR UPDATE OF c, me" : ""}`,
     [conversationId, handle]
   );
   const membership = result.rows[0];
@@ -1066,7 +1066,7 @@ export const saveConversationDraft = async (conversationId: string, rawInput: un
   };
   await ensureLiveData();
   return runAtomic(async (client) => {
-    const membership = await getMembership(client, conversationId, handle, { lock: true });
+    const membership = await getMembership(client, conversationId, handle, { lock: "participant" });
     if (membership.status !== "active") throw new TRPCError({ code: "FORBIDDEN", message: "Join this conversation before saving a draft." });
     if (numberValue(membership.draftRevision) !== input.expectedRevision) {
       return { value: { conflict: true, draft: conversationDraftSnapshot(membership) } };
@@ -1089,7 +1089,7 @@ export const saveConversationDraft = async (conversationId: string, rawInput: un
       [conversationId, handle, input.body, input.clientVersion, input.expectedRevision]
     );
     if (!updated.rows[0]) {
-      const current = await getMembership(client, conversationId, handle, { lock: true });
+      const current = await getMembership(client, conversationId, handle, { lock: "participant" });
       return { value: { conflict: true, draft: conversationDraftSnapshot(current) } };
     }
     const value = { conflict: false, draft: conversationDraftSnapshot(updated.rows[0]) };

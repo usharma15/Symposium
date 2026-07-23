@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowDown,
   ArchiveX,
   BellOff,
   BellRing,
@@ -101,6 +102,13 @@ import {
   messagingEventRequiresRefresh,
   type MessagingLiveEvent
 } from "@/features/messages/messageLiveState";
+import {
+  mergeCanonicalMessagePage,
+  mergeConversationPageAfterProjectionChange,
+  reconcileDiscoveryMessage,
+  upsertConversationProjection
+} from "@/features/messages/messageProjectionState";
+import { enqueueConversationSend } from "@/features/messages/messageSendQueue";
 
 const messageIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const emptyMessagingLiveEvents: MessagingLiveEvent[] = [];
@@ -168,6 +176,13 @@ const removeLocalDraft = (actorHandle: string, conversationId: string) => {
 };
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Messaging could not sync.";
+const retryableMessagingFailure = (error: unknown) =>
+  !(error instanceof SymposiumApiError) ||
+  error.status === null ||
+  error.status === 408 ||
+  error.status === 425 ||
+  error.status === 429 ||
+  (error.status !== null && error.status >= 500);
 const messagingLiveEventKey = (event: MessagingLiveEvent) =>
   event.id ?? event.cursor ?? `${event.kind}:${event.subjectId}:${event.createdAt ?? "unknown"}`;
 
@@ -184,6 +199,7 @@ type FailedSendDraft = {
 };
 
 type MessageDraftSyncState = "idle" | "saving" | "saved" | "local";
+type MessageDraftStorageState = "available" | "memory-only";
 
 type ConversationDraftSnapshot = {
   body: string;
@@ -311,6 +327,27 @@ function AttachmentTile({
         <img src={url} alt="" loading="lazy" />
         <CompactAttachmentFileName fileName={attachment.fileName} maxStemCharacters={24} />
       </button>
+    );
+  }
+  if (attachment.kind === "video") {
+    return (
+      <div className="message-attachment message-attachment-video">
+        <video
+          src={url}
+          controls
+          playsInline
+          preload="metadata"
+          aria-label={`Play ${attachment.fileName}`}
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            onPreview();
+          }}
+        />
+        <button type="button" title={`Preview ${attachment.fileName}`} onClick={onPreview}>
+          <CompactAttachmentFileName fileName={attachment.fileName} maxStemCharacters={24} />
+          <small>{formatAttachmentBytes(attachment.byteSize)} · Open preview</small>
+        </button>
+      </div>
     );
   }
   return (
@@ -890,6 +927,7 @@ export function MessagingExperience({
   const [draftState, dispatchDraft] = useReducer(reduceMessageDraft, emptyMessageDraftState);
   const draft = draftState.body;
   const [draftSyncState, setDraftSyncState] = useState<MessageDraftSyncState>("idle");
+  const [draftStorageState, setDraftStorageState] = useState<MessageDraftStorageState>("available");
   const [draftServerHydrated, setDraftServerHydrated] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([]);
   const [sendingCount, setSendingCount] = useState(0);
@@ -910,6 +948,7 @@ export function MessagingExperience({
   const [mediaCursor, setMediaCursor] = useState<string | null>(null);
   const [mediaLoading, setMediaLoading] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<MessageAttachmentPreview | null>(null);
+  const [historyContextMessageId, setHistoryContextMessageId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -917,12 +956,16 @@ export function MessagingExperience({
   const draftStateRef = useRef<MessageDraftState>(draftState);
   const draftServerHydratedRef = useRef(false);
   const draftSaveTimerRef = useRef<number | null>(null);
+  const draftRetryTimerRef = useRef<number | null>(null);
+  const draftRetryAttemptRef = useRef(0);
+  const persistDraftRef = useRef<(conversationId: string, body: string, expectedRevision: number, clientVersion: string) => void>(() => undefined);
   const failedSendAttachmentsRef = useRef(new Map<string, PendingMessageAttachment[]>());
   const failedSendDraftsRef = useRef(new Map<string, FailedSendDraft[]>());
   const latestSendDraftRef = useRef(new Map<string, ConversationDraftSnapshot>());
   const pendingSendCountsRef = useRef(new Map<string, number>());
   const sendConversationAliasesRef = useRef(new Map<string, string>());
-  const sendRequestQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const locallyHiddenMessageIdsRef = useRef(new Set<string>());
+  const sendRequestQueuesRef = useRef(new Map<string, Promise<void>>());
   const sendSequenceRef = useRef(0);
   const sendSessionRef = useRef({ actorHandle: actor.handle, generation: 1 });
   const liveRefreshTimerRef = useRef<number | null>(null);
@@ -934,12 +977,23 @@ export function MessagingExperience({
   const latestReadSequenceRef = useRef(0);
   const conversationListEpochRef = useRef(0);
   const conversationLoadEpochRef = useRef(0);
+  const conversationProjectionEpochRef = useRef(0);
+  const conversationProjectionEpochByIdRef = useRef(new Map<string, number>());
+  const messageProjectionEpochByConversationRef = useRef(new Map<string, number>());
+  const conversationSummaryEpochRef = useRef(new Map<string, number>());
+  const conversationSummaryRetryTimersRef = useRef(new Map<string, number>());
+  const conversationSummaryRetryAttemptsRef = useRef(new Map<string, number>());
+  const loadConversationRef = useRef<(conversationId: string, options?: { older?: boolean; quiet?: boolean }) => void>(() => undefined);
   const mediaLoadEpochRef = useRef(0);
   const searchLoadEpochRef = useRef(0);
+  const discoveryRefreshTimerRef = useRef<number | null>(null);
+  const refreshDiscoveryRef = useRef<() => void>(() => undefined);
   const mountedRef = useRef(true);
   const pendingAttachmentsRef = useRef<PendingMessageAttachment[]>(pendingAttachments);
   const conversationsRef = useRef<ConversationSummaryContract[]>(conversations);
   const messagesRef = useRef<MessageContract[]>(messages);
+  const searchResultsRef = useRef<MessageContract[] | null>(searchResults);
+  const mediaKindRef = useRef<MessageMediaKind | null>(mediaKind);
   const processedLiveEventKeysRef = useRef<string[]>(liveEvents.map(messagingLiveEventKey));
   const processedLiveEventKeySetRef = useRef(new Set(processedLiveEventKeysRef.current));
   const selectedRef = useRef(selectedConversationId);
@@ -954,6 +1008,23 @@ export function MessagingExperience({
   pendingAttachmentsRef.current = pendingAttachments;
   conversationsRef.current = conversations;
   messagesRef.current = messages;
+  searchResultsRef.current = searchResults;
+  mediaKindRef.current = mediaKind;
+
+  const markConversationProjectionChanged = useCallback((conversationId: string) => {
+    conversationProjectionEpochRef.current += 1;
+    conversationProjectionEpochByIdRef.current.set(
+      conversationId,
+      (conversationProjectionEpochByIdRef.current.get(conversationId) ?? 0) + 1
+    );
+  }, []);
+
+  const markMessageProjectionChanged = useCallback((conversationId: string) => {
+    messageProjectionEpochByConversationRef.current.set(
+      conversationId,
+      (messageProjectionEpochByConversationRef.current.get(conversationId) ?? 0) + 1
+    );
+  }, []);
 
   const applyDraftAction = useCallback((action: MessageDraftAction) => {
     const next = reduceMessageDraft(draftStateRef.current, action);
@@ -1051,6 +1122,7 @@ export function MessagingExperience({
   const loadConversations = useCallback(async (append = false) => {
     const requestEpoch = append ? conversationListEpochRef.current : conversationListEpochRef.current + 1;
     if (!append) conversationListEpochRef.current = requestEpoch;
+    const projectionEpoch = conversationProjectionEpochRef.current;
     const cursor = append ? conversationCursor : null;
     const parameters = new URLSearchParams({ limit: quick ? "8" : "24" });
     if (cursor) parameters.set("cursor", cursor);
@@ -1060,9 +1132,12 @@ export function MessagingExperience({
         { cache: "no-store" }
       );
       if (requestEpoch !== conversationListEpochRef.current) return;
-      setConversations((current) => append
-        ? [...current, ...page.conversations.filter((entry) => !current.some((existing) => existing.id === entry.id))]
-        : page.conversations);
+      const projectionChanged = projectionEpoch !== conversationProjectionEpochRef.current;
+      setConversations((current) => projectionChanged
+        ? mergeConversationPageAfterProjectionChange(current, page.conversations)
+        : append
+          ? [...current, ...page.conversations.filter((entry) => !current.some((existing) => existing.id === entry.id))]
+          : page.conversations);
       setConversationCursor(page.nextCursor);
       setError("");
     } catch (loadError) {
@@ -1075,6 +1150,7 @@ export function MessagingExperience({
   const loadConversation = useCallback(async (conversationId: string, options: { older?: boolean; quiet?: boolean } = {}) => {
     const requestEpoch = options.older ? conversationLoadEpochRef.current : conversationLoadEpochRef.current + 1;
     if (!options.older) conversationLoadEpochRef.current = requestEpoch;
+    const projectionEpoch = messageProjectionEpochByConversationRef.current.get(conversationId) ?? 0;
     if (!messageIdPattern.test(conversationId)) {
       const recipientHandle = cleanHandle(conversationId.replace(/^direct:/, ""));
       const recipient = profiles[recipientHandle];
@@ -1097,6 +1173,13 @@ export function MessagingExperience({
         { cache: "no-store" }
       );
       if (requestEpoch !== conversationLoadEpochRef.current || selectedRef.current !== conversationId) return;
+      if (
+        !options.older &&
+        projectionEpoch !== (messageProjectionEpochByConversationRef.current.get(conversationId) ?? 0)
+      ) {
+        void loadConversationRef.current(conversationId, { quiet: options.quiet });
+        return;
+      }
       setConversation(page.conversation);
       if (!draftServerHydratedRef.current) {
         const local = readLocalDraft(actor.handle, conversationId);
@@ -1113,9 +1196,11 @@ export function MessagingExperience({
         setDraftServerHydrated(true);
         setDraftSyncState(hydratedDraft.dirty ? "local" : "idle");
       }
+      const visiblePageMessages = page.messages.filter((message) => !locallyHiddenMessageIdsRef.current.has(message.id));
       setMessages((current) => options.older
-        ? [...page.messages, ...current.filter((entry) => !page.messages.some((incoming) => incoming.id === entry.id))]
-        : page.messages);
+        ? mergeCanonicalMessagePage(current, visiblePageMessages)
+        : visiblePageMessages);
+      if (!options.older) setHistoryContextMessageId(null);
       setMessageCursor(page.nextCursor);
       setConversations((current) => current.map((entry) => entry.id === page.conversation.id ? page.conversation : entry));
       if (!options.older && page.conversation.status === "active") {
@@ -1140,6 +1225,77 @@ export function MessagingExperience({
       }
     }
   }, [actor.handle, messageCursor, profiles, quick, scheduleReadReceipt]);
+  loadConversationRef.current = loadConversation;
+
+  const loadConversationSummary = useCallback(async (conversationId: string) => {
+    if (!messageIdPattern.test(conversationId)) return;
+    const pendingRetry = conversationSummaryRetryTimersRef.current.get(conversationId);
+    if (pendingRetry !== undefined) window.clearTimeout(pendingRetry);
+    conversationSummaryRetryTimersRef.current.delete(conversationId);
+    const requestEpoch = (conversationSummaryEpochRef.current.get(conversationId) ?? 0) + 1;
+    conversationSummaryEpochRef.current.set(conversationId, requestEpoch);
+    const projectionEpoch = conversationProjectionEpochByIdRef.current.get(conversationId) ?? 0;
+    const requestActorHandle = actor.handle;
+    const requestGeneration = sendSessionRef.current.generation;
+    try {
+      const result = await symposiumApi.request<{ conversation: ConversationSummaryContract }>(
+        withActor(`/api/conversations/${encodeURIComponent(conversationId)}`, requestActorHandle),
+        { cache: "no-store" }
+      );
+      if (
+        conversationSummaryEpochRef.current.get(conversationId) !== requestEpoch ||
+        sendSessionRef.current.actorHandle !== requestActorHandle ||
+        sendSessionRef.current.generation !== requestGeneration
+      ) return;
+      conversationSummaryRetryAttemptsRef.current.delete(conversationId);
+      if (projectionEpoch !== (conversationProjectionEpochByIdRef.current.get(conversationId) ?? 0)) {
+        void loadConversationSummaryRef.current(conversationId);
+        return;
+      }
+      const summary = result.conversation;
+      setConversations((current) => upsertConversationProjection(current, summary));
+      if (selectedRef.current === conversationId) {
+        setConversation(summary);
+        const next = applyDraftAction({
+          type: "server",
+          conversationId,
+          body: summary.draftBody,
+          revision: summary.draftRevision,
+          clientVersion: summary.draftClientVersion,
+          preserveLocal: draftStateRef.current.dirty,
+          updatedAt: summary.draftUpdatedAt
+        });
+        setDraftSyncState(next.dirty ? "local" : "idle");
+      }
+    } catch (loadError) {
+      if (
+        conversationSummaryEpochRef.current.get(conversationId) !== requestEpoch ||
+        sendSessionRef.current.actorHandle !== requestActorHandle ||
+        sendSessionRef.current.generation !== requestGeneration
+      ) return;
+      if (loadError instanceof SymposiumApiError && loadError.status === 404) {
+        conversationSummaryRetryAttemptsRef.current.delete(conversationId);
+        conversationListEpochRef.current += 1;
+        setConversations((current) => current.filter((entry) => entry.id !== conversationId));
+        if (selectedRef.current === conversationId) selectConversation(null);
+        return;
+      }
+      setError(errorText(loadError));
+      if (!retryableMessagingFailure(loadError)) {
+        conversationSummaryRetryAttemptsRef.current.delete(conversationId);
+        return;
+      }
+      const attempt = Math.min(6, (conversationSummaryRetryAttemptsRef.current.get(conversationId) ?? 0) + 1);
+      conversationSummaryRetryAttemptsRef.current.set(conversationId, attempt);
+      const retryTimer = window.setTimeout(() => {
+        conversationSummaryRetryTimersRef.current.delete(conversationId);
+        loadConversationSummaryRef.current(conversationId);
+      }, Math.min(30_000, 1_000 * (2 ** (attempt - 1))));
+      conversationSummaryRetryTimersRef.current.set(conversationId, retryTimer);
+    }
+  }, [actor.handle, applyDraftAction]); // eslint-disable-line react-hooks/exhaustive-deps
+  const loadConversationSummaryRef = useRef(loadConversationSummary);
+  loadConversationSummaryRef.current = loadConversationSummary;
 
   useEffect(() => {
     setConversationListLoading(true);
@@ -1159,6 +1315,8 @@ export function MessagingExperience({
   }, []);
 
   const mergeLiveMessage = useCallback((incoming: MessageContract, kind: string) => {
+    markMessageProjectionChanged(incoming.conversationId);
+    markConversationProjectionChanged(incoming.conversationId);
     const selected = selectedRef.current === incoming.conversationId;
     if (selected) {
       setMessages((current) => kind === "message.sent" || current.some((message) => message.id === incoming.id)
@@ -1171,6 +1329,17 @@ export function MessagingExperience({
         const history = historyRef.current;
         if (history && shouldStickToBottomRef.current) history.scrollTop = history.scrollHeight;
       });
+      setSearchResults((current) => current ? reconcileDiscoveryMessage(current, incoming) : current);
+      setMediaResults((current) => reconcileDiscoveryMessage(current, incoming));
+      if (searchResultsRef.current || mediaKindRef.current) {
+        searchLoadEpochRef.current += 1;
+        mediaLoadEpochRef.current += 1;
+        if (discoveryRefreshTimerRef.current !== null) window.clearTimeout(discoveryRefreshTimerRef.current);
+        discoveryRefreshTimerRef.current = window.setTimeout(() => {
+          discoveryRefreshTimerRef.current = null;
+          refreshDiscoveryRef.current();
+        }, 0);
+      }
     }
 
     const mergeSummary = (current: ConversationSummaryContract) => {
@@ -1186,7 +1355,7 @@ export function MessagingExperience({
         unreadCount: kind === "message.sent" && incomingFromAnotherPerson && !alreadyHadMessage
             ? current.unreadCount + 1
             : current.unreadCount,
-        updatedAt: kind === "message.sent" ? incoming.createdAt : current.updatedAt
+        updatedAt: kind === "message.sent" && shouldReplaceLast ? incoming.createdAt : current.updatedAt
       };
     };
 
@@ -1194,7 +1363,7 @@ export function MessagingExperience({
     setConversations((current) => current
       .map((entry) => entry.id === incoming.conversationId ? mergeSummary(entry) : entry)
       .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.updatedAt.localeCompare(left.updatedAt)));
-  }, [actor.handle, scheduleReadReceipt]);
+  }, [actor.handle, markConversationProjectionChanged, markMessageProjectionChanged, scheduleReadReceipt]);
 
   useEffect(() => {
     let shouldRefreshConversations = false;
@@ -1217,7 +1386,7 @@ export function MessagingExperience({
         const knownSequence = Math.max(activeSequence, knownConversation?.lastMessage?.sequence ?? 0);
         const sequenceGap = liveEvent.kind === "message.sent" && knownSequence > 0 && canonicalMessage.sequence > knownSequence + 1;
         mergeLiveMessage(canonicalMessage, liveEvent.kind);
-        if (!knownConversation || sequenceGap) void loadConversations(false);
+        if (!knownConversation) void loadConversationSummary(canonicalMessage.conversationId);
         if (sequenceGap && selectedRef.current === canonicalMessage.conversationId) {
           void loadConversation(canonicalMessage.conversationId, { quiet: true });
         }
@@ -1227,25 +1396,41 @@ export function MessagingExperience({
         const messageId = liveEvent.payload?.messageId;
         const active = liveEvent.payload?.active;
         if (typeof messageId === "string" && typeof active === "boolean") {
+          markMessageProjectionChanged(liveEventConversationId(liveEvent));
+          markConversationProjectionChanged(liveEventConversationId(liveEvent));
           const updateStar = (entry: MessageContract) => entry.id === messageId ? { ...entry, starred: active } : entry;
           setMessages((current) => current.map(updateStar));
-          setMediaResults((current) => current.map(updateStar));
+          setSearchResults((current) => current?.map(updateStar) ?? current);
+          setMediaResults((current) => mediaKindRef.current === "starred" && !active
+            ? current.filter((entry) => entry.id !== messageId)
+            : current.map(updateStar));
           setConversation((current) => current?.lastMessage?.id === messageId
             ? { ...current, lastMessage: updateStar(current.lastMessage) }
             : current);
           setConversations((current) => current.map((entry) => entry.lastMessage?.id === messageId
             ? { ...entry, lastMessage: updateStar(entry.lastMessage) }
             : entry));
+          if (mediaKindRef.current === "starred") {
+            mediaLoadEpochRef.current += 1;
+            if (discoveryRefreshTimerRef.current !== null) window.clearTimeout(discoveryRefreshTimerRef.current);
+            discoveryRefreshTimerRef.current = window.setTimeout(() => {
+              discoveryRefreshTimerRef.current = null;
+              refreshDiscoveryRef.current();
+            }, 0);
+          }
         }
         continue;
       }
       if (liveEvent.kind === "conversation.draft.updated" || liveEvent.kind === "conversation.read") {
-        shouldRefreshConversations = true;
+        const conversationId = liveEventConversationId(liveEvent);
+        markConversationProjectionChanged(conversationId);
+        void loadConversationSummary(conversationId);
         continue;
       }
       if (!messagingEventRequiresRefresh(liveEvent)) continue;
-      shouldRefreshConversations = true;
       const eventConversationId = liveEventConversationId(liveEvent);
+      markConversationProjectionChanged(eventConversationId);
+      shouldRefreshConversations = true;
       const activeConversationId = selectedRef.current;
       if (activeConversationId && activeConversationId === eventConversationId && messageIdPattern.test(activeConversationId)) {
         liveRefreshConversationIdRef.current = activeConversationId;
@@ -1268,6 +1453,8 @@ export function MessagingExperience({
     if (liveRefreshTimerRef.current !== null) window.clearTimeout(liveRefreshTimerRef.current);
     liveRefreshTimerRef.current = null;
     liveRefreshConversationIdRef.current = null;
+    if (discoveryRefreshTimerRef.current !== null) window.clearTimeout(discoveryRefreshTimerRef.current);
+    discoveryRefreshTimerRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -1282,6 +1469,7 @@ export function MessagingExperience({
       setConversation(null);
       setMessages([]);
       setMessageCursor(null);
+      setHistoryContextMessageId(null);
       setConversationLoading(false);
       applyDraftAction({
         type: "select",
@@ -1327,6 +1515,7 @@ export function MessagingExperience({
     setConversation(summary ?? null);
     setMessages([]);
     setMessageCursor(null);
+    setHistoryContextMessageId(null);
     setConversationLoading(messageIdPattern.test(selectedConversationId));
     const selectedDraft = applyDraftAction({
       type: "select",
@@ -1378,6 +1567,19 @@ export function MessagingExperience({
     setSendingCount(0);
     return () => {
       mountedRef.current = false;
+      conversationListEpochRef.current += 1;
+      conversationLoadEpochRef.current += 1;
+      conversationProjectionEpochRef.current += 1;
+      conversationProjectionEpochByIdRef.current.clear();
+      messageProjectionEpochByConversationRef.current.clear();
+      conversationSummaryEpochRef.current.clear();
+      for (const timer of conversationSummaryRetryTimersRef.current.values()) window.clearTimeout(timer);
+      conversationSummaryRetryTimersRef.current.clear();
+      conversationSummaryRetryAttemptsRef.current.clear();
+      locallyHiddenMessageIdsRef.current.clear();
+      if (draftRetryTimerRef.current !== null) window.clearTimeout(draftRetryTimerRef.current);
+      draftRetryTimerRef.current = null;
+      draftRetryAttemptRef.current = 0;
       for (const attachment of pendingAttachmentsRef.current) void discardPendingAttachment(attachment, actor.handle);
       for (const [conversationId, failures] of failedSendDraftsRef.current) {
         const restoredConversationId = sendConversationAliasesRef.current.get(conversationId) ?? conversationId;
@@ -1396,7 +1598,7 @@ export function MessagingExperience({
       latestSendDraftRef.current.clear();
       pendingSendCountsRef.current.clear();
       sendConversationAliasesRef.current.clear();
-      sendRequestQueueRef.current = Promise.resolve();
+      sendRequestQueuesRef.current.clear();
       if (readReceiptTimerRef.current !== null) window.clearTimeout(readReceiptTimerRef.current);
     };
   }, [actor.handle]);
@@ -1439,6 +1641,8 @@ export function MessagingExperience({
     clientVersion: string
   ) => {
     if (!messageIdPattern.test(conversationId)) return;
+    if (draftRetryTimerRef.current !== null) window.clearTimeout(draftRetryTimerRef.current);
+    draftRetryTimerRef.current = null;
     const requestActorHandle = actor.handle;
     const requestGeneration = sendSessionRef.current.generation;
     const ownsDraftSurface = () => mountedRef.current &&
@@ -1453,9 +1657,11 @@ export function MessagingExperience({
         updatedAt?: string | null;
       }>(`/api/conversations/${encodeURIComponent(conversationId)}/draft`, {
         method: "PATCH",
+        idempotencyKey: createClientMutationId("message-draft-save"),
         body: { actorHandle: requestActorHandle, body, expectedRevision, clientVersion }
       });
       if (!ownsDraftSurface()) return;
+      draftRetryAttemptRef.current = 0;
       const savedDraft = saved.draft ?? {
         body: saved.body ?? body,
         revision: expectedRevision + 1,
@@ -1477,6 +1683,7 @@ export function MessagingExperience({
       if (!ownsDraftSurface()) return;
       const canonical = conversationDraftFromConflict(saveError);
       if (canonical) {
+        draftRetryAttemptRef.current = 0;
         const requestWasAlreadyApplied = canonical.body === body && canonical.clientVersion === clientVersion;
         const next = applyDraftAction(requestWasAlreadyApplied ? {
           type: "saved",
@@ -1498,20 +1705,50 @@ export function MessagingExperience({
         return;
       }
       if (selectedRef.current === conversationId) setDraftSyncState("local");
+      if (!retryableMessagingFailure(saveError)) {
+        setError(errorText(saveError));
+        return;
+      }
+      const retryAttempt = Math.min(6, draftRetryAttemptRef.current + 1);
+      draftRetryAttemptRef.current = retryAttempt;
+      const retryDelay = Math.min(30_000, 1_000 * (2 ** (retryAttempt - 1)));
+      draftRetryTimerRef.current = window.setTimeout(() => {
+        draftRetryTimerRef.current = null;
+        const current = draftStateRef.current;
+        if (
+          ownsDraftSurface() &&
+          current.conversationId === conversationId &&
+          current.dirty &&
+          current.clientVersion
+        ) {
+          persistDraftRef.current(
+            conversationId,
+            current.body,
+            current.serverRevision,
+            current.clientVersion
+          );
+        }
+      }, retryDelay);
     }
   }, [actor.handle, applyDraftAction]);
+  persistDraftRef.current = persistDraft;
 
   useEffect(() => {
     if (!selectedConversationId || draftState.conversationId !== selectedConversationId) return;
     if (messageIdPattern.test(selectedConversationId) && !draftServerHydrated) return;
     if (draftSaveTimerRef.current !== null) window.clearTimeout(draftSaveTimerRef.current);
+    if (draftRetryTimerRef.current !== null) window.clearTimeout(draftRetryTimerRef.current);
+    draftRetryTimerRef.current = null;
+    draftRetryAttemptRef.current = 0;
     const storageKey = localDraftKey(actor.handle, selectedConversationId);
     const storedDraft = storedMessageDraftFromState(draftState);
     try {
       if (storedDraft) window.localStorage.setItem(storageKey, JSON.stringify(storedDraft));
       else window.localStorage.removeItem(storageKey);
+      setDraftStorageState("available");
     } catch {
       // The in-memory editor remains authoritative when browser storage is full or unavailable.
+      setDraftStorageState("memory-only");
     }
     if (draftState.dirty && draftState.clientVersion && messageIdPattern.test(selectedConversationId)) {
       const body = draftState.body;
@@ -1527,6 +1764,31 @@ export function MessagingExperience({
       draftSaveTimerRef.current = null;
     };
   }, [actor.handle, draftServerHydrated, draftState, persistDraft, selectedConversationId]);
+
+  useEffect(() => {
+    const retryWhenActive = () => {
+      if (document.visibilityState !== "visible") return;
+      const current = draftStateRef.current;
+      if (!current.conversationId || !current.dirty || !current.clientVersion) return;
+      if (draftRetryTimerRef.current !== null) window.clearTimeout(draftRetryTimerRef.current);
+      draftRetryTimerRef.current = null;
+      draftRetryAttemptRef.current = 0;
+      persistDraftRef.current(
+        current.conversationId,
+        current.body,
+        current.serverRevision,
+        current.clientVersion
+      );
+    };
+    window.addEventListener("focus", retryWhenActive);
+    window.addEventListener("online", retryWhenActive);
+    document.addEventListener("visibilitychange", retryWhenActive);
+    return () => {
+      window.removeEventListener("focus", retryWhenActive);
+      window.removeEventListener("online", retryWhenActive);
+      document.removeEventListener("visibilitychange", retryWhenActive);
+    };
+  }, []);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1724,7 +1986,7 @@ export function MessagingExperience({
         }
       }
     };
-    sendRequestQueueRef.current = sendRequestQueueRef.current.then(performSend, performSend);
+    void enqueueConversationSend(sendRequestQueuesRef.current, sendConversationId, performSend);
   };
 
   const uploadFiles = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1767,15 +2029,40 @@ export function MessagingExperience({
     }
   };
 
-  const updateMessage = (incoming: MessageContract) =>
+  const updateMessage = (incoming: MessageContract) => {
+    markMessageProjectionChanged(incoming.conversationId);
+    markConversationProjectionChanged(incoming.conversationId);
     setMessages((current) => mergeCanonicalMessage(current, incoming));
+    setSearchResults((current) => current ? reconcileDiscoveryMessage(current, incoming) : current);
+    setMediaResults((current) => reconcileDiscoveryMessage(current, incoming));
+    const updateSummary = (current: ConversationSummaryContract) => current.lastMessage?.id === incoming.id
+      ? { ...current, lastMessage: { ...incoming, starred: incoming.deletedAt ? false : current.lastMessage.starred } }
+      : current;
+    setConversation((current) => current?.id === incoming.conversationId ? updateSummary(current) : current);
+    setConversations((current) => current.map((entry) => entry.id === incoming.conversationId ? updateSummary(entry) : entry));
+  };
 
   const star = async (message: MessageContract) => {
     try {
       await symposiumApi.request(`/api/conversations/${message.conversationId}/messages/${message.id}/star`, {
         method: "POST", body: { actorHandle: actor.handle, active: !message.starred }
       });
+      markMessageProjectionChanged(message.conversationId);
+      markConversationProjectionChanged(message.conversationId);
+      const active = !message.starred;
+      const updateStar = (entry: MessageContract) => entry.id === message.id ? { ...entry, starred: active } : entry;
       setMessages((current) => current.map((entry) => entry.id === message.id ? { ...entry, starred: !message.starred } : entry));
+      setSearchResults((current) => current?.map(updateStar) ?? current);
+      setMediaResults((current) => mediaKindRef.current === "starred" && !active
+        ? current.filter((entry) => entry.id !== message.id)
+        : current.map(updateStar));
+      setConversation((current) => current?.lastMessage?.id === message.id
+        ? { ...current, lastMessage: updateStar(current.lastMessage) }
+        : current);
+      setConversations((current) => current.map((entry) => entry.lastMessage?.id === message.id
+        ? { ...entry, lastMessage: updateStar(entry.lastMessage) }
+        : entry));
+      if (mediaKindRef.current === "starred") refreshDiscoveryRef.current();
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
@@ -1799,7 +2086,15 @@ export function MessagingExperience({
       const data = await symposiumApi.request<{ message?: MessageContract }>(`/api/conversations/${message.conversationId}/messages/${message.id}`, {
         method: "DELETE", body: { actorHandle: actor.handle, mode, expectedRevision: mode === "everyone" ? message.revision : undefined }
       });
-      if (mode === "self") setMessages((current) => current.filter((entry) => entry.id !== message.id));
+      if (mode === "self") {
+        markMessageProjectionChanged(message.conversationId);
+        markConversationProjectionChanged(message.conversationId);
+        locallyHiddenMessageIdsRef.current.add(message.id);
+        setMessages((current) => current.filter((entry) => entry.id !== message.id));
+        setSearchResults((current) => current?.filter((entry) => entry.id !== message.id) ?? current);
+        setMediaResults((current) => current.filter((entry) => entry.id !== message.id));
+        void loadConversationSummary(message.conversationId);
+      }
       else updateMessage(data.message ?? { ...message, body: "", attachments: [], deletedAt: new Date().toISOString(), revision: message.revision + 1 });
     } catch (actionError) { setError(errorText(actionError)); }
   };
@@ -1811,6 +2106,7 @@ export function MessagingExperience({
         method: "PATCH", body: { actorHandle: actor.handle, ...preference }
       });
       const updated = { ...conversation, ...preference };
+      markConversationProjectionChanged(conversation.id);
       setConversation(updated);
       setConversations((current) => current
         .map((entry) => entry.id === updated.id ? updated : entry)
@@ -1822,7 +2118,10 @@ export function MessagingExperience({
     if (!conversation || !window.confirm("Clear all of this chat's current messages and attachments for you? This cannot be undone.")) return;
     try {
       await symposiumApi.request(`/api/conversations/${conversation.id}/clear`, { method: "POST", body: { actorHandle: actor.handle } });
+      markMessageProjectionChanged(conversation.id);
+      markConversationProjectionChanged(conversation.id);
       setMessages([]);
+      setHistoryContextMessageId(null);
       applyDraftAction({ type: "clear", conversationId: conversation.id });
       removeLocalDraft(actor.handle, conversation.id);
       await loadConversations(false);
@@ -1833,7 +2132,11 @@ export function MessagingExperience({
     if (!conversation || !window.confirm("Delete this chat for you? It will stay hidden until you deliberately start a new connection.")) return;
     try {
       await symposiumApi.request(`/api/conversations/${conversation.id}`, { method: "DELETE", body: { actorHandle: actor.handle } });
+      conversationListEpochRef.current += 1;
+      markConversationProjectionChanged(conversation.id);
+      markMessageProjectionChanged(conversation.id);
       removeLocalDraft(actor.handle, conversation.id);
+      setConversations((current) => current.filter((entry) => entry.id !== conversation.id));
       selectConversation(null);
       await loadConversations(false);
     } catch (actionError) { setError(errorText(actionError)); }
@@ -1913,6 +2216,11 @@ export function MessagingExperience({
       if (requestEpoch === mediaLoadEpochRef.current) setMediaLoading(false);
     }
   };
+  refreshDiscoveryRef.current = () => {
+    if (searchResultsRef.current && searchQuery.trim()) void searchChat(false);
+    const activeMediaKind = mediaKindRef.current;
+    if (activeMediaKind) void loadMedia(activeMediaKind, false);
+  };
 
   const addPeople = async (handles: string[]) => {
     if (!conversation || conversation.kind !== "group" || !handles.length) return false;
@@ -1987,20 +2295,44 @@ export function MessagingExperience({
     }
     if (!conversation) return;
     const conversationId = conversation.id;
+    const visibleMessageIdsAtStart = new Set(messagesRef.current.map((message) => message.id));
     shouldStickToBottomRef.current = false;
     setConversationLoading(true);
+    const loadContext = async (attempt: number): Promise<void> => {
+      const requestEpoch = conversationLoadEpochRef.current + 1;
+      conversationLoadEpochRef.current = requestEpoch;
+      const projectionEpoch = messageProjectionEpochByConversationRef.current.get(conversationId) ?? 0;
+      try {
+        const page = await symposiumApi.request<MessagePageContract>(
+          withActor(`/api/conversations/${conversationId}/messages/${messageId}/context`, actor.handle),
+          { cache: "no-store" }
+        );
+        if (requestEpoch !== conversationLoadEpochRef.current || selectedRef.current !== conversationId) return;
+        const latestProjectionEpoch = messageProjectionEpochByConversationRef.current.get(conversationId) ?? 0;
+        if (projectionEpoch !== latestProjectionEpoch && attempt < 2) {
+          await loadContext(attempt + 1);
+          return;
+        }
+        const canonicalPage = projectionEpoch === latestProjectionEpoch
+          ? page.messages
+          : messagesRef.current.reduce((current, message) => {
+              const belongsToRequestedContext = current.some((entry) => entry.id === message.id);
+              const arrivedDuringRequest = !visibleMessageIdsAtStart.has(message.id);
+              return belongsToRequestedContext || arrivedDuringRequest
+                ? mergeCanonicalMessagePage(current, [message])
+                : current;
+            }, page.messages);
+        setConversation(page.conversation);
+        setMessages(canonicalPage);
+        setMessageCursor(page.nextCursor);
+        setHistoryContextMessageId(messageId);
+        window.requestAnimationFrame(() => window.requestAnimationFrame(scrollToTarget));
+      } catch (actionError) {
+        if (requestEpoch === conversationLoadEpochRef.current) setError(errorText(actionError));
+      }
+    };
     try {
-      const page = await symposiumApi.request<MessagePageContract>(
-        withActor(`/api/conversations/${conversationId}/messages/${messageId}/context`, actor.handle),
-        { cache: "no-store" }
-      );
-      if (selectedRef.current !== conversationId) return;
-      setConversation(page.conversation);
-      setMessages(page.messages);
-      setMessageCursor(page.nextCursor);
-      window.requestAnimationFrame(() => window.requestAnimationFrame(scrollToTarget));
-    } catch (actionError) {
-      setError(errorText(actionError));
+      await loadContext(0);
     } finally {
       if (selectedRef.current === conversationId) setConversationLoading(false);
     }
@@ -2057,6 +2389,21 @@ export function MessagingExperience({
               if (shouldStickToBottomRef.current) flushReadReceiptRef.current();
             }}
           >
+            {historyContextMessageId ? (
+              <button
+                className="return-to-latest-messages"
+                type="button"
+                disabled={conversationLoading}
+                onClick={() => {
+                  if (!selectedConversationId) return;
+                  shouldStickToBottomRef.current = true;
+                  void loadConversation(selectedConversationId);
+                }}
+              >
+                <ArrowDown size={13} />
+                {conversationLoading ? "Returning…" : "Return to latest"}
+              </button>
+            ) : null}
             {messageCursor ? <button className="load-older-messages" type="button" disabled={loadingOlder} onClick={() => selectedConversationId && void loadConversation(selectedConversationId, { older: true })}>{loadingOlder ? "Loading…" : "Load older messages"}</button> : null}
             {conversationLoading && !messages.length ? <div className="message-thread-loading"><LoaderCircle className="spin" size={22} /><span>Syncing this chat…</span></div> : null}
             {!conversationLoading && !messages.length ? <div className="empty-message-thread"><MessageCircle size={30} /><strong>{syntheticProfile ? `Start a conversation with ${syntheticProfile.name}` : "No messages here yet"}</strong><p>Messages and attachments will appear here.</p></div> : null}
@@ -2161,7 +2508,13 @@ export function MessagingExperience({
               <div className="message-draft-status" aria-live="polite">
                 {draftSyncState !== "idle" ? (
                   <small className={`message-draft-sync ${draftSyncState}`}>
-                    {draftSyncState === "saving" ? "Saving draft…" : draftSyncState === "saved" ? "Draft saved" : "Saved on this device · cloud sync pending"}
+                    {draftSyncState === "saving"
+                      ? "Saving draft…"
+                      : draftSyncState === "saved"
+                        ? "Draft saved"
+                        : draftStorageState === "memory-only"
+                          ? "Held in this tab · cloud sync pending"
+                          : "Saved on this device · cloud sync pending"}
                   </small>
                 ) : null}
                 {draftState.recovery ? (

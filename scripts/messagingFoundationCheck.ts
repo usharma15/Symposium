@@ -33,6 +33,13 @@ import {
   messagingEventRequiresRefresh
 } from "@/features/messages/messageLiveState";
 import {
+  mergeCanonicalMessagePage,
+  mergeConversationPageAfterProjectionChange,
+  reconcileDiscoveryMessage,
+  upsertConversationProjection
+} from "@/features/messages/messageProjectionState";
+import { enqueueConversationSend } from "@/features/messages/messageSendQueue";
+import {
   compactMessageUnreadCount,
   latestUnreadChangingEventKey,
   messagingEventCanChangeUnread
@@ -319,6 +326,59 @@ const main = async () => {
     liveMira.avatarUrl
   );
   assert.deepEqual(withoutConversationParticipant(groupSummary, "lin").participants.map((participant) => participant.handle), ["@mira"]);
+  const liveSummary = {
+    ...groupSummary,
+    lastMessage: secondLiveMessage,
+    unreadCount: 2,
+    updatedAt: secondLiveMessage.createdAt
+  };
+  assert.equal(
+    mergeConversationPageAfterProjectionChange([liveSummary], [groupSummary])[0]?.lastMessage?.id,
+    secondLiveMessage.id
+  );
+  assert.equal(
+    mergeConversationPageAfterProjectionChange(
+      [liveSummary],
+      [{ ...groupSummary, id: "00000000-0000-4000-8000-000000000099" }]
+    ).length,
+    2
+  );
+  assert.equal(upsertConversationProjection([groupSummary], liveSummary)[0]?.unreadCount, 2);
+  assert.equal(
+    mergeCanonicalMessagePage([{ ...firstLiveMessage, revision: 2, body: "canonical" }], [firstLiveMessage])[0]?.body,
+    "canonical"
+  );
+  assert.deepEqual(
+    reconcileDiscoveryMessage(
+      [firstLiveMessage],
+      { ...firstLiveMessage, revision: 2, body: "", deletedAt: "2026-07-18T20:02:00.000Z" }
+    ),
+    []
+  );
+  const sendQueues = new Map<string, Promise<void>>();
+  const sendOrder: string[] = [];
+  let releaseFirstSend: () => void = () => undefined;
+  const firstSendGate = new Promise<void>((resolve) => {
+    releaseFirstSend = resolve;
+  });
+  const firstConversationSend = enqueueConversationSend(sendQueues, "conversation-a", async () => {
+    sendOrder.push("a1-start");
+    await firstSendGate;
+    sendOrder.push("a1-end");
+  });
+  const secondConversationSend = enqueueConversationSend(sendQueues, "conversation-a", async () => {
+    sendOrder.push("a2");
+  });
+  const independentConversationSend = enqueueConversationSend(sendQueues, "conversation-b", async () => {
+    sendOrder.push("b");
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(sendOrder, ["a1-start", "b"]);
+  releaseFirstSend();
+  await Promise.all([firstConversationSend, secondConversationSend, independentConversationSend]);
+  assert.deepEqual(sendOrder, ["a1-start", "b", "a1-end", "a2"]);
+  assert.equal(sendQueues.size, 0);
 
   const repository = readFileSync("apps/api/src/repository/conversations.ts", "utf8");
   const notifications = readFileSync("apps/api/src/repository/notifications.ts", "utf8");
@@ -356,6 +416,7 @@ const main = async () => {
   assert.match(repository, /Date\.now\(\) - new Date\(message\.createdAt\)\.getTime\(\) > messageEditWindowMs/);
   assert.match(repository, /draft_revision = draft_revision \+ 1/);
   assert.match(repository, /draft_client_version/);
+  assert.match(repository, /lock: "participant"/);
   assert.match(repository, /last_read_sequence < \$3/);
   assert.match(repository, /payload: \{ conversationId, messageId, sequence, message \}/);
   assert.match(repository, /message: canonicalMessage/);
@@ -396,7 +457,16 @@ const main = async () => {
   assert.match(client, /draftSaveTimerRef/);
   assert.match(client, /conversationLoadEpochRef/);
   assert.match(client, /failedSendDraftsRef/);
-  assert.match(client, /sendRequestQueueRef/);
+  assert.match(client, /sendRequestQueuesRef/);
+  assert.match(client, /enqueueConversationSend\(sendRequestQueuesRef\.current,\s*sendConversationId,\s*performSend\)/);
+  assert.match(client, /loadConversationSummary\(conversationId\)/);
+  assert.match(client, /mergeConversationPageAfterProjectionChange/);
+  assert.match(client, /projectionEpoch !== \(messageProjectionEpochByConversationRef\.current\.get\(conversationId\) \?\? 0\)/);
+  assert.match(client, /message-draft-save/);
+  assert.match(client, /draftRetryAttemptRef/);
+  assert.match(client, /Held in this tab · cloud sync pending/);
+  assert.match(client, /setSearchResults\(\(current\) => current\?\.map\(updateStar\) \?\? current\)/);
+  assert.match(client, /locallyHiddenMessageIdsRef\.current\.add\(message\.id\)/);
   assert.match(client, /messageReadViewportActive/);
   assert.match(client, /cloud sync pending/);
   assert.match(client, /storedMessageDraftFromState/);
@@ -405,6 +475,8 @@ const main = async () => {
   assert.match(client, /Transfer ownership/);
   assert.match(client, /Leave group/);
   assert.match(client, /messages\/\$\{messageId\}\/context/);
+  assert.match(client, /Return to latest/);
+  assert.match(client, /className="message-attachment message-attachment-video"/);
   assert.doesNotMatch(client, /\}, 80\)/);
   assert.match(client, /shouldRefreshConversations/);
   assert.match(client, /liveRefreshConversationIdRef/);
@@ -433,6 +505,10 @@ const main = async () => {
   assert.match(client, /messageSenderProfile\(message, conversation\?\.participants/);
   assert.doesNotMatch(client, /window\.prompt/);
   assert.match(styles, /\.message-composer\.has-attachments/);
+  assert.match(styles, /\.message-attachment-video video/);
+  assert.match(styles, /\.return-to-latest-messages/);
+  assert.match(styles, /minmax\(410px,\s*1\.78fr\)\s+minmax\(252px,\s*0\.82fr\)/);
+  assert.match(routes, /createPrivateDownloadUrl\(attachment\.objectKey,\s*15 \* 60\)/);
   assert.match(styles, /grid-area: previews/);
   assert.match(styles, /--messages-panel-top-clearance:\s*20px/);
   assert.match(styles, /--messages-center-bottom-clearance:\s*8px/);

@@ -21,7 +21,7 @@
 .messaging-experience {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(248px, 0.82fr) minmax(410px, 1.7fr) minmax(260px, 0.9fr);
+  grid-template-columns: minmax(248px, 0.82fr) minmax(410px, 1.78fr) minmax(252px, 0.82fr);
   width: min(1480px, 100%);
   height: 100%;
   min-height: 520px;
@@ -500,6 +500,24 @@
   font-size: 0.75rem;
 }
 
+.return-to-latest-messages {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(35, 141, 149, 0.24);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(235, 249, 247, 0.96);
+  color: #176f77 !important;
+  box-shadow: 0 5px 16px rgba(9, 22, 23, 0.1);
+  font-size: 0.69rem;
+  font-weight: 820;
+}
+
 .empty-message-thread,
 .messages-no-selection {
   display: grid;
@@ -790,6 +808,46 @@
 
 .message-attachment-image span {
   padding: 2px 4px;
+}
+
+.message-attachment-video {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 4px;
+  overflow: hidden;
+}
+
+.message-attachment-video video {
+  display: block;
+  width: min(360px, 100%);
+  max-height: 300px;
+  border-radius: 5px;
+  background: #071011;
+  object-fit: contain;
+}
+
+.message-attachment-video > button {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  border: 0;
+  border-radius: 5px;
+  padding: 4px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.message-attachment-video > button:hover,
+.message-attachment-video > button:focus-visible {
+  background: rgba(207, 239, 237, 0.48);
+}
+
+.message-attachment-video > button small {
+  flex: none;
 }
 
 .message-composer {
@@ -1938,7 +1996,8 @@
   .new-conversation-panel > header button.active,
   .create-message-group,
   .open-full-messages,
-  .message-media-more
+  .message-media-more,
+  .return-to-latest-messages
 ) {
   border-color: rgba(131, 203, 209, 0.28);
   background: rgba(35, 103, 108, 0.44);
@@ -1951,6 +2010,8 @@
   .message-info-results > button:hover,
   .message-attachment:hover,
   .message-attachment:focus-visible,
+  .message-attachment-video > button:hover,
+  .message-attachment-video > button:focus-visible,
   .message-composer-attachment-preview:hover,
   .message-bubble-actions button:hover
 ) {

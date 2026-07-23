@@ -263,7 +263,9 @@ export const registerMessageRoutes = (app: FastifyInstance) => {
   app.get<{ Params: AttachmentParams }>("/v1/message-attachments/:attachmentId/access", async (request, reply) => {
     try {
       const attachment = await assertMessageAttachmentAccess(uuidParam(request.params.attachmentId), await withWriteActor(request, { scope: "message-attachment", limit: 120 }));
-      return reply.send({ url: await createPrivateDownloadUrl(attachment.objectKey) });
+      // Inline video players can issue fresh range requests while playing or
+      // seeking, so message previews receive a bounded 15-minute access window.
+      return reply.send({ url: await createPrivateDownloadUrl(attachment.objectKey, 15 * 60) });
     } catch (error) {
       return sendError(app, reply, error);
     }
