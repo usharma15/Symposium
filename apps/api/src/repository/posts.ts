@@ -35,6 +35,7 @@ import {
   replaceOwnerAttachments
 } from "../services/attachmentOwnership";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
+import { createNotifications, notificationActorName } from "../services/notificationDelivery";
 import { assertCanonicalOpportunityUpdate, createOpportunityProjection, opportunityPostStatus, updateOpportunityProjection } from "../services/opportunityPosts";
 import { transitionPostAction } from "./actions";
 import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
@@ -296,6 +297,7 @@ export const applyPostAction = async (
   let updated: InquiryItemContract;
   const stagedEvents: StoredLiveEvent[] = [];
   let activity: CanonicalActionActivityContract | undefined;
+  let actionChanged = false;
 
   try {
     await client.query("BEGIN");
@@ -389,6 +391,7 @@ export const applyPostAction = async (
         input.active
       );
       activity = transition.activity;
+      actionChanged = transition.changed;
       const reconciled = setItemActionMembership(
         existing,
         input.action,
@@ -442,6 +445,29 @@ export const applyPostAction = async (
     const privatePost = updated.room === "office" || updated.kind === "draft";
     const eventScope = await communityEventScope(client, updated.postType === "paper" ? null : updated.communityId);
     await stageCommunityProfileInvalidation(client, handle, input.action !== "read" && eventScope.visibility === "community", stagedEvents);
+    const canNotifyAuthor =
+      !privatePost &&
+      actionChanged &&
+      activity?.active === true &&
+      (input.action === "signal" || input.action === "fork") &&
+      Boolean(updated.authorHandle && updated.authorHandle !== handle) &&
+      (
+        eventScope.visibility !== "community" ||
+        Boolean(updated.authorHandle && eventScope.audienceHandles?.includes(updated.authorHandle))
+      );
+    if (canNotifyAuthor) {
+      const actionLabel = input.action === "signal" ? "signalled" : "reshared";
+      const createdNotifications = await createNotifications(client, [{
+        profileHandle: updated.authorHandle!,
+        kind: input.action === "signal" ? "post_signal" : "post_reshare",
+        title: `${await notificationActorName(client, handle)} ${actionLabel} your ${updated.postType ?? "post"}`,
+        body: updated.title,
+        href: `/posts/${encodeURIComponent(postId)}`,
+        dedupeKey: `post-${input.action}:${postId}:${handle}:${activity!.revision}`,
+        metadata: { postId, action: input.action, actorHandle: handle }
+      }]);
+      stagedEvents.push(...createdNotifications.events);
+    }
     if (!privatePost) {
       stagedEvents.push(
         await stageEvent(client, {

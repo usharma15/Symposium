@@ -16,6 +16,7 @@ import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../service
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { replaceOwnerAttachments } from "../services/attachmentOwnership";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
+import { createNotifications } from "../services/notificationDelivery";
 import { actorHandle, ensureLiveData, rowToAttachment, type AttachmentRow } from "./foundation";
 
 type ApplicationRow = {
@@ -67,10 +68,11 @@ const requireDatabase = async () => {
 const postAccess = async (client: PoolClient, postId: string, lock = false) => {
   const result = await client.query<{
     authorHandle: string | null;
+    title: string;
     deletedAt: Date | null;
     opportunity: { status?: string; deadline?: string | null } | null;
   }>(
-    `SELECT author_handle AS "authorHandle", deleted_at AS "deletedAt", opportunity
+    `SELECT author_handle AS "authorHandle", title, deleted_at AS "deletedAt", opportunity
      FROM posts WHERE id = $1${lock ? " FOR UPDATE" : ""}`,
     [postId]
   );
@@ -215,6 +217,16 @@ export const createOpportunityApplication = async (rawInput: unknown, actor: Act
     application = (await hydrate(client, inserted.rows, handle))[0]!;
     await stageAuditLog(client, { actorHandle: handle, action: "opportunity.application.create", subjectType: "opportunity_application", subjectId: id, metadata: { postId: input.postId, attachmentCount: application.attachments.length } });
     await completeMutation(client, handle, mutation, application);
+    const createdNotifications = await createNotifications(client, [{
+      profileHandle: post.authorHandle!,
+      kind: "opportunity_application_received",
+      title: `${application.applicantName} applied to your opportunity`,
+      body: post.title,
+      href: `/posts/${encodeURIComponent(input.postId)}/applications?application=${encodeURIComponent(id)}`,
+      dedupeKey: `opportunity-application-received:${id}`,
+      metadata: { postId: input.postId, applicationId: id, applicantHandle: handle }
+    }]);
+    events.push(...createdNotifications.events);
     events.push(await stageEvent(client, {
       kind: "opportunity.application.created", actorHandle: handle, audienceHandles: [handle, post.authorHandle!],
       subjectType: "opportunity_application", subjectId: id, visibility: "private", payload: { postId: input.postId, applicationId: id }
@@ -256,6 +268,18 @@ export const updateOpportunityApplication = async (postId: string, applicationId
     );
     application = (await hydrate(client, [{ ...current, shortlisted: input.shortlisted, ...revision.rows[0] }], handle))[0]!;
     await completeMutation(client, handle, mutation, application);
+    if (current.shortlisted !== input.shortlisted) {
+      const createdNotifications = await createNotifications(client, [{
+        profileHandle: current.applicantHandle,
+        kind: input.shortlisted ? "opportunity_application_shortlisted" : "opportunity_application_status",
+        title: input.shortlisted ? "Your application was shortlisted" : "Your application status changed",
+        body: post.title,
+        href: `/posts/${encodeURIComponent(postId)}`,
+        dedupeKey: `opportunity-application-status:${applicationId}:${application.revision}`,
+        metadata: { postId, applicationId, shortlisted: input.shortlisted }
+      }]);
+      events.push(...createdNotifications.events);
+    }
     events.push(await stageEvent(client, { kind: "opportunity.application.updated", actorHandle: handle, audienceHandles: [handle], subjectType: "opportunity_application", subjectId: applicationId, visibility: "private", payload: { postId, applicationId } }));
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
@@ -307,6 +331,16 @@ export const deleteOpportunityApplication = async (postId: string, applicationId
     const response = { id: applicationId, postId };
     await stageAuditLog(client, { actorHandle: handle, action: "opportunity.application.delete", subjectType: "opportunity_application", subjectId: applicationId, metadata: { postId, attachmentCount: attachmentIds.length } });
     await completeMutation(client, handle, mutation, response);
+    const createdNotifications = await createNotifications(client, [{
+      profileHandle: existing.rows[0].applicantHandle,
+      kind: "opportunity_application_closed",
+      title: "Your opportunity application was closed",
+      body: post.title,
+      href: `/posts/${encodeURIComponent(postId)}`,
+      dedupeKey: `opportunity-application-closed:${applicationId}`,
+      metadata: { postId, applicationId }
+    }]);
+    events.push(...createdNotifications.events);
     events.push(await stageEvent(client, { kind: "opportunity.application.deleted", actorHandle: handle, audienceHandles: [handle, existing.rows[0].applicantHandle], subjectType: "opportunity_application", subjectId: applicationId, visibility: "private", payload: { postId, applicationId } }));
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }

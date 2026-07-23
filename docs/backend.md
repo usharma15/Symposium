@@ -50,6 +50,8 @@ Useful endpoints:
 - `GET /v1/conversations`
 - `POST /v1/messages`
 - `GET /v1/notifications`
+- `GET /v1/notifications/unread`
+- `POST /v1/notifications/read`
 - `GET /v1/workspace`
 - `POST /v1/notes/blocks`
 - `POST /v1/notes/publish`
@@ -192,6 +194,8 @@ The current guarantees are:
 - Action rows are the canonical save/signal/fork ledger. The denormalized post/comment arrays and metrics are reconciled inside the same locked transaction for fast reads.
 - Bootstrap reads profiles, posts, comments, attachments, communities, and action ledgers from one repeatable-read snapshot, so a refresh cannot mix rows from different mutation moments.
 - Follow, membership, call, notification, message, note, opportunity, assistant, and upload-prepare writes use atomic transactions and no-op-aware state transitions.
+- Directed notifications are created in the same transaction as the follow, comment/reply, signal/reshare, community decision, workspace-access/comment, group-membership/role, or opportunity-application action that caused them. Stable per-recipient dedupe keys make mutation retries safe, and every inserted notification stages a private `notification.created` event for immediate multi-tab delivery. Read and read-all writes stage the matching private convergence event.
+- The closed notification bell uses the scalar unread projection instead of loading the notification page. Opening the panel performs one snapshot-consistent page-and-count query; cursor pagination and unread counts use recipient-scoped partial indexes. Focus, visibility, online, stream replay, and bounded backoff recover missed delivery without continuous polling.
 - Direct-message creation uses a transaction-scoped advisory lock so simultaneous first messages cannot produce duplicate direct conversations.
 - Note publishing is a recoverable two-stage idempotent promotion: a retry reuses the same post, moves the draft discussion and its public attachment copies into the destination, soft-removes the source from workspace projections, and then completes the publication record.
 - Workspace, note, block, AI-conversation, message-conversation, notification, private-community, Office, and draft access is checked server-side against the authenticated actor. Unknown and foreign resources deliberately collapse to `404` where existence should not be disclosed.
@@ -205,6 +209,7 @@ The current guarantees are:
 - Migration `0016_comment_attachment_ownership` extends the attachment-owner constraint to comments. Comment and reply creation claims verified staged objects in the comment transaction; post/comment edits replace a content-version-guarded desired attachment set; comment deletion and parent-post deletion queue every canonical and staging object durably.
 - Migration `0017_content_quotes` adds the shared post/comment quote snapshot columns. Quote resolution rejects private, deleted, or self-referential sources; source deletion sanitizes dependent snapshots, and live deletion events converge the unavailable state across active tabs.
 - Migration `0018_comment_quote_kind` backfills the source post kind into existing comment quote snapshots so paper/thought presentation remains consistent without exposing parent-post content.
+- Migration `0042_notification_delivery_indexes` adds recipient-scoped page and unread indexes for the notification center without introducing any timer or idle database work.
 
 `npm run verify` is the local release gate. It runs security, infrastructure, domain, attachment, mutation, profile, TypeScript, and production-build checks. `npm audit --audit-level=high` is the dependency vulnerability gate.
 

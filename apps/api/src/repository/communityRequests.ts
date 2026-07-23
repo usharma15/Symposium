@@ -10,6 +10,7 @@ import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { runAtomic } from "../services/transactions";
+import { createNotifications } from "../services/notificationDelivery";
 import { assertCommunityManager } from "./communityAuthorization";
 import { actorHandle, ensureLiveData, ensureProfileHandle, getCommunity, publicCommunity } from "./foundation";
 
@@ -86,6 +87,21 @@ export const resolveCommunityRequest = async (rawInput: unknown, actor: Actor, m
       metadata: mutationAuditMetadata(mutation, { communityId: community.id, decision: input.decision })
     });
     await completeMutation(client, handle, mutation, response);
+    const createdNotifications = await createNotifications(client, [{
+      profileHandle: memberHandle,
+      kind: input.decision === "approve" ? "community_request_approved" : "community_request_declined",
+      title: input.decision === "approve"
+        ? `Your request to join ${community.name} was approved`
+        : `Your request to join ${community.name} was declined`,
+      body: input.decision === "approve"
+        ? "You now have access to the community."
+        : "The community remains private.",
+      href: input.decision === "approve"
+        ? `/communities/${encodeURIComponent(community.id)}`
+        : "/communities",
+      dedupeKey: `community-request-${input.decision}:${community.id}:${memberHandle}:${value.revision}`,
+      metadata: { communityId: community.id, decision: input.decision, reviewedByHandle: handle }
+    }]);
     const audience = await client.query<{ profileHandle: string }>(
       `SELECT profile_handle AS "profileHandle" FROM community_memberships WHERE community_id = $1 AND status = 'active'`,
       [community.id]
@@ -102,6 +118,6 @@ export const resolveCommunityRequest = async (rawInput: unknown, actor: Actor, m
       audienceHandles,
       payload: { communityId: community.id, memberHandle, decision: input.decision, revision: value.revision }
     });
-    return { value: response, events: [event] };
+    return { value: response, events: [...createdNotifications.events, event] };
   });
 };

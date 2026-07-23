@@ -14,6 +14,7 @@ import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";
 import { runAtomic } from "../services/transactions";
+import { createNotifications, notificationActorName } from "../services/notificationDelivery";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { decodeActivityCursor, decodeProfileCommentCursor, encodeActivityCursor, encodeProfileCommentCursor, listCanonicalProfileActivity } from "./actions";
 import { actorHandle, ensureLiveData, ensureProfileHandle, getInitialState } from "./foundation";
@@ -149,6 +150,12 @@ export const followProfile = async (rawInput: unknown, actor: Actor, mutation?: 
       updatedAt: string;
     }>(client, follower, mutation);
     if (claim.replayed) return { value: claim.response };
+    const previousFollow = await client.query<{ status: string }>(
+      `SELECT status FROM profile_follows
+       WHERE follower_handle = $1 AND following_handle = $2
+       FOR UPDATE`,
+      [follower, following]
+    );
     const result = await client.query<{ revision: number; updatedAt: Date | string }>(
       `INSERT INTO profile_follows (follower_handle, following_handle, status)
        VALUES ($1, $2, $3)
@@ -190,7 +197,18 @@ export const followProfile = async (rawInput: unknown, actor: Actor, mutation?: 
       visibility: input.status === "active" ? "public" : "private",
       payload: { follow: value }
     });
-    return { value, events: [event] };
+    const createdNotifications = input.status === "active" && previousFollow.rows[0]?.status !== "active"
+      ? await createNotifications(client, [{
+          profileHandle: following,
+          kind: "profile_followed",
+          title: `${await notificationActorName(client, follower)} followed you`,
+          body: "They will now see your public Symposium activity in their following feed.",
+          href: `/profiles/${encodeURIComponent(follower.replace(/^@/, ""))}`,
+          dedupeKey: `profile-followed:${follower}:${following}:${value.revision}`,
+          metadata: { followerHandle: follower }
+        }])
+      : { notifications: [], events: [] };
+    return { value, events: [...createdNotifications.events, event] };
   });
 };
 

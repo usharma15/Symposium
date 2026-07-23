@@ -94,7 +94,11 @@ import {
   createInquiryActionReconciler,
   type ProtectedActionMetricState
 } from "@/features/live-sync/inquiryActionReconciler";
-import type { CanonicalRoute, ProfileSocialView } from "@/features/navigation/canonicalRoute";
+import {
+  parseCanonicalRoute,
+  type CanonicalRoute,
+  type ProfileSocialView
+} from "@/features/navigation/canonicalRoute";
 import {
   canonicalRouteForView as routeForViewSnapshot,
   detailOriginFromSnapshot,
@@ -615,7 +619,7 @@ function SymposiumExperience({
   const [messagingEvents, setMessagingEvents] = useState<SymposiumLiveEvent[]>([]);
   const [messageTabletContext, setMessageTabletContext] = useState<{ conversationId: string; title: string; content: string } | null>(null);
   const [workspaceTabletDocument, setWorkspaceTabletDocument] = useState<WorkspaceDocument | null>(null);
-  const [notificationRevision, setNotificationRevision] = useState(0);
+  const [notificationEvents, setNotificationEvents] = useState<SymposiumLiveEvent[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [remoteSearchResults, setRemoteSearchResults] = useState<SearchResults | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -1634,12 +1638,9 @@ function SymposiumExperience({
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
     const payload = event.payload ?? {};
     if (
-      event.kind.startsWith("notification.") ||
-      event.kind === "conversation.participant.removed" ||
-      event.kind === "note.access.granted" ||
-      event.kind === "note.access.revoked"
+      event.kind.startsWith("notification.")
     ) {
-      setNotificationRevision((revision) => revision + 1);
+      setNotificationEvents((current) => [...current, event].slice(-1000));
     }
     if (
       event.kind.startsWith("message.") ||
@@ -4322,10 +4323,18 @@ function SymposiumExperience({
           </button>
           <NotificationsControl
             actorHandle={currentProfile.handle}
-            liveRevision={notificationRevision}
+            liveEvents={notificationEvents}
             onOpenConversation={(conversationId) => {
               setMessagesQuickOpen(false);
               navigateView({ messagesOpen: true, selectedConversationId: conversationId });
+            }}
+            onNavigate={(href) => {
+              const url = new URL(href, window.location.origin);
+              const { scrollY: _scrollY, ...target } = snapshotForCanonicalRoute(
+                parseCanonicalRoute(url.pathname, url.search),
+                (postId) => itemsRef.current.find((item) => item.id === postId)?.room
+              );
+              navigateView(target);
             }}
           />
           <MessagesUnreadButton

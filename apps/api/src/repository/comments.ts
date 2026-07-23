@@ -32,6 +32,11 @@ import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../service
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { markQuotedCommentUnavailable, resolveContentQuote, resolveUpdatedContentQuote } from "../services/contentQuotes";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
+import {
+  createNotifications,
+  notificationActorName,
+  type CreateNotificationInput
+} from "../services/notificationDelivery";
 import { transitionCommentAction } from "./actions";
 import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
 import { assertCommunityCommentDeletion } from "./communityAuthorization";
@@ -208,7 +213,10 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         message: "Private comment attachments require protected delivery before they can be published."
       });
     }
-    if (comment.parentId && !findCommentInTree(existingComments, comment.parentId)) {
+    const parentComment = comment.parentId
+      ? findCommentInTree(existingComments, comment.parentId)
+      : null;
+    if (comment.parentId && !parentComment) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
     }
     const attachmentChange = await replaceOwnerAttachments(client, {
@@ -290,6 +298,43 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
     });
     await completeMutation(client, handle, mutation, { comment, item: updatedItem });
     const eventScope = await communityEventScope(client, lockedItem.postType === "paper" ? null : lockedItem.communityId);
+    const eligibleCommunityRecipients = eventScope.visibility === "community"
+      ? new Set(eventScope.audienceHandles ?? [])
+      : null;
+    const canNotify = (recipient: string | null | undefined) =>
+      Boolean(
+        recipient &&
+        recipient !== handle &&
+        (!eligibleCommunityRecipients || eligibleCommunityRecipients.has(recipient))
+      );
+    const notificationInputs: CreateNotificationInput[] = [];
+    if (canNotify(parentComment?.authorHandle)) {
+      notificationInputs.push({
+        profileHandle: parentComment!.authorHandle!,
+        kind: "comment_reply",
+        title: `${comment.author} replied to your comment`,
+        body: lockedItem.title,
+        href: `/posts/${encodeURIComponent(postId)}?comment=${encodeURIComponent(comment.id as string)}`,
+        dedupeKey: `comment-reply:${comment.id}:${parentComment!.authorHandle}`,
+        metadata: { postId, commentId: comment.id, parentCommentId: parentComment!.id, actorHandle: handle }
+      });
+    }
+    if (
+      canNotify(lockedItem.authorHandle) &&
+      lockedItem.authorHandle !== parentComment?.authorHandle
+    ) {
+      notificationInputs.push({
+        profileHandle: lockedItem.authorHandle!,
+        kind: "post_comment",
+        title: `${comment.author} commented on your ${lockedItem.postType ?? "post"}`,
+        body: lockedItem.title,
+        href: `/posts/${encodeURIComponent(postId)}?comment=${encodeURIComponent(comment.id as string)}`,
+        dedupeKey: `post-comment:${comment.id}:${lockedItem.authorHandle}`,
+        metadata: { postId, commentId: comment.id, actorHandle: handle }
+      });
+    }
+    const createdNotifications = await createNotifications(client, notificationInputs);
+    stagedEvents.push(...createdNotifications.events);
     stagedEvents.push(await stageEvent(client, {
       kind: "comment.created",
       actorHandle: comment.authorHandle,
@@ -763,6 +808,7 @@ export const applyCommentAction = async (
   let updatedItem: InquiryItemContract;
   let updatedComment: InquiryCommentContract | undefined;
   let activity: CanonicalActionActivityContract | undefined;
+  let actionChanged = false;
   const stagedEvents: StoredLiveEvent[] = [];
 
   try {
@@ -839,6 +885,7 @@ export const applyCommentAction = async (
         input.active
       );
       activity = transition.activity;
+      actionChanged = transition.changed;
       canonicalActive = transition.activity.active;
       canonicalOriginal = setCommentActionMembership(
         original,
@@ -898,6 +945,29 @@ export const applyCommentAction = async (
     const eventScope = await communityEventScope(client, updatedItem.postType === "paper" ? null : updatedItem.communityId);
     if (input.action !== "read") {
       await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
+    }
+    const canNotifyAuthor =
+      !privatePost &&
+      actionChanged &&
+      activity?.active === true &&
+      (input.action === "signal" || input.action === "fork") &&
+      Boolean(original.authorHandle && original.authorHandle !== handle) &&
+      (
+        eventScope.visibility !== "community" ||
+        Boolean(original.authorHandle && eventScope.audienceHandles?.includes(original.authorHandle))
+      );
+    if (canNotifyAuthor) {
+      const actionLabel = input.action === "signal" ? "signalled" : "reshared";
+      const createdNotifications = await createNotifications(client, [{
+        profileHandle: original.authorHandle!,
+        kind: input.action === "signal" ? "comment_signal" : "comment_reshare",
+        title: `${await notificationActorName(client, handle)} ${actionLabel} your comment`,
+        body: updatedItem.title,
+        href: `/posts/${encodeURIComponent(postId)}?comment=${encodeURIComponent(commentId)}`,
+        dedupeKey: `comment-${input.action}:${commentId}:${handle}:${activity!.revision}`,
+        metadata: { postId, commentId, action: input.action, actorHandle: handle }
+      }]);
+      stagedEvents.push(...createdNotifications.events);
     }
     if (!privatePost) {
       stagedEvents.push(

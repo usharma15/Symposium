@@ -36,7 +36,10 @@ import { replaceOwnerAttachments } from "../services/attachmentOwnership";
 import { triggerStorageDeletion } from "../services/storageDeletion";
 import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData, ensureProfileHandle, type AttachmentRow } from "./foundation";
-import { createNotifications } from "./notifications";
+import {
+  createNotifications,
+  notificationActorName
+} from "../services/notificationDelivery";
 
 const messageEditWindowMs = 15 * 60 * 1000;
 const maxGroupParticipants = 50;
@@ -753,6 +756,19 @@ export const createGroupConversation = async (rawInput: unknown, actor: Actor, m
       subjectId: conversationId,
       metadata: mutationAuditMetadata(mutation, { memberCount: memberHandles.length + 1 })
     });
+    const ownerName = await notificationActorName(client, owner);
+    const createdNotifications = await createNotifications(
+      client,
+      memberHandles.map((profileHandle) => ({
+        profileHandle,
+        kind: "group_added",
+        title: `Added to ${input.title}`,
+        body: `${ownerName} started a private group with you.`,
+        href: `/messages?conversation=${encodeURIComponent(conversationId)}`,
+        dedupeKey: `group-added:${conversationId}:${profileHandle}`,
+        metadata: { conversationId, addedByHandle: owner }
+      }))
+    );
     const event = await stageEvent(client, {
       kind: "conversation.created",
       actorHandle: owner,
@@ -762,7 +778,7 @@ export const createGroupConversation = async (rawInput: unknown, actor: Actor, m
       audienceHandles: [owner, ...memberHandles],
       payload: { conversationId, memberHandles: [owner, ...memberHandles] }
     });
-    return { value, events: [event] };
+    return { value, events: [...createdNotifications.events, event] };
   });
 };
 
@@ -816,6 +832,19 @@ export const addConversationParticipants = async (conversationId: string, rawInp
       `SELECT profile_handle AS handle FROM conversation_participants WHERE conversation_id = $1 AND hidden_at IS NULL`,
       [conversationId]
     );
+    const addedByName = await notificationActorName(client, addedBy);
+    const createdNotifications = await createNotifications(
+      client,
+      addedHandles.map((profileHandle) => ({
+        profileHandle,
+        kind: "group_added",
+        title: `Added to ${membership.title ?? "a private group"}`,
+        body: `${addedByName} added you to the conversation.`,
+        href: `/messages?conversation=${encodeURIComponent(conversationId)}`,
+        dedupeKey: `group-added:${conversationId}:${profileHandle}:${membership.revision + 1}`,
+        metadata: { conversationId, addedByHandle: addedBy }
+      }))
+    );
     const event = await stageEvent(client, {
       kind: "conversation.participants.added",
       actorHandle: addedBy,
@@ -825,7 +854,7 @@ export const addConversationParticipants = async (conversationId: string, rawInp
       audienceHandles: Array.from(new Set([...audience.rows.map((row) => row.handle), ...addedHandles])),
       payload: { conversationId, addedHandles }
     });
-    return { value: { added: addedHandles }, events: [event] };
+    return { value: { added: addedHandles }, events: [...createdNotifications.events, event] };
   });
 };
 
@@ -922,7 +951,19 @@ export const updateConversationParticipant = async (
         audienceHandles: audience.rows.map((row) => row.handle),
         payload: { conversationId, previousOwnerHandle: actorProfile, ownerHandle: target }
       });
-      return { value: { conversationId, handle: target, role: input.role }, events: [event] };
+      const createdNotifications = await createNotifications(client, [{
+        profileHandle: target,
+        kind: "group_role_updated",
+        title: `You now own ${membership.title ?? "a private group"}`,
+        body: "You can manage participants, roles, and group settings.",
+        href: `/messages?conversation=${encodeURIComponent(conversationId)}`,
+        dedupeKey: `group-role:${conversationId}:${target}:owner:${membership.revision + 1}`,
+        metadata: { conversationId, role: "owner", updatedByHandle: actorProfile }
+      }]);
+      return {
+        value: { conversationId, handle: target, role: input.role },
+        events: [...createdNotifications.events, event]
+      };
     }
     const updated = await client.query(
       `UPDATE conversation_participants SET role = $3
@@ -952,7 +993,21 @@ export const updateConversationParticipant = async (
       audienceHandles: audience.rows.map((row) => row.handle),
       payload: { conversationId, targetHandle: target, role: input.role }
     });
-    return { value: { conversationId, handle: target, role: input.role }, events: [event] };
+    const createdNotifications = await createNotifications(client, [{
+      profileHandle: target,
+      kind: "group_role_updated",
+      title: `Your role changed in ${membership.title ?? "a private group"}`,
+      body: input.role === "admin"
+        ? "You can now help manage this conversation."
+        : "Your role is now member.",
+      href: `/messages?conversation=${encodeURIComponent(conversationId)}`,
+      dedupeKey: `group-role:${conversationId}:${target}:${input.role}:${membership.revision + 1}`,
+      metadata: { conversationId, role: input.role, updatedByHandle: actorProfile }
+    }]);
+    return {
+      value: { conversationId, handle: target, role: input.role },
+      events: [...createdNotifications.events, event]
+    };
   });
 };
 
@@ -992,7 +1047,7 @@ export const removeConversationParticipant = async (
       [conversationId, target, through, existing.status]
     );
     await client.query(`UPDATE conversations SET revision = revision + 1, updated_at = now() WHERE id = $1`, [conversationId]);
-    await createNotifications(client, [{
+    const createdNotifications = await createNotifications(client, [{
       profileHandle: target,
       kind: "group_removed",
       title: `Removed from ${membership.title ?? "a private group"}`,
@@ -1023,7 +1078,10 @@ export const removeConversationParticipant = async (
       audienceHandles: Array.from(new Set([target, ...audience.rows.map((row) => row.handle)])),
       payload: { conversationId, targetHandle: target, through }
     });
-    return { value: { conversationId, handle: target, removed: true }, events: [event] };
+    return {
+      value: { conversationId, handle: target, removed: true },
+      events: [...createdNotifications.events, event]
+    };
   });
 };
 

@@ -20,6 +20,11 @@ import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { runAtomic } from "../services/transactions";
+import {
+  createNotifications,
+  notificationActorName,
+  type CreateNotificationInput
+} from "../services/notificationDelivery";
 import { assertCommunityManager } from "./communityAuthorization";
 import {
   actorHandle,
@@ -321,8 +326,21 @@ export const updateCommunityMember = async (rawInput: unknown, actor: Actor, mut
     const response = { community: value, member: { handle: memberHandle, role: input.role } };
     await stageAuditLog(client, { actorHandle: handle, action: "community.member.role.update", subjectType: "community_membership", subjectId: `${community.id}:${memberHandle}`, metadata: mutationAuditMetadata(mutation, { previousRole: row.targetRole, role: input.role, communityId: community.id }) });
     await completeMutation(client, handle, mutation, response);
+    const createdNotifications = await createNotifications(client, [{
+      profileHandle: memberHandle,
+      kind: "community_role_updated",
+      title: input.role === "moderator"
+        ? `You are now a moderator of ${community.name}`
+        : `Your role changed in ${community.name}`,
+      body: input.role === "moderator"
+        ? "You can now help manage members and community activity."
+        : "Your community role is now member.",
+      href: `/communities/${encodeURIComponent(community.id)}`,
+      dedupeKey: `community-role:${community.id}:${memberHandle}:${value.revision}`,
+      metadata: { communityId: community.id, role: input.role, updatedByHandle: handle }
+    }]);
     const event = await stageEvent(client, { kind: "community.member.role.updated", actorHandle: handle, subjectType: "community", subjectId: community.id, visibility: community.visibility === "private" ? "community" : "public", audienceHandles: community.visibility === "private" ? await communityAudienceHandles(client, community.id) : undefined, payload: { communityId: community.id, member: response.member, revision: value.revision } });
-    return { value: response, events: [event] };
+    return { value: response, events: [...createdNotifications.events, event] };
   });
 };
 
@@ -374,11 +392,20 @@ export const removeCommunityMember = async (rawInput: unknown, actor: Actor, mut
     const response = { community: value, removedHandle: memberHandle };
     await stageAuditLog(client, { actorHandle: handle, action: "community.member.remove", subjectType: "community_membership", subjectId: `${community.id}:${memberHandle}`, metadata: mutationAuditMetadata(mutation, { previousRole: row.targetRole, communityId: community.id }) });
     await completeMutation(client, handle, mutation, response);
+    const createdNotifications = await createNotifications(client, [{
+      profileHandle: memberHandle,
+      kind: "community_member_removed",
+      title: `You were removed from ${community.name}`,
+      body: "Your community membership is no longer active.",
+      href: "/communities",
+      dedupeKey: `community-member-removed:${community.id}:${memberHandle}:${value.revision}`,
+      metadata: { communityId: community.id, removedByHandle: handle }
+    }]);
     const audienceHandles = community.visibility === "private"
       ? [...new Set([...(await communityAudienceHandles(client, community.id)), memberHandle])]
       : undefined;
     const event = await stageEvent(client, { kind: "community.member.removed", actorHandle: handle, subjectType: "community", subjectId: community.id, visibility: community.visibility === "private" ? "community" : "public", audienceHandles, payload: { communityId: community.id, removedHandle: memberHandle, revision: value.revision } });
-    return { value: response, events: [event] };
+    return { value: response, events: [...createdNotifications.events, event] };
   });
 };
 
@@ -409,7 +436,7 @@ export const joinOrRequestCommunity = async (rawInput: unknown, actor: Actor) =>
     if (existingMembership.rows[0]?.status === "blocked") {
       throw new TRPCError({ code: "FORBIDDEN", message: "This community membership is unavailable." });
     }
-    const membership = await client.query<{ status: string }>(
+    const membership = await client.query<{ status: string; updatedAt: Date | string }>(
       `INSERT INTO community_memberships (community_id, profile_handle, status)
        VALUES ($1, $2, $3)
        ON CONFLICT (community_id, profile_handle) DO UPDATE SET
@@ -418,7 +445,7 @@ export const joinOrRequestCommunity = async (rawInput: unknown, actor: Actor) =>
          last_accessed_at = CASE WHEN EXCLUDED.status = 'active' THEN now() ELSE community_memberships.last_accessed_at END
        WHERE community_memberships.status IS DISTINCT FROM EXCLUDED.status
          AND community_memberships.status <> 'active'
-       RETURNING status`,
+       RETURNING status, updated_at AS "updatedAt"`,
       [community.id, handle, requestedStatus]
     );
     const membershipStatus =
@@ -461,15 +488,42 @@ export const joinOrRequestCommunity = async (rawInput: unknown, actor: Actor) =>
       subjectId: community.id,
       metadata: { status: membershipStatus }
     });
+    let notificationInputs: CreateNotificationInput[] = [];
+    let privateAudienceHandles: string[] | undefined;
+    if (value.status === "requested") {
+      const managers = await client.query<{ handle: string }>(
+        `SELECT profile_handle AS handle
+         FROM community_memberships
+         WHERE community_id = $1
+           AND status = 'active'
+           AND role IN ('owner', 'moderator')`,
+        [community.id]
+      );
+      privateAudienceHandles = [...new Set([handle, ...managers.rows.map((row) => row.handle)])];
+      const requesterName = await notificationActorName(client, handle);
+      notificationInputs = managers.rows
+        .filter((manager) => manager.handle !== handle)
+        .map((manager) => ({
+          profileHandle: manager.handle,
+          kind: "community_join_request",
+          title: `${requesterName} requested to join ${community.name}`,
+          body: "Review the pending membership request.",
+          href: `/communities/${encodeURIComponent(community.id)}`,
+          dedupeKey: `community-join-request:${community.id}:${handle}:${new Date(membership.rows[0]!.updatedAt).getTime()}`,
+          metadata: { communityId: community.id, requesterHandle: handle }
+        }));
+    }
+    const createdNotifications = await createNotifications(client, notificationInputs);
     const event = await stageEvent(client, {
       kind: value.status === "requested" ? "community.requested" : "community.joined",
       actorHandle: handle,
       subjectType: "community",
       subjectId: community.id,
       visibility: value.status === "requested" ? "private" : "public",
+      audienceHandles: privateAudienceHandles,
       payload: { community: projectedCommunity, status: value.status }
     });
-    return { value, events: [event] };
+    return { value, events: [...createdNotifications.events, event] };
   });
 };
 

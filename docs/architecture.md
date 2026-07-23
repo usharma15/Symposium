@@ -150,6 +150,8 @@ Browser-session entry is server-coordinated. `app/SymposiumPage.tsx` reads a non
 
 Backend persistence is split into bounded repositories for posts, comments, identity, profiles, communities, conversations, notifications, search, workspaces, attachments, actions, opportunities, and the assistant. HTTP and tRPC routes import their owning repository directly. Cross-domain note-to-post and note-to-proposal publication is explicit in `services/notePublishing.ts`; there is no compatibility façade. The post repository owns proposal creation and metadata edits in the same transaction as the public post, while payment ingestion remains gated behind a future provider-owned service. Domain repositories may depend on the shared foundation, transaction, mutation, audit, event, database, and storage kernels, but they may not import one another sideways.
 
+The notification repository owns page/unread reads and read convergence. Domain mutations supply notification copy and metadata to the shared notification-delivery service while still inside their existing transaction; that kernel performs recipient-safe insertion, stable deduplication, and private recipient-event staging. Message bodies deliberately remain outside this notification table because Quick Messages has its own authoritative unread/read model.
+
 ## Extraction order
 
 1. Characterization checks and mutation-safe inbound reconciliation. Complete.

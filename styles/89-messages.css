@@ -1842,18 +1842,19 @@
 }
 
 .notifications-list p,
-.notifications-list small {
+.notifications-list time {
   margin: 0;
   color: var(--muted);
   font-size: 0.76rem;
   line-height: 1.38;
 }
 
-.notifications-list small {
+.notifications-list time {
   font-size: 0.65rem;
 }
 
-.notifications-more {
+.notifications-more,
+.notifications-retry {
   width: 100%;
   min-height: 39px;
   border: 0;
@@ -1861,6 +1862,14 @@
   color: #186d75;
   font-size: 0.74rem;
   font-weight: 820;
+}
+
+.notifications-retry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #9b4d3f;
 }
 
 .profile-primary-actions {
@@ -1984,7 +1993,7 @@
   color: #fff8ea;
 }
 
-.symposium-shell.night :is(.conversation-list-copy small, .message-thread-identity small, .messages-info-panel > header small, .message-peer-bio, .notifications-list p, .notifications-list small) {
+.symposium-shell.night :is(.conversation-list-copy small, .message-thread-identity small, .messages-info-panel > header small, .message-peer-bio, .notifications-list p, .notifications-list time) {
   color: rgba(246, 234, 212, 0.68);
 }
 
@@ -2056,7 +2065,7 @@
   background: rgba(125, 54, 49, 0.42);
 }
 
-.symposium-shell.night .notifications-more {
+.symposium-shell.night :is(.notifications-more, .notifications-retry) {
   color: #9bdde1;
 }
 

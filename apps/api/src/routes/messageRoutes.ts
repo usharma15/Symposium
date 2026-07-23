@@ -29,7 +29,11 @@ import {
   updateConversationParticipant,
   updateConversationPreferences
 } from "../repository/conversations";
-import { listNotifications, markNotificationRead } from "../repository/notifications";
+import {
+  getUnreadNotificationCount,
+  listNotifications,
+  markNotificationRead
+} from "../repository/notifications";
 import { mutationContextFromRequest } from "../services/mutations";
 import { createPrivateDownloadUrl } from "../services/storage";
 import type { RouteParams } from "./types";
@@ -247,6 +251,14 @@ export const registerMessageRoutes = (app: FastifyInstance) => {
   app.get<{ Querystring: Query }>("/v1/notifications", async (request, reply) => {
     try {
       return reply.send(await listNotifications(request.query, await withWriteActor(request, { scope: "notification-read", limit: 180 })));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/notifications/unread", async (request, reply) => {
+    try {
+      return reply.send(await getUnreadNotificationCount(await withWriteActor(request, { scope: "notification-read", limit: 180 })));
     } catch (error) {
       return sendError(app, reply, error);
     }

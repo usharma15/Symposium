@@ -1159,6 +1159,12 @@ export const notifications = pgTable(
   (table) => [
     index("notifications_read_idx").on(table.readAt),
     index("notifications_profile_created_idx").on(table.profileHandle, table.createdAt),
+    index("notifications_profile_page_idx")
+      .on(table.profileHandle, table.createdAt.desc(), table.id.desc())
+      .where(sql`${table.kind} <> 'message'`),
+    index("notifications_profile_unread_idx")
+      .on(table.profileHandle, table.createdAt.desc(), table.id.desc())
+      .where(sql`${table.kind} <> 'message' AND ${table.readAt} IS NULL`),
     index("notifications_retention_idx").on(table.createdAt).where(sql`${table.readAt} IS NOT NULL`),
     uniqueIndex("notifications_profile_dedupe_idx").on(table.profileHandle, table.dedupeKey).where(sql`${table.dedupeKey} IS NOT NULL`)
   ]

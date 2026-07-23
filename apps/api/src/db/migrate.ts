@@ -2121,6 +2121,18 @@ const migrations: Migration[] = [
       END
       $$;
     `
+  },
+  {
+    id: "0042_notification_delivery_indexes",
+    sql: `
+      CREATE INDEX IF NOT EXISTS notifications_profile_page_idx
+        ON notifications (profile_handle, created_at DESC, id DESC)
+        WHERE kind <> 'message';
+
+      CREATE INDEX IF NOT EXISTS notifications_profile_unread_idx
+        ON notifications (profile_handle, created_at DESC, id DESC)
+        WHERE kind <> 'message' AND read_at IS NULL;
+    `
   }
 ];
 

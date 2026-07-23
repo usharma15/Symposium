@@ -382,6 +382,7 @@ const main = async () => {
 
   const repository = readFileSync("apps/api/src/repository/conversations.ts", "utf8");
   const notifications = readFileSync("apps/api/src/repository/notifications.ts", "utf8");
+  const notificationDelivery = readFileSync("apps/api/src/services/notificationDelivery.ts", "utf8");
   const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
   const routes = readFileSync("apps/api/src/routes/messageRoutes.ts", "utf8");
   const workspaceRoutes = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
@@ -436,10 +437,10 @@ const main = async () => {
   assert.match(repository, /attachment\.file_name ~\* '\\\\.\(txt\|md\|doc\|docx\|odt\|rtf\|pdf\)\$'/);
   assert.match(repository, /maxGroupParticipants = 50/);
   assert.match(repository, /kind: "group_removed"/);
-  assert.match(notifications, /jsonb_to_recordset/);
-  assert.match(notifications, /input\.kind !== "message"/);
+  assert.match(notificationDelivery, /jsonb_to_recordset/);
+  assert.match(notificationDelivery, /input\.kind !== "message"/);
   assert.match(notifications, /kind <> 'message'/);
-  assert.match(notifications, /ON CONFLICT \(profile_handle, dedupe_key\)/);
+  assert.match(notificationDelivery, /ON CONFLICT \(profile_handle, dedupe_key\)/);
   assert.match(migration, /0034_messaging_foundation/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS message_stars/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS message_hidden_for/);
@@ -521,16 +522,16 @@ const main = async () => {
   assert.match(styles, /\.messaging-experience\.full > \.messages-info-panel\s*\{[^}]*height:\s*calc\(100% - var\(--messages-panel-top-clearance\) - var\(--messages-side-controls-clearance\)\)/);
   assert.match(styles, /@media \(max-width:\s*1020px\) and \(min-width:\s*761px\) and \(min-height:\s*761px\)[\s\S]*?\.messaging-experience\.full > :is\([\s\S]*?\.messages-thread-panel,[\s\S]*?\.messages-no-selection[\s\S]*?height:\s*calc\(100% - var\(--messages-panel-top-clearance\) - var\(--messages-side-controls-clearance\)\)/);
   assert.match(styles, /\.symposium-shell\.night :is\([\s\S]*?\.new-conversation-panel > header button,[\s\S]*?\.notifications-panel > header button[\s\S]*?color:\s*#fff8ea/);
-  assert.match(styles, /\.symposium-shell\.night \.notifications-more\s*\{[^}]*color:\s*#9bdde1/);
+  assert.match(styles, /\.symposium-shell\.night :is\(\.notifications-more,\s*\.notifications-retry\)\s*\{[^}]*color:\s*#9bdde1/);
   assert.match(client, /ownerType: "message"/);
   assert.match(client, /Open full messages/);
   assert.match(client, /IntersectionObserver/);
   assert.match(shell, /data-view=\{messagesOpen \? "messages"/);
   assert.match(shell, /onMessage=\{/);
-  assert.match(shell, /notificationRevision/);
+  assert.match(shell, /notificationEvents/);
   assert.match(shell, /setMessagingEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);
   assert.doesNotMatch(shell, /event\.kind === "conversation\.invited"/);
-  assert.match(shell, /event\.kind === "note\.access\.granted"/);
+  assert.match(shell, /event\.kind\.startsWith\("notification\."\)/);
   assert.match(routes, /\/v1\/conversations\/:id\/participants/);
   assert.match(routes, /\/v1\/conversations\/:id\/leave/);
   assert.match(routes, /\/v1\/conversations\/:id\/messages\/:messageId\/context/);

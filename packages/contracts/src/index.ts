@@ -1564,6 +1564,10 @@ export const notificationPageSchema = z.object({
   nextCursor: z.string().nullable()
 });
 
+export const notificationUnreadCountSchema = z.object({
+  unreadCount: z.number().int().nonnegative()
+});
+
 export const markNotificationInputSchema = z.object({
   notificationId: z.string().uuid().optional(),
   all: z.boolean().default(false)
@@ -1780,6 +1784,7 @@ export type ConversationSearchInputContract = z.infer<typeof conversationSearchI
 export type NotificationContract = z.infer<typeof notificationSchema>;
 export type NotificationListQueryContract = z.infer<typeof notificationListQuerySchema>;
 export type NotificationPageContract = z.infer<typeof notificationPageSchema>;
+export type NotificationUnreadCountContract = z.infer<typeof notificationUnreadCountSchema>;
 export type FollowProfileInputContract = z.infer<typeof followProfileInputSchema>;
 export type ProfileFollowContract = z.infer<typeof profileFollowSchema>;
 export type CommunityCallContract = z.infer<typeof communityCallSchema>;

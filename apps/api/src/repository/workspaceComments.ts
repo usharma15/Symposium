@@ -16,6 +16,11 @@ import { claimMutation, completeMutation, type MutationContext } from "../servic
 import { replaceOwnerAttachments } from "../services/attachmentOwnership";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
 import { runAtomic } from "../services/transactions";
+import {
+  createNotifications,
+  notificationActorName,
+  type CreateNotificationInput
+} from "../services/notificationDelivery";
 import { resolveActionTransition } from "./actions";
 import { recordContentView } from "./contentViews";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
@@ -23,6 +28,7 @@ import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 type WorkspaceCommentAccessRow = {
   id: string;
   ownerHandle: string;
+  title: string;
   role: WorkspaceAccessRoleContract;
 };
 
@@ -69,7 +75,7 @@ const roleSql = `
 
 const findDocumentAccess = async (client: PoolClient, noteId: string, handle: string, lock = false) => {
   const result = await client.query<WorkspaceCommentAccessRow>(
-    `SELECT note.id::text, note.owner_handle AS "ownerHandle", ${roleSql} AS role
+    `SELECT note.id::text, note.owner_handle AS "ownerHandle", note.title, ${roleSql} AS role
      FROM notes note
      LEFT JOIN workspace_note_grants direct
        ON direct.note_id = note.id AND direct.grantee_handle = $2
@@ -247,13 +253,15 @@ export const createWorkspaceComment = async (
     await lockDocument(client, noteId);
     const access = await findDocumentAccess(client, noteId, handle, true);
     assertCanComment(access);
+    let parentAuthorHandle: string | null = null;
     if (input.parentId) {
-      const parent = await client.query(
-        `SELECT 1 FROM workspace_note_comments
+      const parent = await client.query<{ authorHandle: string | null }>(
+        `SELECT author_handle AS "authorHandle" FROM workspace_note_comments
          WHERE id = $1 AND note_id = $2 AND deleted_at IS NULL FOR SHARE`,
         [input.parentId, noteId]
       );
       if (!parent.rowCount) throw new TRPCError({ code: "NOT_FOUND", message: "Reply target is no longer available." });
+      parentAuthorHandle = parent.rows[0]?.authorHandle ?? null;
     }
     const profile = await client.query<{ name: string }>("SELECT name FROM profiles WHERE handle = $1", [handle]);
     const inserted = await client.query<{ id: string }>(
@@ -279,6 +287,32 @@ export const createWorkspaceComment = async (
       metadata: mutationAuditMetadata(mutation, { noteId, parentId: input.parentId ?? null })
     });
     await completeMutation(client, handle, mutation, value);
+    const notificationInputs: CreateNotificationInput[] = [];
+    const href = `/workspace?view=notes&note=${encodeURIComponent(noteId)}&comment=${encodeURIComponent(commentId)}`;
+    const actorName = profile.rows[0]?.name ?? handle;
+    if (parentAuthorHandle && parentAuthorHandle !== handle) {
+      notificationInputs.push({
+        profileHandle: parentAuthorHandle,
+        kind: "workspace_comment_reply",
+        title: `${actorName} replied to your draft comment`,
+        body: access!.title,
+        href,
+        dedupeKey: `workspace-comment-reply:${commentId}:${parentAuthorHandle}`,
+        metadata: { noteId, commentId, parentCommentId: input.parentId, actorHandle: handle }
+      });
+    }
+    if (access!.ownerHandle !== handle && access!.ownerHandle !== parentAuthorHandle) {
+      notificationInputs.push({
+        profileHandle: access!.ownerHandle,
+        kind: "workspace_comment",
+        title: `${actorName} commented on your draft`,
+        body: access!.title,
+        href,
+        dedupeKey: `workspace-comment:${commentId}:${access!.ownerHandle}`,
+        metadata: { noteId, commentId, actorHandle: handle }
+      });
+    }
+    const createdNotifications = await createNotifications(client, notificationInputs);
     const event = await stageEvent(client, {
       kind: input.parentId ? "note.comment.replied" : "note.comment.created",
       actorHandle: handle,
@@ -288,7 +322,7 @@ export const createWorkspaceComment = async (
       visibility: "private",
       payload: { noteId, commentId, parentId: input.parentId ?? null }
     });
-    return { value, events: [event] };
+    return { value, events: [...createdNotifications.events, event] };
   });
 };
 
@@ -427,8 +461,8 @@ export const applyWorkspaceCommentAction = async (
     await lockDocument(client, noteId);
     const access = await findDocumentAccess(client, noteId, handle, true);
     if (!access) throw new TRPCError({ code: "NOT_FOUND", message: "Draft not found." });
-    const comment = await client.query<{ id: string }>(
-      `SELECT id::text FROM workspace_note_comments
+    const comment = await client.query<{ id: string; authorHandle: string | null }>(
+      `SELECT id::text, author_handle AS "authorHandle" FROM workspace_note_comments
        WHERE id = $1 AND note_id = $2 AND deleted_at IS NULL FOR UPDATE`,
       [commentId, noteId]
     );
@@ -436,11 +470,12 @@ export const applyWorkspaceCommentAction = async (
 
     let changed = false;
     let active = input.active;
+    let actionRevision: number | null = null;
     if (input.action === "read") {
       changed = await recordContentView(client, "note_comment", commentId, handle, input.trigger, input.surface ?? "workspace");
     } else {
-      const existing = await client.query<{ active: boolean }>(
-        `SELECT active FROM workspace_note_comment_actions
+      const existing = await client.query<{ active: boolean; revision: number }>(
+        `SELECT active, revision FROM workspace_note_comment_actions
          WHERE comment_id = $1 AND actor_handle = $2 AND action = $3 FOR UPDATE`,
         [commentId, handle, input.action]
       );
@@ -448,20 +483,26 @@ export const applyWorkspaceCommentAction = async (
       changed = transition.changed;
       active = transition.nextActive;
       if (!existing.rows[0]) {
-        await client.query(
+        const inserted = await client.query<{ revision: number }>(
           `INSERT INTO workspace_note_comment_actions (
              comment_id, note_id, actor_handle, action, active, count
-           ) VALUES ($1, $2, $3, $4, $5, $6)`,
+           ) VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING revision`,
           [commentId, noteId, handle, input.action, active, active ? 1 : 0]
         );
+        actionRevision = inserted.rows[0]!.revision;
       } else if (changed) {
-        await client.query(
+        const updated = await client.query<{ revision: number }>(
           `UPDATE workspace_note_comment_actions
            SET active = $4, count = CASE WHEN $4 THEN 1 ELSE 0 END,
                revision = revision + 1, updated_at = now()
-           WHERE comment_id = $1 AND actor_handle = $2 AND action = $3`,
+           WHERE comment_id = $1 AND actor_handle = $2 AND action = $3
+           RETURNING revision`,
           [commentId, handle, input.action, active]
         );
+        actionRevision = updated.rows[0]!.revision;
+      } else {
+        actionRevision = existing.rows[0].revision;
       }
     }
     if (changed) {
@@ -483,6 +524,17 @@ export const applyWorkspaceCommentAction = async (
     }
     await completeMutation(client, handle, mutation, value);
     if (!changed) return { value };
+    const createdNotifications = input.action === "signal" && active && comment.rows[0]?.authorHandle && comment.rows[0].authorHandle !== handle
+      ? await createNotifications(client, [{
+          profileHandle: comment.rows[0].authorHandle,
+          kind: "workspace_comment_signal",
+          title: `${await notificationActorName(client, handle)} signalled your draft comment`,
+          body: access.title,
+          href: `/workspace?view=notes&note=${encodeURIComponent(noteId)}&comment=${encodeURIComponent(commentId)}`,
+          dedupeKey: `workspace-comment-signal:${commentId}:${handle}:${actionRevision}`,
+          metadata: { noteId, commentId, actorHandle: handle }
+        }])
+      : { notifications: [], events: [] };
     const event = await stageEvent(client, {
       kind: `note.comment.${input.action}`,
       actorHandle: handle,
@@ -492,6 +544,6 @@ export const applyWorkspaceCommentAction = async (
       visibility: "private",
       payload: { noteId, commentId, action: input.action, active }
     });
-    return { value, events: [event] };
+    return { value, events: [...createdNotifications.events, event] };
   });
 };

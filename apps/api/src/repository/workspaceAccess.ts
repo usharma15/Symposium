@@ -20,6 +20,7 @@ import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { runAtomic } from "../services/transactions";
+import { createNotifications } from "../services/notificationDelivery";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
 type ResourceAccess = {
@@ -410,11 +411,15 @@ export const createWorkspaceGrant = async (
     }
     const grantor = await client.query<{ name: string }>("SELECT name FROM profiles WHERE handle = $1", [handle]);
     const copy = notificationCopy(resource, input.role, grantor.rows[0]?.name ?? handle);
-    await client.query(
-      `INSERT INTO notifications (profile_handle, kind, title, body, href, metadata)
-       VALUES ($1, 'workspace_access_granted', $2, $3, $4, $5)`,
-      [granteeHandle, copy.title, copy.body, copy.href, JSON.stringify({ resourceType: type, resourceId, role: input.role, grantedByHandle: handle })]
-    );
+    const createdNotifications = await createNotifications(client, [{
+      profileHandle: granteeHandle,
+      kind: "workspace_access_granted",
+      title: copy.title,
+      body: copy.body,
+      href: copy.href,
+      dedupeKey: `workspace-access-granted:${inserted.id}:${inserted.revision}`,
+      metadata: { resourceType: type, resourceId, role: input.role, grantedByHandle: handle }
+    }]);
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "workspace.access.grant",
@@ -428,7 +433,7 @@ export const createWorkspaceGrant = async (
       access: await accessOverview(client, resource, handle)
     };
     await completeMutation(client, handle, mutation, value);
-    return { value, events: [event] };
+    return { value, events: [...createdNotifications.events, event] };
   });
 };
 
@@ -472,6 +477,17 @@ export const updateWorkspaceGrant = async (
       [resource.id, granteeHandle, input.role, input.expectedRevision]
     );
     if (!updated.rowCount) throw new TRPCError({ code: "CONFLICT", message: "This access setting changed before your update." });
+    const createdNotifications = await createNotifications(client, [{
+      profileHandle: granteeHandle,
+      kind: "workspace_access_updated",
+      title: `Access updated for ${resource.name}`,
+      body: `${resource.type === "document" ? "Draft" : "Notebook"} · ${input.role} access`,
+      href: resource.type === "document"
+        ? `/workspace?view=notes&note=${encodeURIComponent(resource.id)}`
+        : "/workspace?view=notes",
+      dedupeKey: `workspace-access-updated:${type}:${resource.id}:${granteeHandle}:${updated.rows[0]!.revision}`,
+      metadata: { resourceType: type, resourceId, role: input.role, updatedByHandle: handle }
+    }]);
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "workspace.access.update",
@@ -482,7 +498,7 @@ export const updateWorkspaceGrant = async (
     const event = await stageAccessEvent(client, resource, handle, granteeHandle, input.role, "updated", [granteeHandle]);
     const value = { access: await accessOverview(client, resource, handle) };
     await completeMutation(client, handle, mutation, value);
-    return { value, events: [event] };
+    return { value, events: [...createdNotifications.events, event] };
   });
 };
 
@@ -525,18 +541,17 @@ export const deleteWorkspaceGrant = async (
       [resource.id, granteeHandle, input.expectedRevision]
     );
     if (!removed.rowCount) throw new TRPCError({ code: "CONFLICT", message: "This access setting changed before removal." });
-    if (granteeHandle !== handle) {
-      await client.query(
-        `INSERT INTO notifications (profile_handle, kind, title, body, href, metadata)
-         VALUES ($1, 'workspace_access_revoked', $2, $3, '/workspace?view=notes', $4)`,
-        [
-          granteeHandle,
-          `Access removed from ${resource.name}`,
-          `${resource.type === "document" ? "Draft" : "Notebook"} access was removed.`,
-          JSON.stringify({ resourceType: type, resourceId, removedByHandle: handle })
-        ]
-      );
-    }
+    const createdNotifications = granteeHandle === handle
+      ? { notifications: [], events: [] }
+      : await createNotifications(client, [{
+          profileHandle: granteeHandle,
+          kind: "workspace_access_revoked",
+          title: `Access removed from ${resource.name}`,
+          body: `${resource.type === "document" ? "Draft" : "Notebook"} access was removed.`,
+          href: "/workspace?view=notes",
+          dedupeKey: `workspace-access-revoked:${type}:${resource.id}:${granteeHandle}:${input.expectedRevision}`,
+          metadata: { resourceType: type, resourceId, removedByHandle: handle }
+        }]);
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "workspace.access.revoke",
@@ -562,7 +577,7 @@ export const deleteWorkspaceGrant = async (
     }
     const value = { removed: true, resourceId: resource.id, granteeHandle, access };
     await completeMutation(client, handle, mutation, value);
-    return { value, events: [event] };
+    return { value, events: [...createdNotifications.events, event] };
   });
 };
 
