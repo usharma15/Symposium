@@ -1000,11 +1000,17 @@ function PdfAttachmentPreview({
           void loadingTask?.destroy().catch(() => undefined);
           return;
         }
-        const dimensions = await Promise.all(Array.from({ length: loadedDocument.numPages }, async (_, index) => {
-          const pdfPage = await loadedDocument.getPage(index + 1);
-          const viewport = pdfPage.getViewport({ scale: 1 });
-          return { width: viewport.width, height: viewport.height };
-        }));
+        const firstPage = await loadedDocument.getPage(1);
+        const firstViewport = firstPage.getViewport({ scale: 1 });
+        const firstDimensions = { width: firstViewport.width, height: firstViewport.height };
+        const dimensions = mode === "expanded"
+          ? await Promise.all(Array.from({ length: loadedDocument.numPages }, async (_, index) => {
+              if (index === 0) return firstDimensions;
+              const pdfPage = await loadedDocument.getPage(index + 1);
+              const viewport = pdfPage.getViewport({ scale: 1 });
+              return { width: viewport.width, height: viewport.height };
+            }))
+          : Array.from({ length: loadedDocument.numPages }, () => firstDimensions);
         if (cancelled) return;
         setDocument(loadedDocument);
         setPageDimensions(dimensions);
@@ -1017,7 +1023,7 @@ function PdfAttachmentPreview({
       cancelled = true;
       void loadingTask?.destroy().catch(() => undefined);
     };
-  }, [attachment.id, attachment.url]);
+  }, [attachment.id, attachment.url, mode]);
 
   useEffect(() => {
     if (!document) return;
@@ -1185,7 +1191,9 @@ function PdfAttachmentPreview({
               dimensions={pageDimensions[index] ?? fallbackDimensions}
               availableWidth={availablePageWidth}
               zoom={zoom}
-              shouldRender={Math.abs(pageNumber - boundedPage) <= 2}
+              shouldRender={mode === "expanded"
+                ? Math.abs(pageNumber - boundedPage) <= 2
+                : pageNumber === boundedPage}
               translatedSegments={translated?.segments ?? []}
               showTranslation={translation.showTranslationForPage(pageNumber)}
             />
