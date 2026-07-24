@@ -262,6 +262,20 @@ assert.deepEqual(
   ]
 );
 assert.deepEqual(
+  pdfTranslationSegmentsFromTextContent(4, {
+    items: [
+      { str: "A spatially measured", hasEOL: false, transform: [12, 0, 0, 12, 80, 720], height: 12 },
+      { str: "PDF heading", hasEOL: false, transform: [12, 0, 0, 12, 240, 720], height: 12 },
+      { str: "A separate paragraph line", hasEOL: false, transform: [10, 0, 0, 10, 80, 690], height: 10 },
+      { str: "continues here.", hasEOL: false, transform: [10, 0, 0, 10, 260, 690], height: 10 }
+    ]
+  }),
+  [
+    { id: "pdf-4-line-0", text: "A spatially measured PDF heading" },
+    { id: "pdf-4-line-1", text: "A separate paragraph line continues here." }
+  ]
+);
+assert.deepEqual(
   restoreTranslationSegmentOrder(
     [{ id: "a", text: "First" }, { id: "b", text: "Second" }],
     [{ id: "b", text: "Deuxième" }, { id: "a", text: "Premier" }]

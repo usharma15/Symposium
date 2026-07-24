@@ -336,7 +336,12 @@ const plainTextToDocxBlocks = (text: string): DocxPreviewBlock[] => {
 };
 
 type PdfTextContentLike = {
-  items: Array<{ str?: unknown; hasEOL?: unknown } | unknown>;
+  items: Array<{
+    str?: unknown;
+    hasEOL?: unknown;
+    transform?: unknown;
+    height?: unknown;
+  } | unknown>;
 };
 
 type PdfTranslationSegmentGroup = TranslationSourceSegmentContract & {
@@ -353,6 +358,7 @@ const pdfTranslationSegmentGroupsFromTextContent = (
   const groups: PdfTranslationSegmentGroup[] = [];
   let line = "";
   let spanIndexes: number[] = [];
+  let lineBaseline: number | null = null;
   let visibleSpanIndex = 0;
   const flush = () => {
     const text = line.replace(/\s+/g, " ").trim();
@@ -365,6 +371,7 @@ const pdfTranslationSegmentGroupsFromTextContent = (
     }
     line = "";
     spanIndexes = [];
+    lineBaseline = null;
   };
 
   textContent.items.forEach((item) => {
@@ -372,6 +379,25 @@ const pdfTranslationSegmentGroupsFromTextContent = (
       return;
     }
     const text = item.str.replace(/\s+/g, " ").trim();
+    const transform = "transform" in item && Array.isArray(item.transform)
+      ? item.transform
+      : null;
+    const baseline = transform && typeof transform[5] === "number"
+      ? transform[5]
+      : null;
+    const itemHeight = "height" in item && typeof item.height === "number"
+      ? Math.abs(item.height)
+      : 0;
+    const baselineTolerance = Math.max(2, itemHeight * 0.45);
+    if (
+      line &&
+      lineBaseline !== null &&
+      baseline !== null &&
+      Math.abs(baseline - lineBaseline) > baselineTolerance
+    ) {
+      flush();
+    }
+    if (lineBaseline === null && baseline !== null) lineBaseline = baseline;
     const separator = line && !/^[,.;:!?%\])}]/.test(text) ? " " : "";
     line += `${separator}${text}`;
     spanIndexes.push(visibleSpanIndex);
