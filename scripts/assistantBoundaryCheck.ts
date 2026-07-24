@@ -843,6 +843,17 @@ assert.match(attachmentViews, /new pdfjs\.TextLayer/);
 assert.match(attachmentViews, /readPdfPageText\(document, boundedPage\)/);
 assert.match(attachmentViews, /const imageDataUrl = await renderPdfPageTranslationImage\(document, boundedPage\)/);
 assert.doesNotMatch(attachmentViews, /pdfPageNeedsVisualTranslationFallback/);
+const visionTranslationCanvasBlock = attachmentViews.match(
+  /if \(visionTranslationBlocks\.length\) \{([\s\S]*?)\n      return;\n    \}/
+)?.[1] ?? "";
+assert.doesNotMatch(
+  visionTranslationCanvasBlock,
+  /fillRect\(0, 0, translationCanvas\.width, translationCanvas\.height\)/
+);
+assert.ok(
+  visionTranslationCanvasBlock.indexOf("visionTranslationBlocks.forEach") <
+  visionTranslationCanvasBlock.indexOf("preservedArtifacts.forEach")
+);
 assert.match(attachmentViews, /DocumentTranslationControl state=\{translation\}/);
 assert.match(documentTranslationControl, /\["English", "French", "German", "Spanish"\]/);
 assert.match(documentTranslationControl, /This translates the current page/);

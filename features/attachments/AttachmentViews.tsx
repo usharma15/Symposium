@@ -1144,8 +1144,17 @@ function PdfContinuousPage({
       translationCanvas.height
     );
     if (visionTranslationBlocks.length) {
-      context.fillStyle = pageBackground;
-      context.fillRect(0, 0, translationCanvas.width, translationCanvas.height);
+      const scaleX = translationCanvas.width / Math.max(1, renderedWidth);
+      const scaleY = translationCanvas.height / Math.max(1, renderedHeight);
+      visionTranslationBlocks.forEach((block) => {
+        const padding = Math.max(1, block.fontSize * 0.08);
+        const left = Math.max(0, (block.left - padding) * scaleX);
+        const top = Math.max(0, (block.top - padding) * scaleY);
+        const width = Math.min(translationCanvas.width - left, (block.width + padding * 2) * scaleX);
+        const height = Math.min(translationCanvas.height - top, (block.height + padding * 2) * scaleY);
+        context.fillStyle = pageBackground;
+        context.fillRect(left, top, width, height);
+      });
       preservedArtifacts.forEach((artifact) => {
         const sourceX = translationCanvas.width * artifact.x / 1000;
         const sourceY = translationCanvas.height * artifact.y / 1000;
@@ -1162,17 +1171,6 @@ function PdfContinuousPage({
           sourceWidth,
           sourceHeight
         );
-      });
-      const scaleX = translationCanvas.width / Math.max(1, renderedWidth);
-      const scaleY = translationCanvas.height / Math.max(1, renderedHeight);
-      visionTranslationBlocks.forEach((block) => {
-        const padding = Math.max(1, block.fontSize * 0.08);
-        const left = Math.max(0, (block.left - padding) * scaleX);
-        const top = Math.max(0, (block.top - padding) * scaleY);
-        const width = Math.min(translationCanvas.width - left, (block.width + padding * 2) * scaleX);
-        const height = Math.min(translationCanvas.height - top, (block.height + padding * 2) * scaleY);
-        context.fillStyle = pageBackground;
-        context.fillRect(left, top, width, height);
       });
       return;
     }
