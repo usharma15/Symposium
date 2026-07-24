@@ -82,7 +82,70 @@ const sourceDocument = (document: unknown, fallback: string) => {
   return parsed.success ? parsed.data : plainTextDocument(fallback);
 };
 
-const sourceSegments = (document: VersionedDocumentContract): TranslationSourceSegmentContract[] => {
+type TranslationTextPiece =
+  | { kind: "structure"; text: string }
+  | { kind: "text"; text: string; ordinal: number };
+
+const translationTextPieces = (text: string): TranslationTextPiece[] => {
+  const pieces: TranslationTextPiece[] = [];
+  let textOrdinal = 0;
+  const pushNaturalText = (value: string) => {
+    if (!value) return;
+    const leading = value.match(/^[ \u00a0]+/)?.[0] ?? "";
+    const trailing = value.slice(leading.length).match(/[ \u00a0]+$/)?.[0] ?? "";
+    const natural = value.slice(leading.length, value.length - trailing.length);
+    if (leading) pieces.push({ kind: "structure", text: leading });
+    if (natural) pieces.push({ kind: "text", text: natural, ordinal: textOrdinal++ });
+    if (trailing) pieces.push({ kind: "structure", text: trailing });
+  };
+
+  let cursor = 0;
+  const structuralWhitespace = /[ \u00a0]*[\t\r\n]+[ \t\r\n\u00a0]*/g;
+  for (const match of text.matchAll(structuralWhitespace)) {
+    const start = match.index ?? cursor;
+    pushNaturalText(text.slice(cursor, start));
+    pieces.push({ kind: "structure", text: match[0] });
+    cursor = start + match[0].length;
+  }
+  pushNaturalText(text.slice(cursor));
+  return pieces;
+};
+
+const translationPieceId = (baseId: string, piece: Extract<TranslationTextPiece, { kind: "text" }>, hasStructure: boolean) =>
+  hasStructure ? `${baseId}:t${piece.ordinal}` : baseId;
+
+const addRunSegments = (
+  segments: TranslationSourceSegmentContract[],
+  baseId: string,
+  text: string | undefined
+) => {
+  if (!text) return;
+  const pieces = translationTextPieces(text);
+  const hasStructure = pieces.some((piece) => piece.kind === "structure");
+  for (const piece of pieces) {
+    if (piece.kind === "text" && piece.text.trim()) {
+      segments.push({ id: translationPieceId(baseId, piece, hasStructure), text: piece.text });
+    }
+  }
+};
+
+const translatedRunText = (
+  baseId: string,
+  sourceText: string,
+  translated: Map<string, string>
+) => {
+  const pieces = translationTextPieces(sourceText);
+  const hasStructure = pieces.some((piece) => piece.kind === "structure");
+  return pieces.map((piece) => {
+    if (piece.kind === "structure") return piece.text;
+    const value = translated.get(translationPieceId(baseId, piece, hasStructure));
+    if (!value) return piece.text;
+    const normalized = value.replace(/[\t\r\n]+/g, " ").trim();
+    return normalized || piece.text;
+  }).join("");
+};
+
+export const contentTranslationSourceSegments = (document: VersionedDocumentContract): TranslationSourceSegmentContract[] => {
   const segments: TranslationSourceSegmentContract[] = [];
   const add = (id: string, text: string | undefined) => {
     if (text?.trim()) segments.push({ id, text });
@@ -90,12 +153,12 @@ const sourceSegments = (document: VersionedDocumentContract): TranslationSourceS
   document.nodes.forEach((node, nodeIndex) => {
     const prefix = `n${nodeIndex}`;
     if (node.type === "paragraph" || node.type === "heading" || node.type === "quote") {
-      node.content.forEach((run, runIndex) => add(`${prefix}:r${runIndex}`, run.text));
+      node.content.forEach((run, runIndex) => addRunSegments(segments, `${prefix}:r${runIndex}`, run.text));
       return;
     }
     if (node.type === "list") {
       node.items.forEach((item, itemIndex) => {
-        item.forEach((run, runIndex) => add(`${prefix}:i${itemIndex}:r${runIndex}`, run.text));
+        item.forEach((run, runIndex) => addRunSegments(segments, `${prefix}:i${itemIndex}:r${runIndex}`, run.text));
       });
       return;
     }
@@ -126,7 +189,7 @@ const sourceSegments = (document: VersionedDocumentContract): TranslationSourceS
   }];
 };
 
-const translatedDocument = (
+export const contentTranslatedDocument = (
   document: VersionedDocumentContract,
   translatedSegments: TranslationResultSegmentContract[]
 ): VersionedDocumentContract => {
@@ -140,7 +203,7 @@ const translatedDocument = (
           ...node,
           content: node.content.map((run, runIndex) => ({
             ...run,
-            text: translated.get(`${prefix}:r${runIndex}`) ?? run.text
+            text: translatedRunText(`${prefix}:r${runIndex}`, run.text, translated)
           }))
         };
       }
@@ -149,7 +212,7 @@ const translatedDocument = (
           ...node,
           items: node.items.map((item, itemIndex) => item.map((run, runIndex) => ({
             ...run,
-            text: translated.get(`${prefix}:i${itemIndex}:r${runIndex}`) ?? run.text
+            text: translatedRunText(`${prefix}:i${itemIndex}:r${runIndex}`, run.text, translated)
           })))
         };
       }
@@ -220,7 +283,7 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
       sourceTitle: row.title,
       sourceBody: documentPlainTextProjection(document) || row.body,
       sourceDocument: document,
-      sourceSegments: sourceSegments(document)
+      sourceSegments: contentTranslationSourceSegments(document)
     });
   }
 
@@ -269,7 +332,7 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
     sourceTitle: `Comment by ${row.authorName} on ${row.postTitle}`.slice(0, 300),
     sourceBody: documentPlainTextProjection(document) || row.body,
     sourceDocument: document,
-    sourceSegments: sourceSegments(document)
+    sourceSegments: contentTranslationSourceSegments(document)
   });
 };
 
@@ -448,7 +511,7 @@ const finalizeTranslation = async (
   const providerError = !modelResult || !validOutput;
   const output = validOutput ? modelResult.output : null;
   const translatedStructure = output
-    ? translatedDocument(prepared.source.sourceDocument, output.translatedSegments)
+    ? contentTranslatedDocument(prepared.source.sourceDocument, output.translatedSegments)
     : null;
   const translatedBody = translatedStructure ? documentPlainTextProjection(translatedStructure) : "";
   const status: ContentTranslationResultContract["status"] = providerError ? "provider_error" : "translated";

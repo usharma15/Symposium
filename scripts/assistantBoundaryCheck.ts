@@ -22,7 +22,11 @@ import {
   documentTranslationRenderedInput,
   restoreTranslationSegmentOrder
 } from "@/apps/api/src/services/openaiResponses";
-import { contentTranslationFingerprint } from "@/apps/api/src/repository/contentTranslations";
+import {
+  contentTranslatedDocument,
+  contentTranslationFingerprint,
+  contentTranslationSourceSegments
+} from "@/apps/api/src/repository/contentTranslations";
 import {
   documentTranslationFingerprint,
   supportedLanguageFromInstruction
@@ -579,6 +583,48 @@ assert.equal(contentTranslationModelOutputSchema.safeParse({
   translatedSegments: [],
   message: "Use a supported language."
 }).success, false);
+
+const importedWhitespaceDocument = {
+  version: 1 as const,
+  nodes: [
+    {
+      id: "google-docs-paste",
+      type: "paragraph" as const,
+      content: [{
+        text: "\t\tComment 3a2\n\nShow previous replies\u00a0",
+        marks: ["bold" as const]
+      }],
+      align: "left" as const,
+      indent: 0
+    }
+  ],
+  settings: { width: "standard" as const, margin: "normal" as const }
+};
+assert.deepEqual(contentTranslationSourceSegments(importedWhitespaceDocument), [
+  { id: "n0:r0:t0", text: "Comment 3a2" },
+  { id: "n0:r0:t1", text: "Show previous replies" }
+]);
+const translatedImportedWhitespaceDocument = contentTranslatedDocument(importedWhitespaceDocument, [
+  { id: "n0:r0:t0", text: "\n  Comentario 3a2  " },
+  { id: "n0:r0:t1", text: "Mostrar respuestas anteriores\t" }
+]);
+const translatedImportedParagraph = translatedImportedWhitespaceDocument.nodes[0];
+assert.equal(translatedImportedParagraph?.type, "paragraph");
+if (translatedImportedParagraph?.type === "paragraph") {
+  assert.equal(
+    translatedImportedParagraph.content[0]?.text,
+    "\t\tComentario 3a2\n\nMostrar respuestas anteriores\u00a0"
+  );
+  assert.deepEqual(translatedImportedParagraph.content[0]?.marks, ["bold"]);
+}
+assert.equal(contentTranslationModelOutputSchema.parse({
+  targetLanguage: "french",
+  targetLanguageLabel: "French",
+  translatedTitle: "Une affirmation circonscrite",
+  translatedSegments: [{ id: "n0:r0", text: "  Espacement préservé  " }],
+  message: "French translation ready."
+}).translatedSegments[0]?.text, "  Espacement préservé  ");
+
 const contentFingerprint = contentTranslationFingerprint(contentTranslationModelInput);
 assert.match(contentFingerprint, /^[a-f0-9]{64}$/);
 assert.notEqual(contentFingerprint, contentTranslationFingerprint({ ...contentTranslationModelInput, sourceRevision: 3 }));

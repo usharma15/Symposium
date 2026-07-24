@@ -184,6 +184,36 @@ const inlineJSONToRuns = (content: JSONContent[] = [], capability: EditorCapabil
   return runs;
 }, []));
 
+export const normalizeImportedParagraphLayout = (
+  content: SymposiumTextRun[],
+  indent: number,
+  capability: EditorCapability = "paper"
+) => {
+  const boundedIndent = Math.max(0, Math.min(8, Number(indent) || 0));
+  if (capability !== "paper") return { content, indent: boundedIndent };
+
+  let leadingTabs = 0;
+  let consumingLeadingTabs = true;
+  const normalized = content.map((run) => {
+    if (!consumingLeadingTabs) return run;
+    const match = run.text.match(/^\t+/);
+    if (!match) {
+      consumingLeadingTabs = false;
+      return run;
+    }
+    leadingTabs += match[0].length;
+    const text = run.text.slice(match[0].length);
+    if (text) consumingLeadingTabs = false;
+    return { ...run, text };
+  });
+
+  if (leadingTabs === 0) return { content, indent: boundedIndent };
+  return {
+    content: normalizeRuns(normalized),
+    indent: Math.min(8, boundedIndent + leadingTabs)
+  };
+};
+
 const canonicalNodeToJSON = (node: SymposiumDocumentNode): JSONContent => {
   if (node.type === "paragraph") return { type: "paragraph", attrs: { blockId: node.id, textAlign: node.align, indent: node.indent }, content: runsToJSON(node.content) };
   if (node.type === "heading") return { type: "heading", attrs: { blockId: node.id, level: node.level, textAlign: node.align }, content: runsToJSON(node.content) };
@@ -218,7 +248,20 @@ export const tiptapToSymposiumDocument = (
   capability: EditorCapability = "paper"
 ): SymposiumDocument => {
   const nodes = (json.content ?? []).flatMap<SymposiumDocumentNode>((node) => {
-    if (node.type === "paragraph") return [{ id: blockId(node), type: "paragraph", content: inlineJSONToRuns(node.content, capability), align: capability === "paper" && isOneOf(node.attrs?.textAlign, ["left", "center", "right"] as const) ? node.attrs.textAlign : "left", indent: capability === "paper" ? Math.max(0, Math.min(8, Number(node.attrs?.indent) || 0)) : 0 }];
+    if (node.type === "paragraph") {
+      const importedLayout = normalizeImportedParagraphLayout(
+        inlineJSONToRuns(node.content, capability),
+        capability === "paper" ? Number(node.attrs?.indent) || 0 : 0,
+        capability
+      );
+      return [{
+        id: blockId(node),
+        type: "paragraph",
+        content: importedLayout.content,
+        align: capability === "paper" && isOneOf(node.attrs?.textAlign, ["left", "center", "right"] as const) ? node.attrs.textAlign : "left",
+        indent: capability === "paper" ? importedLayout.indent : 0
+      }];
+    }
     if (node.type === "heading") return capability === "scribble"
       ? [{ id: blockId(node), type: "paragraph", content: inlineJSONToRuns(node.content, capability), align: "left", indent: 0 }]
       : [{

@@ -14,6 +14,7 @@ import {
   plainTextDocument
 } from "../lib/documentModel";
 import {
+  normalizeImportedParagraphLayout,
   symposiumDocumentToTiptap,
   tiptapToSymposiumDocument
 } from "../features/content/SymposiumTiptapEditor";
@@ -68,6 +69,38 @@ assert.deepEqual(
   formattedDocument,
   "the continuous editor must round-trip canonical formatting, page settings, equations, and inline attachments"
 );
+
+const importedGoogleDocsParagraph = normalizeImportedParagraphLayout([
+  { text: "\t", marks: ["bold"] },
+  { text: "\tA pasted Google Docs line", marks: ["italic"], font: "serif" }
+], 1);
+assert.equal(importedGoogleDocsParagraph.indent, 3);
+assert.deepEqual(importedGoogleDocsParagraph.content, [
+  { text: "A pasted Google Docs line", marks: ["italic"], font: "serif" }
+]);
+assert.deepEqual(
+  normalizeImportedParagraphLayout([{ text: "\tA reduced-editor paste" }], 0, "reduced"),
+  { content: [{ text: "\tA reduced-editor paste" }], indent: 0 },
+  "reduced editors must retain imported layout characters that they cannot represent as paragraph indentation"
+);
+const importedGoogleDocsDocument = tiptapToSymposiumDocument({
+  type: "doc",
+  content: [{
+    type: "paragraph",
+    attrs: { blockId: "google-docs", textAlign: "center", indent: 0 },
+    content: [
+      { type: "text", text: "\t", marks: [{ type: "bold" }] },
+      { type: "text", text: "\tImported and styled", marks: [{ type: "italic" }] }
+    ]
+  }]
+});
+assert.deepEqual(importedGoogleDocsDocument.nodes[0], {
+  id: "google-docs",
+  type: "paragraph",
+  content: [{ text: "Imported and styled", marks: ["italic"] }],
+  align: "center",
+  indent: 2
+});
 
 const reducedProjection = tiptapToSymposiumDocument(symposiumDocumentToTiptap(formattedDocument), formattedDocument.settings, "reduced");
 assert.equal(reducedProjection.nodes.some((node) => node.type === "list" || node.type === "heading" || node.type === "code"), false);

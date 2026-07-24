@@ -1349,7 +1349,10 @@ export const translationSourceSegmentSchema = z.object({
 
 export const translationResultSegmentSchema = z.object({
   id: z.string().trim().min(1).max(240),
-  text: z.string().trim().min(1).max(20000)
+  text: z.string()
+    .min(1)
+    .max(20000)
+    .refine((value) => value.trim().length > 0, "Translated segment text cannot be blank.")
 });
 
 export const documentTranslationLayoutRoleSchema = z.enum([
