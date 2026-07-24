@@ -892,7 +892,7 @@ export const documentTranslations = pgTable(
     uniqueIndex("document_translations_source_language_unique_idx").on(table.attachmentId, table.sourceFingerprint, table.targetLanguage),
     index("document_translations_created_idx").on(table.createdAt),
     check("document_translations_source_kind_check", sql`${table.sourceKind} IN ('document', 'docx', 'pdf')`),
-    check("document_translations_language_check", sql`${table.targetLanguage} IN ('english', 'french', 'german', 'spanish')`),
+    check("document_translations_language_check", sql`${table.targetLanguage} IN ('english', 'french', 'german', 'spanish', 'hindi', 'bengali', 'punjabi', 'marathi', 'gujarati', 'telugu', 'tamil', 'greek', 'portuguese', 'japanese', 'korean', 'simplified_chinese', 'sanskrit')`),
     check("document_translations_fingerprint_check", sql`${table.sourceFingerprint} ~ '^[a-f0-9]{64}$'`),
     check("document_translations_pages_check", sql`jsonb_typeof(${table.pages}) = 'array' AND jsonb_array_length(${table.pages}) BETWEEN 1 AND 40`)
   ]
@@ -927,7 +927,7 @@ export const contentTranslations = pgTable(
     index("content_translations_source_idx").on(table.sourceType, table.sourceId, table.sourceRevision),
     check("content_translations_source_type_check", sql`${table.sourceType} IN ('post', 'comment')`),
     check("content_translations_source_revision_check", sql`${table.sourceRevision} >= 1`),
-    check("content_translations_language_check", sql`${table.targetLanguage} IN ('english', 'french', 'german', 'spanish')`),
+    check("content_translations_language_check", sql`${table.targetLanguage} IN ('english', 'french', 'german', 'spanish', 'hindi', 'bengali', 'punjabi', 'marathi', 'gujarati', 'telugu', 'tamil', 'greek', 'portuguese', 'japanese', 'korean', 'simplified_chinese', 'sanskrit')`),
     check("content_translations_fingerprint_check", sql`${table.sourceFingerprint} ~ '^[a-f0-9]{64}$'`)
   ]
 );

@@ -88,7 +88,7 @@ const main = async () => {
       settings: { width: "standard" as const, margin: "normal" as const }
     },
     sourceSegments: [{ id: "claim:r0", text: "Evidence precedes the conclusion." }],
-    languageInstruction: "Spanish"
+    languageInstruction: "Sanskrit (experimental)"
   };
   let contentPayloadJson = "";
   const contentFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
@@ -98,11 +98,11 @@ const main = async () => {
       model: "gpt-5.6-terra",
       status: "completed",
       output_text: JSON.stringify({
-        targetLanguage: "spanish",
-        targetLanguageLabel: "Spanish",
-        translatedTitle: "Una afirmación delimitada",
-        translatedSegments: [{ id: "claim:r0", text: "La evidencia precede a la conclusión." }],
-        message: "Spanish translation ready."
+        targetLanguage: "sanskrit",
+        targetLanguageLabel: "Sanskrit (experimental)",
+        translatedTitle: "परिमितं प्रतिपादनम्",
+        translatedSegments: [{ id: "claim:r0", text: "प्रमाणं निष्कर्षात् पूर्वं भवति।" }],
+        message: "Sanskrit translation ready."
       }),
       usage: {
         input_tokens: 120,
@@ -116,7 +116,7 @@ const main = async () => {
     request: contentRequest,
     fetchImpl: contentFetch
   });
-  assert.equal(contentResult.output.targetLanguage, "spanish");
+  assert.equal(contentResult.output.targetLanguage, "sanskrit");
   assert.equal(contentResult.output.translatedSegments[0]?.id, "claim:r0");
   assert.equal(contentResult.inputTokens, 120);
   const contentPayload = JSON.parse(contentPayloadJson) as { text?: { format?: unknown } };
@@ -124,6 +124,8 @@ const main = async () => {
     JSON.stringify(contentPayload.text?.format),
     /minItems|maxItems|minimum|maximum/
   );
+  assert.match(JSON.stringify(contentPayload.text?.format), /simplified_chinese/);
+  assert.match(JSON.stringify(contentPayload.text?.format), /sanskrit/);
 
   const documentRequest = {
     attachmentId: "provider-check-scan",

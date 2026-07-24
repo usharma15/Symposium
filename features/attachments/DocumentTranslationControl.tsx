@@ -10,13 +10,16 @@ import {
 } from "react";
 import { Languages, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
+import { TranslationLanguagePicker } from "@/features/translation/TranslationLanguagePicker";
 import {
   documentViewerSessionSnapshot,
   rememberDocumentTranslation,
   setDocumentTranslationVisible,
   subscribeDocumentViewerSession
 } from "@/features/attachments/documentViewerSession";
+import { assistantTranslationLanguageLabels } from "@/packages/contracts/src/translationLanguages";
 import type {
+  AssistantTranslationLanguageContract,
   DocumentTranslationResultContract,
   DocumentTranslationSourcePageContract
 } from "@/packages/contracts/src";
@@ -42,7 +45,7 @@ export const useDocumentTranslation = ({
   loadSource
 }: TranslationRequest) => {
   const [open, setOpen] = useState(false);
-  const [instruction, setInstruction] = useState("");
+  const [language, setLanguage] = useState<AssistantTranslationLanguageContract>("english");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const retryRef = useRef<{ fingerprint: string; key: string } | null>(null);
@@ -60,7 +63,7 @@ export const useDocumentTranslation = ({
 
   useEffect(() => {
     setOpen(false);
-    setInstruction("");
+    setLanguage("english");
     setBusy(false);
     setError("");
     retryRef.current = null;
@@ -72,8 +75,8 @@ export const useDocumentTranslation = ({
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
-    const languageInstruction = instruction.trim();
-    if (!languageInstruction || busy) return;
+    if (busy) return;
+    const languageInstruction = assistantTranslationLanguageLabels[language];
     setBusy(true);
     setError("");
     try {
@@ -137,8 +140,8 @@ export const useDocumentTranslation = ({
   return {
     open,
     setOpen,
-    instruction,
-    setInstruction,
+    language,
+    setLanguage,
     busy,
     error,
     result,
@@ -225,20 +228,12 @@ export function DocumentTranslationControl({ state }: { state: DocumentTranslati
             <button type="button" title="Close translation" onClick={() => state.setOpen(false)}><X size={14} /></button>
           </div>
           <span className="translation-language-label">Language</span>
-          <div className="translation-language-options" role="group" aria-label="Translation language">
-            {["English", "French", "German", "Spanish"].map((language) => (
-              <button
-                type="button"
-                key={language}
-                className={state.instruction === language ? "active" : ""}
-                aria-pressed={state.instruction === language}
-                disabled={state.busy}
-                onClick={() => state.setInstruction(language)}
-              >
-                {language}
-              </button>
-            ))}
-          </div>
+          <TranslationLanguagePicker
+            value={state.language}
+            onChange={state.setLanguage}
+            disabled={state.busy}
+            ariaLabel={`Search languages for page ${state.pageNumber}`}
+          />
           <small className="document-translation-scope-note">
             This translates the current page. Only a completed translation uses 1 answer; the original stays available.
           </small>
@@ -247,7 +242,7 @@ export function DocumentTranslationControl({ state }: { state: DocumentTranslati
             <span>Document formatting can shift. Use the translation as a reading guide and verify important passages against the original.</span>
           </small>
           {state.error ? <p role="alert">{state.error}</p> : null}
-          <button type="submit" className="document-translation-submit" disabled={!state.instruction.trim() || state.busy}>
+          <button type="submit" className="document-translation-submit" disabled={state.busy}>
             {state.busy ? <LoaderCircle className="spin" size={14} /> : <Languages size={14} />}
             {state.busy ? "Translating…" : "Translate · 1 answer"}
           </button>

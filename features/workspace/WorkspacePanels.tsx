@@ -20,6 +20,7 @@ import type {
   AssistantTranslationContract,
   AssistantTranslationLanguageContract
 } from "@/packages/contracts/src";
+import { assistantTranslationLanguageLabels } from "@/packages/contracts/src/translationLanguages";
 import type { ScribbleSnapshot } from "@/lib/workspaceTypes";
 
 type TabletContext = AssistantMessageInputContract["context"];
@@ -36,13 +37,6 @@ type TabletMessage = {
 const threadSummary = (thread: AssistantThreadStateContract): AssistantThreadSummaryContract => {
   const { sources: _sources, ...summary } = thread;
   return summary;
-};
-
-const translationLanguageLabels: Record<AssistantTranslationLanguageContract, string> = {
-  english: "English",
-  french: "French",
-  german: "German",
-  spanish: "Spanish"
 };
 
 const initialMessage = (context: TabletContext): TabletMessage => ({
@@ -221,9 +215,9 @@ function TranslationCard({
   translation: AssistantTranslationContract;
 }) {
   return (
-    <section className="tablet-translation-card" aria-label={`${translationLanguageLabels[translation.targetLanguage]} translation`}>
+    <section className="tablet-translation-card" aria-label={`${assistantTranslationLanguageLabels[translation.targetLanguage]} translation`}>
       <header>
-        <span><Languages size={14} />{translationLanguageLabels[translation.targetLanguage]} translation</span>
+        <span><Languages size={14} />{assistantTranslationLanguageLabels[translation.targetLanguage]} translation</span>
         <small>Derived from {translation.source.title}</small>
       </header>
       <div className="tablet-translation-copy">

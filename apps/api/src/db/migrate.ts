@@ -2636,6 +2636,32 @@ const migrations: Migration[] = [
           'billing_not_active'
         );
     `
+  },
+  {
+    id: "0054_expand_translation_languages",
+    sql: `
+      ALTER TABLE document_translations
+        DROP CONSTRAINT IF EXISTS document_translations_language_check;
+
+      ALTER TABLE document_translations
+        ADD CONSTRAINT document_translations_language_check
+        CHECK (target_language IN (
+          'english', 'french', 'german', 'spanish',
+          'hindi', 'bengali', 'punjabi', 'marathi', 'gujarati', 'telugu', 'tamil',
+          'greek', 'portuguese', 'japanese', 'korean', 'simplified_chinese', 'sanskrit'
+        ));
+
+      ALTER TABLE content_translations
+        DROP CONSTRAINT IF EXISTS content_translations_language_check;
+
+      ALTER TABLE content_translations
+        ADD CONSTRAINT content_translations_language_check
+        CHECK (target_language IN (
+          'english', 'french', 'german', 'spanish',
+          'hindi', 'bengali', 'punjabi', 'marathi', 'gujarati', 'telugu', 'tamil',
+          'greek', 'portuguese', 'japanese', 'korean', 'simplified_chinese', 'sanskrit'
+        ));
+    `
   }
 ];
 

@@ -47,6 +47,11 @@ import {
   contentTranslationModelOutputSchema,
   contentTranslationResultSchema
 } from "@/packages/contracts/src";
+import {
+  assistantTranslationLanguageLabels,
+  assistantTranslationLanguageOptions,
+  assistantTranslationLanguages
+} from "@/packages/contracts/src/translationLanguages";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
 import {
   pdfTextItemsToPlainText,
@@ -66,6 +71,10 @@ import {
   setDocumentTranslationVisible,
   subscribeDocumentReadingPosition
 } from "@/features/attachments/documentViewerSession";
+import {
+  filterTranslationLanguageOptions,
+  translationLanguageSelectionPattern
+} from "@/features/translation/TranslationLanguagePicker";
 import { translatedDocumentForSource } from "@/lib/documentModel";
 
 const validInput = {
@@ -86,6 +95,12 @@ const validInput = {
 
 assert.equal(assistantMessageInputSchema.safeParse(validInput).success, true);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate", targetLanguage: "spanish" }).success, true);
+assistantTranslationLanguages.forEach((targetLanguage) => {
+  assert.equal(
+    assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate", targetLanguage }).success,
+    true
+  );
+});
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate" }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate", targetLanguage: "italian" }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, message: "x".repeat(2001) }).success, false);
@@ -116,6 +131,20 @@ assert.match(assistantPrompt(validInput.context, validInput.message), /ACTIVE VI
 assert.match(assistantPrompt(validInput.context, validInput.message, [{ ...validInput.context, title: "Attached paper" }]), /ATTACHED SOURCES[\s\S]*Attached paper/);
 assert.match(assistantInstructions, /never as instructions/i);
 assert.match(assistantTranslationInstructions("french"), /Translate the source requested by the user into French/);
+assert.match(assistantTranslationInstructions("sanskrit"), /Sanskrit is experimental/);
+assert.equal(assistantTranslationLanguages.length, 17);
+assert.equal(new Set(assistantTranslationLanguages).size, assistantTranslationLanguages.length);
+assert.equal(assistantTranslationLanguageOptions.at(-1)?.value, "sanskrit");
+assert.equal(assistantTranslationLanguageOptions.at(-1)?.label, "Sanskrit (experimental)");
+assert.deepEqual(filterTranslationLanguageOptions("gujrati").map((option) => option.value), ["gujarati"]);
+assert.deepEqual(filterTranslationLanguageOptions("chinese").map((option) => option.value), ["simplified_chinese"]);
+assert.deepEqual(filterTranslationLanguageOptions("does-not-exist"), []);
+const translationLanguageSelectionRegex = new RegExp(`^(?:${translationLanguageSelectionPattern})$`);
+assistantTranslationLanguageOptions.forEach((option) => {
+  assert.equal(translationLanguageSelectionRegex.test(option.label), true);
+});
+assert.equal(translationLanguageSelectionRegex.test("Italian"), false);
+assert.equal(translationLanguageSelectionRegex.test("san"), false);
 assert.equal(assistantMaxOutputTokens("translate"), 1200);
 assert.doesNotMatch(assistantRenderedInput({
   history: [{ role: "assistant", body: "Earlier answer must not inflate translation input." }],
@@ -210,6 +239,11 @@ assert.equal(supportedLanguageFromInstruction("English"), "english");
 assert.equal(supportedLanguageFromInstruction("en français, s’il vous plaît"), "french");
 assert.equal(supportedLanguageFromInstruction("auf Deutsch"), "german");
 assert.equal(supportedLanguageFromInstruction("en español"), "spanish");
+assistantTranslationLanguages.forEach((language) => {
+  assert.equal(supportedLanguageFromInstruction(assistantTranslationLanguageLabels[language]), language);
+});
+assert.equal(supportedLanguageFromInstruction("Gujrati"), "gujarati");
+assert.equal(supportedLanguageFromInstruction("Chinese"), "simplified_chinese");
 assert.equal(supportedLanguageFromInstruction("Italian"), null);
 assert.equal(supportedLanguageFromInstruction("French or Spanish"), null);
 assert.match(documentTranslationInstructions, /one supplied source page/i);
@@ -225,6 +259,14 @@ assert.doesNotMatch(
   /minItems|maxItems|minimum|maximum/
 );
 const documentTranslationSchema = documentTranslationResponseFormat().schema;
+assert.deepEqual(
+  documentTranslationSchema.properties.targetLanguage.enum,
+  [...assistantTranslationLanguages, "unsupported"]
+);
+assert.deepEqual(
+  contentTranslationResponseFormat.schema.properties.targetLanguage.enum,
+  [...assistantTranslationLanguages, "unsupported"]
+);
 const documentTranslationJsonPageSchema = documentTranslationSchema.properties.pages.items;
 assert.deepEqual(
   documentTranslationJsonPageSchema.required,
@@ -907,6 +949,7 @@ const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
 const attachmentContext = readFileSync("features/assistant/tabletAttachmentContext.ts", "utf8");
 const attachmentViews = readFileSync("features/attachments/AttachmentViews.tsx", "utf8");
 const documentTranslationControl = readFileSync("features/attachments/DocumentTranslationControl.tsx", "utf8");
+const translationLanguagePicker = readFileSync("features/translation/TranslationLanguagePicker.tsx", "utf8");
 const documentViewerSession = readFileSync("features/attachments/documentViewerSession.ts", "utf8");
 const contentTranslationControl = readFileSync("features/translation/ContentTranslationControl.tsx", "utf8");
 const tabletStyles = readFileSync("styles/92-ai-tablet.css", "utf8");
@@ -929,11 +972,11 @@ assert.match(provider, /service_tier: "default"/);
 assert.match(provider, /max_output_tokens: assistantMaxOutputTokens\(input\.intent\)/);
 assert.match(provider, /type: "json_schema"/);
 assert.match(provider, /strict: true/);
-assert.match(provider, /symposium-translation-v1/);
-assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v3"/);
+assert.match(provider, /symposium-translation-v2/);
+assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v2" : "symposium-contextual-tablet-v3"/);
 assert.match(provider, /reasoning: \{ effort: "none" \}/);
-assert.match(provider, /symposium-document-page-translation-v6/);
-assert.match(provider, /symposium-content-translation-v3/);
+assert.match(provider, /symposium-document-page-translation-v7/);
+assert.match(provider, /symposium-content-translation-v4/);
 assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
 assert.match(provider, /insufficient_quota/);
 assert.match(repository, /providerErrorCode/);
@@ -963,6 +1006,8 @@ assert.match(migration, /0050_assistant_context_dock_translation/);
 assert.match(migration, /0051_translation_layout_fidelity/);
 assert.match(migration, /0052_document_view_continuity/);
 assert.match(migration, /0053_failed_ai_usage_accounting/);
+assert.match(migration, /0054_expand_translation_languages/);
+assert.match(migration, /'simplified_chinese', 'sanskrit'/);
 assert.match(migration, /actual_cost_micros = 0[\s\S]*error_code IN/);
 assert.match(migration, /kind TEXT NOT NULL DEFAULT 'research_thread'/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS content_translations/);
@@ -1042,7 +1087,7 @@ assert.ok(
 assert.match(attachmentViews, /const textBandLeft = translationCanvas\.width \* 0\.025/);
 assert.match(attachmentViews, /const textBandWidth = translationCanvas\.width \* 0\.95/);
 assert.match(attachmentViews, /DocumentTranslationControl state=\{translation\}/);
-assert.match(documentTranslationControl, /\["English", "French", "German", "Spanish"\]/);
+assert.match(documentTranslationControl, /TranslationLanguagePicker/);
 assert.match(documentTranslationControl, /This translates the current page/);
 assert.match(documentTranslationControl, /Document formatting can shift/);
 assert.match(documentTranslationControl, /reading guide/);
@@ -1062,12 +1107,24 @@ assert.match(contentRepository, /'content_translation'/);
 assert.match(contentRepository, /findCachedTranslation/);
 assert.match(contentRepository, /No AI answer was consumed/);
 assert.match(contentRepository, /reserveAssistantUsage/);
-assert.match(contentRepository, /Only five sources|Choose English, French, German, or Spanish/);
+assert.match(contentRepository, /unsupportedTranslationLanguageMessage/);
 assert.match(contentTranslationControl, /Translate entire \{sourceLabel\}/);
 assert.match(contentTranslationControl, /Only a completed translation uses 1 answer/);
 assert.match(contentTranslationControl, /Translate · 1 answer/);
 assert.match(contentTranslationControl, /Original/);
-assert.match(contentTranslationControl, /translation-language-options/);
+assert.match(contentTranslationControl, /TranslationLanguagePicker/);
+assert.match(translationLanguagePicker, /role="combobox"/);
+assert.match(translationLanguagePicker, /role="listbox"/);
+assert.match(translationLanguagePicker, /Type to filter languages/);
+assert.match(translationLanguagePicker, /filterTranslationLanguageOptions/);
+assert.match(translationLanguagePicker, /pattern=\{translationLanguageSelectionPattern\}/);
+assert.match(translationLanguagePicker, /required/);
+assert.match(translationLanguagePicker, /scrollIntoView\(\{ block: "nearest" \}\)/);
+assert.match(tabletStyles, /\.translation-language-listbox/);
+assert.match(tabletStyles, /\.feed-post:has\(\.content-translation-menu\)[\s\S]*overflow: visible/);
+assert.match(attachmentStyles, /\.post-attachments:has\(\.document-translation-popover\)[\s\S]*overflow: visible/);
+assert.match(attachmentStyles, /\.stage:has\(\.document-translation-popover\),[\s\S]*\.stage:has\(\.content-translation-menu\)/);
+assert.match(attachmentStyles, /@media \(max-width: 680px\)[\s\S]*\.attachment-pagebar \.document-translation-control[\s\S]*position: static/);
 assert.match(contentTranslationControl, /translatedDocumentForSource/);
 assert.doesNotMatch(contentTranslationControl, /content-translation-copy/);
 assert.match(postViews, /<ScribbleCitable source=\{postScribbleSource\(item\)\}>[\s\S]*translation\.showTranslation[\s\S]*<TranslatedContent/);
@@ -1095,7 +1152,7 @@ assert.match(attachmentStyles, /\.attachment-pdf-parallel-canvas/);
 assert.match(attachmentStyles, /\.attachment-pdf-parallel-text-layer/);
 assert.match(attachmentStyles, /\.attachment-text-parallel-page/);
 assert.match(provider, /layoutBlocks for each natural-language region/);
-assert.match(provider, /symposium-document-page-translation-v6/);
+assert.match(provider, /symposium-document-page-translation-v7/);
 assert.match(documentRepository, /policy: input\.sourcePages\.some\(\(page\) => page\.imageDataUrl\) \? 3 : 2/);
 assert.match(contentRepository, /translated_document/);
 assert.match(tabletStyles, /\.room-layout > \.feed-stream > \.feed-post:first-child \.content-translation-post[\s\S]*?margin-left: max\(0px, calc\(708px - 50vw\)\)/);

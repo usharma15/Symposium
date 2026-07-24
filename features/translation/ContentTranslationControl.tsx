@@ -1,30 +1,21 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Languages, LoaderCircle, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import { SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
+import { TranslationLanguagePicker } from "@/features/translation/TranslationLanguagePicker";
 import { translatedDocumentForSource } from "@/lib/documentModel";
 import type { InquiryAttachment, ResearchProfile } from "@/lib/mockData";
+import {
+  assistantTranslationLanguageCodes,
+  assistantTranslationLanguageLabels
+} from "@/packages/contracts/src/translationLanguages";
 import type {
   AssistantTranslationLanguageContract,
   ContentTranslationResultContract,
   VersionedDocumentContract
 } from "@/packages/contracts/src";
-
-const languageLabels: Record<AssistantTranslationLanguageContract, string> = {
-  english: "English",
-  french: "French",
-  german: "German",
-  spanish: "Spanish"
-};
-
-const languageCodes: Record<AssistantTranslationLanguageContract, string> = {
-  english: "en",
-  french: "fr",
-  german: "de",
-  spanish: "es"
-};
 
 export const useContentTranslation = ({
   sourceType,
@@ -70,7 +61,7 @@ export const useContentTranslation = ({
           body: {
             sourceType,
             sourceId,
-            languageInstruction: languageLabels[language]
+            languageInstruction: assistantTranslationLanguageLabels[language]
           }
         }
       );
@@ -115,7 +106,6 @@ export function ContentTranslationControl({
   state: ContentTranslationState;
   sourceLabel: "post" | "comment";
 }) {
-  const languageInputId = useId();
   const translated = state.result?.status === "translated";
   return (
     <div
@@ -161,7 +151,6 @@ export function ContentTranslationControl({
       </div>
       {state.open ? (
         <form
-          id={languageInputId}
           className="content-translation-menu"
           onSubmit={state.submit}
           onPointerDown={(event) => event.stopPropagation()}
@@ -171,21 +160,12 @@ export function ContentTranslationControl({
             <button type="button" title="Close translation menu" onClick={() => state.setOpen(false)}><X size={14} /></button>
           </header>
           <span className="translation-language-label">Language</span>
-          <div className="translation-language-options" role="group" aria-label="Translation language">
-            {Object.entries(languageLabels).map(([value, label]) => (
-              <button
-                type="button"
-                value={value}
-                key={value}
-                className={state.language === value ? "active" : ""}
-                aria-pressed={state.language === value}
-                disabled={state.busy}
-                onClick={() => state.setLanguage(value as AssistantTranslationLanguageContract)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <TranslationLanguagePicker
+            value={state.language}
+            onChange={state.setLanguage}
+            disabled={state.busy}
+            ariaLabel={`Search languages for this ${sourceLabel}`}
+          />
           <small>Only a completed translation uses 1 answer. The original and saved translations remain available.</small>
           {state.error ? <p role="alert">{state.error}</p> : null}
           <button type="submit" className="primary" disabled={state.busy}>
@@ -233,7 +213,7 @@ export function TranslatedContent({
       attachments={attachments}
       profiles={profiles}
       mode={mode}
-      lang={state.result.targetLanguage ? languageCodes[state.result.targetLanguage] : undefined}
+      lang={state.result.targetLanguage ? assistantTranslationLanguageCodes[state.result.targetLanguage] : undefined}
       onOpenAttachment={onOpenAttachment}
       onCiteAttachment={onCiteAttachment}
       onExpand={onExpand}

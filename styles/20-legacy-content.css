@@ -820,6 +820,22 @@
   box-shadow: 0 16px 42px rgba(10, 19, 20, 0.22);
 }
 
+.post-attachments:has(.document-translation-popover),
+.attachment-frame:has(.document-translation-popover),
+.attachment-document:has(.document-translation-popover) {
+  overflow: visible;
+}
+
+.post-attachments:has(.document-translation-popover) {
+  position: relative;
+  z-index: 54;
+}
+
+.stage:has(.document-translation-popover),
+.stage:has(.content-translation-menu) {
+  z-index: 54;
+}
+
 .attachment-pagebar .document-translation-popover-title {
   display: flex;
   align-items: center;
@@ -1271,6 +1287,10 @@
 }
 
 @media (max-width: 680px) {
+  .attachment-pagebar .document-translation-control {
+    position: static;
+  }
+
   .attachment-pagebar .document-translate-button span {
     display: none;
   }

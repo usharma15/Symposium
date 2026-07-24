@@ -1,4 +1,12 @@
 import { z } from "zod";
+import { assistantTranslationLanguages } from "./translationLanguages";
+
+export {
+  assistantTranslationLanguageCodes,
+  assistantTranslationLanguageLabels,
+  assistantTranslationLanguageOptions,
+  assistantTranslationLanguages
+} from "./translationLanguages";
 
 export const roomIdSchema = z.enum([
   "hall",
@@ -1240,7 +1248,7 @@ export const assistantSurfaceSchema = z.enum([
   "opportunity",
   "attachment"
 ]);
-export const assistantTranslationLanguageSchema = z.enum(["english", "french", "german", "spanish"]);
+export const assistantTranslationLanguageSchema = z.enum(assistantTranslationLanguages);
 export const assistantRequestIntentSchema = z.enum(["answer", "translate"]);
 export const assistantConversationKindSchema = z.enum([
   "research_thread",

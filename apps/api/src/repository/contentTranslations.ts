@@ -34,7 +34,11 @@ import {
   type AssistantProviderFailure,
   type ContentTranslationModelResult
 } from "../services/openaiResponses";
-import { supportedLanguageFromInstruction, translationLanguageLabels } from "../services/translationLanguages";
+import {
+  supportedLanguageFromInstruction,
+  translationLanguageLabels,
+  unsupportedTranslationLanguageMessage
+} from "../services/translationLanguages";
 import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
@@ -649,7 +653,7 @@ export const translateContent = async (
       sourceFingerprint,
       owner,
       "unsupported_language",
-      "Choose English, French, German, or Spanish. No AI answer was consumed."
+      unsupportedTranslationLanguageMessage
     );
   }
   const cached = await findCachedTranslation(source, sourceFingerprint, requestedLanguage);

@@ -28,7 +28,11 @@ import {
   type AssistantProviderFailure,
   type DocumentTranslationModelResult
 } from "../services/openaiResponses";
-import { supportedLanguageFromInstruction, translationLanguageLabels } from "../services/translationLanguages";
+import {
+  supportedLanguageFromInstruction,
+  translationLanguageLabels,
+  unsupportedTranslationLanguageMessage
+} from "../services/translationLanguages";
 import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
@@ -164,7 +168,7 @@ const unsupportedResult = async (
   targetLanguageLabel: null,
   translatedTitle: "",
   pages: [],
-  message: "Choose English, French, German, or Spanish. No AI answer was consumed.",
+  message: unsupportedTranslationLanguageMessage,
   model: env.SYMPOSIUM_AI_MODEL,
   createdAt: new Date().toISOString(),
   quota: await currentQuota(owner)
@@ -249,7 +253,7 @@ const finalizeTranslation = async (
       ? prepared.input.sourceComplete
         ? `${translationLanguageLabels[targetLanguage]} translation ready for page ${prepared.input.sourcePages[0]!.pageNumber}.`
         : `${translationLanguageLabels[targetLanguage]} translation ready for the available text on page ${prepared.input.sourcePages[0]!.pageNumber}; that page's text extraction was incomplete.`
-      : output?.message || "Type English, French, German, or Spanish.";
+      : output?.message || unsupportedTranslationLanguageMessage;
   const actualMicros = modelResult
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, modelResult.inputTokens, modelResult.outputTokens)
     : failure?.mayHaveBeenBilled
