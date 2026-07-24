@@ -607,10 +607,10 @@ export const documentTranslationResponseFormat = () => ({
                 required: ["id", "role", "x", "y", "width", "height"],
                 additionalProperties: false
               }
-            },
-            required: ["pageNumber", "segments", "layoutBlocks", "preservedArtifacts"],
-            additionalProperties: false
-          }
+            }
+          },
+          required: ["pageNumber", "segments", "layoutBlocks", "preservedArtifacts"],
+          additionalProperties: false
         }
       },
       message: { type: "string" }

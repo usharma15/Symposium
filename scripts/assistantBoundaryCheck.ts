@@ -219,6 +219,15 @@ assert.doesNotMatch(
   JSON.stringify(documentTranslationResponseFormat()),
   /minItems|maxItems|minimum|maximum/
 );
+const documentTranslationSchema = documentTranslationResponseFormat().schema;
+const documentTranslationJsonPageSchema = documentTranslationSchema.properties.pages.items;
+assert.deepEqual(
+  documentTranslationJsonPageSchema.required,
+  ["pageNumber", "segments", "layoutBlocks", "preservedArtifacts"]
+);
+assert.equal(documentTranslationJsonPageSchema.additionalProperties, false);
+assert.equal("required" in documentTranslationJsonPageSchema.properties, false);
+assert.equal("additionalProperties" in documentTranslationJsonPageSchema.properties, false);
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 1400);
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 12_000);
 assert.equal(documentTranslationMaxOutputTokens(scannedPdfTranslationInput), 7000);
