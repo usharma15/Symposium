@@ -15,6 +15,7 @@ import {
   documentTranslationInstructions,
   documentTranslationMaxOutputTokens,
   documentTranslationRequestContent,
+  documentTranslationResponseFormat,
   documentTranslationRenderedInput,
   restoreTranslationSegmentOrder
 } from "@/apps/api/src/services/openaiResponses";
@@ -202,6 +203,10 @@ assert.doesNotMatch(documentTranslationRenderedInput(scannedPdfTranslationInput)
 assert.ok(documentTranslationRenderedInput(scannedPdfTranslationInput).length > 12_000);
 assert.deepEqual(documentTranslationRequestContent(documentTranslationInput).map((item) => item.type), ["input_text"]);
 assert.deepEqual(documentTranslationRequestContent(scannedPdfTranslationInput).map((item) => item.type), ["input_text", "input_image"]);
+assert.doesNotMatch(
+  JSON.stringify(documentTranslationResponseFormat()),
+  /minItems|maxItems|minimum|maximum/
+);
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 800);
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 7000);
 assert.equal(documentTranslationMaxOutputTokens(scannedPdfTranslationInput), 7000);
@@ -685,7 +690,7 @@ assert.match(provider, /strict: true/);
 assert.match(provider, /symposium-translation-v1/);
 assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v3"/);
 assert.match(provider, /reasoning: \{ effort: "none" \}/);
-assert.match(provider, /symposium-document-page-translation-v5/);
+assert.match(provider, /symposium-document-page-translation-v6/);
 assert.match(provider, /symposium-content-translation-v2/);
 assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
 assert.match(provider, /insufficient_quota/);
@@ -820,7 +825,7 @@ assert.match(attachmentStyles, /\.attachment-pdf-parallel-canvas/);
 assert.match(attachmentStyles, /\.attachment-pdf-parallel-text-layer/);
 assert.match(attachmentStyles, /\.attachment-text-parallel-page/);
 assert.match(provider, /layoutBlocks for each natural-language region/);
-assert.match(provider, /symposium-document-page-translation-v5/);
+assert.match(provider, /symposium-document-page-translation-v6/);
 assert.match(documentRepository, /policy: input\.sourcePages\.some\(\(page\) => page\.imageDataUrl\) \? 3 : 2/);
 assert.match(contentRepository, /translated_document/);
 assert.match(tabletStyles, /\.room-layout > \.feed-stream > \.feed-post:first-child \.content-translation-post[\s\S]*?margin-left: max\(0px, calc\(708px - 50vw\)\)/);

@@ -410,7 +410,7 @@ export const documentTranslationMaxOutputTokens = (input: DocumentTranslationInp
   return Math.min(7000, Math.max(800, Math.ceil(sourceCharacters / 2.4) + 500));
 };
 
-const documentTranslationResponseFormat = (pageCount: number) => ({
+export const documentTranslationResponseFormat = () => ({
   type: "json_schema",
   name: "symposium_document_translation",
   strict: true,
@@ -422,16 +422,12 @@ const documentTranslationResponseFormat = (pageCount: number) => ({
       translatedTitle: { type: "string" },
       pages: {
         type: "array",
-        minItems: 0,
-        maxItems: pageCount,
         items: {
           type: "object",
           properties: {
             pageNumber: { type: "integer" },
             segments: {
               type: "array",
-              minItems: 1,
-              maxItems: 1200,
               items: {
                 type: "object",
                 properties: {
@@ -444,8 +440,6 @@ const documentTranslationResponseFormat = (pageCount: number) => ({
             },
             layoutBlocks: {
               type: "array",
-              minItems: 0,
-              maxItems: 200,
               items: {
                 type: "object",
                 properties: {
@@ -455,10 +449,10 @@ const documentTranslationResponseFormat = (pageCount: number) => ({
                     enum: ["title", "heading", "paragraph", "list", "caption", "header", "footer", "footnote", "table"]
                   },
                   text: { type: "string" },
-                  x: { type: "integer", minimum: 0, maximum: 1000 },
-                  y: { type: "integer", minimum: 0, maximum: 1000 },
-                  width: { type: "integer", minimum: 1, maximum: 1000 },
-                  height: { type: "integer", minimum: 1, maximum: 1000 },
+                  x: { type: "integer" },
+                  y: { type: "integer" },
+                  width: { type: "integer" },
+                  height: { type: "integer" },
                   fontScale: { type: "string", enum: ["xs", "sm", "md", "lg", "xl"] },
                   align: { type: "string", enum: ["left", "center", "right", "justify"] }
                 },
@@ -468,17 +462,15 @@ const documentTranslationResponseFormat = (pageCount: number) => ({
             },
             preservedArtifacts: {
               type: "array",
-              minItems: 0,
-              maxItems: 100,
               items: {
                 type: "object",
                 properties: {
                   id: { type: "string" },
                   role: { type: "string", enum: ["equation", "figure", "diagram", "image", "rule"] },
-                  x: { type: "integer", minimum: 0, maximum: 1000 },
-                  y: { type: "integer", minimum: 0, maximum: 1000 },
-                  width: { type: "integer", minimum: 1, maximum: 1000 },
-                  height: { type: "integer", minimum: 1, maximum: 1000 }
+                  x: { type: "integer" },
+                  y: { type: "integer" },
+                  width: { type: "integer" },
+                  height: { type: "integer" }
                 },
                 required: ["id", "role", "x", "y", "width", "height"],
                 additionalProperties: false
@@ -597,8 +589,8 @@ export const callDocumentTranslationModel = async (input: {
       max_output_tokens: documentTranslationMaxOutputTokens(input.request),
       instructions: documentTranslationInstructions,
       input: [{ role: "user", content: documentTranslationRequestContent(input.request) }],
-      text: { format: documentTranslationResponseFormat(input.request.sourcePages.length) },
-      prompt_cache_key: "symposium-document-page-translation-v5",
+      text: { format: documentTranslationResponseFormat() },
+      prompt_cache_key: "symposium-document-page-translation-v6",
       safety_identifier: createHash("sha256").update(input.ownerHandle).digest("hex").slice(0, 64)
     }),
     signal: AbortSignal.timeout(75_000)
