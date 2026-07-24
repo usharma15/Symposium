@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { actualCostMicros, conservativeInputTokenCeiling, reserveCostMicros, usdToMicros } from "@/apps/api/src/services/aiBudget";
 import { assistantDailyLimitFor } from "@/apps/api/src/services/assistantQuota";
+import { assistantQuotaAfterReservation } from "@/apps/api/src/services/assistantUsage";
 import {
   assistantInstructions,
   assistantMaxOutputTokens,
@@ -11,6 +12,7 @@ import {
   assistantTranslationInstructions,
   contentTranslationInstructions,
   contentTranslationMaxOutputTokens,
+  contentTranslationResponseFormat,
   contentTranslationRenderedInput,
   documentTranslationInstructions,
   documentTranslationMaxOutputTokens,
@@ -121,10 +123,18 @@ assert.equal(conservativeInputTokenCeiling("abc"), 3);
 assert.equal(reserveCostMicros("gpt-5.6-terra", "a", 700), 10_504);
 assert.equal(actualCostMicros("gpt-5.6-terra", 1000, 100), 4_625);
 assert.equal(usdToMicros(40), 40_000_000);
+assert.equal(assistantQuotaAfterReservation(10, 8, true).remainingToday, 8);
+assert.equal(assistantQuotaAfterReservation(10, 8, false).remainingToday, 9);
+assert.equal(assistantQuotaAfterReservation(10, 10, false).remainingToday, 10);
 const permanentUserPolicy = { baseLimit: 10 };
 assert.equal(assistantDailyLimitFor("@udayan", "2026-07-20", permanentUserPolicy), 10);
 assert.equal(assistantDailyLimitFor("@someone_else", "2030-01-01", permanentUserPolicy), 10);
-assert.match(assistantProviderFailure(new DOMException("timed out", "TimeoutError")).body, /request timeout/);
+const timeoutFailure = assistantProviderFailure(new DOMException("timed out", "TimeoutError"));
+assert.match(timeoutFailure.body, /No daily answer was used/);
+assert.equal(timeoutFailure.mayHaveBeenBilled, true);
+const localFailure = assistantProviderFailure(new Error("local validation"));
+assert.match(localFailure.body, /No daily answer was used/);
+assert.equal(localFailure.inputTokens, 0);
 
 const documentTranslationInput = {
   attachmentId: "attachment-docx-1",
@@ -489,6 +499,10 @@ assert.equal(contentTranslationInputSchema.safeParse({
 }).success, true);
 assert.match(contentTranslationInstructions, /complete Symposium post or comment/i);
 assert.match(contentTranslationRenderedInput(contentTranslationModelInput), /SOURCE CONTENT/);
+assert.doesNotMatch(
+  JSON.stringify(contentTranslationResponseFormat),
+  /minItems|maxItems|minimum|maximum/
+);
 assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) >= 600);
 assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) <= 6000);
 assert.equal(contentTranslationModelOutputSchema.safeParse({
@@ -691,21 +705,24 @@ assert.match(provider, /symposium-translation-v1/);
 assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v3"/);
 assert.match(provider, /reasoning: \{ effort: "none" \}/);
 assert.match(provider, /symposium-document-page-translation-v6/);
-assert.match(provider, /symposium-content-translation-v2/);
+assert.match(provider, /symposium-content-translation-v3/);
 assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
 assert.match(provider, /insufficient_quota/);
 assert.match(repository, /providerErrorCode/);
 assert.match(usageService, /pg_advisory_xact_lock\(hashtextextended\('symposium:ai-budget'/);
-assert.match(usageService, /current\.userMinute >= 2/);
+assert.doesNotMatch(usageService, /userMinute|two attempts per minute/);
 assert.match(usageService, /current\.inFlight >= 1/);
+assert.match(usageService, /status IN \('reserved', 'completed'\)/);
 assert.match(repository, /getAssistantQuota/);
 assert.match(repository, /SYMPOSIUM_AI_USER_DAILY_LIMIT/);
-assert.match(repository, /assistantQuota\(prepared\.dailyLimit, prepared\.remainingToday\)/);
+assert.match(repository, /assistantQuotaAfterReservation\(prepared\.dailyLimit, prepared\.remainingToday, !providerError\)/);
+assert.doesNotMatch(repository, /failed beta attempt still uses one daily answer/);
 assert.match(usageService, /SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT/);
 assert.match(usageService, /SYMPOSIUM_AI_DAILY_BUDGET_USD/);
 assert.match(usageService, /SYMPOSIUM_AI_MONTHLY_BUDGET_USD/);
 assert.match(usageService, /created_at >= quota_reset\.reset_at/);
 assert.match(usageService, /monthlyCostMicros/);
+assert.match(usageService, /CASE WHEN status = 'reserved' THEN reserved_cost_micros ELSE actual_cost_micros END/);
 assert.match(migration, /0037_ai_usage_budget_ledger/);
 assert.match(migration, /reserved_cost_micros BIGINT NOT NULL/);
 assert.match(migration, /0038_document_translation_cache/);
@@ -717,6 +734,8 @@ assert.match(migration, /context_sources JSONB NOT NULL DEFAULT '\[\]'::jsonb/);
 assert.match(migration, /0050_assistant_context_dock_translation/);
 assert.match(migration, /0051_translation_layout_fidelity/);
 assert.match(migration, /0052_document_view_continuity/);
+assert.match(migration, /0053_failed_ai_usage_accounting/);
+assert.match(migration, /actual_cost_micros = 0[\s\S]*error_code IN/);
 assert.match(migration, /kind TEXT NOT NULL DEFAULT 'research_thread'/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS content_translations/);
 assert.match(repository, /listAssistantConversations/);
@@ -782,11 +801,11 @@ assert.match(attachmentViews, /readPdfPageText\(document, boundedPage\)/);
 assert.match(attachmentViews, /renderPdfPageTranslationImage\(document, boundedPage\)/);
 assert.match(attachmentViews, /DocumentTranslationControl state=\{translation\}/);
 assert.match(documentTranslationControl, /\["English", "French", "German", "Spanish"\]/);
-assert.match(documentTranslationControl, /Due to limited usage restriction this beta translates one page at a time/);
-assert.match(documentTranslationControl, /TriangleAlert/);
+assert.match(documentTranslationControl, /This translates the current page/);
+assert.doesNotMatch(documentTranslationControl, /limited usage restriction|TriangleAlert/);
 assert.match(documentTranslationControl, /Original/);
 assert.match(documentTranslationControl, /Translation/);
-assert.match(documentTranslationControl, /Translate · uses 1/);
+assert.match(documentTranslationControl, /Translate · 1 answer/);
 assert.match(documentRepository, /findCachedTranslation/);
 assert.match(documentRepository, /No AI answer was consumed/);
 assert.match(documentRepository, /reserveAssistantUsage/);
@@ -798,8 +817,8 @@ assert.match(contentRepository, /No AI answer was consumed/);
 assert.match(contentRepository, /reserveAssistantUsage/);
 assert.match(contentRepository, /Only five sources|Choose English, French, German, or Spanish/);
 assert.match(contentTranslationControl, /Translate entire \{sourceLabel\}/);
-assert.match(contentTranslationControl, /Saved translations reuse 0 answers/);
-assert.match(contentTranslationControl, /Translate · up to 1/);
+assert.match(contentTranslationControl, /Only a completed translation uses 1 answer/);
+assert.match(contentTranslationControl, /Translate · 1 answer/);
 assert.match(contentTranslationControl, /Original/);
 assert.match(contentTranslationControl, /translation-language-options/);
 assert.match(attachmentViews, /attachment-pdf-stage-continuous/);

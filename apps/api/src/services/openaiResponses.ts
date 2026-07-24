@@ -43,17 +43,41 @@ type OpenAIResponsePayload = {
 export type AssistantProviderFailure = {
   code: string;
   body: string;
+  providerResponseId?: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  mayHaveBeenBilled: boolean;
 };
 
 class OpenAIProviderError extends Error {
   constructor(
     readonly status: number,
-    readonly providerCode: string
+    readonly providerCode: string,
+    readonly payload: OpenAIResponsePayload
   ) {
     super(`OpenAI request failed (${status}, ${providerCode}).`);
     this.name = "OpenAIProviderError";
   }
 }
+
+class OpenAIOutputError extends Error {
+  constructor(
+    readonly providerCode: string,
+    readonly payload: OpenAIResponsePayload
+  ) {
+    super(`OpenAI returned an unusable response (${providerCode}).`);
+    this.name = "OpenAIOutputError";
+  }
+}
+
+const providerUsage = (payload?: OpenAIResponsePayload) => ({
+  inputTokens: Math.max(0, payload?.usage?.input_tokens ?? 0),
+  cachedInputTokens: Math.max(0, payload?.usage?.input_tokens_details?.cached_tokens ?? 0),
+  cacheWriteTokens: Math.max(0, payload?.usage?.input_tokens_details?.cache_write_tokens ?? 0),
+  outputTokens: Math.max(0, payload?.usage?.output_tokens ?? 0)
+});
 
 const normalizedProviderCode = (status: number, payload: OpenAIResponsePayload) => {
   const reported = payload.error?.code?.trim() || payload.error?.type?.trim();
@@ -66,51 +90,63 @@ const normalizedProviderCode = (status: number, payload: OpenAIResponsePayload) 
 };
 
 export const assistantProviderFailure = (error: unknown): AssistantProviderFailure => {
-  const code = error instanceof OpenAIProviderError
+  const providerPayload = error instanceof OpenAIProviderError || error instanceof OpenAIOutputError
+    ? error.payload
+    : undefined;
+  const usage = providerUsage(providerPayload);
+  const code = error instanceof OpenAIProviderError || error instanceof OpenAIOutputError
     ? error.providerCode
     : error instanceof DOMException && error.name === "TimeoutError"
       ? "provider_timeout"
       : "provider_error";
+  const common = {
+    code,
+    ...(providerPayload?.id ? { providerResponseId: providerPayload.id } : {}),
+    ...usage,
+    mayHaveBeenBilled: error instanceof OpenAIOutputError ||
+      error instanceof DOMException && error.name === "TimeoutError" ||
+      usage.inputTokens + usage.outputTokens > 0
+  };
   const normalized = code.toLowerCase();
   if (normalized.includes("insufficient_quota") || normalized.includes("billing")) {
     return {
-      code,
-      body: "The Symposium OpenAI project has no available API credit. Add API billing or credits to that project, then try again. This failed beta attempt still uses one daily answer so repeated retries cannot create surprise costs."
+      ...common,
+      body: "The AI service is temporarily unavailable. No daily answer was used."
     };
   }
   if (normalized.includes("invalid_api_key") || normalized.includes("authentication")) {
     return {
-      code,
-      body: "OpenAI rejected the Symposium API key. Replace OPENAI_API_KEY on the live backend with an active key from the Symposium project. This failed beta attempt still uses one daily answer."
+      ...common,
+      body: "The AI service is temporarily unavailable. No daily answer was used."
     };
   }
   if (normalized.includes("permission") || normalized.includes("forbidden")) {
     return {
-      code,
-      body: "The Symposium OpenAI key is not permitted to create model responses. Give the key Responses write access, then try again. This failed beta attempt still uses one daily answer."
+      ...common,
+      body: "The AI service is temporarily unavailable. No daily answer was used."
     };
   }
   if (normalized.includes("model_not_found") || normalized.includes("model_not_available")) {
     return {
-      code,
-      body: "The configured OpenAI model is not available to the Symposium project. Check the project’s model access before trying again. This failed beta attempt still uses one daily answer."
+      ...common,
+      body: "The AI service is temporarily unavailable. No daily answer was used."
     };
   }
   if (normalized.includes("rate_limit")) {
     return {
-      code,
-      body: "OpenAI temporarily rate-limited the Symposium project. Wait before trying again. This failed beta attempt still uses one daily answer."
+      ...common,
+      body: "The AI service is temporarily busy. No daily answer was used; try again shortly."
     };
   }
   if (normalized === "provider_timeout") {
     return {
-      code,
-      body: "OpenAI did not finish before Symposium’s request timeout. This failed beta attempt still uses one daily answer so repeated retries cannot create surprise costs."
+      ...common,
+      body: "The AI request took too long to finish. No daily answer was used; you can retry."
     };
   }
   return {
-    code,
-    body: "The AI provider could not complete this answer. This failed beta attempt still uses one daily answer so repeated retries cannot create surprise costs."
+    ...common,
+    body: "The AI request could not be completed. No daily answer was used; you can retry."
   };
 };
 
@@ -317,7 +353,7 @@ export const contentTranslationRenderedInput = (input: ContentTranslationModelIn
 export const contentTranslationMaxOutputTokens = (input: ContentTranslationModelInputContract) =>
   Math.min(6000, Math.max(600, Math.ceil((input.sourceTitle.length + input.sourceSegments.reduce((total, segment) => total + segment.text.length, 0)) / 2.4) + 450));
 
-const contentTranslationResponseFormat = {
+export const contentTranslationResponseFormat = {
   type: "json_schema",
   name: "symposium_content_translation",
   strict: true,
@@ -329,8 +365,6 @@ const contentTranslationResponseFormat = {
       translatedTitle: { type: "string" },
       translatedSegments: {
         type: "array",
-        minItems: 0,
-        maxItems: 5000,
         items: {
           type: "object",
           properties: {
@@ -544,12 +578,18 @@ export const callAssistantModel = async (input: {
 
   const payload = await response.json().catch(() => ({})) as OpenAIResponsePayload;
   if (!response.ok) {
-    throw new OpenAIProviderError(response.status, normalizedProviderCode(response.status, payload));
+    throw new OpenAIProviderError(response.status, normalizedProviderCode(response.status, payload), payload);
   }
   const output = responseText(payload);
-  if (!output) throw new Error("OpenAI returned no answer text.");
-  const translation = translating ? assistantTranslationDraftSchema.parse(JSON.parse(output)) : undefined;
-  const answer = translating ? undefined : assistantAnswerDraftSchema.parse(JSON.parse(output));
+  if (!output) throw new OpenAIOutputError("missing_output_text", payload);
+  let translation: AssistantTranslationDraftContract | undefined;
+  let answer: ReturnType<typeof assistantAnswerDraftSchema.parse> | undefined;
+  try {
+    translation = translating ? assistantTranslationDraftSchema.parse(JSON.parse(output)) : undefined;
+    answer = translating ? undefined : assistantAnswerDraftSchema.parse(JSON.parse(output));
+  } catch {
+    throw new OpenAIOutputError("invalid_structured_output", payload);
+  }
   const quickNote = answer?.shouldOfferQuickNote
     ? { title: answer.quickNoteTitle, body: answer.quickNoteBody }
     : undefined;
@@ -598,29 +638,34 @@ export const callDocumentTranslationModel = async (input: {
 
   const payload = await response.json().catch(() => ({})) as OpenAIResponsePayload;
   if (!response.ok) {
-    throw new OpenAIProviderError(response.status, normalizedProviderCode(response.status, payload));
+    throw new OpenAIProviderError(response.status, normalizedProviderCode(response.status, payload), payload);
   }
   const text = responseText(payload);
-  if (!text) throw new Error("OpenAI returned no document translation.");
-  const output = documentTranslationModelOutputSchema.parse(JSON.parse(text));
-  if (output.targetLanguage !== "unsupported") {
-    const expectedPages = input.request.sourcePages.map((page) => page.pageNumber);
-    const actualPages = output.pages.map((page) => page.pageNumber);
-    if (actualPages.length !== expectedPages.length || actualPages.some((page, index) => page !== expectedPages[index])) {
-      throw new Error("OpenAI returned a document translation with mismatched pages.");
+  if (!text) throw new OpenAIOutputError("missing_document_translation", payload);
+  let output: DocumentTranslationModelOutputContract;
+  try {
+    output = documentTranslationModelOutputSchema.parse(JSON.parse(text));
+    if (output.targetLanguage !== "unsupported") {
+      const expectedPages = input.request.sourcePages.map((page) => page.pageNumber);
+      const actualPages = output.pages.map((page) => page.pageNumber);
+      if (actualPages.length !== expectedPages.length || actualPages.some((page, index) => page !== expectedPages[index])) {
+        throw new Error("OpenAI returned a document translation with mismatched pages.");
+      }
+      output.pages.forEach((page, pageIndex) => {
+        const expectedSegments = documentTranslationSegmentsForPage(input.request.sourcePages[pageIndex]!);
+        const restoredSegments = restoreTranslationSegmentOrder(expectedSegments, page.segments);
+        if (!restoredSegments) {
+          throw new Error("OpenAI returned a document translation with mismatched text segments.");
+        }
+        page.segments = restoredSegments;
+        const sourcePage = input.request.sourcePages[pageIndex]!;
+        if (sourcePage.imageDataUrl && !page.layoutBlocks.length) {
+          throw new Error("OpenAI returned a visual document translation without reconstructed layout blocks.");
+        }
+      });
     }
-    output.pages.forEach((page, pageIndex) => {
-      const expectedSegments = documentTranslationSegmentsForPage(input.request.sourcePages[pageIndex]!);
-      const restoredSegments = restoreTranslationSegmentOrder(expectedSegments, page.segments);
-      if (!restoredSegments) {
-        throw new Error("OpenAI returned a document translation with mismatched text segments.");
-      }
-      page.segments = restoredSegments;
-      const sourcePage = input.request.sourcePages[pageIndex]!;
-      if (sourcePage.imageDataUrl && !page.layoutBlocks.length) {
-        throw new Error("OpenAI returned a visual document translation without reconstructed layout blocks.");
-      }
-    });
+  } catch {
+    throw new OpenAIOutputError("invalid_document_translation", payload);
   }
   return {
     output,
@@ -655,7 +700,7 @@ export const callContentTranslationModel = async (input: {
       instructions: contentTranslationInstructions,
       input: [{ role: "user", content: contentTranslationPrompt(input.request) }],
       text: { format: contentTranslationResponseFormat },
-      prompt_cache_key: "symposium-content-translation-v2",
+      prompt_cache_key: "symposium-content-translation-v3",
       safety_identifier: createHash("sha256").update(input.ownerHandle).digest("hex").slice(0, 64)
     }),
     signal: AbortSignal.timeout(60_000)
@@ -663,20 +708,25 @@ export const callContentTranslationModel = async (input: {
 
   const payload = await response.json().catch(() => ({})) as OpenAIResponsePayload;
   if (!response.ok) {
-    throw new OpenAIProviderError(response.status, normalizedProviderCode(response.status, payload));
+    throw new OpenAIProviderError(response.status, normalizedProviderCode(response.status, payload), payload);
   }
   const text = responseText(payload);
-  if (!text) throw new Error("OpenAI returned no content translation.");
-  const output = contentTranslationModelOutputSchema.parse(JSON.parse(text));
-  if (output.targetLanguage !== "unsupported") {
-    const restoredSegments = restoreTranslationSegmentOrder(
-      input.request.sourceSegments,
-      output.translatedSegments
-    );
-    if (!restoredSegments) {
-      throw new Error("OpenAI returned a content translation with mismatched text segments.");
+  if (!text) throw new OpenAIOutputError("missing_content_translation", payload);
+  let output: ContentTranslationModelOutputContract;
+  try {
+    output = contentTranslationModelOutputSchema.parse(JSON.parse(text));
+    if (output.targetLanguage !== "unsupported") {
+      const restoredSegments = restoreTranslationSegmentOrder(
+        input.request.sourceSegments,
+        output.translatedSegments
+      );
+      if (!restoredSegments) {
+        throw new Error("OpenAI returned a content translation with mismatched text segments.");
+      }
+      output.translatedSegments = restoredSegments;
     }
-    output.translatedSegments = restoredSegments;
+  } catch {
+    throw new OpenAIOutputError("invalid_content_translation", payload);
   }
   return {
     output,

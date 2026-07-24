@@ -2614,6 +2614,28 @@ const migrations: Migration[] = [
         ADD CONSTRAINT document_translations_source_kind_check
         CHECK (source_kind IN ('document', 'docx', 'pdf'));
     `
+  },
+  {
+    id: "0053_failed_ai_usage_accounting",
+    sql: `
+      UPDATE ai_usage
+      SET actual_cost_micros = 0,
+          updated_at = now()
+      WHERE status = 'failed'
+        AND provider_response_id IS NULL
+        AND input_tokens = 0
+        AND output_tokens = 0
+        AND error_code IN (
+          'invalid_json_schema',
+          'invalid_request_error',
+          'invalid_api_key',
+          'permission_denied',
+          'model_not_found',
+          'rate_limit_exceeded',
+          'insufficient_quota',
+          'billing_not_active'
+        );
+    `
   }
 ];
 

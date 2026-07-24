@@ -836,16 +836,8 @@
   line-height: 1.35;
 }
 
-.document-translation-popover .document-translation-limit-warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  color: color-mix(in srgb, var(--warning, #a56518) 82%, var(--ink));
-}
-
-.document-translation-limit-warning svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
+.document-translation-popover .document-translation-scope-note {
+  color: var(--muted);
 }
 
 .document-translation-popover input {

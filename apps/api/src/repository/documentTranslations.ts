@@ -10,7 +10,12 @@ import {
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { actualCostMicros } from "../services/aiBudget";
-import { assistantQuota, completeAssistantUsage, reserveAssistantUsage } from "../services/assistantUsage";
+import {
+  assistantQuota,
+  assistantQuotaAfterReservation,
+  completeAssistantUsage,
+  reserveAssistantUsage
+} from "../services/assistantUsage";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import type { Actor } from "../services/auth";
 import { stageEvent } from "../services/events";
@@ -43,6 +48,7 @@ type TranslationCacheRow = {
 type PreparedTranslation = {
   owner: string;
   input: ParsedInput;
+  requestedLanguage: AssistantTranslationLanguageContract;
   sourceFingerprint: string;
   conversationId: string;
   usageId: string;
@@ -73,7 +79,9 @@ const currentQuota = async (owner: string) => {
      )
      SELECT count(*)::int AS "usedToday"
      FROM ai_usage CROSS JOIN quota_reset
-     WHERE owner_handle = $1 AND created_at >= quota_reset.reset_at`,
+     WHERE owner_handle = $1
+       AND status IN ('reserved', 'completed')
+       AND created_at >= quota_reset.reset_at`,
     [owner]
   );
   return assistantQuota(
@@ -165,6 +173,7 @@ const unsupportedResult = async (
 const prepareTranslation = async (
   input: ParsedInput,
   sourceFingerprint: string,
+  requestedLanguage: AssistantTranslationLanguageContract,
   owner: string,
   mutation?: MutationContext
 ): Promise<PreparedTranslation | { replayed: DocumentTranslationResultContract }> => runAtomic<PreparedTranslation | { replayed: DocumentTranslationResultContract }>(async (client) => {
@@ -199,6 +208,7 @@ const prepareTranslation = async (
     value: {
       owner,
       input,
+      requestedLanguage,
       sourceFingerprint,
       conversationId,
       usageId: reservation.usageId,
@@ -215,9 +225,10 @@ const finalizeTranslation = async (
   failure: AssistantProviderFailure | null,
   mutation?: MutationContext
 ): Promise<DocumentTranslationResultContract> => runAtomic(async (client) => {
-  const providerError = !modelResult;
-  const output = modelResult?.output;
-  const targetLanguage = output && output.targetLanguage !== "unsupported" ? output.targetLanguage : null;
+  const validOutput = modelResult?.output.targetLanguage === prepared.requestedLanguage;
+  const providerError = !modelResult || !validOutput;
+  const output = validOutput ? modelResult.output : null;
+  const targetLanguage = validOutput ? prepared.requestedLanguage : null;
   const translatedPages = targetLanguage
     ? (output?.pages ?? []).map((page) => ({
         pageNumber: page.pageNumber,
@@ -233,7 +244,7 @@ const finalizeTranslation = async (
       ? "translated"
       : "unsupported_language";
   const message = providerError
-    ? failure?.body ?? "The AI provider could not translate this document. This failed attempt still uses one daily answer."
+    ? failure?.body ?? "Translation could not be completed. No daily answer was used; you can retry."
     : targetLanguage
       ? prepared.input.sourceComplete
         ? `${translationLanguageLabels[targetLanguage]} translation ready for page ${prepared.input.sourcePages[0]!.pageNumber}.`
@@ -241,19 +252,23 @@ const finalizeTranslation = async (
       : output?.message || "Type English, French, German, or Spanish.";
   const actualMicros = modelResult
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, modelResult.inputTokens, modelResult.outputTokens)
-    : prepared.reservedCostMicros;
+    : failure?.mayHaveBeenBilled
+      ? failure.inputTokens + failure.outputTokens > 0
+        ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, failure.inputTokens, failure.outputTokens)
+        : prepared.reservedCostMicros
+      : 0;
 
   await completeAssistantUsage(client, {
     usageId: prepared.usageId,
     owner: prepared.owner,
     providerError,
     actualCostMicros: actualMicros,
-    inputTokens: modelResult?.inputTokens ?? 0,
-    cachedInputTokens: modelResult?.cachedInputTokens ?? 0,
-    cacheWriteTokens: modelResult?.cacheWriteTokens ?? 0,
-    outputTokens: modelResult?.outputTokens ?? 0,
-    providerResponseId: modelResult?.providerResponseId,
-    errorCode: failure?.code
+    inputTokens: modelResult?.inputTokens ?? failure?.inputTokens ?? 0,
+    cachedInputTokens: modelResult?.cachedInputTokens ?? failure?.cachedInputTokens ?? 0,
+    cacheWriteTokens: modelResult?.cacheWriteTokens ?? failure?.cacheWriteTokens ?? 0,
+    outputTokens: modelResult?.outputTokens ?? failure?.outputTokens ?? 0,
+    providerResponseId: modelResult?.providerResponseId ?? failure?.providerResponseId,
+    errorCode: failure?.code ?? (!validOutput ? "translation_language_mismatch" : undefined)
   });
 
   const createdAt = new Date().toISOString();
@@ -270,7 +285,7 @@ const finalizeTranslation = async (
     message,
     model: modelResult?.model ?? env.SYMPOSIUM_AI_MODEL,
     createdAt,
-    quota: assistantQuota(prepared.dailyLimit, prepared.remainingToday)
+    quota: assistantQuotaAfterReservation(prepared.dailyLimit, prepared.remainingToday, !providerError)
   };
   documentTranslationResultSchema.parse(response);
 
@@ -361,7 +376,7 @@ export const translateDocument = async (
   const cached = await findCachedTranslation(input.attachmentId, sourceFingerprint, requestedLanguage);
   if (cached) return cachedResult(cached, owner);
 
-  const prepared = await prepareTranslation(input, sourceFingerprint, owner, mutation);
+  const prepared = await prepareTranslation(input, sourceFingerprint, requestedLanguage, owner, mutation);
   if ("replayed" in prepared) return prepared.replayed;
 
   let result: DocumentTranslationModelResult | null = null;

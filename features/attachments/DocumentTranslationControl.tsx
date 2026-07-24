@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
   type FormEvent
 } from "react";
-import { Languages, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { Languages, LoaderCircle, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import {
   documentViewerSessionSnapshot,
@@ -229,15 +229,13 @@ export function DocumentTranslationControl({ state }: { state: DocumentTranslati
               </button>
             ))}
           </div>
-          <small className="document-translation-limit-warning">
-            <TriangleAlert size={14} aria-hidden="true" />
-            <span>Due to limited usage restriction this beta translates one page at a time</span>
+          <small className="document-translation-scope-note">
+            This translates the current page. Only a completed translation uses 1 answer; the original stays available.
           </small>
-          <small>English, French, German, or Spanish.</small>
           {state.error ? <p role="alert">{state.error}</p> : null}
           <button type="submit" className="document-translation-submit" disabled={!state.instruction.trim() || state.busy}>
             {state.busy ? <LoaderCircle className="spin" size={14} /> : <Languages size={14} />}
-            {state.busy ? "Translating…" : "Translate · uses 1"}
+            {state.busy ? "Translating…" : "Translate · 1 answer"}
           </button>
         </form>
       ) : null}

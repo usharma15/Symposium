@@ -22,7 +22,12 @@ import {
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { actualCostMicros } from "../services/aiBudget";
-import { assistantQuota, completeAssistantUsage, reserveAssistantUsage } from "../services/assistantUsage";
+import {
+  assistantQuota,
+  assistantQuotaAfterReservation,
+  completeAssistantUsage,
+  reserveAssistantUsage
+} from "../services/assistantUsage";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import type { Actor } from "../services/auth";
 import { stageEvent } from "../services/events";
@@ -224,7 +229,9 @@ export const getAssistantQuota = async (actor: Actor): Promise<AssistantQuotaSta
      )
      SELECT count(*)::int AS "usedToday", current_date::text AS "usageDay"
      FROM ai_usage CROSS JOIN quota_reset
-     WHERE owner_handle = $1 AND created_at >= quota_reset.reset_at`,
+     WHERE owner_handle = $1
+       AND status IN ('reserved', 'completed')
+       AND created_at >= quota_reset.reset_at`,
     [owner]
   );
   const dailyLimit = env.SYMPOSIUM_AI_USER_DAILY_LIMIT;
@@ -707,7 +714,7 @@ const finalizeAssistant = async (
   mutation?: MutationContext
 ): Promise<AssistantResponseContract> => runAtomic(async (client) => {
   const providerError = !result;
-  const body = result?.body ?? failure?.body ?? "The AI provider could not complete this answer. This failed beta attempt still uses one daily answer so repeated retries cannot create surprise costs.";
+  const body = result?.body ?? failure?.body ?? "The AI service could not complete this answer. No daily answer was used; you can retry.";
   const translation = result?.translation && prepared.input.targetLanguage
     ? {
         ...result.translation,
@@ -735,7 +742,11 @@ const finalizeAssistant = async (
     : undefined;
   const actualMicros = result
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, result.inputTokens, result.outputTokens)
-    : prepared.reservedCostMicros;
+    : failure?.mayHaveBeenBilled
+      ? failure.inputTokens + failure.outputTokens > 0
+        ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, failure.inputTokens, failure.outputTokens)
+        : prepared.reservedCostMicros
+      : 0;
   const assistantMessage = await client.query<{
     id: string;
     conversationId: string;
@@ -761,11 +772,11 @@ const finalizeAssistant = async (
     owner: prepared.owner,
     providerError,
     actualCostMicros: actualMicros,
-    inputTokens: result?.inputTokens ?? 0,
-    cachedInputTokens: result?.cachedInputTokens ?? 0,
-    cacheWriteTokens: result?.cacheWriteTokens ?? 0,
-    outputTokens: result?.outputTokens ?? 0,
-    providerResponseId: result?.providerResponseId,
+    inputTokens: result?.inputTokens ?? failure?.inputTokens ?? 0,
+    cachedInputTokens: result?.cachedInputTokens ?? failure?.cachedInputTokens ?? 0,
+    cacheWriteTokens: result?.cacheWriteTokens ?? failure?.cacheWriteTokens ?? 0,
+    outputTokens: result?.outputTokens ?? failure?.outputTokens ?? 0,
+    providerResponseId: result?.providerResponseId ?? failure?.providerResponseId,
     errorCode: failure?.code
   });
   const updatedConversation = await client.query<ConversationRow>(
@@ -781,7 +792,7 @@ const finalizeAssistant = async (
     providerConfigured: true,
     status: providerError ? "provider_error" : "answered",
     model: result?.model ?? env.SYMPOSIUM_AI_MODEL,
-    quota: assistantQuota(prepared.dailyLimit, prepared.remainingToday),
+    quota: assistantQuotaAfterReservation(prepared.dailyLimit, prepared.remainingToday, !providerError),
     thread: assistantThreadState(updatedConversation.rows[0] ?? {
       ...prepared.thread,
       contextSources: prepared.thread.sources,

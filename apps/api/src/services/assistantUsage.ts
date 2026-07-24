@@ -13,10 +13,16 @@ export type AssistantUsageReservation = {
 
 export const assistantQuota = (dailyLimit: number, remainingToday: number) => ({
   dailyLimit,
-  remainingToday: Math.max(0, remainingToday),
+  remainingToday: Math.min(dailyLimit, Math.max(0, remainingToday)),
   monthlyBudgetUsd: env.SYMPOSIUM_AI_MONTHLY_BUDGET_USD,
   extremelyLimited: true as const
 });
+
+export const assistantQuotaAfterReservation = (
+  dailyLimit: number,
+  remainingToday: number,
+  completed: boolean
+) => assistantQuota(dailyLimit, remainingToday + (completed ? 0 : 1));
 
 export const reserveAssistantUsage = async (
   client: PoolClient,
@@ -30,7 +36,6 @@ export const reserveAssistantUsage = async (
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended('symposium:ai-budget', 0))");
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended('symposium:ai-user:' || $1, 0))", [input.owner]);
   const usage = await client.query<{
-    userMinute: number;
     userDaily: number;
     globalDaily: number;
     inFlight: number;
@@ -44,13 +49,19 @@ export const reserveAssistantUsage = async (
        WHERE owner_handle = $1 AND usage_day = current_date
      )
      SELECT
-       count(*) FILTER (WHERE owner_handle = $1 AND created_at >= now() - interval '60 seconds')::int AS "userMinute",
-       count(*) FILTER (WHERE owner_handle = $1 AND created_at >= quota_reset.reset_at)::int AS "userDaily",
-       count(*) FILTER (WHERE created_at >= date_trunc('day', now()))::int AS "globalDaily",
+       count(*) FILTER (
+         WHERE owner_handle = $1
+           AND status IN ('reserved', 'completed')
+           AND created_at >= quota_reset.reset_at
+       )::int AS "userDaily",
+       count(*) FILTER (
+         WHERE status IN ('reserved', 'completed')
+           AND created_at >= date_trunc('day', now())
+       )::int AS "globalDaily",
        count(*) FILTER (WHERE owner_handle = $1 AND status = 'reserved' AND created_at >= now() - interval '2 minutes')::int AS "inFlight",
-       COALESCE(sum(CASE WHEN status = 'completed' THEN actual_cost_micros ELSE reserved_cost_micros END)
+       COALESCE(sum(CASE WHEN status = 'reserved' THEN reserved_cost_micros ELSE actual_cost_micros END)
          FILTER (WHERE created_at >= date_trunc('day', now())), 0)::text AS "dailyCostMicros",
-       COALESCE(sum(CASE WHEN status = 'completed' THEN actual_cost_micros ELSE reserved_cost_micros END)
+       COALESCE(sum(CASE WHEN status = 'reserved' THEN reserved_cost_micros ELSE actual_cost_micros END)
          FILTER (WHERE created_at >= date_trunc('month', now())), 0)::text AS "monthlyCostMicros",
        current_date::text AS "usageDay"
      FROM ai_usage CROSS JOIN quota_reset`,
@@ -62,9 +73,6 @@ export const reserveAssistantUsage = async (
   });
   if (current.inFlight >= 1) {
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Only one AI request can run at a time for this account." });
-  }
-  if (current.userMinute >= 2) {
-    throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "AI requests are limited to two attempts per minute." });
   }
   if (current.userDaily >= dailyLimit) {
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: `Daily AI limit reached. Every account has a hard limit of ${dailyLimit} answers per usage day.` });

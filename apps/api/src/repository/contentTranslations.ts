@@ -16,7 +16,12 @@ import {
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { actualCostMicros } from "../services/aiBudget";
-import { assistantQuota, completeAssistantUsage, reserveAssistantUsage } from "../services/assistantUsage";
+import {
+  assistantQuota,
+  assistantQuotaAfterReservation,
+  completeAssistantUsage,
+  reserveAssistantUsage
+} from "../services/assistantUsage";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import type { Actor } from "../services/auth";
 import { stageEvent } from "../services/events";
@@ -290,7 +295,9 @@ const currentQuota = async (owner: string) => {
      )
      SELECT count(*)::int AS "usedToday"
      FROM ai_usage CROSS JOIN quota_reset
-     WHERE owner_handle = $1 AND created_at >= quota_reset.reset_at`,
+     WHERE owner_handle = $1
+       AND status IN ('reserved', 'completed')
+       AND created_at >= quota_reset.reset_at`,
     [owner]
   );
   return assistantQuota(
@@ -446,21 +453,25 @@ const finalizeTranslation = async (
   const translatedBody = translatedStructure ? documentPlainTextProjection(translatedStructure) : "";
   const status: ContentTranslationResultContract["status"] = providerError ? "provider_error" : "translated";
   const message = providerError
-    ? failure?.body ?? "The AI provider returned an invalid content translation. This failed attempt still uses one daily answer."
+    ? failure?.body ?? "Translation could not be completed. No daily answer was used; you can retry."
     : `${translationLanguageLabels[prepared.requestedLanguage]} translation ready for this ${prepared.source.sourceType}.`;
   const actualMicros = modelResult
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, modelResult.inputTokens, modelResult.outputTokens)
-    : prepared.reservedCostMicros;
+    : failure?.mayHaveBeenBilled
+      ? failure.inputTokens + failure.outputTokens > 0
+        ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, failure.inputTokens, failure.outputTokens)
+        : prepared.reservedCostMicros
+      : 0;
   await completeAssistantUsage(client, {
     usageId: prepared.usageId,
     owner: prepared.owner,
     providerError,
     actualCostMicros: actualMicros,
-    inputTokens: modelResult?.inputTokens ?? 0,
-    cachedInputTokens: modelResult?.cachedInputTokens ?? 0,
-    cacheWriteTokens: modelResult?.cacheWriteTokens ?? 0,
-    outputTokens: modelResult?.outputTokens ?? 0,
-    providerResponseId: modelResult?.providerResponseId,
+    inputTokens: modelResult?.inputTokens ?? failure?.inputTokens ?? 0,
+    cachedInputTokens: modelResult?.cachedInputTokens ?? failure?.cachedInputTokens ?? 0,
+    cacheWriteTokens: modelResult?.cacheWriteTokens ?? failure?.cacheWriteTokens ?? 0,
+    outputTokens: modelResult?.outputTokens ?? failure?.outputTokens ?? 0,
+    providerResponseId: modelResult?.providerResponseId ?? failure?.providerResponseId,
     errorCode: failure?.code ?? (!validOutput ? "translation_language_mismatch" : undefined)
   });
   const response: ContentTranslationResultContract = {
@@ -478,7 +489,7 @@ const finalizeTranslation = async (
     message,
     model: modelResult?.model ?? env.SYMPOSIUM_AI_MODEL,
     createdAt: new Date().toISOString(),
-    quota: assistantQuota(prepared.dailyLimit, prepared.remainingToday)
+    quota: assistantQuotaAfterReservation(prepared.dailyLimit, prepared.remainingToday, !providerError)
   };
   contentTranslationResultSchema.parse(response);
   if (status === "translated") {

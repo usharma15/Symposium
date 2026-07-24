@@ -176,11 +176,11 @@ export function ContentTranslationControl({
               </button>
             ))}
           </div>
-          <small>The original stays available. Saved translations reuse 0 answers.</small>
+          <small>Only a completed translation uses 1 answer. The original and saved translations remain available.</small>
           {state.error ? <p role="alert">{state.error}</p> : null}
           <button type="submit" className="primary" disabled={state.busy}>
             {state.busy ? <LoaderCircle className="spin" size={14} /> : <Languages size={14} />}
-            {state.busy ? "Translating entire text…" : "Translate · up to 1"}
+            {state.busy ? "Translating entire text…" : "Translate · 1 answer"}
           </button>
         </form>
       ) : null}
