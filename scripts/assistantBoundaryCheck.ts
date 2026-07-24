@@ -253,12 +253,14 @@ assert.deepEqual(
       { str: "The vital assumption", hasEOL: false },
       { str: "is locality.", hasEOL: true },
       { str: "E(a,b) = -a · b", hasEOL: true },
-      { str: "III. Illustration", hasEOL: true }
+      { str: "III. Illustration", hasEOL: true },
+      { str: "and so on...", hasEOL: true }
     ]
   }),
   [
     { id: "pdf-2-line-0", text: "The vital assumption is locality." },
-    { id: "pdf-2-line-1", text: "III. Illustration" }
+    { id: "pdf-2-line-1", text: "III. Illustration" },
+    { id: "pdf-2-line-2", text: "and so on..." }
   ]
 );
 assert.deepEqual(
@@ -868,6 +870,8 @@ assert.ok(
   visionTranslationCanvasBlock.indexOf("visionTranslationBlocks.forEach") <
   visionTranslationCanvasBlock.indexOf("preservedArtifacts.forEach")
 );
+assert.match(attachmentViews, /const textBandLeft = translationCanvas\.width \* 0\.025/);
+assert.match(attachmentViews, /const textBandWidth = translationCanvas\.width \* 0\.95/);
 assert.match(attachmentViews, /DocumentTranslationControl state=\{translation\}/);
 assert.match(documentTranslationControl, /\["English", "French", "German", "Spanish"\]/);
 assert.match(documentTranslationControl, /This translates the current page/);

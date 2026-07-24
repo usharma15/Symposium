@@ -349,7 +349,8 @@ type PdfTranslationSegmentGroup = TranslationSourceSegmentContract & {
 };
 
 const pdfLineHasNaturalLanguage = (text: string) =>
-  (text.match(/\p{L}/gu)?.length ?? 0) >= 8;
+  (text.match(/\p{L}/gu)?.length ?? 0) >= 2 &&
+  /\p{L}{2,}/u.test(text);
 
 const pdfTranslationSegmentGroupsFromTextContent = (
   pageNumber: number,
@@ -1200,16 +1201,15 @@ function PdfContinuousPage({
       });
       return;
     }
-    const scaleX = translationCanvas.width / Math.max(1, renderedWidth);
     const scaleY = translationCanvas.height / Math.max(1, renderedHeight);
     parallelBlocks.forEach((block) => {
       const padding = Math.max(2, block.fontSize * 0.18);
-      const left = Math.max(0, (block.left - padding) * scaleX);
       const top = Math.max(0, (block.top - padding) * scaleY);
-      const width = Math.min(translationCanvas.width - left, (block.width + padding * 2) * scaleX);
       const height = Math.min(translationCanvas.height - top, (block.height + padding * 2) * scaleY);
+      const textBandLeft = translationCanvas.width * 0.025;
+      const textBandWidth = translationCanvas.width * 0.95;
       context.fillStyle = pageBackground;
-      context.fillRect(left, top, width, height);
+      context.fillRect(textBandLeft, top, textBandWidth, height);
     });
   }, [parallelBlocks, preservedArtifacts, ready, renderedHeight, renderedWidth, showTranslation, visionTranslationBlocks.length, visualFallback]);
 
