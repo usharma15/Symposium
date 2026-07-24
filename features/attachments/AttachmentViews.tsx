@@ -298,23 +298,55 @@ type PdfTextContentLike = {
   items: Array<{ str?: unknown; hasEOL?: unknown } | unknown>;
 };
 
+type PdfTranslationSegmentGroup = TranslationSourceSegmentContract & {
+  spanIndexes: number[];
+};
+
+const pdfLineHasNaturalLanguage = (text: string) =>
+  (text.match(/\p{L}/gu)?.length ?? 0) >= 8;
+
+const pdfTranslationSegmentGroupsFromTextContent = (
+  pageNumber: number,
+  textContent: PdfTextContentLike
+): PdfTranslationSegmentGroup[] => {
+  const groups: PdfTranslationSegmentGroup[] = [];
+  let line = "";
+  let spanIndexes: number[] = [];
+  let visibleSpanIndex = 0;
+  const flush = () => {
+    const text = line.replace(/\s+/g, " ").trim();
+    if (text && spanIndexes.length && pdfLineHasNaturalLanguage(text)) {
+      groups.push({
+        id: `pdf-${pageNumber}-line-${groups.length}`,
+        text,
+        spanIndexes
+      });
+    }
+    line = "";
+    spanIndexes = [];
+  };
+
+  textContent.items.forEach((item) => {
+    if (!item || typeof item !== "object" || !("str" in item) || typeof item.str !== "string" || !item.str.trim()) {
+      return;
+    }
+    const text = item.str.replace(/\s+/g, " ").trim();
+    const separator = line && !/^[,.;:!?%\])}]/.test(text) ? " " : "";
+    line += `${separator}${text}`;
+    spanIndexes.push(visibleSpanIndex);
+    visibleSpanIndex += 1;
+    if (("hasEOL" in item && Boolean(item.hasEOL)) || line.length >= 360) flush();
+  });
+  flush();
+  return groups;
+};
+
 export const pdfTranslationSegmentsFromTextContent = (
   pageNumber: number,
   textContent: PdfTextContentLike
-): TranslationSourceSegmentContract[] => {
-  let segmentIndex = 0;
-  return textContent.items.flatMap((item) => {
-    if (!item || typeof item !== "object" || !("str" in item) || typeof item.str !== "string" || !item.str.trim()) {
-      return [];
-    }
-    const segment = {
-      id: `pdf-${pageNumber}-${segmentIndex}`,
-      text: item.str
-    };
-    segmentIndex += 1;
-    return [segment];
-  });
-};
+): TranslationSourceSegmentContract[] =>
+  pdfTranslationSegmentGroupsFromTextContent(pageNumber, textContent)
+    .map(({ id, text }) => ({ id, text }));
 
 const paginateDocxBlocks = (blocks: DocxPreviewBlock[], pageSize = 2600) => {
   if (!blocks.length) return [[]] as DocxPreviewBlock[][];
@@ -797,18 +829,26 @@ function PdfContinuousPage({
         if (cancelled) return;
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
         if (cancelled) return;
-        const sourceSegments = pdfTranslationSegmentsFromTextContent(pageNumber, textContent);
+        const sourceGroups = pdfTranslationSegmentGroupsFromTextContent(pageNumber, textContent);
         const spans = Array.from(textLayerContainer.querySelectorAll<HTMLElement>("span"))
           .filter((span) => !span.classList.contains("markedContent") && Boolean(span.textContent?.trim()));
         const pageBounds = pageContainer.getBoundingClientRect();
-        setLayouts(sourceSegments.slice(0, spans.length).map((segment, index) => {
-          const bounds = spans[index]!.getBoundingClientRect();
+        setLayouts(sourceGroups.flatMap((segment) => {
+          const bounds = segment.spanIndexes
+            .map((index) => spans[index]?.getBoundingClientRect())
+            .filter((value): value is DOMRect => Boolean(value));
+          if (!bounds.length) return [];
+          const left = Math.min(...bounds.map((value) => value.left));
+          const top = Math.min(...bounds.map((value) => value.top));
+          const right = Math.max(...bounds.map((value) => value.right));
+          const bottom = Math.max(...bounds.map((value) => value.bottom));
           return {
-            ...segment,
-            left: bounds.left - pageBounds.left,
-            top: bounds.top - pageBounds.top,
-            width: bounds.width,
-            height: bounds.height
+            id: segment.id,
+            text: segment.text,
+            left: left - pageBounds.left,
+            top: top - pageBounds.top,
+            width: right - left,
+            height: bottom - top
           };
         }));
         setReady(true);
@@ -833,6 +873,7 @@ function PdfContinuousPage({
     <div
       className={`attachment-pdf-page-shell${showTranslation ? " translated" : ""}`}
       data-pdf-page-shell={pageNumber}
+      data-translation-segment-count={layouts.length}
       style={{ width: `${renderedWidth}px`, height: `${renderedHeight}px` }}
     >
       <div

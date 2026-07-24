@@ -44,6 +44,7 @@ import {
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
 } from "@/features/attachments/pdfAttachmentClient";
+import { pdfTranslationSegmentsFromTextContent } from "@/features/attachments/AttachmentViews";
 
 const validInput = {
   message: "What is the strongest objection?",
@@ -188,6 +189,20 @@ assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 7000);
 assert.equal(documentTranslationMaxOutputTokens(scannedPdfTranslationInput), 6000);
 assert.equal(pdfPageNeedsVisualTranslationFallback("Short title"), true);
 assert.equal(pdfPageNeedsVisualTranslationFallback("x".repeat(200)), false);
+assert.deepEqual(
+  pdfTranslationSegmentsFromTextContent(2, {
+    items: [
+      { str: "The vital assumption", hasEOL: false },
+      { str: "is locality.", hasEOL: true },
+      { str: "E(a,b) = -a · b", hasEOL: true },
+      { str: "III. Illustration", hasEOL: true }
+    ]
+  }),
+  [
+    { id: "pdf-2-line-0", text: "The vital assumption is locality." },
+    { id: "pdf-2-line-1", text: "III. Illustration" }
+  ]
+);
 assert.deepEqual(
   restoreTranslationSegmentOrder(
     [{ id: "a", text: "First" }, { id: "b", text: "Second" }],
