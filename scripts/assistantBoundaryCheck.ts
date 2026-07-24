@@ -48,6 +48,7 @@ import { pdfTranslationSegmentsFromTextContent } from "@/features/attachments/At
 import {
   documentViewerSessionSnapshot,
   readDocumentReadingPosition,
+  reapplyDocumentReadingPosition,
   rememberDocumentReadingPosition,
   rememberDocumentTranslation,
   resetDocumentViewerSessionsForTests,
@@ -286,10 +287,12 @@ assert.equal(
   false
 );
 let observedPositionPage = 0;
+let observedPositionCount = 0;
 const unsubscribePosition = subscribeDocumentReadingPosition(
   documentTranslationInput.attachmentId,
   (position) => {
     observedPositionPage = position.pageNumber;
+    observedPositionCount += 1;
   }
 );
 rememberDocumentReadingPosition(documentTranslationInput.attachmentId, {
@@ -301,6 +304,11 @@ assert.deepEqual(readDocumentReadingPosition(documentTranslationInput.attachment
   pageNumber: 3,
   pageProgress: 0.42
 });
+reapplyDocumentReadingPosition(documentTranslationInput.attachmentId, {
+  pageNumber: 3,
+  pageProgress: 0.42
+}, "assistant-boundary-reapply");
+assert.equal(observedPositionCount, 2);
 unsubscribePosition();
 resetDocumentViewerSessionsForTests();
 

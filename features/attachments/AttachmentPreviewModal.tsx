@@ -31,6 +31,10 @@ import {
   type AttachmentViewportSize,
   type ImageRegion
 } from "@/features/attachments/AttachmentViews";
+import {
+  readDocumentReadingPosition,
+  reapplyDocumentReadingPosition
+} from "@/features/attachments/documentViewerSession";
 import type { PdfAttachmentViewContext } from "@/features/attachments/pdfAttachmentClient";
 
 const zoomInStep = 0.2;
@@ -71,6 +75,7 @@ export function AttachmentPreviewModal({
   } | null>(null);
   const modalRef = useRef<HTMLElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const viewTransitionAnchorRef = useRef<ReturnType<typeof readDocumentReadingPosition> | null>(null);
 
   useEffect(() => {
     setActiveIndex(Math.max(0, attachments.findIndex((attachment) => attachment.id === attachmentId)));
@@ -131,6 +136,36 @@ export function AttachmentPreviewModal({
     };
   }, [activeAttachment?.id, stageSize?.height, stageSize?.width, zoom]);
 
+  useLayoutEffect(() => {
+    const anchor = viewTransitionAnchorRef.current;
+    if (!anchor || !activeAttachment) return;
+    const sourceId = "attachment-modal-view-transition";
+    let secondFrame = 0;
+    let firstTimeout = 0;
+    let secondTimeout = 0;
+    const restoreAnchor = () => {
+      reapplyDocumentReadingPosition(activeAttachment.id, anchor, sourceId);
+    };
+    restoreAnchor();
+    const frame = window.requestAnimationFrame(() => {
+      restoreAnchor();
+      secondFrame = window.requestAnimationFrame(restoreAnchor);
+      firstTimeout = window.setTimeout(restoreAnchor, 80);
+      secondTimeout = window.setTimeout(() => {
+        restoreAnchor();
+        if (viewTransitionAnchorRef.current === anchor) {
+          viewTransitionAnchorRef.current = null;
+        }
+      }, 180);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+      if (firstTimeout) window.clearTimeout(firstTimeout);
+      if (secondTimeout) window.clearTimeout(secondTimeout);
+    };
+  }, [activeAttachment?.id, isFullscreen, stageSize?.height, stageSize?.width, zoom]);
+
   useEffect(() => {
     const onFullscreenChange = () => {
       setIsFullscreen(document.fullscreenElement === modalRef.current);
@@ -179,11 +214,19 @@ export function AttachmentPreviewModal({
     onClose();
   };
 
-  const resetZoom = () => setZoom(1);
+  const preserveReadingAnchor = () => {
+    viewTransitionAnchorRef.current = readDocumentReadingPosition(activeAttachment.id);
+  };
+  const resetZoom = () => {
+    preserveReadingAnchor();
+    setZoom(1);
+  };
   const adjustZoom = (delta: number) => {
+    preserveReadingAnchor();
     setZoom((current) => clampAttachmentZoom(current + delta));
   };
   const toggleFullscreen = async () => {
+    preserveReadingAnchor();
     try {
       if (document.fullscreenElement === modalRef.current) {
         await document.exitFullscreen();

@@ -112,6 +112,19 @@ export const rememberDocumentReadingPosition = (
   positionListeners.get(attachmentId)?.forEach((listener) => listener(next, sourceId));
 };
 
+export const reapplyDocumentReadingPosition = (
+  attachmentId: string,
+  position: DocumentReadingPosition,
+  sourceId: string
+) => {
+  const next = {
+    pageNumber: boundedPageNumber(position.pageNumber),
+    pageProgress: boundedPageProgress(position.pageProgress)
+  };
+  positions.set(attachmentId, next);
+  positionListeners.get(attachmentId)?.forEach((listener) => listener(next, sourceId));
+};
+
 export const subscribeDocumentReadingPosition = (
   attachmentId: string,
   listener: PositionListener
