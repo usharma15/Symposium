@@ -33,6 +33,7 @@ import {
   saveAssistantQuickNoteInputSchema,
   documentTranslationInputSchema,
   documentTranslationModelOutputSchema,
+  documentTranslationPageSchema,
   documentTranslationResultSchema,
   contentTranslationInputSchema,
   contentTranslationModelOutputSchema,
@@ -263,7 +264,7 @@ assert.equal(documentTranslationModelOutputSchema.safeParse({
   }],
   message: "Spanish translation ready."
 }).success, true);
-assert.equal(documentTranslationModelOutputSchema.safeParse({
+const outOfBoundsModelTranslation = documentTranslationModelOutputSchema.safeParse({
   targetLanguage: "spanish",
   targetLanguageLabel: "Spanish",
   translatedTitle: "Fuera de página",
@@ -284,6 +285,28 @@ assert.equal(documentTranslationModelOutputSchema.safeParse({
     preservedArtifacts: []
   }],
   message: "Spanish translation ready."
+});
+assert.equal(outOfBoundsModelTranslation.success, true);
+if (!outOfBoundsModelTranslation.success) throw new Error("Expected model geometry to normalize.");
+assert.equal(outOfBoundsModelTranslation.data.pages[0]?.layoutBlocks[0]?.x, 900);
+assert.equal(outOfBoundsModelTranslation.data.pages[0]?.layoutBlocks[0]?.width, 100);
+assert.equal(outOfBoundsModelTranslation.data.pages[0]?.layoutBlocks[0]?.id, "page-7-layout-0");
+assert.equal(documentTranslationPageSchema.safeParse({
+  pageNumber: 7,
+  body: "Fuera de página",
+  segments: [{ id: "document-page-7-body", text: "Fuera de página" }],
+  layoutBlocks: [{
+    id: "visual-7-invalid",
+    role: "paragraph",
+    text: "Fuera de página",
+    x: 900,
+    y: 100,
+    width: 200,
+    height: 100,
+    fontScale: "md",
+    align: "left"
+  }],
+  preservedArtifacts: []
 }).success, false);
 assert.equal(documentTranslationModelOutputSchema.safeParse({
   targetLanguage: "spanish",
@@ -319,7 +342,7 @@ assert.equal(documentTranslationModelOutputSchema.safeParse({
     preservedArtifacts: []
   }],
   message: "Spanish translation ready."
-}).success, false);
+}).success, true);
 assert.equal(documentTranslationModelOutputSchema.safeParse({
   targetLanguage: "spanish",
   targetLanguageLabel: "Spanish",
@@ -348,7 +371,7 @@ assert.equal(documentTranslationModelOutputSchema.safeParse({
     }]
   }],
   message: "Spanish translation ready."
-}).success, false);
+}).success, true);
 const reconstructedPdfBlock = visionLayoutToPdfBlock({
   id: "visual-10-paragraph-1",
   role: "paragraph",
@@ -782,6 +805,7 @@ assert.match(attachmentViews, /sourceLineHeight \* 0\.82/);
 assert.match(attachmentViews, /sampledCanvasBackground/);
 assert.match(attachmentViews, /translatedLayoutBlocks/);
 assert.match(attachmentViews, /pdfTranslationFitted/);
+assert.match(attachmentViews, /visionTranslationBlocks\.forEach/);
 assert.match(attachmentViews, /data-docx-page-variant/);
 assert.match(attachmentViews, /sourceKind: "document"/);
 assert.match(attachmentViews, /`document-\$\{boundedPage\}-body`/);

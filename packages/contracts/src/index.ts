@@ -1364,7 +1364,7 @@ export const documentTranslationLayoutRoleSchema = z.enum([
   "table"
 ]);
 
-export const documentTranslationLayoutBlockSchema = z.object({
+const documentTranslationLayoutBlockModelSchema = z.object({
   id: z.string().trim().min(1).max(240),
   role: documentTranslationLayoutRoleSchema,
   text: z.string().trim().min(1).max(20000),
@@ -1374,7 +1374,9 @@ export const documentTranslationLayoutBlockSchema = z.object({
   height: z.number().int().min(1).max(1000),
   fontScale: z.enum(["xs", "sm", "md", "lg", "xl"]),
   align: z.enum(["left", "center", "right", "justify"])
-}).superRefine((block, context) => {
+});
+
+export const documentTranslationLayoutBlockSchema = documentTranslationLayoutBlockModelSchema.superRefine((block, context) => {
   if (block.x + block.width > 1000) {
     context.addIssue({ code: "custom", path: ["width"], message: "Translated layout blocks must remain inside the page width." });
   }
@@ -1383,14 +1385,16 @@ export const documentTranslationLayoutBlockSchema = z.object({
   }
 });
 
-export const documentTranslationArtifactBlockSchema = z.object({
+const documentTranslationArtifactBlockModelSchema = z.object({
   id: z.string().trim().min(1).max(240),
   role: z.enum(["equation", "figure", "diagram", "image", "rule"]),
   x: z.number().int().min(0).max(1000),
   y: z.number().int().min(0).max(1000),
   width: z.number().int().min(1).max(1000),
   height: z.number().int().min(1).max(1000)
-}).superRefine((block, context) => {
+});
+
+export const documentTranslationArtifactBlockSchema = documentTranslationArtifactBlockModelSchema.superRefine((block, context) => {
   if (block.x + block.width > 1000) {
     context.addIssue({ code: "custom", path: ["width"], message: "Preserved artifact blocks must remain inside the page width." });
   }
@@ -1448,48 +1452,35 @@ export const documentTranslationPageSchema = z.object({
 export const documentTranslationModelPageSchema = z.object({
   pageNumber: z.number().int().positive().max(1000),
   segments: z.array(translationResultSegmentSchema).min(1).max(1200),
-  layoutBlocks: z.array(documentTranslationLayoutBlockSchema).max(200).default([]),
-  preservedArtifacts: z.array(documentTranslationArtifactBlockSchema).max(100).default([])
-}).superRefine((page, context) => {
-  const blockIds = page.layoutBlocks.map((block) => block.id);
-  if (new Set(blockIds).size !== blockIds.length) {
-    context.addIssue({ code: "custom", path: ["layoutBlocks"], message: "Translated layout block IDs must be unique." });
-  }
-  const artifactIds = page.preservedArtifacts.map((block) => block.id);
-  if (new Set(artifactIds).size !== artifactIds.length) {
-    context.addIssue({ code: "custom", path: ["preservedArtifacts"], message: "Preserved artifact block IDs must be unique." });
-  }
-  page.layoutBlocks.forEach((block, blockIndex) => {
-    page.layoutBlocks.slice(blockIndex + 1).forEach((otherBlock, offset) => {
-      const overlapWidth = Math.max(0, Math.min(block.x + block.width, otherBlock.x + otherBlock.width) - Math.max(block.x, otherBlock.x));
-      const overlapHeight = Math.max(0, Math.min(block.y + block.height, otherBlock.y + otherBlock.height) - Math.max(block.y, otherBlock.y));
-      const overlapArea = overlapWidth * overlapHeight;
-      const smallerArea = Math.min(block.width * block.height, otherBlock.width * otherBlock.height);
-      if (smallerArea > 0 && overlapArea / smallerArea > 0.7) {
-        context.addIssue({
-          code: "custom",
-          path: ["layoutBlocks", blockIndex + offset + 1],
-          message: "Translated layout blocks cannot substantially overlap."
-        });
-      }
-    });
-  });
-  page.layoutBlocks.forEach((block, blockIndex) => {
-    page.preservedArtifacts.forEach((artifact, artifactIndex) => {
-      const overlapWidth = Math.max(0, Math.min(block.x + block.width, artifact.x + artifact.width) - Math.max(block.x, artifact.x));
-      const overlapHeight = Math.max(0, Math.min(block.y + block.height, artifact.y + artifact.height) - Math.max(block.y, artifact.y));
-      const overlapArea = overlapWidth * overlapHeight;
-      const smallerArea = Math.min(block.width * block.height, artifact.width * artifact.height);
-      if (smallerArea > 0 && overlapArea / smallerArea > 0.35) {
-        context.addIssue({
-          code: "custom",
-          path: ["preservedArtifacts", artifactIndex],
-          message: `Preserved artifact overlaps translated text block ${blockIndex + 1}.`
-        });
-      }
-    });
-  });
-});
+  layoutBlocks: z.array(documentTranslationLayoutBlockModelSchema).max(200).default([]),
+  preservedArtifacts: z.array(documentTranslationArtifactBlockModelSchema).max(100).default([])
+}).transform((page) => ({
+  ...page,
+  layoutBlocks: page.layoutBlocks.map((block, index) => {
+    const x = Math.min(999, block.x);
+    const y = Math.min(999, block.y);
+    return {
+      ...block,
+      id: `page-${page.pageNumber}-layout-${index}`,
+      x,
+      y,
+      width: Math.max(1, Math.min(block.width, 1000 - x)),
+      height: Math.max(1, Math.min(block.height, 1000 - y))
+    };
+  }),
+  preservedArtifacts: page.preservedArtifacts.map((block, index) => {
+    const x = Math.min(999, block.x);
+    const y = Math.min(999, block.y);
+    return {
+      ...block,
+      id: `page-${page.pageNumber}-artifact-${index}`,
+      x,
+      y,
+      width: Math.max(1, Math.min(block.width, 1000 - x)),
+      height: Math.max(1, Math.min(block.height, 1000 - y))
+    };
+  })
+}));
 
 export const documentTranslationModelOutputSchema = z.object({
   targetLanguage: z.union([assistantTranslationLanguageSchema, z.literal("unsupported")]),
