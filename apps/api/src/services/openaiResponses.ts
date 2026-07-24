@@ -185,7 +185,7 @@ export const assistantProviderFailure = (error: unknown): AssistantProviderFailu
   }
   return {
     ...common,
-    body: "The AI request could not be completed. No daily answer was used; you can retry."
+    body: `The AI request could not be completed. No daily answer was used; you can retry. Reference: ${normalized}.`
   };
 };
 

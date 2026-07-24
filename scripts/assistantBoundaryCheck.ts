@@ -134,6 +134,7 @@ assert.match(timeoutFailure.body, /No daily answer was used/);
 assert.equal(timeoutFailure.mayHaveBeenBilled, true);
 const localFailure = assistantProviderFailure(new Error("local validation"));
 assert.match(localFailure.body, /No daily answer was used/);
+assert.match(localFailure.body, /Reference: provider_error/);
 assert.equal(localFailure.inputTokens, 0);
 
 const documentTranslationInput = {
