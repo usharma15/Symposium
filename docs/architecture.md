@@ -132,7 +132,7 @@ Profiles reuse the same collection coordinator and ordered browser transport as 
 
 - `features/posts`: composers, feed cards, detail views, edit surfaces, post action presentation
 - `features/comments`: discussion trees, reply-window paging, comment ownership and actions
-- `features/attachments`: metadata generation, carousel, document/media previews, continuous virtualized PDF.js and DOCX reading surfaces, scroll-derived active-page context, structured in-place page translation, selectable PDF text, zoom and fullscreen
+- `features/attachments`: metadata generation, carousel, document/media previews, continuous virtualized PDF.js and DOCX reading surfaces, attachment-scoped reading/translation sessions shared across preview/modal/fullscreen, scroll-derived active-page context, fitted structured in-place page translation, selectable PDF text, zoom and fullscreen
 - `features/profiles`: activity projection, privacy-aware tabs, social graph and settings
 - `features/communities`, `features/rooms`, `features/workspace`, `features/messages`, `features/search`: their respective surfaces
 - `features/entities`, `features/live-sync`, `features/navigation`, `features/actions`: shared client invariants and contracts

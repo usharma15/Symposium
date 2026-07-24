@@ -37,7 +37,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0051_translation_layout_fidelity");
+  assert.equal(latestMigrationId, "0052_document_view_continuity");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");

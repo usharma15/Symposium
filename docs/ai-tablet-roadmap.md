@@ -44,10 +44,11 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Translate an entire post or individual comment on request while keeping the original one click away. **Shipped.**
 - Cache post/comment translations by canonical source revision and target language. **Shipped.**
 - Keep unsupported-language input and cached reuse at zero AI answers. **Shipped.**
-- Translate supported document attachments through the document viewer. **Shipped for one user-selected PDF/DOCX page at a time.**
+- Translate supported document attachments through the document viewer. **Shipped for one user-selected PDF, DOCX, or extracted legacy/text-document page at a time.**
 - Keep PDF and DOCX documents continuously scrollable, with the visible reading position selecting the active translation page. **Shipped.**
+- Share the active page, exact normalized reading position, saved page translations, and Original/Translation choice across feed preview, viewing window, and fullscreen. **Shipped.**
 - Preserve rich post/comment document structure and translate text in place without replacing equations, code, citations, drawings, or inline attachments. **Shipped.**
-- Preserve the original PDF canvas and DOCX layout while substituting translated text at its source locations; retain diagrams, images, equations, and other non-text page content. **Shipped.**
+- Preserve the original PDF canvas and DOCX layout while substituting fitted translated text at its source locations; retain diagrams, images, equations, and other non-text page content. **Shipped.**
 - Add one action for a bounded whole discussion and a bounded whole-document translation job. **Remaining.**
 - Preserve headings, structure, citations, quantities, uncertainty, and scientific terminology. **Enforced through structured segments and provider-output identity checks.**
 - Cache translations by source revision, target language, and translation policy.

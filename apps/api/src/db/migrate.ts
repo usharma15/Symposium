@@ -2603,6 +2603,17 @@ const migrations: Migration[] = [
       ALTER TABLE content_translations
         ADD COLUMN IF NOT EXISTS translated_document JSONB;
     `
+  },
+  {
+    id: "0052_document_view_continuity",
+    sql: `
+      ALTER TABLE document_translations
+        DROP CONSTRAINT IF EXISTS document_translations_source_kind_check;
+
+      ALTER TABLE document_translations
+        ADD CONSTRAINT document_translations_source_kind_check
+        CHECK (source_kind IN ('document', 'docx', 'pdf'));
+    `
   }
 ];
 

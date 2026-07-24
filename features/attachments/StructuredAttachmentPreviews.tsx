@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Code2, FileSpreadsheet, MousePointer2, PenLine, Presentation, X } from "lucide-react";
 import type { InquiryAttachment } from "@/lib/mockData";
 import type { DocumentCitationLocatorContract } from "@/packages/contracts/src";
@@ -12,6 +12,11 @@ import {
   structuredPreviewFromMetadata,
   type StructuredAttachmentPreview
 } from "@/lib/structuredAttachmentPreview";
+import {
+  readDocumentReadingPosition,
+  rememberDocumentReadingPosition,
+  subscribeDocumentReadingPosition
+} from "@/features/attachments/documentViewerSession";
 
 type PreviewMode = "feed" | "detail" | "modal" | "expanded";
 type CellPoint = { row: number; column: number };
@@ -50,13 +55,14 @@ export function StructuredAttachmentPreviewPane({ attachment, mode, zoom = 1, on
   zoom?: number;
   onCite?: (excerpt: string, locator: DocumentCitationLocatorContract) => void;
 }) {
+  const viewerInstanceId = useId();
   const initialText = metadataText(attachment.metadata, "previewText");
   const initialStructured = useMemo(() => structuredPreviewFromMetadata(attachment.metadata)
     ?? (attachment.fileName.toLowerCase().endsWith(".csv") && initialText ? parseCsvPreview(initialText) : null), [attachment.fileName, attachment.metadata, initialText]);
   const [structured, setStructured] = useState<StructuredAttachmentPreview | null>(initialStructured);
   const [previewText, setPreviewText] = useState(initialText);
   const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => readDocumentReadingPosition(attachment.id).pageNumber);
   const [selectingCells, setSelectingCells] = useState(false);
   const [cellAnchor, setCellAnchor] = useState<CellPoint | null>(null);
   const [cellFocus, setCellFocus] = useState<CellPoint | null>(null);
@@ -65,11 +71,18 @@ export function StructuredAttachmentPreviewPane({ attachment, mode, zoom = 1, on
   useEffect(() => {
     setStructured(initialStructured);
     setPreviewText(initialText);
-    setPage(1);
+    setPage(readDocumentReadingPosition(attachment.id).pageNumber);
     setSelectingCells(false);
     setCellAnchor(null);
     setCellFocus(null);
   }, [attachment.id, initialStructured, initialText]);
+
+  useEffect(() => subscribeDocumentReadingPosition(
+    attachment.id,
+    (position, sourceId) => {
+      if (sourceId !== viewerInstanceId) setPage(position.pageNumber);
+    }
+  ), [attachment.id, viewerInstanceId]);
 
   useEffect(() => {
     if (!draggingCells) return;
@@ -84,6 +97,10 @@ export function StructuredAttachmentPreviewPane({ attachment, mode, zoom = 1, on
 
   const changePage = (nextPage: number) => {
     setPage(nextPage);
+    rememberDocumentReadingPosition(attachment.id, {
+      pageNumber: nextPage,
+      pageProgress: 0
+    }, viewerInstanceId);
     setCellAnchor(null);
     setCellFocus(null);
     setDraggingCells(false);

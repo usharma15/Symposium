@@ -1,8 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent
+} from "react";
 import { Languages, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
+import {
+  documentViewerSessionSnapshot,
+  rememberDocumentTranslation,
+  setDocumentTranslationVisible,
+  subscribeDocumentViewerSession
+} from "@/features/attachments/documentViewerSession";
 import type {
   DocumentTranslationResultContract,
   DocumentTranslationSourcePageContract
@@ -16,7 +29,7 @@ export type DocumentTranslationSource = {
 type TranslationRequest = {
   attachmentId: string;
   sourceTitle: string;
-  sourceKind: "docx" | "pdf";
+  sourceKind: "document" | "docx" | "pdf";
   pageNumber: number;
   loadSource: () => Promise<DocumentTranslationSource>;
 };
@@ -32,17 +45,24 @@ export const useDocumentTranslation = ({
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [resultsByPage, setResultsByPage] = useState<Record<number, DocumentTranslationResultContract>>({});
-  const [translatedVisiblePages, setTranslatedVisiblePages] = useState<Set<number>>(() => new Set());
   const retryRef = useRef<{ fingerprint: string; key: string } | null>(null);
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeDocumentViewerSession(attachmentId, listener),
+    [attachmentId]
+  );
+  const getSnapshot = useCallback(
+    () => documentViewerSessionSnapshot(attachmentId),
+    [attachmentId]
+  );
+  const session = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const resultsByPage = session.resultsByPage;
+  const translatedVisiblePages = session.translatedVisiblePages;
 
   useEffect(() => {
     setOpen(false);
     setInstruction("");
     setBusy(false);
     setError("");
-    setResultsByPage({});
-    setTranslatedVisiblePages(new Set());
     retryRef.current = null;
   }, [attachmentId]);
 
@@ -56,7 +76,6 @@ export const useDocumentTranslation = ({
     if (!languageInstruction || busy) return;
     setBusy(true);
     setError("");
-    const submittedPageNumber = pageNumber;
     try {
       const source = await loadSource();
       if (!source.pages.length || source.pages.every((page) => !page.body.trim() && !page.imageDataUrl)) {
@@ -83,20 +102,9 @@ export const useDocumentTranslation = ({
         }
       );
       retryRef.current = null;
-      setResultsByPage((current) => {
-        const next = { ...current };
-        response.pages.forEach((translatedPage) => {
-          next[translatedPage.pageNumber] = response;
-        });
-        return next;
-      });
+      rememberDocumentTranslation(attachmentId, response);
       window.dispatchEvent(new CustomEvent("symposium-ai-quota-change", { detail: response.quota }));
       if (response.status === "translated") {
-        setTranslatedVisiblePages((current) => {
-          const next = new Set(current);
-          next.add(submittedPageNumber);
-          return next;
-        });
         setOpen(false);
       } else {
         setError(response.message);
@@ -115,12 +123,7 @@ export const useDocumentTranslation = ({
     result.pages.some((translatedPage) => translatedPage.pageNumber === pageNumber);
   const showTranslation = translatedOnCurrentPage && translatedVisiblePages.has(pageNumber);
   const setShowTranslation = (visible: boolean) => {
-    setTranslatedVisiblePages((current) => {
-      const next = new Set(current);
-      if (visible) next.add(pageNumber);
-      else next.delete(pageNumber);
-      return next;
-    });
+    setDocumentTranslationVisible(attachmentId, pageNumber, visible);
   };
   const translatedPageFor = (targetPage: number) => {
     const pageResult = resultsByPage[targetPage];

@@ -1373,7 +1373,7 @@ export const documentTranslationSourcePageSchema = z.object({
 export const documentTranslationInputSchema = z.object({
   attachmentId: z.string().trim().min(1).max(240),
   sourceTitle: z.string().trim().min(1).max(300),
-  sourceKind: z.enum(["docx", "pdf"]),
+  sourceKind: z.enum(["document", "docx", "pdf"]),
   sourcePages: z.array(documentTranslationSourcePageSchema).length(1),
   sourceComplete: z.boolean(),
   languageInstruction: z.string().trim().min(1).max(120)

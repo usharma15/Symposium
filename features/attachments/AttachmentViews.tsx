@@ -3,6 +3,8 @@
 import {
   useCallback,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -38,6 +40,11 @@ import {
   useDocumentTranslation,
   type DocumentTranslationSource
 } from "@/features/attachments/DocumentTranslationControl";
+import {
+  readDocumentReadingPosition,
+  rememberDocumentReadingPosition,
+  subscribeDocumentReadingPosition
+} from "@/features/attachments/documentViewerSession";
 import {
   extractPdfAttachmentMetadata,
   loadPdfModule,
@@ -384,8 +391,26 @@ const extractDocxMetadata = async (file: File) => {
   };
 };
 
+const readableRtfText = (source: string) => source
+  .replace(/\\u(-?\d+)\??/g, (_match, code: string) =>
+    String.fromCodePoint((Number(code) + 65_536) % 65_536))
+  .replace(/\\'([0-9a-f]{2})/gi, (_match, hex: string) =>
+    String.fromCharCode(Number.parseInt(hex, 16)))
+  .replace(/\\(?:par|line)\b ?/gi, "\n")
+  .replace(/\\tab\b ?/gi, "\t")
+  .replace(/\\[a-z]+-?\d* ?/gi, "")
+  .replace(/\\([{}\\])/g, "$1")
+  .replace(/[{}]/g, "")
+  .replace(/\n{3,}/g, "\n\n")
+  .trim();
+
 const extractTextMetadata = async (file: File) => {
-  const text = (await file.text()).slice(0, maxAttachmentPreviewTextLength);
+  const source = await file.text();
+  const text = (
+    file.type.toLowerCase() === "application/rtf" || file.name.toLowerCase().endsWith(".rtf")
+      ? readableRtfText(source)
+      : source
+  ).slice(0, maxAttachmentPreviewTextLength);
   return {
     pageCount: splitPreviewTextIntoPages(text).length,
     previewText: text
@@ -752,7 +777,64 @@ type PdfTranslationLayout = TranslationSourceSegmentContract & {
   top: number;
   width: number;
   height: number;
+  fontSize: number;
 };
+
+const median = (values: number[]) => {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle] ?? 0
+    : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
+};
+
+function PdfFittedTranslationSpan({
+  layout,
+  text
+}: {
+  layout: PdfTranslationLayout;
+  text: string;
+}) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const maximum = Math.max(5, layout.fontSize);
+    const minimum = Math.max(4.5, Math.min(maximum, maximum * 0.58));
+    let fitted = maximum;
+    element.style.fontSize = `${fitted}px`;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const fitsWidth = element.scrollWidth <= element.clientWidth + 1;
+      const fitsHeight = element.scrollHeight <= element.clientHeight + 1;
+      if (fitsWidth && fitsHeight) break;
+      const widthRatio = element.clientWidth / Math.max(1, element.scrollWidth);
+      const heightRatio = element.clientHeight / Math.max(1, element.scrollHeight);
+      const ratio = Math.min(0.92, widthRatio || 0.92, heightRatio || 0.92);
+      const next = Math.max(minimum, fitted * Math.max(0.72, ratio));
+      if (Math.abs(next - fitted) < 0.05) break;
+      fitted = next;
+      element.style.fontSize = `${fitted}px`;
+    }
+  }, [layout.fontSize, layout.height, layout.width, text]);
+
+  return (
+    <span
+      ref={ref}
+      data-pdf-translation-segment={layout.id}
+      style={{
+        left: `${layout.left}px`,
+        top: `${layout.top}px`,
+        width: `${Math.max(1, layout.width)}px`,
+        height: `${Math.max(1, layout.height)}px`,
+        fontSize: `${Math.max(5, layout.fontSize)}px`
+      }}
+    >
+      {text}
+    </span>
+  );
+}
 
 function PdfContinuousPage({
   document,
@@ -842,13 +924,19 @@ function PdfContinuousPage({
           const top = Math.min(...bounds.map((value) => value.top));
           const right = Math.max(...bounds.map((value) => value.right));
           const bottom = Math.max(...bounds.map((value) => value.bottom));
+          const sourceLineHeight = median(
+            bounds
+              .map((value) => value.height)
+              .filter((height) => height >= 2 && height <= 80)
+          );
           return {
             id: segment.id,
             text: segment.text,
             left: left - pageBounds.left,
             top: top - pageBounds.top,
             width: right - left,
-            height: bottom - top
+            height: bottom - top,
+            fontSize: Math.max(5, sourceLineHeight * 0.82)
           };
         }));
         setReady(true);
@@ -891,18 +979,11 @@ function PdfContinuousPage({
             {showTranslation && translatedLayouts.length ? (
               <div className="attachment-pdf-translation-text-layer" lang="auto">
                 {translatedLayouts.map((layout) => (
-                  <span
+                  <PdfFittedTranslationSpan
                     key={layout.id}
-                    style={{
-                      left: `${layout.left}px`,
-                      top: `${layout.top}px`,
-                      width: `${Math.max(1, layout.width)}px`,
-                      minHeight: `${Math.max(1, layout.height)}px`,
-                      fontSize: `${Math.max(5, layout.height * 0.78)}px`
-                    }}
-                  >
-                    {translations.get(layout.id)}
-                  </span>
+                    layout={layout}
+                    text={translations.get(layout.id) ?? ""}
+                  />
                 ))}
               </div>
             ) : null}
@@ -936,8 +1017,10 @@ function PdfAttachmentPreview({
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const scrollFrameRef = useRef(0);
+  const positionRestoredRef = useRef(false);
+  const viewerInstanceId = useId();
   const [document, setDocument] = useState<import("pdfjs-dist").PDFDocumentProxy | null>(null);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => readDocumentReadingPosition(attachment.id).pageNumber);
   const [pageDimensions, setPageDimensions] = useState<PdfPageDimensions[]>([]);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [loadState, setLoadState] = useState<"loading" | "ready" | "unavailable">("loading");
@@ -997,6 +1080,23 @@ function PdfAttachmentPreview({
     loadSource: loadTranslationSource
   });
   const translatedPage = translation.translatedPageFor(boundedPage);
+  const restoreReadingPosition = useCallback((position = readDocumentReadingPosition(attachment.id)) => {
+    const stage = stageRef.current;
+    const targetPage = Math.min(Math.max(1, position.pageNumber), pageCount);
+    const shell = stage?.querySelector<HTMLElement>(`[data-pdf-page-shell="${targetPage}"]`);
+    if (!stage || !shell) return;
+    const stageBounds = stage.getBoundingClientRect();
+    const shellBounds = shell.getBoundingClientRect();
+    const shellTopInScroll = stage.scrollTop + shellBounds.top - stageBounds.top;
+    const targetTop = shellTopInScroll
+      + shellBounds.height * position.pageProgress
+      - stage.clientHeight * 0.46;
+    stage.dataset.documentRestoredPage = String(targetPage);
+    stage.dataset.documentRestoredProgress = position.pageProgress.toFixed(4);
+    setPage(targetPage);
+    stage.scrollTop = Math.max(0, targetTop);
+    positionRestoredRef.current = true;
+  }, [attachment.id, pageCount]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -1004,7 +1104,11 @@ function PdfAttachmentPreview({
     const updateSize = () => {
       const next = { width: stage.clientWidth, height: stage.clientHeight };
       if (next.width <= 0 || next.height <= 0) return;
-      setStageSize((current) => current.width === next.width && current.height === next.height ? current : next);
+      setStageSize((current) => {
+        if (current.width === next.width && current.height === next.height) return current;
+        positionRestoredRef.current = false;
+        return next;
+      });
     };
     updateSize();
     const observer = new ResizeObserver(updateSize);
@@ -1013,8 +1117,9 @@ function PdfAttachmentPreview({
   }, []);
 
   useEffect(() => {
+    positionRestoredRef.current = false;
     setDocument(null);
-    setPage(1);
+    setPage(readDocumentReadingPosition(attachment.id).pageNumber);
     setPageDimensions([]);
     setPageContext(null);
     setSelectedText("");
@@ -1066,6 +1171,25 @@ function PdfAttachmentPreview({
     };
   }, [attachment.id, attachment.url, mode]);
 
+  useLayoutEffect(() => {
+    if (!document || !pageDimensions.length) return;
+    positionRestoredRef.current = false;
+    const frame = window.requestAnimationFrame(() => restoreReadingPosition());
+    const timeout = window.setTimeout(() => restoreReadingPosition(), 80);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+    };
+  }, [document, mode, pageDimensions, restoreReadingPosition, stageSize.height, stageSize.width, zoom]);
+
+  useEffect(() => subscribeDocumentReadingPosition(
+    attachment.id,
+    (position, sourceId) => {
+      if (sourceId === viewerInstanceId) return;
+      window.requestAnimationFrame(() => restoreReadingPosition(position));
+    }
+  ), [attachment.id, restoreReadingPosition, viewerInstanceId]);
+
   useEffect(() => {
     if (!document) return;
     let cancelled = false;
@@ -1092,7 +1216,7 @@ function PdfAttachmentPreview({
 
   const updateActivePage = useCallback(() => {
     const stage = stageRef.current;
-    if (!stage) return;
+    if (!stage || !positionRestoredRef.current) return;
     const stageBounds = stage.getBoundingClientRect();
     const readingLine = stageBounds.top + stageBounds.height * 0.46;
     const shells = Array.from(stage.querySelectorAll<HTMLElement>("[data-pdf-page-shell]"));
@@ -1110,8 +1234,24 @@ function PdfAttachmentPreview({
         closestPage = Number(shell.dataset.pdfPageShell) || closestPage;
       }
     });
+    const activeShell = shells.find((shell) =>
+      Number(shell.dataset.pdfPageShell) === closestPage
+    );
+    if (activeShell) {
+      const activeBounds = activeShell.getBoundingClientRect();
+      const pageProgress = Math.min(
+        1,
+        Math.max(0, (readingLine - activeBounds.top) / Math.max(1, activeBounds.height))
+      );
+      stage.dataset.documentReadingPage = String(closestPage);
+      stage.dataset.documentReadingProgress = pageProgress.toFixed(4);
+      rememberDocumentReadingPosition(attachment.id, {
+        pageNumber: closestPage,
+        pageProgress
+      }, viewerInstanceId);
+    }
     setPage((current) => current === closestPage ? current : closestPage);
-  }, [boundedPage]);
+  }, [attachment.id, boundedPage, viewerInstanceId]);
 
   const requestActivePageUpdate = () => {
     window.cancelAnimationFrame(scrollFrameRef.current);
@@ -1163,6 +1303,10 @@ function PdfAttachmentPreview({
     const shell = stage?.querySelector<HTMLElement>(`[data-pdf-page-shell="${targetPage}"]`);
     if (!stage || !shell) return;
     setPage(targetPage);
+    rememberDocumentReadingPosition(attachment.id, {
+      pageNumber: targetPage,
+      pageProgress: 0
+    }, viewerInstanceId);
     stage.scrollTo({ top: Math.max(0, shell.offsetTop - 12), behavior: "smooth" });
   };
   const movePage = (direction: -1 | 1) => (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -1254,18 +1398,75 @@ function TextAttachmentPreview({
   mode: AttachmentRenderMode;
   zoom?: number;
 }) {
+  const viewerInstanceId = useId();
+  const contentRef = useRef<HTMLElement | null>(null);
   const metadataPreviewText = metadataString(attachment.metadata, "previewText");
   const [loadedPreviewText, setLoadedPreviewText] = useState("");
   const [loadingPreviewText, setLoadingPreviewText] = useState(false);
   const previewText = metadataPreviewText || loadedPreviewText;
   const pages = splitPreviewTextIntoPages(previewText);
   const pageCount = attachmentPageCount(attachment, previewText);
-  const [page, setPage] = useState(1);
-  const boundedPage = Math.min(page, Math.max(pageCount, pages.length));
+  const totalPages = Math.max(1, pageCount, pages.length);
+  const [page, setPage] = useState(() => readDocumentReadingPosition(attachment.id).pageNumber);
+  const boundedPage = Math.min(Math.max(1, page), totalPages);
   const pageText = pages[Math.min(boundedPage - 1, pages.length - 1)] ?? "";
+  const pageSegments = useMemo(() => {
+    const paragraphs = pageText.split(/\n{2,}/).map((text) => text.trim()).filter(Boolean);
+    return (paragraphs.length ? paragraphs : pageText.trim() ? [pageText.trim()] : [])
+      .map((text, index) => ({
+        id: `document-${boundedPage}-block-${index}`,
+        text
+      }));
+  }, [boundedPage, pageText]);
+  const loadTranslationSource = useCallback(async () => boundedDocumentTranslationSource(
+    pageText.trim()
+      ? [{
+          pageNumber: boundedPage,
+          body: pageText,
+          segments: pageSegments
+        }]
+      : [],
+    Boolean(pageText.trim())
+  ), [boundedPage, pageSegments, pageText]);
+  const translation = useDocumentTranslation({
+    attachmentId: attachment.id,
+    sourceTitle: attachment.fileName,
+    sourceKind: "document",
+    pageNumber: boundedPage,
+    loadSource: loadTranslationSource
+  });
+  const translatedPage = translation.translatedPageFor(boundedPage);
+  const translatedParagraphs = translation.showTranslation
+    ? translatedPage?.segments.map((segment) => segment.text) ?? []
+    : [];
+  const restoreReadingPosition = useCallback((position = readDocumentReadingPosition(attachment.id)) => {
+    const targetPage = Math.min(Math.max(1, position.pageNumber), totalPages);
+    setPage(targetPage);
+    window.requestAnimationFrame(() => {
+      const content = contentRef.current;
+      if (!content) return;
+      content.scrollTop = position.pageProgress * Math.max(0, content.scrollHeight - content.clientHeight);
+    });
+  }, [attachment.id, totalPages]);
+  const changePage = (targetPage: number) => {
+    const nextPage = Math.min(Math.max(1, targetPage), totalPages);
+    setPage(nextPage);
+    rememberDocumentReadingPosition(attachment.id, {
+      pageNumber: nextPage,
+      pageProgress: 0
+    }, viewerInstanceId);
+  };
+  const rememberTextScroll = () => {
+    const content = contentRef.current;
+    if (!content) return;
+    rememberDocumentReadingPosition(attachment.id, {
+      pageNumber: boundedPage,
+      pageProgress: content.scrollTop / Math.max(1, content.scrollHeight - content.clientHeight)
+    }, viewerInstanceId);
+  };
 
   useEffect(() => {
-    setPage(1);
+    setPage(readDocumentReadingPosition(attachment.id).pageNumber);
     setLoadedPreviewText("");
     setLoadingPreviewText(false);
     if (metadataPreviewText || !attachment.url) return;
@@ -1289,19 +1490,33 @@ function TextAttachmentPreview({
     return () => { cancelled = true; };
   }, [attachment.contentType, attachment.fileName, attachment.id, attachment.url, metadataPreviewText]);
 
+  useEffect(() => subscribeDocumentReadingPosition(
+    attachment.id,
+    (position, sourceId) => {
+      if (sourceId === viewerInstanceId) return;
+      restoreReadingPosition(position);
+    }
+  ), [attachment.id, restoreReadingPosition, viewerInstanceId]);
+
+  useLayoutEffect(() => {
+    restoreReadingPosition();
+  }, [mode, pageText, restoreReadingPosition, translation.showTranslation, zoom]);
+
   return (
     <div className={`attachment-document attachment-document-${mode}`}>
       <div className="attachment-pagebar">
-        <span>Page {boundedPage}/{Math.max(pageCount, pages.length)}</span>
-        {Math.max(pageCount, pages.length) > 1 ? (
-          <div>
+        <span>Page {boundedPage}/{totalPages}</span>
+        <div className="attachment-page-actions">
+          <DocumentTranslationControl state={translation} />
+          {totalPages > 1 ? (
+            <>
             <button
               type="button"
               title="Previous page"
               disabled={boundedPage <= 1}
               onClick={(event) => {
                 event.stopPropagation();
-                setPage((current) => Math.max(1, current - 1));
+                changePage(boundedPage - 1);
               }}
             >
               <ChevronLeft size={15} />
@@ -1312,16 +1527,40 @@ function TextAttachmentPreview({
               disabled={boundedPage >= Math.max(pageCount, pages.length)}
               onClick={(event) => {
                 event.stopPropagation();
-                setPage((current) => Math.min(Math.max(pageCount, pages.length), current + 1));
+                changePage(boundedPage + 1);
               }}
             >
               <ChevronRight size={15} />
             </button>
-          </div>
-        ) : null}
+            </>
+          ) : null}
+        </div>
       </div>
       {pageText ? (
-        <pre data-attachment-selectable="true" data-attachment-page={boundedPage} style={mode === "expanded" ? { fontSize: `${0.86 * zoom}rem` } : undefined}>{pageText}</pre>
+        translation.showTranslation && translatedPage ? (
+          <article
+            ref={contentRef}
+            className="attachment-text-translation-page"
+            data-attachment-selectable="true"
+            data-attachment-page={boundedPage}
+            onScroll={rememberTextScroll}
+            style={mode === "expanded" ? { fontSize: `${0.92 * zoom}rem` } : undefined}
+          >
+            {translatedParagraphs.map((paragraph, index) => (
+              <p key={`${translatedPage.pageNumber}-${index}`}>{paragraph}</p>
+            ))}
+          </article>
+        ) : (
+          <pre
+            ref={contentRef as React.RefObject<HTMLPreElement | null>}
+            data-attachment-selectable="true"
+            data-attachment-page={boundedPage}
+            onScroll={rememberTextScroll}
+            style={mode === "expanded" ? { fontSize: `${0.86 * zoom}rem` } : undefined}
+          >
+            {pageText}
+          </pre>
+        )
       ) : (
         <div className="attachment-file-shell">
           {attachmentIcon(attachment)}
@@ -1334,9 +1573,13 @@ function TextAttachmentPreview({
 }
 
 type DocxTranslationDomSegment = TranslationSourceSegmentContract & {
-  node: Text;
-  leading: string;
-  trailing: string;
+  parts: Array<{
+    node: Text;
+    original: string;
+    leading: string;
+    trailing: string;
+    weight: number;
+  }>;
 };
 
 const collectDocxTranslationSegments = (
@@ -1344,29 +1587,74 @@ const collectDocxTranslationSegments = (
   pageNumber: number
 ): DocxTranslationDomSegment[] => {
   const walker = globalThis.document.createTreeWalker(pageElement, NodeFilter.SHOW_TEXT);
-  const segments: DocxTranslationDomSegment[] = [];
+  const blocks = new Map<Element, Text[]>();
   let current = walker.nextNode();
   while (current) {
     const node = current as Text;
     const parent = node.parentElement;
     const raw = node.data;
     if (parent && !parent.closest("script, style, svg, math") && raw.trim()) {
-      const leading = raw.match(/^\s*/)?.[0] ?? "";
-      const trailing = raw.match(/\s*$/)?.[0] ?? "";
-      const text = raw.slice(leading.length, raw.length - trailing.length || undefined);
-      if (text) {
-        segments.push({
-          id: `docx-${pageNumber}-${segments.length}`,
-          text,
-          node,
-          leading,
-          trailing
-        });
-      }
+      const block = parent.closest("p, li, td, th, h1, h2, h3, h4, h5, h6") ?? parent;
+      const nodes = blocks.get(block) ?? [];
+      nodes.push(node);
+      blocks.set(block, nodes);
     }
     current = walker.nextNode();
   }
-  return segments;
+  return Array.from(blocks.values()).flatMap((nodes, blockIndex) => {
+    const text = nodes.map((node) => node.data).join("").replace(/\s+/g, " ").trim();
+    if ((text.match(/\p{L}/gu)?.length ?? 0) < 2) return [];
+    const parts = nodes.map((node) => {
+      const original = node.data;
+      const leading = original.match(/^\s*/)?.[0] ?? "";
+      const trailing = original.match(/\s*$/)?.[0] ?? "";
+      return {
+        node,
+        original,
+        leading,
+        trailing,
+        weight: Math.max(1, original.trim().length)
+      };
+    });
+    return [{
+      id: `docx-${pageNumber}-block-${blockIndex}`,
+      text,
+      parts
+    }];
+  });
+};
+
+const applyDocxTranslationSegment = (
+  segment: DocxTranslationDomSegment,
+  translatedText: string | null
+) => {
+  if (translatedText === null) {
+    segment.parts.forEach((part) => {
+      part.node.data = part.original;
+    });
+    return;
+  }
+  const words = translatedText.trim().split(/\s+/).filter(Boolean);
+  const totalWeight = segment.parts.reduce((total, part) => total + part.weight, 0);
+  let consumedWeight = 0;
+  let wordIndex = 0;
+  segment.parts.forEach((part, partIndex) => {
+    consumedWeight += part.weight;
+    const finalPart = partIndex === segment.parts.length - 1;
+    const targetCharacters = translatedText.length * (consumedWeight / Math.max(1, totalWeight));
+    const selected: string[] = [];
+    while (wordIndex < words.length) {
+      if (!finalPart && selected.length && words.slice(0, wordIndex).join(" ").length >= targetCharacters) break;
+      selected.push(words[wordIndex] ?? "");
+      wordIndex += 1;
+      if (!finalPart && words.slice(0, wordIndex).join(" ").length >= targetCharacters) break;
+    }
+    const text = finalPart && wordIndex < words.length
+      ? [...selected, ...words.slice(wordIndex)].join(" ")
+      : selected.join(" ");
+    if (finalPart) wordIndex = words.length;
+    part.node.data = `${part.leading}${text}${part.trailing}`;
+  });
 };
 
 function DocxAttachmentPreview({
@@ -1387,12 +1675,14 @@ function DocxAttachmentPreview({
   const renderTargetRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollFrameRef = useRef(0);
+  const positionRestoredRef = useRef(false);
+  const viewerInstanceId = useId();
   const domSegmentsRef = useRef<Map<number, DocxTranslationDomSegment[]>>(new Map());
   const [renderedPageCount, setRenderedPageCount] = useState(0);
   const [renderRevision, setRenderRevision] = useState(0);
   const [fitScale, setFitScale] = useState(1);
   const [parseFailed, setParseFailed] = useState(false);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => readDocumentReadingPosition(attachment.id).pageNumber);
   const totalPages = Math.max(1, renderedPageCount || metadataPageCount || fallbackPages.length);
   const boundedPage = Math.min(Math.max(1, page), totalPages);
   const fallbackPageBlocks = fallbackPages[Math.min(boundedPage - 1, fallbackPages.length - 1)] ?? [];
@@ -1427,9 +1717,27 @@ function DocxAttachmentPreview({
   });
   const renderedZoom = fitScale * (mode === "expanded" ? clampAttachmentZoom(zoom) : 1);
   const renderedStyle = { "--docx-preview-scale": renderedZoom } as CSSProperties;
+  const restoreReadingPosition = useCallback((position = readDocumentReadingPosition(attachment.id)) => {
+    const scroller = scrollRef.current;
+    const targetPage = Math.min(Math.max(1, position.pageNumber), totalPages);
+    const pageElement = scroller?.querySelector<HTMLElement>(`[data-docx-page-shell="${targetPage}"]`);
+    if (!scroller || !pageElement) return;
+    const scrollerBounds = scroller.getBoundingClientRect();
+    const pageBounds = pageElement.getBoundingClientRect();
+    const pageTopInScroll = scroller.scrollTop + pageBounds.top - scrollerBounds.top;
+    scroller.dataset.documentRestoredPage = String(targetPage);
+    scroller.dataset.documentRestoredProgress = position.pageProgress.toFixed(4);
+    setPage(targetPage);
+    scroller.scrollTop = Math.max(
+      0,
+      pageTopInScroll + pageBounds.height * position.pageProgress - scroller.clientHeight * 0.46
+    );
+    positionRestoredRef.current = true;
+  }, [attachment.id, totalPages]);
 
   useEffect(() => {
-    setPage(1);
+    positionRestoredRef.current = false;
+    setPage(readDocumentReadingPosition(attachment.id).pageNumber);
     domSegmentsRef.current = new Map();
   }, [attachment.id]);
 
@@ -1485,13 +1793,19 @@ function DocxAttachmentPreview({
           renderedPage.dataset.attachmentSelectable = "true";
           renderedPage.dataset.attachmentPage = String(pageNumber);
           renderedPage.dataset.docxPageShell = String(pageNumber);
+          renderedPage.style.setProperty("--docx-original-page-height", `${renderedPage.offsetHeight}px`);
           segmentMap.set(pageNumber, collectDocxTranslationSegments(renderedPage, pageNumber));
         });
         domSegmentsRef.current = segmentMap;
         const firstPageWidth = renderedPages[0]?.getBoundingClientRect().width ?? 0;
         const updateFitScale = () => {
           const availableWidth = Math.max(1, target.clientWidth - 28);
-          setFitScale(firstPageWidth > 0 ? Math.min(1, availableWidth / firstPageWidth) : 1);
+          const nextFitScale = firstPageWidth > 0 ? Math.min(1, availableWidth / firstPageWidth) : 1;
+          setFitScale((current) => {
+            if (Math.abs(current - nextFitScale) < 0.0001) return current;
+            positionRestoredRef.current = false;
+            return nextFitScale;
+          });
         };
         updateFitScale();
         resizeObserver = new ResizeObserver(updateFitScale);
@@ -1513,7 +1827,8 @@ function DocxAttachmentPreview({
     };
   }, [attachment.contentType, attachment.fileName, attachment.id, attachment.url, metadataPreviewText, mode]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    positionRestoredRef.current = false;
     domSegmentsRef.current.forEach((segments, pageNumber) => {
       const translatedPage = translation.translatedPageFor(pageNumber);
       const translated = new Map((translatedPage?.segments ?? []).map((segment) => [segment.id, segment.text]));
@@ -1522,14 +1837,38 @@ function DocxAttachmentPreview({
         ?.querySelector<HTMLElement>(`section.symposium-docx[data-attachment-page="${pageNumber}"]`)
         ?.classList.toggle("translated", showTranslation);
       segments.forEach((segment) => {
-        segment.node.data = `${segment.leading}${showTranslation ? translated.get(segment.id) ?? segment.text : segment.text}${segment.trailing}`;
+        applyDocxTranslationSegment(
+          segment,
+          showTranslation ? translated.get(segment.id) ?? segment.text : null
+        );
       });
     });
-  }, [renderRevision, translation.resultsByPage, translation.translatedVisiblePages]);
+    const frame = window.requestAnimationFrame(() => restoreReadingPosition());
+    return () => window.cancelAnimationFrame(frame);
+  }, [renderRevision, restoreReadingPosition, translation.resultsByPage, translation.translatedVisiblePages]);
+
+  useLayoutEffect(() => {
+    if (!renderRevision && !fallbackPages.length) return;
+    positionRestoredRef.current = false;
+    const frame = window.requestAnimationFrame(() => restoreReadingPosition());
+    const timeout = window.setTimeout(() => restoreReadingPosition(), 100);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+    };
+  }, [fallbackPages.length, fitScale, mode, renderRevision, restoreReadingPosition, zoom]);
+
+  useEffect(() => subscribeDocumentReadingPosition(
+    attachment.id,
+    (position, sourceId) => {
+      if (sourceId === viewerInstanceId) return;
+      window.requestAnimationFrame(() => restoreReadingPosition(position));
+    }
+  ), [attachment.id, restoreReadingPosition, viewerInstanceId]);
 
   const updateActivePage = useCallback(() => {
     const scroller = scrollRef.current;
-    if (!scroller) return;
+    if (!scroller || !positionRestoredRef.current) return;
     const bounds = scroller.getBoundingClientRect();
     const readingLine = bounds.top + bounds.height * 0.46;
     const pages = Array.from(scroller.querySelectorAll<HTMLElement>("[data-docx-page-shell]"));
@@ -1547,8 +1886,24 @@ function DocxAttachmentPreview({
         closestPage = Number(pageElement.dataset.docxPageShell) || closestPage;
       }
     });
+    const activePage = pages.find((pageElement) =>
+      Number(pageElement.dataset.docxPageShell) === closestPage
+    );
+    if (activePage) {
+      const activeBounds = activePage.getBoundingClientRect();
+      const pageProgress = Math.min(
+        1,
+        Math.max(0, (readingLine - activeBounds.top) / Math.max(1, activeBounds.height))
+      );
+      scroller.dataset.documentReadingPage = String(closestPage);
+      scroller.dataset.documentReadingProgress = pageProgress.toFixed(4);
+      rememberDocumentReadingPosition(attachment.id, {
+        pageNumber: closestPage,
+        pageProgress
+      }, viewerInstanceId);
+    }
     setPage((current) => current === closestPage ? current : closestPage);
-  }, [boundedPage]);
+  }, [attachment.id, boundedPage, viewerInstanceId]);
   const requestActivePageUpdate = () => {
     window.cancelAnimationFrame(scrollFrameRef.current);
     scrollFrameRef.current = window.requestAnimationFrame(updateActivePage);
@@ -1563,6 +1918,10 @@ function DocxAttachmentPreview({
     const pageElement = scroller?.querySelector<HTMLElement>(`[data-docx-page-shell="${targetPage}"]`);
     if (!scroller || !pageElement) return;
     setPage(targetPage);
+    rememberDocumentReadingPosition(attachment.id, {
+      pageNumber: targetPage,
+      pageProgress: 0
+    }, viewerInstanceId);
     scroller.scrollTo({ top: Math.max(0, pageElement.offsetTop - 14), behavior: "smooth" });
   };
   return (

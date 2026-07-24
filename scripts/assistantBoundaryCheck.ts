@@ -45,6 +45,15 @@ import {
   resolvePdfDocumentUrl
 } from "@/features/attachments/pdfAttachmentClient";
 import { pdfTranslationSegmentsFromTextContent } from "@/features/attachments/AttachmentViews";
+import {
+  documentViewerSessionSnapshot,
+  readDocumentReadingPosition,
+  rememberDocumentReadingPosition,
+  rememberDocumentTranslation,
+  resetDocumentViewerSessionsForTests,
+  setDocumentTranslationVisible,
+  subscribeDocumentReadingPosition
+} from "@/features/attachments/documentViewerSession";
 
 const validInput = {
   message: "What is the strongest objection?",
@@ -127,6 +136,10 @@ const documentTranslationInput = {
   languageInstruction: "Please put this into Spanish"
 };
 assert.equal(documentTranslationInputSchema.safeParse(documentTranslationInput).success, true);
+assert.equal(documentTranslationInputSchema.safeParse({
+  ...documentTranslationInput,
+  sourceKind: "document"
+}).success, true);
 assert.equal(documentTranslationInputSchema.safeParse({
   ...documentTranslationInput,
   sourcePages: [
@@ -242,7 +255,7 @@ const sourceFingerprint = documentTranslationFingerprint(documentTranslationInpu
 assert.match(sourceFingerprint, /^[a-f0-9]{64}$/);
 assert.equal(sourceFingerprint, documentTranslationFingerprint(documentTranslationInput));
 assert.notEqual(sourceFingerprint, documentTranslationFingerprint({ ...documentTranslationInput, sourceComplete: false }));
-assert.equal(documentTranslationResultSchema.safeParse({
+const validDocumentTranslationResult = documentTranslationResultSchema.parse({
   status: "translated",
   attachmentId: documentTranslationInput.attachmentId,
   sourceFingerprint,
@@ -256,7 +269,40 @@ assert.equal(documentTranslationResultSchema.safeParse({
   model: "gpt-5.6-terra",
   createdAt: new Date().toISOString(),
   quota: { dailyLimit: 10, remainingToday: 9, monthlyBudgetUsd: 40, extremelyLimited: true }
-}).success, true);
+});
+resetDocumentViewerSessionsForTests();
+rememberDocumentTranslation(documentTranslationInput.attachmentId, validDocumentTranslationResult);
+assert.equal(
+  documentViewerSessionSnapshot(documentTranslationInput.attachmentId).resultsByPage[7],
+  validDocumentTranslationResult
+);
+assert.equal(
+  documentViewerSessionSnapshot(documentTranslationInput.attachmentId).translatedVisiblePages.has(7),
+  true
+);
+setDocumentTranslationVisible(documentTranslationInput.attachmentId, 7, false);
+assert.equal(
+  documentViewerSessionSnapshot(documentTranslationInput.attachmentId).translatedVisiblePages.has(7),
+  false
+);
+let observedPositionPage = 0;
+const unsubscribePosition = subscribeDocumentReadingPosition(
+  documentTranslationInput.attachmentId,
+  (position) => {
+    observedPositionPage = position.pageNumber;
+  }
+);
+rememberDocumentReadingPosition(documentTranslationInput.attachmentId, {
+  pageNumber: 3,
+  pageProgress: 0.42
+}, "assistant-boundary-check");
+assert.equal(observedPositionPage, 3);
+assert.deepEqual(readDocumentReadingPosition(documentTranslationInput.attachmentId), {
+  pageNumber: 3,
+  pageProgress: 0.42
+});
+unsubscribePosition();
+resetDocumentViewerSessionsForTests();
 
 const contentTranslationModelInput = {
   sourceType: "post" as const,
@@ -455,12 +501,14 @@ const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
 const attachmentContext = readFileSync("features/assistant/tabletAttachmentContext.ts", "utf8");
 const attachmentViews = readFileSync("features/attachments/AttachmentViews.tsx", "utf8");
 const documentTranslationControl = readFileSync("features/attachments/DocumentTranslationControl.tsx", "utf8");
+const documentViewerSession = readFileSync("features/attachments/documentViewerSession.ts", "utf8");
 const contentTranslationControl = readFileSync("features/translation/ContentTranslationControl.tsx", "utf8");
 const tabletStyles = readFileSync("styles/92-ai-tablet.css", "utf8");
 const postViews = readFileSync("features/posts/PostViews.tsx", "utf8");
 const commentThread = readFileSync("features/comments/CommentThread.tsx", "utf8");
 const attachmentModal = readFileSync("features/attachments/AttachmentPreviewModal.tsx", "utf8");
 const pdfClient = readFileSync("features/attachments/pdfAttachmentClient.ts", "utf8");
+const attachmentStyles = readFileSync("styles/20-legacy-content.css", "utf8");
 const packageManifest = readFileSync("package.json", "utf8");
 const nextConfig = readFileSync("next.config.mjs", "utf8");
 const renderBlueprint = readFileSync("render.yaml", "utf8");
@@ -504,6 +552,7 @@ assert.match(migration, /0049_assistant_research_threads/);
 assert.match(migration, /context_sources JSONB NOT NULL DEFAULT '\[\]'::jsonb/);
 assert.match(migration, /0050_assistant_context_dock_translation/);
 assert.match(migration, /0051_translation_layout_fidelity/);
+assert.match(migration, /0052_document_view_continuity/);
 assert.match(migration, /kind TEXT NOT NULL DEFAULT 'research_thread'/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS content_translations/);
 assert.match(repository, /listAssistantConversations/);
@@ -592,6 +641,16 @@ assert.match(contentTranslationControl, /translation-language-options/);
 assert.match(attachmentViews, /attachment-pdf-stage-continuous/);
 assert.match(attachmentViews, /data-docx-page-shell/);
 assert.match(attachmentViews, /translatedPageFor/);
+assert.match(attachmentViews, /PdfFittedTranslationSpan/);
+assert.match(attachmentViews, /sourceLineHeight \* 0\.82/);
+assert.match(attachmentViews, /sourceKind: "document"/);
+assert.match(attachmentViews, /applyDocxTranslationSegment/);
+assert.match(documentTranslationControl, /useSyncExternalStore/);
+assert.match(documentTranslationControl, /rememberDocumentTranslation/);
+assert.match(documentViewerSession, /rememberDocumentReadingPosition/);
+assert.match(documentViewerSession, /subscribeDocumentReadingPosition/);
+assert.match(attachmentStyles, /min-height: var\(--docx-original-page-height/);
+assert.match(attachmentStyles, /\.attachment-text-translation-page/);
 assert.match(contentRepository, /translated_document/);
 assert.match(tabletStyles, /\.room-layout > \.feed-stream > \.feed-post:first-child \.content-translation-post[\s\S]*?margin-left: max\(0px, calc\(708px - 50vw\)\)/);
 assert.match(postViews, /ContentTranslationControl state=\{translation\} sourceLabel="post"/);
