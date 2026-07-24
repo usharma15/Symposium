@@ -48,7 +48,8 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Keep PDF and DOCX documents continuously scrollable, with the visible reading position selecting the active translation page. **Shipped.**
 - Share the active page, exact normalized reading position, saved page translations, and Original/Translation choice across feed preview, viewing window, and fullscreen. **Shipped.**
 - Preserve rich post/comment document structure and translate text in place without replacing equations, code, citations, drawings, or inline attachments. **Shipped.**
-- Preserve the original PDF canvas and DOCX layout while substituting fitted translated text at its source locations; retain diagrams, images, equations, and other non-text page content. **Shipped.**
+- Render Translation as a parallel reconstructed page rather than a text box over the source: text PDFs use deterministic source geometry, scanned pages use bounded visual regions plus preserved equation/figure crops, DOCX uses a translated structural clone, and text/Markdown documents retain their original whitespace model. **Shipped.**
+- Keep Original completely untouched and make the reconstructed Translation page independently selectable while retaining diagrams, images, equations, rules, columns, headings, and other non-text page content. **Shipped.**
 - Add one action for a bounded whole discussion and a bounded whole-document translation job. **Remaining.**
 - Preserve headings, structure, citations, quantities, uncertainty, and scientific terminology. **Enforced through structured segments and provider-output identity checks.**
 - Cache translations by source revision, target language, and translation policy.

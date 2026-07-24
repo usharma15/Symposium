@@ -59,6 +59,8 @@ import { isDeletedPost } from "@/lib/symposiumCore";
 import {
   isSafeExternalUrl,
   type DocumentCitationLocatorContract,
+  type DocumentTranslationArtifactBlockContract,
+  type DocumentTranslationLayoutBlockContract,
   type TranslationResultSegmentContract,
   type TranslationSourceSegmentContract
 } from "@/packages/contracts/src";
@@ -271,6 +273,39 @@ export const sanitizeRenderedDocx = (target: HTMLElement) => {
     for (const attributeName of ["href", "xlink:href", "src"]) {
       const value = element.getAttribute(attributeName)?.trim();
       if (value && !safeEmbeddedImageSource(value)) element.removeAttribute(attributeName);
+    }
+  });
+};
+
+export const remapClonedDocumentIds = (target: HTMLElement, suffix: string) => {
+  const idMap = new Map<string, string>();
+  const identifiedElements = [
+    ...(target.id ? [target] : []),
+    ...Array.from(target.querySelectorAll<HTMLElement>("[id]"))
+  ];
+
+  identifiedElements.forEach((element) => {
+    const sourceId = element.id;
+    const translatedId = `${sourceId}-${suffix}`;
+    idMap.set(sourceId, translatedId);
+    element.id = translatedId;
+  });
+
+  target.querySelectorAll<HTMLElement>("[href], [xlink\\:href], [for], [aria-labelledby], [aria-describedby]").forEach((element) => {
+    for (const attributeName of ["href", "xlink:href"]) {
+      const value = element.getAttribute(attributeName);
+      if (!value?.startsWith("#")) continue;
+      const translatedId = idMap.get(value.slice(1));
+      if (translatedId) element.setAttribute(attributeName, `#${translatedId}`);
+    }
+
+    for (const attributeName of ["for", "aria-labelledby", "aria-describedby"]) {
+      const value = element.getAttribute(attributeName);
+      if (!value) continue;
+      element.setAttribute(
+        attributeName,
+        value.split(/\s+/).map((id) => idMap.get(id) ?? id).join(" ")
+      );
     }
   });
 };
@@ -778,6 +813,25 @@ type PdfTranslationLayout = TranslationSourceSegmentContract & {
   width: number;
   height: number;
   fontSize: number;
+  fontFamily: string;
+  fontWeight: CSSProperties["fontWeight"];
+  fontStyle: CSSProperties["fontStyle"];
+  align: CSSProperties["textAlign"];
+};
+
+type PdfParallelTranslationBlock = {
+  id: string;
+  text: string;
+  role: DocumentTranslationLayoutBlockContract["role"];
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  fontFamily: string;
+  fontWeight: CSSProperties["fontWeight"];
+  fontStyle: CSSProperties["fontStyle"];
+  align: CSSProperties["textAlign"];
 };
 
 const median = (values: number[]) => {
@@ -789,23 +843,48 @@ const median = (values: number[]) => {
     : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
 };
 
-function PdfFittedTranslationSpan({
-  layout,
-  text
+const visionFontScaleRatio: Record<DocumentTranslationLayoutBlockContract["fontScale"], number> = {
+  xs: 0.011,
+  sm: 0.014,
+  md: 0.018,
+  lg: 0.024,
+  xl: 0.032
+};
+
+export const visionLayoutToPdfBlock = (
+  block: DocumentTranslationLayoutBlockContract,
+  renderedWidth: number,
+  renderedHeight: number
+): PdfParallelTranslationBlock => ({
+  id: block.id,
+  text: block.text,
+  role: block.role,
+  left: renderedWidth * block.x / 1000,
+  top: renderedHeight * block.y / 1000,
+  width: renderedWidth * block.width / 1000,
+  height: renderedHeight * block.height / 1000,
+  fontSize: Math.max(6.5, renderedWidth * visionFontScaleRatio[block.fontScale]),
+  fontFamily: "Georgia, 'Times New Roman', serif",
+  fontWeight: block.role === "title" || block.role === "heading" ? 700 : 400,
+  fontStyle: "normal",
+  align: block.align
+});
+
+function PdfParallelTextBlock({
+  block
 }: {
-  layout: PdfTranslationLayout;
-  text: string;
+  block: PdfParallelTranslationBlock;
 }) {
   const ref = useRef<HTMLSpanElement | null>(null);
 
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const maximum = Math.max(5, layout.fontSize);
-    const minimum = Math.max(4.5, Math.min(maximum, maximum * 0.58));
+    const maximum = Math.max(5, block.fontSize);
+    const minimum = Math.max(4.5, Math.min(maximum, maximum * 0.6));
     let fitted = maximum;
     element.style.fontSize = `${fitted}px`;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
       const fitsWidth = element.scrollWidth <= element.clientWidth + 1;
       const fitsHeight = element.scrollHeight <= element.clientHeight + 1;
       if (fitsWidth && fitsHeight) break;
@@ -817,24 +896,64 @@ function PdfFittedTranslationSpan({
       fitted = next;
       element.style.fontSize = `${fitted}px`;
     }
-  }, [layout.fontSize, layout.height, layout.width, text]);
+    element.dataset.pdfTranslationFitted = (
+      element.scrollWidth <= element.clientWidth + 1 &&
+      element.scrollHeight <= element.clientHeight + 1
+    ) ? "true" : "false";
+  }, [block.fontSize, block.height, block.text, block.width]);
 
   return (
     <span
       ref={ref}
-      data-pdf-translation-segment={layout.id}
+      className={`attachment-pdf-parallel-block attachment-pdf-parallel-block-${block.role}`}
+      data-pdf-translation-segment={block.id}
+      data-pdf-translation-role={block.role}
       style={{
-        left: `${layout.left}px`,
-        top: `${layout.top}px`,
-        width: `${Math.max(1, layout.width)}px`,
-        height: `${Math.max(1, layout.height)}px`,
-        fontSize: `${Math.max(5, layout.fontSize)}px`
+        left: `${block.left}px`,
+        top: `${block.top}px`,
+        width: `${Math.max(1, block.width)}px`,
+        height: `${Math.max(1, block.height)}px`,
+        fontSize: `${Math.max(5, block.fontSize)}px`,
+        fontFamily: block.fontFamily,
+        fontWeight: block.fontWeight,
+        fontStyle: block.fontStyle,
+        textAlign: block.align
       }}
     >
-      {text}
+      {block.text}
     </span>
   );
 }
+
+const sampledCanvasBackground = (
+  context: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  left: number,
+  top: number,
+  width: number,
+  height: number
+) => {
+  const candidates = [
+    [left - 3, top - 3],
+    [left + width + 3, top - 3],
+    [left - 3, top + height + 3],
+    [left + width + 3, top + height + 3],
+    [left + width / 2, top - 3],
+    [left + width / 2, top + height + 3]
+  ];
+  const lightPixels = candidates.flatMap(([x, y]) => {
+    const boundedX = Math.max(0, Math.min(canvasWidth - 1, Math.round(x ?? 0)));
+    const boundedY = Math.max(0, Math.min(canvasHeight - 1, Math.round(y ?? 0)));
+    const pixel = context.getImageData(boundedX, boundedY, 1, 1).data;
+    const luminance = 0.2126 * (pixel[0] ?? 255) + 0.7152 * (pixel[1] ?? 255) + 0.0722 * (pixel[2] ?? 255);
+    return luminance >= 180 ? [[pixel[0] ?? 255, pixel[1] ?? 255, pixel[2] ?? 255]] : [];
+  });
+  if (!lightPixels.length) return "rgb(255 255 255)";
+  const channel = (index: number) =>
+    Math.round(lightPixels.reduce((total, pixel) => total + (pixel[index] ?? 255), 0) / lightPixels.length);
+  return `rgb(${channel(0)} ${channel(1)} ${channel(2)})`;
+};
 
 function PdfContinuousPage({
   document,
@@ -846,6 +965,8 @@ function PdfContinuousPage({
   zoom,
   shouldRender,
   translatedSegments,
+  translatedLayoutBlocks,
+  preservedArtifacts,
   showTranslation
 }: {
   document: import("pdfjs-dist").PDFDocumentProxy;
@@ -857,10 +978,13 @@ function PdfContinuousPage({
   zoom: number;
   shouldRender: boolean;
   translatedSegments: TranslationResultSegmentContract[];
+  translatedLayoutBlocks: DocumentTranslationLayoutBlockContract[];
+  preservedArtifacts: DocumentTranslationArtifactBlockContract[];
   showTranslation: boolean;
 }) {
   const pageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const translationCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
   const [layouts, setLayouts] = useState<PdfTranslationLayout[]>([]);
   const [ready, setReady] = useState(false);
@@ -915,10 +1039,11 @@ function PdfContinuousPage({
         const spans = Array.from(textLayerContainer.querySelectorAll<HTMLElement>("span"))
           .filter((span) => !span.classList.contains("markedContent") && Boolean(span.textContent?.trim()));
         const pageBounds = pageContainer.getBoundingClientRect();
-        setLayouts(sourceGroups.flatMap((segment) => {
-          const bounds = segment.spanIndexes
-            .map((index) => spans[index]?.getBoundingClientRect())
-            .filter((value): value is DOMRect => Boolean(value));
+        const nextLayouts = sourceGroups.flatMap((segment) => {
+          const sourceSpans = segment.spanIndexes
+            .map((index) => spans[index])
+            .filter((value): value is HTMLElement => Boolean(value));
+          const bounds = sourceSpans.map((span) => span.getBoundingClientRect());
           if (!bounds.length) return [];
           const left = Math.min(...bounds.map((value) => value.left));
           const top = Math.min(...bounds.map((value) => value.top));
@@ -929,6 +1054,7 @@ function PdfContinuousPage({
               .map((value) => value.height)
               .filter((height) => height >= 2 && height <= 80)
           );
+          const sourceStyle = window.getComputedStyle(sourceSpans[0]!);
           return {
             id: segment.id,
             text: segment.text,
@@ -936,9 +1062,16 @@ function PdfContinuousPage({
             top: top - pageBounds.top,
             width: right - left,
             height: bottom - top,
-            fontSize: Math.max(5, sourceLineHeight * 0.82)
+            fontSize: Math.max(5, sourceLineHeight * 0.82),
+            fontFamily: sourceStyle.fontFamily || "Georgia, 'Times New Roman', serif",
+            fontWeight: sourceStyle.fontWeight as CSSProperties["fontWeight"],
+            fontStyle: sourceStyle.fontStyle as CSSProperties["fontStyle"],
+            align: sourceStyle.textAlign === "center" || sourceStyle.textAlign === "right" || sourceStyle.textAlign === "justify"
+              ? sourceStyle.textAlign as CSSProperties["textAlign"]
+              : "left" as const
           };
-        }));
+        });
+        setLayouts(nextLayouts);
         setReady(true);
       })
       .catch((error) => {
@@ -953,9 +1086,98 @@ function PdfContinuousPage({
     };
   }, [document, pageNumber, renderedWidth, shouldRender]);
 
-  const translations = new Map(translatedSegments.map((segment) => [segment.id, segment.text]));
-  const translatedLayouts = layouts.filter((layout) => translations.has(layout.id));
-  const visualFallback = showTranslation && translatedSegments.length > 0 && translatedLayouts.length === 0;
+  const translations = useMemo(
+    () => new Map(translatedSegments.map((segment) => [segment.id, segment.text])),
+    [translatedSegments]
+  );
+  const extractedTranslationBlocks = useMemo<PdfParallelTranslationBlock[]>(
+    () => layouts.flatMap((layout) => {
+      const translatedText = translations.get(layout.id);
+      return translatedText ? [{
+        ...layout,
+        text: translatedText,
+        role: "paragraph" as const
+      }] : [];
+    }),
+    [layouts, translations]
+  );
+  const visionTranslationBlocks = useMemo(
+    () => translatedLayoutBlocks.map((block) =>
+      visionLayoutToPdfBlock(block, renderedWidth, renderedHeight)),
+    [renderedHeight, renderedWidth, translatedLayoutBlocks]
+  );
+  const parallelBlocks = visionTranslationBlocks.length
+    ? visionTranslationBlocks
+    : extractedTranslationBlocks;
+  const visualFallback = showTranslation && translatedSegments.length > 0 && parallelBlocks.length === 0;
+
+  useLayoutEffect(() => {
+    const sourceCanvas = canvasRef.current;
+    const translationCanvas = translationCanvasRef.current;
+    if (!showTranslation || !ready || !sourceCanvas || !translationCanvas) return;
+    translationCanvas.width = sourceCanvas.width;
+    translationCanvas.height = sourceCanvas.height;
+    translationCanvas.style.width = sourceCanvas.style.width;
+    translationCanvas.style.height = sourceCanvas.style.height;
+    const context = translationCanvas.getContext("2d", { alpha: false });
+    if (!context) return;
+    context.drawImage(sourceCanvas, 0, 0);
+    if (visualFallback) {
+      context.fillStyle = sampledCanvasBackground(
+        context,
+        translationCanvas.width,
+        translationCanvas.height,
+        0,
+        0,
+        translationCanvas.width,
+        translationCanvas.height
+      );
+      context.fillRect(0, 0, translationCanvas.width, translationCanvas.height);
+      return;
+    }
+    const pageBackground = sampledCanvasBackground(
+      context,
+      translationCanvas.width,
+      translationCanvas.height,
+      0,
+      0,
+      translationCanvas.width,
+      translationCanvas.height
+    );
+    if (visionTranslationBlocks.length) {
+      context.fillStyle = pageBackground;
+      context.fillRect(0, 0, translationCanvas.width, translationCanvas.height);
+      preservedArtifacts.forEach((artifact) => {
+        const sourceX = translationCanvas.width * artifact.x / 1000;
+        const sourceY = translationCanvas.height * artifact.y / 1000;
+        const sourceWidth = translationCanvas.width * artifact.width / 1000;
+        const sourceHeight = translationCanvas.height * artifact.height / 1000;
+        context.drawImage(
+          sourceCanvas,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight
+        );
+      });
+      return;
+    }
+    const scaleX = translationCanvas.width / Math.max(1, renderedWidth);
+    const scaleY = translationCanvas.height / Math.max(1, renderedHeight);
+    parallelBlocks.forEach((block) => {
+      const padding = Math.max(2, block.fontSize * 0.18);
+      const left = Math.max(0, (block.left - padding) * scaleX);
+      const top = Math.max(0, (block.top - padding) * scaleY);
+      const width = Math.min(translationCanvas.width - left, (block.width + padding * 2) * scaleX);
+      const height = Math.min(translationCanvas.height - top, (block.height + padding * 2) * scaleY);
+      context.fillStyle = pageBackground;
+      context.fillRect(left, top, width, height);
+    });
+  }, [parallelBlocks, preservedArtifacts, ready, renderedHeight, renderedWidth, showTranslation, visionTranslationBlocks.length, visualFallback]);
 
   return (
     <div
@@ -974,21 +1196,47 @@ function PdfContinuousPage({
       >
         {shouldRender ? (
           <>
-            <canvas ref={canvasRef} role="img" aria-label={`${fileName}, page ${pageNumber} of ${pageCount}`} />
-            <div ref={textLayerRef} className="attachment-pdf-text-layer" />
-            {showTranslation && translatedLayouts.length ? (
-              <div className="attachment-pdf-translation-text-layer" lang="auto">
-                {translatedLayouts.map((layout) => (
-                  <PdfFittedTranslationSpan
-                    key={layout.id}
-                    layout={layout}
-                    text={translations.get(layout.id) ?? ""}
+            <canvas
+              ref={canvasRef}
+              className={`attachment-pdf-original-canvas${showTranslation ? " source-hidden" : ""}`}
+              role="img"
+              aria-hidden={showTranslation}
+              aria-label={`${fileName}, page ${pageNumber} of ${pageCount}`}
+            />
+            <canvas
+              ref={translationCanvasRef}
+              className={`attachment-pdf-parallel-canvas${showTranslation ? "" : " source-hidden"}`}
+              role="img"
+              aria-hidden={!showTranslation}
+              aria-label={`Translated ${fileName}, page ${pageNumber} of ${pageCount}`}
+            />
+            <div
+              ref={textLayerRef}
+              className={`attachment-pdf-text-layer${showTranslation ? " source-hidden" : ""}`}
+              aria-hidden={showTranslation}
+            />
+            {showTranslation && parallelBlocks.length ? (
+              <div
+                className="attachment-pdf-parallel-text-layer"
+                data-pdf-parallel-page={pageNumber}
+                lang="auto"
+              >
+                {parallelBlocks.map((block) => (
+                  <PdfParallelTextBlock
+                    key={block.id}
+                    block={block}
                   />
                 ))}
               </div>
             ) : null}
             {visualFallback ? (
-              <article className="attachment-pdf-visual-translation" data-attachment-selectable="true" data-attachment-kind="pdf" data-attachment-page={pageNumber}>
+              <article
+                className="attachment-pdf-parallel-article"
+                data-pdf-parallel-page={pageNumber}
+                data-attachment-selectable="true"
+                data-attachment-kind="pdf"
+                data-attachment-page={pageNumber}
+              >
                 {plainTextToDocxBlocks(translatedSegments.map((segment) => segment.text).join("\n\n")).map((block) => (
                   <p key={block.id}>{block.runs.map((run) => run.text).join("")}</p>
                 ))}
@@ -1380,6 +1628,8 @@ function PdfAttachmentPreview({
                 ? Math.abs(pageNumber - boundedPage) <= 2
                 : pageNumber === boundedPage}
               translatedSegments={translated?.segments ?? []}
+              translatedLayoutBlocks={translated?.layoutBlocks ?? []}
+              preservedArtifacts={translated?.preservedArtifacts ?? []}
               showTranslation={translation.showTranslationForPage(pageNumber)}
             />
           );
@@ -1410,14 +1660,12 @@ function TextAttachmentPreview({
   const [page, setPage] = useState(() => readDocumentReadingPosition(attachment.id).pageNumber);
   const boundedPage = Math.min(Math.max(1, page), totalPages);
   const pageText = pages[Math.min(boundedPage - 1, pages.length - 1)] ?? "";
-  const pageSegments = useMemo(() => {
-    const paragraphs = pageText.split(/\n{2,}/).map((text) => text.trim()).filter(Boolean);
-    return (paragraphs.length ? paragraphs : pageText.trim() ? [pageText.trim()] : [])
-      .map((text, index) => ({
-        id: `document-${boundedPage}-block-${index}`,
-        text
-      }));
-  }, [boundedPage, pageText]);
+  const pageSegments = useMemo(
+    () => pageText.trim()
+      ? [{ id: `document-${boundedPage}-body`, text: pageText.trim() }]
+      : [],
+    [boundedPage, pageText]
+  );
   const loadTranslationSource = useCallback(async () => boundedDocumentTranslationSource(
     pageText.trim()
       ? [{
@@ -1436,9 +1684,9 @@ function TextAttachmentPreview({
     loadSource: loadTranslationSource
   });
   const translatedPage = translation.translatedPageFor(boundedPage);
-  const translatedParagraphs = translation.showTranslation
-    ? translatedPage?.segments.map((segment) => segment.text) ?? []
-    : [];
+  const translatedText = translation.showTranslation
+    ? translatedPage?.segments.map((segment) => segment.text).join("") ?? ""
+    : "";
   const restoreReadingPosition = useCallback((position = readDocumentReadingPosition(attachment.id)) => {
     const targetPage = Math.min(Math.max(1, position.pageNumber), totalPages);
     setPage(targetPage);
@@ -1537,30 +1785,17 @@ function TextAttachmentPreview({
         </div>
       </div>
       {pageText ? (
-        translation.showTranslation && translatedPage ? (
-          <article
-            ref={contentRef}
-            className="attachment-text-translation-page"
-            data-attachment-selectable="true"
-            data-attachment-page={boundedPage}
-            onScroll={rememberTextScroll}
-            style={mode === "expanded" ? { fontSize: `${0.92 * zoom}rem` } : undefined}
-          >
-            {translatedParagraphs.map((paragraph, index) => (
-              <p key={`${translatedPage.pageNumber}-${index}`}>{paragraph}</p>
-            ))}
-          </article>
-        ) : (
-          <pre
-            ref={contentRef as React.RefObject<HTMLPreElement | null>}
-            data-attachment-selectable="true"
-            data-attachment-page={boundedPage}
-            onScroll={rememberTextScroll}
-            style={mode === "expanded" ? { fontSize: `${0.86 * zoom}rem` } : undefined}
-          >
-            {pageText}
-          </pre>
-        )
+        <pre
+          ref={contentRef as React.RefObject<HTMLPreElement | null>}
+          className={translation.showTranslation && translatedPage ? "attachment-text-parallel-page" : undefined}
+          data-attachment-selectable="true"
+          data-attachment-page={boundedPage}
+          data-document-page-variant={translation.showTranslation && translatedPage ? "translation" : "original"}
+          onScroll={rememberTextScroll}
+          style={mode === "expanded" ? { fontSize: `${0.86 * zoom}rem` } : undefined}
+        >
+          {translation.showTranslation && translatedPage ? translatedText : pageText}
+        </pre>
       ) : (
         <div className="attachment-file-shell">
           {attachmentIcon(attachment)}
@@ -1677,7 +1912,8 @@ function DocxAttachmentPreview({
   const scrollFrameRef = useRef(0);
   const positionRestoredRef = useRef(false);
   const viewerInstanceId = useId();
-  const domSegmentsRef = useRef<Map<number, DocxTranslationDomSegment[]>>(new Map());
+  const sourceDomSegmentsRef = useRef<Map<number, DocxTranslationDomSegment[]>>(new Map());
+  const translationDomSegmentsRef = useRef<Map<number, DocxTranslationDomSegment[]>>(new Map());
   const [renderedPageCount, setRenderedPageCount] = useState(0);
   const [renderRevision, setRenderRevision] = useState(0);
   const [fitScale, setFitScale] = useState(1);
@@ -1697,7 +1933,7 @@ function DocxAttachmentPreview({
     if (attachment.url && !parseFailed && !renderedPageCount) {
       throw new Error("This page is still being prepared. Please try again in a moment.");
     }
-    const renderedSegments = domSegmentsRef.current.get(boundedPage) ?? [];
+    const renderedSegments = sourceDomSegmentsRef.current.get(boundedPage) ?? [];
     const segments: TranslationSourceSegmentContract[] = renderedSegments.length
       ? renderedSegments.map(({ id, text }) => ({ id, text }))
       : fallbackSegmentsForPage(boundedPage);
@@ -1738,7 +1974,8 @@ function DocxAttachmentPreview({
   useEffect(() => {
     positionRestoredRef.current = false;
     setPage(readDocumentReadingPosition(attachment.id).pageNumber);
-    domSegmentsRef.current = new Map();
+    sourceDomSegmentsRef.current = new Map();
+    translationDomSegmentsRef.current = new Map();
   }, [attachment.id]);
 
   useEffect(() => {
@@ -1746,7 +1983,8 @@ function DocxAttachmentPreview({
     let resizeObserver: ResizeObserver | null = null;
     const target = renderTargetRef.current;
     if (target) target.replaceChildren();
-    domSegmentsRef.current = new Map();
+    sourceDomSegmentsRef.current = new Map();
+    translationDomSegmentsRef.current = new Map();
     setRenderedPageCount(0);
     setRenderRevision(0);
     setFitScale(1);
@@ -1786,17 +2024,34 @@ function DocxAttachmentPreview({
         sanitizeRenderedDocx(target);
         const renderedPages = Array.from(target.querySelectorAll<HTMLElement>("section.symposium-docx"));
         if (!renderedPages.length) throw new Error("Document pages missing.");
-        const segmentMap = new Map<number, DocxTranslationDomSegment[]>();
+        const sourceSegmentMap = new Map<number, DocxTranslationDomSegment[]>();
+        const translationSegmentMap = new Map<number, DocxTranslationDomSegment[]>();
         renderedPages.forEach((renderedPage, index) => {
           const pageNumber = index + 1;
+          const originalHeight = renderedPage.offsetHeight;
+          const pagePair = globalThis.document.createElement("div");
+          pagePair.className = "attachment-docx-page-pair";
+          pagePair.dataset.docxPageShell = String(pageNumber);
+          renderedPage.parentElement?.insertBefore(pagePair, renderedPage);
+          pagePair.append(renderedPage);
           renderedPage.hidden = false;
           renderedPage.dataset.attachmentSelectable = "true";
           renderedPage.dataset.attachmentPage = String(pageNumber);
-          renderedPage.dataset.docxPageShell = String(pageNumber);
-          renderedPage.style.setProperty("--docx-original-page-height", `${renderedPage.offsetHeight}px`);
-          segmentMap.set(pageNumber, collectDocxTranslationSegments(renderedPage, pageNumber));
+          renderedPage.dataset.docxPageVariant = "original";
+          renderedPage.style.setProperty("--docx-original-page-height", `${originalHeight}px`);
+          sourceSegmentMap.set(pageNumber, collectDocxTranslationSegments(renderedPage, pageNumber));
+
+          const translatedPage = renderedPage.cloneNode(true) as HTMLElement;
+          remapClonedDocumentIds(translatedPage, `translated-${pageNumber}`);
+          translatedPage.hidden = true;
+          translatedPage.dataset.docxPageVariant = "translation";
+          translatedPage.classList.add("translated");
+          translatedPage.setAttribute("aria-hidden", "true");
+          pagePair.append(translatedPage);
+          translationSegmentMap.set(pageNumber, collectDocxTranslationSegments(translatedPage, pageNumber));
         });
-        domSegmentsRef.current = segmentMap;
+        sourceDomSegmentsRef.current = sourceSegmentMap;
+        translationDomSegmentsRef.current = translationSegmentMap;
         const firstPageWidth = renderedPages[0]?.getBoundingClientRect().width ?? 0;
         const updateFitScale = () => {
           const availableWidth = Math.max(1, target.clientWidth - 28);
@@ -1829,17 +2084,26 @@ function DocxAttachmentPreview({
 
   useLayoutEffect(() => {
     positionRestoredRef.current = false;
-    domSegmentsRef.current.forEach((segments, pageNumber) => {
+    sourceDomSegmentsRef.current.forEach((_sourceSegments, pageNumber) => {
       const translatedPage = translation.translatedPageFor(pageNumber);
       const translated = new Map((translatedPage?.segments ?? []).map((segment) => [segment.id, segment.text]));
       const showTranslation = translation.showTranslationForPage(pageNumber);
-      renderTargetRef.current
-        ?.querySelector<HTMLElement>(`section.symposium-docx[data-attachment-page="${pageNumber}"]`)
-        ?.classList.toggle("translated", showTranslation);
-      segments.forEach((segment) => {
+      const originalPage = renderTargetRef.current
+        ?.querySelector<HTMLElement>(`section.symposium-docx[data-attachment-page="${pageNumber}"][data-docx-page-variant="original"]`);
+      const parallelPage = renderTargetRef.current
+        ?.querySelector<HTMLElement>(`section.symposium-docx[data-attachment-page="${pageNumber}"][data-docx-page-variant="translation"]`);
+      if (originalPage) {
+        originalPage.hidden = showTranslation;
+        originalPage.setAttribute("aria-hidden", showTranslation ? "true" : "false");
+      }
+      if (parallelPage) {
+        parallelPage.hidden = !showTranslation;
+        parallelPage.setAttribute("aria-hidden", showTranslation ? "false" : "true");
+      }
+      (translationDomSegmentsRef.current.get(pageNumber) ?? []).forEach((segment) => {
         applyDocxTranslationSegment(
           segment,
-          showTranslation ? translated.get(segment.id) ?? segment.text : null
+          translated.get(segment.id) ?? segment.text
         );
       });
     });
@@ -1959,20 +2223,24 @@ function DocxAttachmentPreview({
               (translation.translatedPageFor(pageNumber)?.segments ?? []).map((segment) => [segment.id, segment.text])
             );
             return (
-              <article
+              <div
                 key={pageNumber}
-                className={`attachment-docx-page attachment-docx-fallback${translated ? " translated" : ""}`}
-                data-attachment-selectable="true"
-                data-attachment-page={pageNumber}
+                className="attachment-docx-page-pair"
                 data-docx-page-shell={pageNumber}
               >
-                {blocks.map((block, blockIndex) => (
-                  <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
-                    {block.style === "list" ? <span className="attachment-docx-bullet" aria-hidden="true">•</span> : null}
-                    <span>
-                      {translated
-                        ? translatedFallbackMap.get(`docx-fallback-${pageNumber}-${blockIndex}`) ?? block.runs.map((run) => run.text).join("")
-                        : block.runs.map((run, runIndex) => (
+                <article
+                  className="attachment-docx-page attachment-docx-fallback"
+                  data-attachment-selectable="true"
+                  data-attachment-page={pageNumber}
+                  data-docx-page-variant="original"
+                  hidden={translated}
+                  aria-hidden={translated}
+                >
+                  {blocks.map((block) => (
+                    <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
+                      {block.style === "list" ? <span className="attachment-docx-bullet" aria-hidden="true">•</span> : null}
+                      <span>
+                        {block.runs.map((run, runIndex) => (
                             <span
                               key={`${block.id}-${runIndex}`}
                               className={[
@@ -1983,11 +2251,30 @@ function DocxAttachmentPreview({
                             >
                               {run.text}
                             </span>
-                          ))}
-                    </span>
-                  </p>
-                ))}
-              </article>
+                        ))}
+                      </span>
+                    </p>
+                  ))}
+                </article>
+                <article
+                  className="attachment-docx-page attachment-docx-fallback translated"
+                  data-attachment-selectable="true"
+                  data-attachment-page={pageNumber}
+                  data-docx-page-variant="translation"
+                  hidden={!translated}
+                  aria-hidden={!translated}
+                >
+                  {blocks.map((block, blockIndex) => (
+                    <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
+                      {block.style === "list" ? <span className="attachment-docx-bullet" aria-hidden="true">•</span> : null}
+                      <span>
+                        {translatedFallbackMap.get(`docx-fallback-${pageNumber}-${blockIndex}`)
+                          ?? block.runs.map((run) => run.text).join("")}
+                      </span>
+                    </p>
+                  ))}
+                </article>
+              </div>
             );
           }) : (
             <article className="attachment-docx-page attachment-docx-fallback" data-docx-page-shell="1">

@@ -44,7 +44,10 @@ import {
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
 } from "@/features/attachments/pdfAttachmentClient";
-import { pdfTranslationSegmentsFromTextContent } from "@/features/attachments/AttachmentViews";
+import {
+  pdfTranslationSegmentsFromTextContent,
+  visionLayoutToPdfBlock
+} from "@/features/attachments/AttachmentViews";
 import {
   documentViewerSessionSnapshot,
   readDocumentReadingPosition,
@@ -200,7 +203,7 @@ assert.deepEqual(documentTranslationRequestContent(documentTranslationInput).map
 assert.deepEqual(documentTranslationRequestContent(scannedPdfTranslationInput).map((item) => item.type), ["input_text", "input_image"]);
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 800);
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 7000);
-assert.equal(documentTranslationMaxOutputTokens(scannedPdfTranslationInput), 6000);
+assert.equal(documentTranslationMaxOutputTokens(scannedPdfTranslationInput), 7000);
 assert.equal(pdfPageNeedsVisualTranslationFallback("Short title"), true);
 assert.equal(pdfPageNeedsVisualTranslationFallback("x".repeat(200)), false);
 assert.deepEqual(
@@ -242,9 +245,127 @@ assert.equal(documentTranslationModelOutputSchema.safeParse({
   targetLanguage: "spanish",
   targetLanguageLabel: "Spanish",
   translatedTitle: "Marco persuasivo",
-  pages: [{ pageNumber: 7, segments: [{ id: "document-page-7-body", text: "Marco persuasivo\nFinanciar laboratorios juveniles independientes." }] }],
+  pages: [{
+    pageNumber: 7,
+    segments: [{ id: "document-page-7-body", text: "Marco persuasivo\nFinanciar laboratorios juveniles independientes." }],
+    layoutBlocks: [{
+      id: "visual-7-heading",
+      role: "heading",
+      text: "Marco persuasivo",
+      x: 120,
+      y: 90,
+      width: 760,
+      height: 80,
+      fontScale: "lg",
+      align: "center"
+    }],
+    preservedArtifacts: []
+  }],
   message: "Spanish translation ready."
 }).success, true);
+assert.equal(documentTranslationModelOutputSchema.safeParse({
+  targetLanguage: "spanish",
+  targetLanguageLabel: "Spanish",
+  translatedTitle: "Fuera de página",
+  pages: [{
+    pageNumber: 7,
+    segments: [{ id: "document-page-7-body", text: "Fuera de página" }],
+    layoutBlocks: [{
+      id: "visual-7-invalid",
+      role: "paragraph",
+      text: "Fuera de página",
+      x: 900,
+      y: 100,
+      width: 200,
+      height: 100,
+      fontScale: "md",
+      align: "left"
+    }],
+    preservedArtifacts: []
+  }],
+  message: "Spanish translation ready."
+}).success, false);
+assert.equal(documentTranslationModelOutputSchema.safeParse({
+  targetLanguage: "spanish",
+  targetLanguageLabel: "Spanish",
+  translatedTitle: "Bloques superpuestos",
+  pages: [{
+    pageNumber: 7,
+    segments: [{ id: "document-page-7-body", text: "Bloques superpuestos" }],
+    layoutBlocks: [
+      {
+        id: "visual-7-paragraph-1",
+        role: "paragraph",
+        text: "Primer bloque",
+        x: 100,
+        y: 100,
+        width: 500,
+        height: 250,
+        fontScale: "md",
+        align: "left"
+      },
+      {
+        id: "visual-7-paragraph-2",
+        role: "paragraph",
+        text: "Segundo bloque",
+        x: 120,
+        y: 120,
+        width: 450,
+        height: 200,
+        fontScale: "md",
+        align: "left"
+      }
+    ],
+    preservedArtifacts: []
+  }],
+  message: "Spanish translation ready."
+}).success, false);
+assert.equal(documentTranslationModelOutputSchema.safeParse({
+  targetLanguage: "spanish",
+  targetLanguageLabel: "Spanish",
+  translatedTitle: "Artefacto superpuesto",
+  pages: [{
+    pageNumber: 7,
+    segments: [{ id: "document-page-7-body", text: "Artefacto superpuesto" }],
+    layoutBlocks: [{
+      id: "visual-7-paragraph",
+      role: "paragraph",
+      text: "Texto traducido",
+      x: 100,
+      y: 100,
+      width: 500,
+      height: 250,
+      fontScale: "md",
+      align: "left"
+    }],
+    preservedArtifacts: [{
+      id: "visual-7-equation",
+      role: "equation",
+      x: 120,
+      y: 120,
+      width: 400,
+      height: 180
+    }]
+  }],
+  message: "Spanish translation ready."
+}).success, false);
+const reconstructedPdfBlock = visionLayoutToPdfBlock({
+  id: "visual-10-paragraph-1",
+  role: "paragraph",
+  text: "Translated paragraph",
+  x: 100,
+  y: 200,
+  width: 800,
+  height: 250,
+  fontScale: "md",
+  align: "justify"
+}, 600, 900);
+assert.equal(reconstructedPdfBlock.left, 60);
+assert.equal(reconstructedPdfBlock.top, 180);
+assert.equal(reconstructedPdfBlock.width, 480);
+assert.equal(reconstructedPdfBlock.height, 225);
+assert.ok(Math.abs(reconstructedPdfBlock.fontSize - 10.8) < 0.0001);
+assert.equal(reconstructedPdfBlock.align, "justify");
 assert.equal(documentTranslationModelOutputSchema.safeParse({
   targetLanguage: "unsupported",
   targetLanguageLabel: "",
@@ -256,6 +377,13 @@ const sourceFingerprint = documentTranslationFingerprint(documentTranslationInpu
 assert.match(sourceFingerprint, /^[a-f0-9]{64}$/);
 assert.equal(sourceFingerprint, documentTranslationFingerprint(documentTranslationInput));
 assert.notEqual(sourceFingerprint, documentTranslationFingerprint({ ...documentTranslationInput, sourceComplete: false }));
+assert.notEqual(sourceFingerprint, documentTranslationFingerprint({
+  ...documentTranslationInput,
+  sourcePages: documentTranslationInput.sourcePages.map((page) => ({
+    ...page,
+    imageDataUrl: "data:image/png;base64,AA=="
+  }))
+}));
 const validDocumentTranslationResult = documentTranslationResultSchema.parse({
   status: "translated",
   attachmentId: documentTranslationInput.attachmentId,
@@ -534,7 +662,7 @@ assert.match(provider, /strict: true/);
 assert.match(provider, /symposium-translation-v1/);
 assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v3"/);
 assert.match(provider, /reasoning: \{ effort: "none" \}/);
-assert.match(provider, /symposium-document-page-translation-v4/);
+assert.match(provider, /symposium-document-page-translation-v5/);
 assert.match(provider, /symposium-content-translation-v2/);
 assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
 assert.match(provider, /insufficient_quota/);
@@ -649,22 +777,35 @@ assert.match(contentTranslationControl, /translation-language-options/);
 assert.match(attachmentViews, /attachment-pdf-stage-continuous/);
 assert.match(attachmentViews, /data-docx-page-shell/);
 assert.match(attachmentViews, /translatedPageFor/);
-assert.match(attachmentViews, /PdfFittedTranslationSpan/);
+assert.match(attachmentViews, /PdfParallelTextBlock/);
 assert.match(attachmentViews, /sourceLineHeight \* 0\.82/);
+assert.match(attachmentViews, /sampledCanvasBackground/);
+assert.match(attachmentViews, /translatedLayoutBlocks/);
+assert.match(attachmentViews, /pdfTranslationFitted/);
+assert.match(attachmentViews, /data-docx-page-variant/);
 assert.match(attachmentViews, /sourceKind: "document"/);
+assert.match(attachmentViews, /`document-\$\{boundedPage\}-body`/);
+assert.match(attachmentViews, /translatedPage\?\.segments\.map\(\(segment\) => segment\.text\)\.join\(""\)/);
 assert.match(attachmentViews, /applyDocxTranslationSegment/);
 assert.match(documentTranslationControl, /useSyncExternalStore/);
 assert.match(documentTranslationControl, /rememberDocumentTranslation/);
 assert.match(documentViewerSession, /rememberDocumentReadingPosition/);
 assert.match(documentViewerSession, /subscribeDocumentReadingPosition/);
 assert.match(attachmentStyles, /min-height: var\(--docx-original-page-height/);
-assert.match(attachmentStyles, /\.attachment-text-translation-page/);
+assert.match(attachmentStyles, /\.attachment-pdf-parallel-canvas/);
+assert.match(attachmentStyles, /\.attachment-pdf-parallel-text-layer/);
+assert.match(attachmentStyles, /\.attachment-text-parallel-page/);
+assert.match(provider, /layoutBlocks for each natural-language region/);
+assert.match(provider, /symposium-document-page-translation-v5/);
+assert.match(documentRepository, /policy: input\.sourcePages\.some\(\(page\) => page\.imageDataUrl\) \? 3 : 2/);
 assert.match(contentRepository, /translated_document/);
 assert.match(tabletStyles, /\.room-layout > \.feed-stream > \.feed-post:first-child \.content-translation-post[\s\S]*?margin-left: max\(0px, calc\(708px - 50vw\)\)/);
 assert.match(postViews, /ContentTranslationControl state=\{translation\} sourceLabel="post"/);
 assert.match(commentThread, /ContentTranslationControl state=\{translation\} sourceLabel="comment"/);
 assert.doesNotMatch(attachmentViews, /<iframe[^>]+title=\{attachment\.fileName\}/);
 assert.match(attachmentModal, /kind: "pdf-text", page, excerpt/);
+assert.match(attachmentModal, /suppressModalEscapeUntilRef/);
+assert.match(attachmentModal, /Date\.now\(\) \+ 400/);
 assert.match(pdfClient, /maxPdfMetadataPages = 40/);
 assert.match(pdfClient, /pdfTextStatus: previewText \? "extracted" : "none"/);
 assert.match(packageManifest, /"pdfjs-dist": "6\.1\.200"/);

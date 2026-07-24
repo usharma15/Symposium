@@ -76,6 +76,8 @@ export function AttachmentPreviewModal({
   const modalRef = useRef<HTMLElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const viewTransitionAnchorRef = useRef<ReturnType<typeof readDocumentReadingPosition> | null>(null);
+  const fullscreenActiveRef = useRef(false);
+  const suppressModalEscapeUntilRef = useRef(0);
 
   useEffect(() => {
     setActiveIndex(Math.max(0, attachments.findIndex((attachment) => attachment.id === attachmentId)));
@@ -168,7 +170,12 @@ export function AttachmentPreviewModal({
 
   useEffect(() => {
     const onFullscreenChange = () => {
-      setIsFullscreen(document.fullscreenElement === modalRef.current);
+      const fullscreenActive = document.fullscreenElement === modalRef.current;
+      if (fullscreenActiveRef.current && !fullscreenActive) {
+        suppressModalEscapeUntilRef.current = Date.now() + 400;
+      }
+      fullscreenActiveRef.current = fullscreenActive;
+      setIsFullscreen(fullscreenActive);
     };
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
@@ -182,7 +189,13 @@ export function AttachmentPreviewModal({
         setImageRegion(null);
         return;
       }
-      if (event.key === "Escape" && !document.fullscreenElement) onClose();
+      if (
+        event.key === "Escape" &&
+        !document.fullscreenElement &&
+        Date.now() >= suppressModalEscapeUntilRef.current
+      ) {
+        onClose();
+      }
       if (event.key === "ArrowLeft" && attachments.length > 1) {
         event.preventDefault();
         setActiveIndex((current) => (current - 1 + attachments.length) % attachments.length);

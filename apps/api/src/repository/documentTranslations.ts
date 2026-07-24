@@ -55,7 +55,7 @@ export { supportedLanguageFromInstruction } from "../services/translationLanguag
 
 export const documentTranslationFingerprint = (input: DocumentTranslationInputContract) => createHash("sha256")
   .update(JSON.stringify({
-    policy: 2,
+    policy: input.sourcePages.some((page) => page.imageDataUrl) ? 3 : 2,
     attachmentId: input.attachmentId,
     sourceTitle: input.sourceTitle,
     sourceKind: input.sourceKind,
@@ -222,7 +222,9 @@ const finalizeTranslation = async (
     ? (output?.pages ?? []).map((page) => ({
         pageNumber: page.pageNumber,
         body: page.segments.map((segment) => segment.text).join(" ").replace(/\s+/g, " ").trim(),
-        segments: page.segments
+        segments: page.segments,
+        layoutBlocks: page.layoutBlocks,
+        preservedArtifacts: page.preservedArtifacts
       }))
     : [];
   const status: DocumentTranslationResultContract["status"] = providerError

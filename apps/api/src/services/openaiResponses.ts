@@ -269,6 +269,14 @@ export const documentTranslationInstructions = [
   "Translate only natural-language text inside each segment. Preserve equations, symbols, identifiers, citation markers, quantities, whitespace intent, and other non-linguistic notation exactly.",
   "If a segment has empty text, recover the corresponding page text from the supplied rendered page image and put the complete faithful translation into that segment.",
   "When a SOURCE PAGE IMAGE is supplied, read all legible document text from that image. Use extracted page text when present as a fidelity aid, but use the page image to recover missing or incomplete text.",
+  "For every page with a SOURCE PAGE IMAGE, also return layoutBlocks for each natural-language region that must be replaced on the translated page.",
+  "Each layout block must contain the translated text for one visually coherent source region, its role, alignment, relative font scale, and an accurate normalized bounding rectangle using integer coordinates from 0 to 1000.",
+  "Use x and y for the block's top-left corner and width and height for its full source region. Keep every block inside the 1000 by 1000 page.",
+  "Cover all legible natural-language regions, but do not create layout blocks over equations, symbolic derivations, diagrams, plots, photographs, or other non-linguistic artifacts. The application preserves those source artifacts beneath the reconstructed translated page.",
+  "For every page with a SOURCE PAGE IMAGE, return preservedArtifacts for each equation, figure, diagram, image, or meaningful rule that must be copied unchanged into the reconstructed page.",
+  "Each preserved artifact needs an accurate normalized bounding rectangle and must not include surrounding natural-language prose. Do not preserve ordinary source-language text as an artifact.",
+  "Keep columns, headers, footers, captions, footnotes, tables, lists, and reading order separate. Never combine distant regions into one large block.",
+  "For pages without a SOURCE PAGE IMAGE, return empty layoutBlocks and preservedArtifacts arrays because the application already has deterministic document geometry.",
   "Preserve headings, paragraph order, columns, lists, scientific terminology, quantities, equations, names, citations, uncertainty, and argumentative force. Do not summarize, explain, soften, strengthen, or invent text.",
   "When sourceComplete is false, translate all supplied page text faithfully and state the page-extraction limitation only in message, not inside the translated document.",
   "translatedTitle should be a faithful translation of the document title. Return plain text without Markdown fences."
@@ -398,7 +406,7 @@ export const documentTranslationMaxOutputTokens = (input: DocumentTranslationInp
     (total, page) => total + documentTranslationSegmentsForPage(page).reduce((pageTotal, segment) => pageTotal + segment.text.length, 0),
     0
   );
-  if (!sourceCharacters && input.sourcePages.some((page) => page.imageDataUrl)) return 6000;
+  if (!sourceCharacters && input.sourcePages.some((page) => page.imageDataUrl)) return 7000;
   return Math.min(7000, Math.max(800, Math.ceil(sourceCharacters / 2.4) + 500));
 };
 
@@ -433,10 +441,52 @@ const documentTranslationResponseFormat = (pageCount: number) => ({
                 required: ["id", "text"],
                 additionalProperties: false
               }
-            }
-          },
-          required: ["pageNumber", "segments"],
-          additionalProperties: false
+            },
+            layoutBlocks: {
+              type: "array",
+              minItems: 0,
+              maxItems: 200,
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  role: {
+                    type: "string",
+                    enum: ["title", "heading", "paragraph", "list", "caption", "header", "footer", "footnote", "table"]
+                  },
+                  text: { type: "string" },
+                  x: { type: "integer", minimum: 0, maximum: 1000 },
+                  y: { type: "integer", minimum: 0, maximum: 1000 },
+                  width: { type: "integer", minimum: 1, maximum: 1000 },
+                  height: { type: "integer", minimum: 1, maximum: 1000 },
+                  fontScale: { type: "string", enum: ["xs", "sm", "md", "lg", "xl"] },
+                  align: { type: "string", enum: ["left", "center", "right", "justify"] }
+                },
+                required: ["id", "role", "text", "x", "y", "width", "height", "fontScale", "align"],
+                additionalProperties: false
+              }
+            },
+            preservedArtifacts: {
+              type: "array",
+              minItems: 0,
+              maxItems: 100,
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  role: { type: "string", enum: ["equation", "figure", "diagram", "image", "rule"] },
+                  x: { type: "integer", minimum: 0, maximum: 1000 },
+                  y: { type: "integer", minimum: 0, maximum: 1000 },
+                  width: { type: "integer", minimum: 1, maximum: 1000 },
+                  height: { type: "integer", minimum: 1, maximum: 1000 }
+                },
+                required: ["id", "role", "x", "y", "width", "height"],
+                additionalProperties: false
+              }
+            },
+            required: ["pageNumber", "segments", "layoutBlocks", "preservedArtifacts"],
+            additionalProperties: false
+          }
         }
       },
       message: { type: "string" }
@@ -548,7 +598,7 @@ export const callDocumentTranslationModel = async (input: {
       instructions: documentTranslationInstructions,
       input: [{ role: "user", content: documentTranslationRequestContent(input.request) }],
       text: { format: documentTranslationResponseFormat(input.request.sourcePages.length) },
-      prompt_cache_key: "symposium-document-page-translation-v4",
+      prompt_cache_key: "symposium-document-page-translation-v5",
       safety_identifier: createHash("sha256").update(input.ownerHandle).digest("hex").slice(0, 64)
     }),
     signal: AbortSignal.timeout(75_000)
@@ -574,6 +624,10 @@ export const callDocumentTranslationModel = async (input: {
         throw new Error("OpenAI returned a document translation with mismatched text segments.");
       }
       page.segments = restoredSegments;
+      const sourcePage = input.request.sourcePages[pageIndex]!;
+      if (sourcePage.imageDataUrl && !page.layoutBlocks.length) {
+        throw new Error("OpenAI returned a visual document translation without reconstructed layout blocks.");
+      }
     });
   }
   return {
