@@ -1002,6 +1002,8 @@ assert.match(documentTranslationControl, /Document formatting can shift/);
 assert.match(documentTranslationControl, /reading guide/);
 assert.match(documentTranslationControl, /DocumentTranslationGuidance/);
 assert.match(documentTranslationControl, /TriangleAlert/);
+assert.match(attachmentViews, /attachment-document-has-guidance/);
+assert.match(attachmentStyles, /\.attachment-document-has-guidance\s*\{\s*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\)/);
 assert.match(documentTranslationControl, /Original/);
 assert.match(documentTranslationControl, /Translation/);
 assert.match(documentTranslationControl, /Translate · 1 answer/);

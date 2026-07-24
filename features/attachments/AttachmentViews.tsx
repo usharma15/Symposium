@@ -1600,7 +1600,7 @@ function PdfAttachmentPreview({
 
   return (
     <div
-      className={`attachment-document attachment-document-${mode} attachment-pdf`}
+      className={`attachment-document attachment-document-${mode} attachment-pdf${translation.showTranslation ? " attachment-document-has-guidance" : ""}`}
       onClick={(event) => {
         if (mode === "expanded") {
           event.stopPropagation();
@@ -1785,7 +1785,7 @@ function TextAttachmentPreview({
   }, [mode, pageText, restoreReadingPosition, translation.showTranslation, zoom]);
 
   return (
-    <div className={`attachment-document attachment-document-${mode}`}>
+    <div className={`attachment-document attachment-document-${mode}${translation.showTranslation ? " attachment-document-has-guidance" : ""}`}>
       <div className="attachment-pagebar">
         <span>Page {boundedPage}/{totalPages}</span>
         <div className="attachment-page-actions">
@@ -2224,7 +2224,7 @@ function DocxAttachmentPreview({
     scroller.scrollTo({ top: Math.max(0, pageElement.offsetTop - 14), behavior: "smooth" });
   };
   return (
-    <div className={`attachment-document attachment-document-${mode} attachment-docx`}>
+    <div className={`attachment-document attachment-document-${mode} attachment-docx${translation.showTranslation ? " attachment-document-has-guidance" : ""}`}>
       <div className="attachment-pagebar">
         <span>Page {boundedPage}/{totalPages}</span>
         <div className="attachment-page-actions">
