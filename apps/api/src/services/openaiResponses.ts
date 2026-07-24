@@ -332,11 +332,13 @@ export const documentTranslationInstructions = [
   "Translate only natural-language text inside each segment. Preserve equations, symbols, identifiers, citation markers, quantities, whitespace intent, and other non-linguistic notation exactly.",
   "If a segment has empty text, recover the corresponding page text from the supplied rendered page image and put the complete faithful translation into that segment.",
   "When a SOURCE PAGE IMAGE is supplied, read all legible document text from that image. Use extracted page text when present as a fidelity aid, but use the page image to recover missing or incomplete text.",
-  "For every page with a SOURCE PAGE IMAGE, also return layoutBlocks for each natural-language region that must be replaced on the translated page.",
+  "Each source page declares either structured_text_overlay or visual_reconstruction as its translationMode.",
+  "For structured_text_overlay, the application already owns exact PDF text geometry. Return the translated segments, with empty layoutBlocks and preservedArtifacts arrays. Use the page image only for visual context; the application preserves all original non-text material.",
+  "For visual_reconstruction, also return layoutBlocks for each natural-language region that must be replaced on the translated page.",
   "Each layout block must contain the translated text for one visually coherent source region, its role, alignment, relative font scale, and an accurate normalized bounding rectangle using integer coordinates from 0 to 1000.",
   "Use x and y for the block's top-left corner and width and height for its full source region. Keep every block inside the 1000 by 1000 page.",
   "Cover all legible natural-language regions, but do not create layout blocks over equations, symbolic derivations, diagrams, plots, photographs, or other non-linguistic artifacts. The application preserves those source artifacts beneath the reconstructed translated page.",
-  "For every page with a SOURCE PAGE IMAGE, return preservedArtifacts for each equation, figure, diagram, image, or meaningful rule that must be copied unchanged into the reconstructed page.",
+  "For visual_reconstruction, return preservedArtifacts for each equation, figure, diagram, image, or meaningful rule that must be copied unchanged into the reconstructed page.",
   "Each preserved artifact needs an accurate normalized bounding rectangle and must not include surrounding natural-language prose. Do not preserve ordinary source-language text as an artifact.",
   "Keep columns, headers, footers, captions, footnotes, tables, lists, and reading order separate. Never combine distant regions into one large block.",
   "For pages without a SOURCE PAGE IMAGE, return empty layoutBlocks and preservedArtifacts arrays because the application already has deterministic document geometry.",
@@ -440,6 +442,17 @@ const documentTranslationSegmentsForPage = (
   ? page.segments
   : [{ id: `document-page-${page.pageNumber}-body`, text: page.body }];
 
+export const documentTranslationModeForPage = (
+  page: DocumentTranslationInputContract["sourcePages"][number]
+) => {
+  if (!page.imageDataUrl) return "structured_text_overlay" as const;
+  const extractedCharacters = documentTranslationSegmentsForPage(page)
+    .reduce((total, segment) => total + segment.text.replace(/\s+/g, "").length, 0);
+  return extractedCharacters < 200
+    ? "visual_reconstruction" as const
+    : "structured_text_overlay" as const;
+};
+
 export const restoreTranslationSegmentOrder = (
   sourceSegments: TranslationSourceSegmentContract[],
   translatedSegments: TranslationResultSegmentContract[]
@@ -465,7 +478,8 @@ export const documentTranslationPrompt = (input: DocumentTranslationInputContrac
     pages: input.sourcePages.map((page) => ({
       pageNumber: page.pageNumber,
       segments: documentTranslationSegmentsForPage(page),
-      hasRenderedPageImage: Boolean(page.imageDataUrl)
+      hasRenderedPageImage: Boolean(page.imageDataUrl),
+      translationMode: documentTranslationModeForPage(page)
     }))
   })
 ].join("\n");
@@ -495,15 +509,20 @@ export const documentTranslationMaxOutputTokens = (input: DocumentTranslationInp
   const sourceSegments = input.sourcePages.flatMap(documentTranslationSegmentsForPage);
   const idCharacters = sourceSegments.reduce((total, segment) => total + segment.id.length, 0);
   const hasRenderedPageImage = input.sourcePages.some((page) => page.imageDataUrl);
-  const layoutCharacters = hasRenderedPageImage
+  const needsVisualReconstruction = input.sourcePages.some(
+    (page) => documentTranslationModeForPage(page) === "visual_reconstruction"
+  );
+  const layoutCharacters = needsVisualReconstruction
     ? Math.ceil(sourceCharacters * 1.6) + Math.max(12, sourceSegments.length) * 128
     : 0;
-  return Math.min(12_000, Math.max(hasRenderedPageImage ? 7_000 : 1_400, structuredTranslationOutputTokens({
+  return Math.min(12_000, Math.max(
+    needsVisualReconstruction ? 7_000 : hasRenderedPageImage ? 2_000 : 1_400,
+    structuredTranslationOutputTokens({
     textCharacters: sourceCharacters + input.sourceTitle.length,
     idCharacters,
     segmentCount: sourceSegments.length,
     duplicatedTextCharacters: layoutCharacters,
-    structuralCharacters: hasRenderedPageImage ? 1_600 : 1_000
+    structuralCharacters: needsVisualReconstruction ? 1_600 : 1_000
   })));
 };
 
@@ -724,8 +743,13 @@ export const callDocumentTranslationModel = async (input: {
         }
         page.segments = restoredSegments;
         const sourcePage = input.request.sourcePages[pageIndex]!;
-        if (sourcePage.imageDataUrl && !page.layoutBlocks.length) {
+        const translationMode = documentTranslationModeForPage(sourcePage);
+        if (translationMode === "visual_reconstruction" && !page.layoutBlocks.length) {
           throw new Error("OpenAI returned a visual document translation without reconstructed layout blocks.");
+        }
+        if (translationMode === "structured_text_overlay") {
+          page.layoutBlocks = [];
+          page.preservedArtifacts = [];
         }
       });
     }

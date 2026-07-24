@@ -190,6 +190,74 @@ const main = async () => {
     /minItems|maxItems|minimum|maximum/
   );
 
+  const structuredDocumentRequest = {
+    attachmentId: "provider-check-structured-pdf",
+    sourceTitle: "Formatted comments.pdf",
+    sourceKind: "pdf" as const,
+    sourcePages: [{
+      pageNumber: 4,
+      body: "A complete text-bearing PDF page with figures and formatting.",
+      segments: Array.from({ length: 8 }, (_, index) => ({
+        id: `pdf-4-line-${index}`,
+        text: `Source paragraph ${index + 1} contains enough extracted text for deterministic PDF geometry.`
+      })),
+      imageDataUrl: "data:image/jpeg;base64,YWJj"
+    }],
+    sourceComplete: true,
+    languageInstruction: "Spanish"
+  };
+  let structuredDocumentPayloadJson = "";
+  const structuredDocumentFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    structuredDocumentPayloadJson = String(init?.body);
+    return new Response(JSON.stringify({
+      id: "resp_structured_document_provider_check",
+      model: "gpt-5.6-terra",
+      status: "completed",
+      output_text: JSON.stringify({
+        targetLanguage: "spanish",
+        targetLanguageLabel: "Spanish",
+        translatedTitle: "Comentarios formateados",
+        pages: [{
+          pageNumber: 4,
+          segments: structuredDocumentRequest.sourcePages[0].segments.map((segment, index) => ({
+            id: segment.id,
+            text: `El párrafo de origen ${index + 1} conserva la geometría determinista del PDF.`
+          })),
+          layoutBlocks: [{
+            id: "unneeded-model-layout",
+            role: "paragraph",
+            text: "This model-generated layout must not override exact PDF geometry.",
+            x: 10,
+            y: 10,
+            width: 300,
+            height: 50,
+            fontScale: "md",
+            align: "left"
+          }],
+          preservedArtifacts: [{
+            id: "unneeded-model-artifact",
+            role: "image",
+            x: 400,
+            y: 400,
+            width: 200,
+            height: 200
+          }]
+        }],
+        message: "Spanish translation ready."
+      }),
+      usage: { input_tokens: 900, output_tokens: 260 }
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  const structuredDocumentResult = await callDocumentTranslationModel({
+    ownerHandle: "provider-check",
+    request: structuredDocumentRequest,
+    fetchImpl: structuredDocumentFetch
+  });
+  assert.equal(structuredDocumentResult.output.pages[0]?.segments.length, 8);
+  assert.deepEqual(structuredDocumentResult.output.pages[0]?.layoutBlocks, []);
+  assert.deepEqual(structuredDocumentResult.output.pages[0]?.preservedArtifacts, []);
+  assert.match(structuredDocumentPayloadJson, /structured_text_overlay/);
+
   const rejectedFetch = (async () => new Response(JSON.stringify({
     error: {
       code: "invalid_json_schema",

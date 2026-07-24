@@ -16,6 +16,7 @@ import {
   contentTranslationRenderedInput,
   documentTranslationInstructions,
   documentTranslationMaxOutputTokens,
+  documentTranslationModeForPage,
   documentTranslationRequestContent,
   documentTranslationResponseFormat,
   documentTranslationRenderedInput,
@@ -208,6 +209,7 @@ assert.equal(supportedLanguageFromInstruction("French or Spanish"), null);
 assert.match(documentTranslationInstructions, /one supplied source page/i);
 assert.match(documentTranslationInstructions, /source language may be any language/i);
 assert.match(documentTranslationRenderedInput(documentTranslationInput), /LANGUAGE INSTRUCTION/);
+assert.match(documentTranslationRenderedInput(documentTranslationInput), /structured_text_overlay/);
 assert.doesNotMatch(documentTranslationRenderedInput(scannedPdfTranslationInput), /data:image/);
 assert.ok(documentTranslationRenderedInput(scannedPdfTranslationInput).length > 12_000);
 assert.deepEqual(documentTranslationRequestContent(documentTranslationInput).map((item) => item.type), ["input_text"]);
@@ -219,6 +221,7 @@ assert.doesNotMatch(
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 1400);
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 12_000);
 assert.equal(documentTranslationMaxOutputTokens(scannedPdfTranslationInput), 7000);
+assert.equal(documentTranslationModeForPage(scannedPdfTranslationInput.sourcePages[0]), "visual_reconstruction");
 const denseVisualPdfTranslationInput = {
   ...scannedPdfTranslationInput,
   sourcePages: [{
@@ -231,7 +234,8 @@ const denseVisualPdfTranslationInput = {
     imageDataUrl: "data:image/jpeg;base64,YWJj"
   }]
 };
-assert.ok(documentTranslationMaxOutputTokens(denseVisualPdfTranslationInput) >= 7000);
+assert.equal(documentTranslationModeForPage(denseVisualPdfTranslationInput.sourcePages[0]), "structured_text_overlay");
+assert.ok(documentTranslationMaxOutputTokens(denseVisualPdfTranslationInput) >= 2000);
 assert.ok(documentTranslationMaxOutputTokens(denseVisualPdfTranslationInput) <= 12_000);
 assert.deepEqual(
   pdfTranslationSegmentsFromTextContent(2, {
