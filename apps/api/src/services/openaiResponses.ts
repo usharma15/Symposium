@@ -11,7 +11,9 @@ import {
   type ContentTranslationModelInputContract,
   type ContentTranslationModelOutputContract,
   type DocumentTranslationInputContract,
-  type DocumentTranslationModelOutputContract
+  type DocumentTranslationModelOutputContract,
+  type TranslationResultSegmentContract,
+  type TranslationSourceSegmentContract
 } from "../../../../packages/contracts/src";
 import { env } from "../config/env";
 
@@ -344,6 +346,19 @@ const documentTranslationSegmentsForPage = (
   ? page.segments
   : [{ id: `document-page-${page.pageNumber}-body`, text: page.body }];
 
+export const restoreTranslationSegmentOrder = (
+  sourceSegments: TranslationSourceSegmentContract[],
+  translatedSegments: TranslationResultSegmentContract[]
+) => {
+  if (translatedSegments.length !== sourceSegments.length) return null;
+  const translatedById = new Map(translatedSegments.map((segment) => [segment.id, segment]));
+  if (translatedById.size !== translatedSegments.length) return null;
+  const restored = sourceSegments.map((segment) => translatedById.get(segment.id));
+  return restored.every((segment): segment is TranslationResultSegmentContract => Boolean(segment))
+    ? restored
+    : null;
+};
+
 export const documentTranslationPrompt = (input: DocumentTranslationInputContract) => [
   "LANGUAGE INSTRUCTION:",
   input.languageInstruction,
@@ -554,12 +569,11 @@ export const callDocumentTranslationModel = async (input: {
     }
     output.pages.forEach((page, pageIndex) => {
       const expectedSegments = documentTranslationSegmentsForPage(input.request.sourcePages[pageIndex]!);
-      if (
-        page.segments.length !== expectedSegments.length
-        || page.segments.some((segment, index) => segment.id !== expectedSegments[index]!.id)
-      ) {
+      const restoredSegments = restoreTranslationSegmentOrder(expectedSegments, page.segments);
+      if (!restoredSegments) {
         throw new Error("OpenAI returned a document translation with mismatched text segments.");
       }
+      page.segments = restoredSegments;
     });
   }
   return {
@@ -608,14 +622,15 @@ export const callContentTranslationModel = async (input: {
   const text = responseText(payload);
   if (!text) throw new Error("OpenAI returned no content translation.");
   const output = contentTranslationModelOutputSchema.parse(JSON.parse(text));
-  if (
-    output.targetLanguage !== "unsupported"
-    && (
-      output.translatedSegments.length !== input.request.sourceSegments.length
-      || output.translatedSegments.some((segment, index) => segment.id !== input.request.sourceSegments[index]!.id)
-    )
-  ) {
-    throw new Error("OpenAI returned a content translation with mismatched text segments.");
+  if (output.targetLanguage !== "unsupported") {
+    const restoredSegments = restoreTranslationSegmentOrder(
+      input.request.sourceSegments,
+      output.translatedSegments
+    );
+    if (!restoredSegments) {
+      throw new Error("OpenAI returned a content translation with mismatched text segments.");
+    }
+    output.translatedSegments = restoredSegments;
   }
   return {
     output,

@@ -15,7 +15,8 @@ import {
   documentTranslationInstructions,
   documentTranslationMaxOutputTokens,
   documentTranslationRequestContent,
-  documentTranslationRenderedInput
+  documentTranslationRenderedInput,
+  restoreTranslationSegmentOrder
 } from "@/apps/api/src/services/openaiResponses";
 import { contentTranslationFingerprint } from "@/apps/api/src/repository/contentTranslations";
 import {
@@ -187,6 +188,27 @@ assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 7000);
 assert.equal(documentTranslationMaxOutputTokens(scannedPdfTranslationInput), 6000);
 assert.equal(pdfPageNeedsVisualTranslationFallback("Short title"), true);
 assert.equal(pdfPageNeedsVisualTranslationFallback("x".repeat(200)), false);
+assert.deepEqual(
+  restoreTranslationSegmentOrder(
+    [{ id: "a", text: "First" }, { id: "b", text: "Second" }],
+    [{ id: "b", text: "Deuxième" }, { id: "a", text: "Premier" }]
+  ),
+  [{ id: "a", text: "Premier" }, { id: "b", text: "Deuxième" }]
+);
+assert.equal(
+  restoreTranslationSegmentOrder(
+    [{ id: "a", text: "First" }, { id: "b", text: "Second" }],
+    [{ id: "a", text: "Premier" }, { id: "a", text: "Encore" }]
+  ),
+  null
+);
+assert.equal(
+  restoreTranslationSegmentOrder(
+    [{ id: "a", text: "First" }, { id: "b", text: "Second" }],
+    [{ id: "a", text: "Premier" }]
+  ),
+  null
+);
 assert.equal(documentTranslationModelOutputSchema.safeParse({
   targetLanguage: "spanish",
   targetLanguageLabel: "Spanish",
