@@ -220,7 +220,7 @@ const main = async () => {
         pages: [{
           pageNumber: 4,
           segments: structuredDocumentRequest.sourcePages[0].segments.map((segment, index) => ({
-            id: segment.id,
+            id: `provider-returned-line-${index}`,
             text: `El párrafo de origen ${index + 1} conserva la geometría determinista del PDF.`
           })),
           layoutBlocks: [{
@@ -254,6 +254,10 @@ const main = async () => {
     fetchImpl: structuredDocumentFetch
   });
   assert.equal(structuredDocumentResult.output.pages[0]?.segments.length, 8);
+  assert.deepEqual(
+    structuredDocumentResult.output.pages[0]?.segments.map((segment) => segment.id),
+    structuredDocumentRequest.sourcePages[0].segments.map((segment) => segment.id)
+  );
   assert.deepEqual(structuredDocumentResult.output.pages[0]?.layoutBlocks, []);
   assert.deepEqual(structuredDocumentResult.output.pages[0]?.preservedArtifacts, []);
   assert.match(structuredDocumentPayloadJson, /structured_text_overlay/);

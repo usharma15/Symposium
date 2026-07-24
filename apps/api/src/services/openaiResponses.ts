@@ -171,6 +171,18 @@ export const assistantProviderFailure = (error: unknown): AssistantProviderFailu
       body: "The translation could not finish within its response limit. No daily answer was used; you can retry."
     };
   }
+  if (normalized.includes("invalid_document_translation")) {
+    return {
+      ...common,
+      body: "The AI returned a page translation that did not preserve every required text segment. No daily answer was used; you can retry."
+    };
+  }
+  if (normalized.includes("missing_document_translation")) {
+    return {
+      ...common,
+      body: "The AI did not return a usable page translation. No daily answer was used; you can retry."
+    };
+  }
   return {
     ...common,
     body: "The AI request could not be completed. No daily answer was used; you can retry."
@@ -461,9 +473,13 @@ export const restoreTranslationSegmentOrder = (
   const translatedById = new Map(translatedSegments.map((segment) => [segment.id, segment]));
   if (translatedById.size !== translatedSegments.length) return null;
   const restored = sourceSegments.map((segment) => translatedById.get(segment.id));
-  return restored.every((segment): segment is TranslationResultSegmentContract => Boolean(segment))
-    ? restored
-    : null;
+  if (restored.every((segment): segment is TranslationResultSegmentContract => Boolean(segment))) {
+    return restored;
+  }
+  return sourceSegments.map((sourceSegment, index) => ({
+    id: sourceSegment.id,
+    text: translatedSegments[index]!.text
+  }));
 };
 
 export const documentTranslationPrompt = (input: DocumentTranslationInputContract) => [

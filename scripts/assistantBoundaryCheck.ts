@@ -258,6 +258,13 @@ assert.deepEqual(
   ),
   [{ id: "a", text: "Premier" }, { id: "b", text: "Deuxième" }]
 );
+assert.deepEqual(
+  restoreTranslationSegmentOrder(
+    [{ id: "a", text: "First" }, { id: "b", text: "Second" }],
+    [{ id: "model-a", text: "Premier" }, { id: "model-b", text: "Deuxième" }]
+  ),
+  [{ id: "a", text: "Premier" }, { id: "b", text: "Deuxième" }]
+);
 assert.equal(
   restoreTranslationSegmentOrder(
     [{ id: "a", text: "First" }, { id: "b", text: "Second" }],
