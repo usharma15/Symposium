@@ -48,7 +48,6 @@ import {
 import {
   extractPdfAttachmentMetadata,
   loadPdfModule,
-  pdfPageNeedsVisualTranslationFallback,
   readPdfPageText,
   renderPdfPageTranslationImage,
   resolvePdfDocumentUrl,
@@ -1299,9 +1298,7 @@ function PdfAttachmentPreview({
       const textContent = await pdfPage.getTextContent();
       const body = await readPdfPageText(document, boundedPage);
       const segments = pdfTranslationSegmentsFromTextContent(boundedPage, textContent);
-      const imageDataUrl = pdfPageNeedsVisualTranslationFallback(body)
-        ? await renderPdfPageTranslationImage(document, boundedPage)
-        : undefined;
+      const imageDataUrl = await renderPdfPageTranslationImage(document, boundedPage);
       return boundedDocumentTranslationSource(
         [{
           pageNumber: boundedPage,
@@ -1309,7 +1306,7 @@ function PdfAttachmentPreview({
           segments: segments.length
             ? segments
             : [{ id: `pdf-${boundedPage}-visual`, text: "" }],
-          ...(imageDataUrl ? { imageDataUrl } : {})
+          imageDataUrl
         }],
         true
       );

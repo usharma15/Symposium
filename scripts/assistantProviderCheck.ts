@@ -96,6 +96,7 @@ const main = async () => {
     return new Response(JSON.stringify({
       id: "resp_content_provider_check",
       model: "gpt-5.6-terra",
+      status: "completed",
       output_text: JSON.stringify({
         targetLanguage: "spanish",
         targetLanguageLabel: "Spanish",
@@ -143,6 +144,7 @@ const main = async () => {
     return new Response(JSON.stringify({
       id: "resp_document_provider_check",
       model: "gpt-5.6-terra",
+      status: "completed",
       output_text: JSON.stringify({
         targetLanguage: "english",
         targetLanguageLabel: "English",
@@ -210,6 +212,34 @@ const main = async () => {
   assert.equal(rejectedFailure.mayHaveBeenBilled, false);
   assert.equal(rejectedFailure.inputTokens, 0);
   assert.match(rejectedFailure.body, /No daily answer was used/);
+
+  const incompleteFetch = (async () => new Response(JSON.stringify({
+    id: "resp_incomplete_provider_check",
+    model: "gpt-5.6-terra",
+    status: "incomplete",
+    incomplete_details: { reason: "max_output_tokens" },
+    usage: {
+      input_tokens: 1800,
+      output_tokens: 1177,
+      input_tokens_details: { cached_tokens: 0 }
+    }
+  }), { status: 200, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+  let incompleteFailure: ReturnType<typeof assistantProviderFailure> | null = null;
+  try {
+    await callContentTranslationModel({
+      ownerHandle: "provider-check",
+      request: contentRequest,
+      fetchImpl: incompleteFetch
+    });
+  } catch (error) {
+    incompleteFailure = assistantProviderFailure(error);
+  }
+  assert.ok(incompleteFailure);
+  assert.equal(incompleteFailure.code, "incomplete_max_output_tokens");
+  assert.equal(incompleteFailure.mayHaveBeenBilled, true);
+  assert.equal(incompleteFailure.inputTokens, 1800);
+  assert.equal(incompleteFailure.outputTokens, 1177);
+  assert.match(incompleteFailure.body, /response limit/);
 
   console.log("AI provider request, schema, usage, and failure checks passed.");
 };

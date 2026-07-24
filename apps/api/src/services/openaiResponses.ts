@@ -31,6 +31,7 @@ type OpenAIUsage = {
 type OpenAIResponsePayload = {
   id?: string;
   model?: string;
+  status?: string;
   output_text?: string;
   output?: Array<{
     type?: string;
@@ -38,6 +39,7 @@ type OpenAIResponsePayload = {
   }>;
   usage?: OpenAIUsage;
   error?: { message?: string; type?: string; code?: string; param?: string };
+  incomplete_details?: { reason?: string };
 };
 
 export type AssistantProviderFailure = {
@@ -87,6 +89,25 @@ const normalizedProviderCode = (status: number, payload: OpenAIResponsePayload) 
   if (status === 404) return "model_not_found";
   if (status === 429) return "rate_limit_exceeded";
   return `http_${status}`;
+};
+
+const normalizedResponseReason = (reason: string | undefined) => {
+  const normalized = reason?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized?.slice(0, 80) || "unknown";
+};
+
+const assertCompletedResponse = (payload: OpenAIResponsePayload) => {
+  if (!payload.status || payload.status === "completed") return;
+  if (payload.status === "incomplete") {
+    throw new OpenAIOutputError(
+      `incomplete_${normalizedResponseReason(payload.incomplete_details?.reason)}`,
+      payload
+    );
+  }
+  if (payload.status === "failed") {
+    throw new OpenAIOutputError(normalizedProviderCode(200, payload), payload);
+  }
+  throw new OpenAIOutputError(`unexpected_status_${normalizedResponseReason(payload.status)}`, payload);
 };
 
 export const assistantProviderFailure = (error: unknown): AssistantProviderFailure => {
@@ -142,6 +163,12 @@ export const assistantProviderFailure = (error: unknown): AssistantProviderFailu
     return {
       ...common,
       body: "The AI request took too long to finish. No daily answer was used; you can retry."
+    };
+  }
+  if (normalized.includes("incomplete_max_output_tokens")) {
+    return {
+      ...common,
+      body: "The translation could not finish within its response limit. No daily answer was used; you can retry."
     };
   }
   return {
@@ -350,8 +377,33 @@ export const contentTranslationPrompt = (input: ContentTranslationModelInputCont
 export const contentTranslationRenderedInput = (input: ContentTranslationModelInputContract) =>
   [contentTranslationInstructions, contentTranslationPrompt(input)].join("\n");
 
-export const contentTranslationMaxOutputTokens = (input: ContentTranslationModelInputContract) =>
-  Math.min(6000, Math.max(600, Math.ceil((input.sourceTitle.length + input.sourceSegments.reduce((total, segment) => total + segment.text.length, 0)) / 2.4) + 450));
+const structuredTranslationOutputTokens = (input: {
+  textCharacters: number;
+  idCharacters: number;
+  segmentCount: number;
+  duplicatedTextCharacters?: number;
+  structuralCharacters?: number;
+}) => Math.ceil((
+  Math.ceil(input.textCharacters * 1.8) +
+  input.idCharacters +
+  input.segmentCount * 48 +
+  (input.duplicatedTextCharacters ?? 0) +
+  (input.structuralCharacters ?? 800)
+) / 2.5);
+
+export const contentTranslationMaxOutputTokens = (input: ContentTranslationModelInputContract) => {
+  const textCharacters = input.sourceTitle.length + input.sourceSegments.reduce(
+    (total, segment) => total + segment.text.length,
+    0
+  );
+  const idCharacters = input.sourceSegments.reduce((total, segment) => total + segment.id.length, 0);
+  return Math.min(12_000, Math.max(1_200, structuredTranslationOutputTokens({
+    textCharacters,
+    idCharacters,
+    segmentCount: input.sourceSegments.length,
+    structuralCharacters: 1_200
+  })));
+};
 
 export const contentTranslationResponseFormat = {
   type: "json_schema",
@@ -440,8 +492,19 @@ export const documentTranslationMaxOutputTokens = (input: DocumentTranslationInp
     (total, page) => total + documentTranslationSegmentsForPage(page).reduce((pageTotal, segment) => pageTotal + segment.text.length, 0),
     0
   );
-  if (!sourceCharacters && input.sourcePages.some((page) => page.imageDataUrl)) return 7000;
-  return Math.min(7000, Math.max(800, Math.ceil(sourceCharacters / 2.4) + 500));
+  const sourceSegments = input.sourcePages.flatMap(documentTranslationSegmentsForPage);
+  const idCharacters = sourceSegments.reduce((total, segment) => total + segment.id.length, 0);
+  const hasRenderedPageImage = input.sourcePages.some((page) => page.imageDataUrl);
+  const layoutCharacters = hasRenderedPageImage
+    ? Math.ceil(sourceCharacters * 1.6) + Math.max(12, sourceSegments.length) * 128
+    : 0;
+  return Math.min(12_000, Math.max(hasRenderedPageImage ? 7_000 : 1_400, structuredTranslationOutputTokens({
+    textCharacters: sourceCharacters + input.sourceTitle.length,
+    idCharacters,
+    segmentCount: sourceSegments.length,
+    duplicatedTextCharacters: layoutCharacters,
+    structuralCharacters: hasRenderedPageImage ? 1_600 : 1_000
+  })));
 };
 
 export const documentTranslationResponseFormat = () => ({
@@ -580,6 +643,7 @@ export const callAssistantModel = async (input: {
   if (!response.ok) {
     throw new OpenAIProviderError(response.status, normalizedProviderCode(response.status, payload), payload);
   }
+  assertCompletedResponse(payload);
   const output = responseText(payload);
   if (!output) throw new OpenAIOutputError("missing_output_text", payload);
   let translation: AssistantTranslationDraftContract | undefined;
@@ -640,6 +704,7 @@ export const callDocumentTranslationModel = async (input: {
   if (!response.ok) {
     throw new OpenAIProviderError(response.status, normalizedProviderCode(response.status, payload), payload);
   }
+  assertCompletedResponse(payload);
   const text = responseText(payload);
   if (!text) throw new OpenAIOutputError("missing_document_translation", payload);
   let output: DocumentTranslationModelOutputContract;
@@ -710,6 +775,7 @@ export const callContentTranslationModel = async (input: {
   if (!response.ok) {
     throw new OpenAIProviderError(response.status, normalizedProviderCode(response.status, payload), payload);
   }
+  assertCompletedResponse(payload);
   const text = responseText(payload);
   if (!text) throw new OpenAIOutputError("missing_content_translation", payload);
   let output: ContentTranslationModelOutputContract;

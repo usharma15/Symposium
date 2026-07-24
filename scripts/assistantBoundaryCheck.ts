@@ -44,7 +44,6 @@ import {
 } from "@/packages/contracts/src";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
 import {
-  pdfPageNeedsVisualTranslationFallback,
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
 } from "@/features/attachments/pdfAttachmentClient";
@@ -217,11 +216,23 @@ assert.doesNotMatch(
   JSON.stringify(documentTranslationResponseFormat()),
   /minItems|maxItems|minimum|maximum/
 );
-assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 800);
-assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 7000);
+assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 1400);
+assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 12_000);
 assert.equal(documentTranslationMaxOutputTokens(scannedPdfTranslationInput), 7000);
-assert.equal(pdfPageNeedsVisualTranslationFallback("Short title"), true);
-assert.equal(pdfPageNeedsVisualTranslationFallback("x".repeat(200)), false);
+const denseVisualPdfTranslationInput = {
+  ...scannedPdfTranslationInput,
+  sourcePages: [{
+    pageNumber: 4,
+    body: "A visually complex page with prose, captions, figures, and equations.",
+    segments: Array.from({ length: 24 }, (_, index) => ({
+      id: `pdf-4-line-${index}`,
+      text: `A formatted source line ${index + 1} with scientific terminology and context.`
+    })),
+    imageDataUrl: "data:image/jpeg;base64,YWJj"
+  }]
+};
+assert.ok(documentTranslationMaxOutputTokens(denseVisualPdfTranslationInput) >= 7000);
+assert.ok(documentTranslationMaxOutputTokens(denseVisualPdfTranslationInput) <= 12_000);
 assert.deepEqual(
   pdfTranslationSegmentsFromTextContent(2, {
     items: [
@@ -503,8 +514,19 @@ assert.doesNotMatch(
   JSON.stringify(contentTranslationResponseFormat),
   /minItems|maxItems|minimum|maximum/
 );
-assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) >= 600);
-assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) <= 6000);
+assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) >= 1200);
+assert.ok(contentTranslationMaxOutputTokens(contentTranslationModelInput) <= 12_000);
+const richContentTranslationModelInput = {
+  ...contentTranslationModelInput,
+  sourceId: "rich-post",
+  sourceTitle: "A demanding post with attachments, equations, nested comments, and formatting",
+  sourceSegments: Array.from({ length: 100 }, (_, index) => ({
+    id: `node-${index}:run-${index}`,
+    text: `Segment ${index + 1} preserves a distinct piece of scientific prose and formatting.`
+  }))
+};
+assert.ok(contentTranslationMaxOutputTokens(richContentTranslationModelInput) >= 4_000);
+assert.ok(contentTranslationMaxOutputTokens(richContentTranslationModelInput) <= 12_000);
 assert.equal(contentTranslationModelOutputSchema.safeParse({
   targetLanguage: "french",
   targetLanguageLabel: "French",
@@ -798,7 +820,8 @@ assert.match(shell, /attachmentPreviewViewContext/);
 assert.doesNotMatch(shell, /const \[attachmentViewContext,/);
 assert.match(attachmentViews, /new pdfjs\.TextLayer/);
 assert.match(attachmentViews, /readPdfPageText\(document, boundedPage\)/);
-assert.match(attachmentViews, /renderPdfPageTranslationImage\(document, boundedPage\)/);
+assert.match(attachmentViews, /const imageDataUrl = await renderPdfPageTranslationImage\(document, boundedPage\)/);
+assert.doesNotMatch(attachmentViews, /pdfPageNeedsVisualTranslationFallback/);
 assert.match(attachmentViews, /DocumentTranslationControl state=\{translation\}/);
 assert.match(documentTranslationControl, /\["English", "French", "German", "Spanish"\]/);
 assert.match(documentTranslationControl, /This translates the current page/);

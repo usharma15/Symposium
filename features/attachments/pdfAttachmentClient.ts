@@ -113,9 +113,6 @@ const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
   reader.readAsDataURL(blob);
 });
 
-export const pdfPageNeedsVisualTranslationFallback = (body: string) =>
-  body.replace(/\s+/g, "").length < 200;
-
 export const renderPdfPageTranslationImage = async (
   document: import("pdfjs-dist").PDFDocumentProxy,
   pageNumber: number
