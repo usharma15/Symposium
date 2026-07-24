@@ -840,6 +840,30 @@
   color: var(--muted);
 }
 
+.document-translation-popover .document-translation-fidelity-note,
+.document-translation-guidance {
+  align-items: flex-start;
+  color: color-mix(in srgb, #8a5a18 82%, var(--ink));
+  display: flex;
+  gap: 6px;
+  line-height: 1.35;
+}
+
+.document-translation-popover .document-translation-fidelity-note svg,
+.document-translation-guidance svg {
+  flex: 0 0 auto;
+  margin-top: 0.08em;
+}
+
+.document-translation-guidance {
+  background: color-mix(in srgb, #d89b38 9%, var(--attachment-preview-elevated));
+  border-bottom: 1px solid color-mix(in srgb, #d89b38 28%, var(--line));
+  font-size: 0.66rem;
+  font-weight: 680;
+  margin: 0;
+  padding: 5px 10px;
+}
+
 .document-translation-popover input {
   width: 100%;
   min-height: 38px;

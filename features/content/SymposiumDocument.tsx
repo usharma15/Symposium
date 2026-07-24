@@ -72,6 +72,7 @@ export function SymposiumDocumentRenderer({
   attachments,
   profiles,
   mode = "detail",
+  lang,
   onOpenAttachment,
   onCiteAttachment,
   onExpand
@@ -81,6 +82,7 @@ export function SymposiumDocumentRenderer({
   attachments?: InquiryAttachment[];
   profiles: Record<string, ResearchProfile>;
   mode?: "feed" | "detail" | "comment" | "editor";
+  lang?: string;
   onOpenAttachment?: (attachmentId: string) => void;
   onCiteAttachment?: (attachment: InquiryAttachment) => void;
   onExpand?: () => void;
@@ -150,7 +152,10 @@ export function SymposiumDocumentRenderer({
   const collapseStateClass = expanded ? "expanded" : `collapsed${collapsible ? " is-collapsible" : ""}`;
 
   return (
-    <div className={`symposium-document symposium-document-${mode} document-width-${resolved.settings?.width ?? "standard"} document-margin-${resolved.settings?.margin ?? "normal"}`}>
+    <div
+      className={`symposium-document symposium-document-${mode} document-width-${resolved.settings?.width ?? "standard"} document-margin-${resolved.settings?.margin ?? "normal"}`}
+      lang={lang}
+    >
       {collapsibleSurface ? (
         <div ref={compactContentRef} className={`document-collapsible-content document-${mode}-content ${collapseStateClass}`}>
           {renderedNodes}

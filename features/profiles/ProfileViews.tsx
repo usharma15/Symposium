@@ -810,6 +810,8 @@ function ProfileCommentCard({
       {translation.showTranslation ? (
         <TranslatedContent
           state={translation}
+          sourceDocument={activity.comment.document}
+          sourceBody={activity.comment.body}
           attachments={commentDeleted ? [] : activity.comment.attachments ?? []}
           profiles={profiles}
           mode="comment"

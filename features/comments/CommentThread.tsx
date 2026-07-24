@@ -679,36 +679,40 @@ function CommentNode({
         {comment.id && !commentDeleted ? (
           <ContentTranslationControl state={translation} sourceLabel="comment" />
         ) : null}
-        {translation.showTranslation ? (
-          <TranslatedContent
-            state={translation}
-            attachments={comment.attachments}
-            profiles={profiles}
-            mode="comment"
-            onOpenAttachment={(attachmentId) => comment.id && onOpenAttachmentPreview(itemId, comment.id, attachmentId)}
-            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, scribbleSource))}
-            onExpand={() => {
-              if (comment.id && !commentDeleted) {
-                onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
-              }
-            }}
-          />
-        ) : (
-          <ScribbleCitable source={scribbleSource}><SymposiumDocumentRenderer
-            document={comment.document}
-            body={comment.body}
-            attachments={comment.attachments}
-            profiles={profiles}
-            mode="comment"
-            onOpenAttachment={(attachmentId) => comment.id && onOpenAttachmentPreview(itemId, comment.id, attachmentId)}
-            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, scribbleSource))}
-            onExpand={() => {
-              if (comment.id && !commentDeleted) {
-                onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
-              }
-            }}
-          /></ScribbleCitable>
-        )}
+        <ScribbleCitable source={scribbleSource}>
+          {translation.showTranslation ? (
+            <TranslatedContent
+              state={translation}
+              sourceDocument={comment.document}
+              sourceBody={comment.body}
+              attachments={comment.attachments}
+              profiles={profiles}
+              mode="comment"
+              onOpenAttachment={(attachmentId) => comment.id && onOpenAttachmentPreview(itemId, comment.id, attachmentId)}
+              onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, scribbleSource))}
+              onExpand={() => {
+                if (comment.id && !commentDeleted) {
+                  onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
+                }
+              }}
+            />
+          ) : (
+            <SymposiumDocumentRenderer
+              document={comment.document}
+              body={comment.body}
+              attachments={comment.attachments}
+              profiles={profiles}
+              mode="comment"
+              onOpenAttachment={(attachmentId) => comment.id && onOpenAttachmentPreview(itemId, comment.id, attachmentId)}
+              onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, scribbleSource))}
+              onExpand={() => {
+                if (comment.id && !commentDeleted) {
+                  onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
+                }
+              }}
+            />
+          )}
+        </ScribbleCitable>
         {comment.id && !commentDeleted && appendedContentAttachments(comment.document, comment.attachments ?? []).length ? (
           <AttachmentCarousel
             attachments={appendedContentAttachments(comment.document, comment.attachments ?? [])}

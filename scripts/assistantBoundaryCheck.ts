@@ -62,6 +62,7 @@ import {
   setDocumentTranslationVisible,
   subscribeDocumentReadingPosition
 } from "@/features/attachments/documentViewerSession";
+import { translatedDocumentForSource } from "@/lib/documentModel";
 
 const validInput = {
   message: "What is the strongest objection?",
@@ -603,6 +604,128 @@ assert.equal(contentTranslationResultSchema.safeParse({
   quota: { dailyLimit: 10, remainingToday: 9, monthlyBudgetUsd: 40, extremelyLimited: true }
 }).success, true);
 
+const richSourceLayout = {
+  version: 1 as const,
+  nodes: [
+    {
+      id: "centered-rule",
+      type: "paragraph" as const,
+      content: [
+        { text: "Centered ", marks: ["bold" as const], font: "serif" as const, size: "lead" as const },
+        { text: "separator", marks: ["underline" as const], color: "blue" as const }
+      ],
+      align: "center" as const,
+      indent: 2
+    },
+    {
+      id: "inline-image",
+      type: "attachment" as const,
+      attachmentId: "source-image",
+      placement: "inline" as const,
+      caption: "Original caption"
+    },
+    {
+      id: "formula",
+      type: "equation" as const,
+      source: "E=mc^2",
+      display: true,
+      label: "source-equation"
+    },
+    {
+      id: "nested-list",
+      type: "list" as const,
+      style: "lower-alpha" as const,
+      depth: 3,
+      items: [[{ text: "First item", marks: ["italic" as const] }]]
+    },
+    {
+      id: "empty-spacing-block",
+      type: "paragraph" as const,
+      content: [],
+      align: "right" as const,
+      indent: 1
+    }
+  ],
+  settings: { width: "wide" as const, margin: "generous" as const }
+};
+const structurallyHostileTranslation = {
+  version: 1 as const,
+  nodes: [
+    {
+      id: "centered-rule",
+      type: "paragraph" as const,
+      content: [
+        { text: "Centrado", marks: ["strikethrough" as const], font: "mono" as const, size: "small" as const },
+        { text: "separador", marks: ["italic" as const], color: "crimson" as const }
+      ],
+      align: "left" as const,
+      indent: 0
+    },
+    {
+      id: "inline-image",
+      type: "attachment" as const,
+      attachmentId: "wrong-image",
+      placement: "inline" as const,
+      caption: "Leyenda traducida"
+    },
+    {
+      id: "formula",
+      type: "equation" as const,
+      source: "translated-and-corrupted",
+      display: false,
+      label: "wrong-equation"
+    },
+    {
+      id: "nested-list",
+      type: "list" as const,
+      style: "bullet" as const,
+      depth: 0,
+      items: [[{ text: "Primer elemento", marks: ["strikethrough" as const] }]]
+    }
+  ],
+  settings: { width: "standard" as const, margin: "compact" as const }
+};
+const structurePreservingTranslation = translatedDocumentForSource({
+  sourceDocument: richSourceLayout,
+  sourceBody: "unused source fallback",
+  translatedDocument: structurallyHostileTranslation,
+  translatedBody: "unused translated fallback"
+});
+assert.deepEqual(structurePreservingTranslation.settings, richSourceLayout.settings);
+assert.deepEqual(
+  structurePreservingTranslation.nodes.map((node) => ({ id: node.id, type: node.type })),
+  richSourceLayout.nodes.map((node) => ({ id: node.id, type: node.type }))
+);
+const preservedParagraph = structurePreservingTranslation.nodes[0];
+assert.equal(preservedParagraph?.type, "paragraph");
+if (preservedParagraph?.type === "paragraph") {
+  assert.equal(preservedParagraph.align, "center");
+  assert.equal(preservedParagraph.indent, 2);
+  assert.equal(preservedParagraph.content[0]?.text, "Centrado");
+  assert.deepEqual(preservedParagraph.content[0]?.marks, ["bold"]);
+  assert.equal(preservedParagraph.content[0]?.font, "serif");
+  assert.equal(preservedParagraph.content[0]?.size, "lead");
+  assert.equal(preservedParagraph.content[1]?.text, "separador");
+  assert.deepEqual(preservedParagraph.content[1]?.marks, ["underline"]);
+  assert.equal(preservedParagraph.content[1]?.color, "blue");
+}
+const preservedAttachment = structurePreservingTranslation.nodes[1];
+assert.equal(preservedAttachment?.type, "attachment");
+if (preservedAttachment?.type === "attachment") {
+  assert.equal(preservedAttachment.attachmentId, "source-image");
+  assert.equal(preservedAttachment.caption, "Leyenda traducida");
+}
+assert.deepEqual(structurePreservingTranslation.nodes[2], richSourceLayout.nodes[2]);
+const preservedList = structurePreservingTranslation.nodes[3];
+assert.equal(preservedList?.type, "list");
+if (preservedList?.type === "list") {
+  assert.equal(preservedList.style, "lower-alpha");
+  assert.equal(preservedList.depth, 3);
+  assert.equal(preservedList.items[0]?.[0]?.text, "Primer elemento");
+  assert.deepEqual(preservedList.items[0]?.[0]?.marks, ["italic"]);
+}
+assert.deepEqual(structurePreservingTranslation.nodes[4], richSourceLayout.nodes[4]);
+
 const docxContext = buildTabletAttachmentContext({
   id: "attachment-1",
   fileName: "Persuasive Framework.docx",
@@ -875,7 +998,10 @@ assert.match(attachmentViews, /const textBandWidth = translationCanvas\.width \*
 assert.match(attachmentViews, /DocumentTranslationControl state=\{translation\}/);
 assert.match(documentTranslationControl, /\["English", "French", "German", "Spanish"\]/);
 assert.match(documentTranslationControl, /This translates the current page/);
-assert.doesNotMatch(documentTranslationControl, /limited usage restriction|TriangleAlert/);
+assert.match(documentTranslationControl, /Document formatting can shift/);
+assert.match(documentTranslationControl, /reading guide/);
+assert.match(documentTranslationControl, /DocumentTranslationGuidance/);
+assert.match(documentTranslationControl, /TriangleAlert/);
 assert.match(documentTranslationControl, /Original/);
 assert.match(documentTranslationControl, /Translation/);
 assert.match(documentTranslationControl, /Translate · 1 answer/);
@@ -894,6 +1020,10 @@ assert.match(contentTranslationControl, /Only a completed translation uses 1 ans
 assert.match(contentTranslationControl, /Translate · 1 answer/);
 assert.match(contentTranslationControl, /Original/);
 assert.match(contentTranslationControl, /translation-language-options/);
+assert.match(contentTranslationControl, /translatedDocumentForSource/);
+assert.doesNotMatch(contentTranslationControl, /content-translation-copy/);
+assert.match(postViews, /<ScribbleCitable source=\{postScribbleSource\(item\)\}>[\s\S]*translation\.showTranslation[\s\S]*<TranslatedContent/);
+assert.match(commentThread, /<ScribbleCitable source=\{scribbleSource\}>[\s\S]*translation\.showTranslation[\s\S]*<TranslatedContent/);
 assert.match(attachmentViews, /attachment-pdf-stage-continuous/);
 assert.match(attachmentViews, /data-docx-page-shell/);
 assert.match(attachmentViews, /translatedPageFor/);

@@ -53,6 +53,106 @@ export const documentPlainText = (document: SymposiumDocument | undefined, fallb
 export const documentForContent = (document: SymposiumDocument | undefined, body: string) =>
   document ?? plainTextDocument(body);
 
+const translatedNodeForSource = (
+  sourceNode: SymposiumDocumentNode,
+  translatedNode: SymposiumDocumentNode | undefined
+): SymposiumDocumentNode => {
+  if (!translatedNode || translatedNode.type !== sourceNode.type) return sourceNode;
+
+  if (
+    sourceNode.type === "paragraph" ||
+    sourceNode.type === "heading" ||
+    sourceNode.type === "quote"
+  ) {
+    if (
+      translatedNode.type !== "paragraph" &&
+      translatedNode.type !== "heading" &&
+      translatedNode.type !== "quote"
+    ) return sourceNode;
+    return {
+      ...sourceNode,
+      content: sourceNode.content.map((run, index) => ({
+        ...run,
+        text: translatedNode.content[index]?.text ?? run.text
+      }))
+    };
+  }
+
+  if (sourceNode.type === "list") {
+    if (translatedNode.type !== "list") return sourceNode;
+    return {
+      ...sourceNode,
+      items: sourceNode.items.map((item, itemIndex) =>
+        item.map((run, runIndex) => ({
+          ...run,
+          text: translatedNode.items[itemIndex]?.[runIndex]?.text ?? run.text
+        }))
+      )
+    };
+  }
+
+  if (sourceNode.type === "attachment") {
+    if (translatedNode.type !== "attachment") return sourceNode;
+    return { ...sourceNode, caption: translatedNode.caption ?? sourceNode.caption };
+  }
+
+  if (sourceNode.type === "drawing") {
+    if (translatedNode.type !== "drawing") return sourceNode;
+    return { ...sourceNode, caption: translatedNode.caption ?? sourceNode.caption };
+  }
+
+  if (sourceNode.type === "reference") {
+    if (translatedNode.type !== "reference") return sourceNode;
+    return {
+      ...sourceNode,
+      resource: {
+        ...sourceNode.resource,
+        label: translatedNode.resource.label ?? sourceNode.resource.label
+      }
+    };
+  }
+
+  if (sourceNode.type === "citation") {
+    if (translatedNode.type !== "citation") return sourceNode;
+    return {
+      ...sourceNode,
+      label: translatedNode.label,
+      excerpt: translatedNode.excerpt
+    };
+  }
+
+  return sourceNode;
+};
+
+export const translatedDocumentForSource = ({
+  sourceDocument,
+  sourceBody,
+  translatedDocument,
+  translatedBody
+}: {
+  sourceDocument: SymposiumDocument | undefined;
+  sourceBody: string;
+  translatedDocument: SymposiumDocument | undefined;
+  translatedBody: string;
+}): SymposiumDocument => {
+  const source = documentForContent(sourceDocument, sourceBody);
+  const translated = documentForContent(translatedDocument, translatedBody);
+  const translatedById = new Map(translated.nodes.map((node) => [node.id, node]));
+
+  return {
+    ...source,
+    nodes: source.nodes.map((sourceNode, index) => {
+      const idMatch = translatedById.get(sourceNode.id);
+      const positionalMatch = translated.nodes[index];
+      return translatedNodeForSource(
+        sourceNode,
+        idMatch?.type === sourceNode.type ? idMatch : positionalMatch
+      );
+    }),
+    settings: source.settings ? { ...source.settings } : undefined
+  };
+};
+
 export const editorCapabilityForKind = (kind: ContentKindContract): EditorCapability =>
   kind === "paper" ? "paper" : "reduced";
 

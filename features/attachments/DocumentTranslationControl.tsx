@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
   type FormEvent
 } from "react";
-import { Languages, LoaderCircle, X } from "lucide-react";
+import { Languages, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import {
   documentViewerSessionSnapshot,
@@ -156,6 +156,16 @@ export const useDocumentTranslation = ({
 
 export type DocumentTranslationState = ReturnType<typeof useDocumentTranslation>;
 
+export function DocumentTranslationGuidance({ state }: { state: DocumentTranslationState }) {
+  if (!state.showTranslation) return null;
+  return (
+    <p className="document-translation-guidance" role="note">
+      <TriangleAlert size={13} aria-hidden="true" />
+      <span>Document formatting can shift during translation. Use this as a reading guide and verify important passages against the original.</span>
+    </p>
+  );
+}
+
 export function DocumentTranslationControl({ state }: { state: DocumentTranslationState }) {
   return (
     <div
@@ -231,6 +241,10 @@ export function DocumentTranslationControl({ state }: { state: DocumentTranslati
           </div>
           <small className="document-translation-scope-note">
             This translates the current page. Only a completed translation uses 1 answer; the original stays available.
+          </small>
+          <small className="document-translation-fidelity-note">
+            <TriangleAlert size={13} aria-hidden="true" />
+            <span>Document formatting can shift. Use the translation as a reading guide and verify important passages against the original.</span>
           </small>
           {state.error ? <p role="alert">{state.error}</p> : null}
           <button type="submit" className="document-translation-submit" disabled={!state.instruction.trim() || state.busy}>

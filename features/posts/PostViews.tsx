@@ -781,16 +781,7 @@ export function FeedPost({
               : deletedPostContextTitle(item)}
           </CanonicalLink>
         </h2>
-        {translation.showTranslation ? (
-          <TranslatedContent
-            state={translation}
-            attachments={item.attachments}
-            profiles={profiles}
-            mode="feed"
-            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
-            onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
-          />
-        ) : interactionLocked ? (
+        {interactionLocked ? (
           <SymposiumDocumentRenderer
             document={item.document}
             body={item.body}
@@ -799,15 +790,30 @@ export function FeedPost({
             mode="feed"
           />
         ) : (
-          <ScribbleCitable source={postScribbleSource(item)}><SymposiumDocumentRenderer
-            document={item.document}
-            body={item.body}
-            attachments={item.attachments}
-            profiles={profiles}
-            mode="feed"
-            onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
-            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
-          /></ScribbleCitable>
+          <ScribbleCitable source={postScribbleSource(item)}>
+            {translation.showTranslation ? (
+              <TranslatedContent
+                state={translation}
+                sourceDocument={item.document}
+                sourceBody={item.body}
+                attachments={item.attachments}
+                profiles={profiles}
+                mode="feed"
+                onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+                onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
+              />
+            ) : (
+              <SymposiumDocumentRenderer
+                document={item.document}
+                body={item.body}
+                attachments={item.attachments}
+                profiles={profiles}
+                mode="feed"
+                onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
+                onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+              />
+            )}
+          </ScribbleCitable>
         )}
         <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} onAddToScribble={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))} />
         {item.quote ? (
@@ -1131,16 +1137,7 @@ export function DetailView({
         {!postDeleted && !interactionLocked ? (
           <ContentTranslationControl state={translation} sourceLabel="post" />
         ) : null}
-        {translation.showTranslation ? (
-          <TranslatedContent
-            state={translation}
-            attachments={item.attachments}
-            profiles={profiles}
-            mode="detail"
-            onOpenAttachment={(attachmentId) => onOpenAttachmentPreview(item, attachmentId)}
-            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
-          />
-        ) : interactionLocked ? (
+        {interactionLocked ? (
           <SymposiumDocumentRenderer
             document={item.document}
             body={item.body}
@@ -1149,15 +1146,30 @@ export function DetailView({
             mode="detail"
           />
         ) : (
-          <ScribbleCitable source={postScribbleSource(item)}><SymposiumDocumentRenderer
-            document={item.document}
-            body={item.body}
-            attachments={item.attachments}
-            profiles={profiles}
-            mode="detail"
-            onOpenAttachment={(attachmentId) => onOpenAttachmentPreview(item, attachmentId)}
-            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
-          /></ScribbleCitable>
+          <ScribbleCitable source={postScribbleSource(item)}>
+            {translation.showTranslation ? (
+              <TranslatedContent
+                state={translation}
+                sourceDocument={item.document}
+                sourceBody={item.body}
+                attachments={item.attachments}
+                profiles={profiles}
+                mode="detail"
+                onOpenAttachment={(attachmentId) => onOpenAttachmentPreview(item, attachmentId)}
+                onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+              />
+            ) : (
+              <SymposiumDocumentRenderer
+                document={item.document}
+                body={item.body}
+                attachments={item.attachments}
+                profiles={profiles}
+                mode="detail"
+                onOpenAttachment={(attachmentId) => onOpenAttachmentPreview(item, attachmentId)}
+                onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+              />
+            )}
+          </ScribbleCitable>
         )}
         {appendedContentAttachments(item.document, item.attachments ?? []).length ? (
           <PostAttachmentCarousel

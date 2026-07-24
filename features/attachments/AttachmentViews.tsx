@@ -37,6 +37,7 @@ import { StructuredAttachmentPreviewPane } from "@/features/attachments/Structur
 import { AttachmentScribbleButton } from "@/features/attachments/AttachmentScribbleButton";
 import {
   DocumentTranslationControl,
+  DocumentTranslationGuidance,
   useDocumentTranslation,
   type DocumentTranslationSource
 } from "@/features/attachments/DocumentTranslationControl";
@@ -1628,6 +1629,7 @@ function PdfAttachmentPreview({
           </button>
         </div>
       </div>
+      <DocumentTranslationGuidance state={translation} />
       <div
         ref={stageRef}
         className="attachment-pdf-stage attachment-pdf-stage-continuous"
@@ -1816,6 +1818,7 @@ function TextAttachmentPreview({
           ) : null}
         </div>
       </div>
+      <DocumentTranslationGuidance state={translation} />
       {pageText ? (
         <pre
           ref={contentRef as React.RefObject<HTMLPreElement | null>}
@@ -2240,6 +2243,7 @@ function DocxAttachmentPreview({
           ) : null}
         </div>
       </div>
+      <DocumentTranslationGuidance state={translation} />
       <div ref={scrollRef} className="attachment-docx-scroll" onScroll={requestActivePageUpdate}>
         <div
           ref={renderTargetRef}
