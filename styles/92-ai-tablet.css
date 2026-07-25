@@ -270,7 +270,7 @@
   position: relative;
 }
 .tablet-thread-bar > button { align-items: center; display: flex; justify-content: center; min-height: 2.1rem; min-width: 2.1rem; padding: 0.34rem; }
-.tablet-thread-current { gap: 0.38rem; justify-content: start !important; min-width: 0; text-align: left; }
+.tablet-thread-current { align-items: center; display: flex; gap: 0.38rem; justify-content: start !important; min-height: 2.1rem; min-width: 0; padding: 0.34rem; text-align: left; }
 .tablet-thread-current > span { display: grid; gap: 0.06rem; min-width: 0; }
 .tablet-thread-current strong,
 .tablet-thread-current small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

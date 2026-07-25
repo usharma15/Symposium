@@ -456,33 +456,41 @@ export function AssistantExperience({
       </header>
 
       <nav className="assistant-mobile-nav" aria-label="AI Workspace panels">
-        <button type="button" className={mobilePane === "threads" ? "active" : ""} onClick={() => setMobilePane("threads")}>
+        <button type="button" aria-pressed={mobilePane === "threads"} className={mobilePane === "threads" ? "active" : ""} onClick={() => setMobilePane("threads")}>
           <History size={14} />Threads
         </button>
-        <button type="button" className={mobilePane === "chat" ? "active" : ""} onClick={() => setMobilePane("chat")}>
+        <button type="button" aria-pressed={mobilePane === "chat"} className={mobilePane === "chat" ? "active" : ""} onClick={() => setMobilePane("chat")}>
           <BrainCircuit size={14} />Chat
         </button>
-        <button type="button" className={mobilePane === "context" ? "active" : ""} onClick={() => setMobilePane("context")}>
+        <button type="button" aria-pressed={mobilePane === "context"} className={mobilePane === "context" ? "active" : ""} onClick={() => setMobilePane("context")}>
           <BookOpen size={14} />Context
         </button>
       </nav>
 
       <aside className="assistant-left" aria-label="Research Threads">
         <section className="tablet-thread-bar" aria-label="Research thread controls">
-          <button
-            type="button"
-            className="tablet-thread-current"
-            aria-expanded={mode === "compact" ? threadsOpen : true}
-            onClick={() => {
-              if (mode === "compact") setThreadsOpen((open) => !open);
-            }}
-          >
-            <History size={14} />
-            <span>
-              <strong>{thread?.title ?? "New research thread"}</strong>
-              <small>{thread ? `${thread.sourceCount} source${thread.sourceCount === 1 ? "" : "s"} · saved history` : "Starts when you send"}</small>
-            </span>
-          </button>
+          {mode === "compact" ? (
+            <button
+              type="button"
+              className="tablet-thread-current"
+              aria-expanded={threadsOpen}
+              onClick={() => setThreadsOpen((open) => !open)}
+            >
+              <History size={14} />
+              <span>
+                <strong>{thread?.title ?? "New research thread"}</strong>
+                <small>{thread ? `${thread.sourceCount} source${thread.sourceCount === 1 ? "" : "s"} · saved history` : "Starts when you send"}</small>
+              </span>
+            </button>
+          ) : (
+            <div className="tablet-thread-current" aria-label="Current research thread">
+              <History size={14} />
+              <span>
+                <strong>{thread?.title ?? "New research thread"}</strong>
+                <small>{thread ? `${thread.sourceCount} source${thread.sourceCount === 1 ? "" : "s"} · saved history` : "Starts when you send"}</small>
+              </span>
+            </div>
+          )}
           <button
             type="button"
             title="Start a new research thread"
