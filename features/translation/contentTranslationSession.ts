@@ -4,6 +4,12 @@ import {
   contentTranslationResultSchema,
   type ContentTranslationResultContract
 } from "@/packages/contracts/src";
+import {
+  browserSessionLocalStorage,
+  browserSessionPersistenceId,
+  nonBrowserSessionPersistenceId,
+  type BrowserStorageLike
+} from "@/lib/browserSessionPersistence";
 
 export type ContentTranslationSessionIdentity = {
   viewerHandle: string;
@@ -19,10 +25,15 @@ export type ContentTranslationSessionEntry = {
 };
 
 type ContentTranslationSessionRecord = ContentTranslationSessionIdentity & ContentTranslationSessionEntry;
-type SessionStorageLike = Pick<Storage, "getItem" | "setItem">;
+type TranslationStorageLike = BrowserStorageLike;
+type ContentTranslationSessionEnvelope = {
+  sessionId: string;
+  records: ContentTranslationSessionRecord[];
+};
 
-export const contentTranslationSessionStorageKey = "symposium:content-translation-session:v1";
+export const contentTranslationSessionStorageKey = "symposium:content-translation-session:v2";
 export const maxContentTranslationSessionEntries = 12;
+const legacyContentTranslationSessionStorageKey = "symposium:content-translation-session:v1";
 
 const memoryEntries = new Map<string, ContentTranslationSessionEntry>();
 const rememberInMemory = (key: string, entry: ContentTranslationSessionEntry) => {
@@ -49,14 +60,7 @@ export const contentTranslationSessionIdentityKey = ({
   Math.max(1, Math.trunc(sourceRevision))
 ].join(":");
 
-const browserSessionStorage = (): SessionStorageLike | null => {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.sessionStorage;
-  } catch {
-    return null;
-  }
-};
+const browserTranslationStorage = () => browserSessionLocalStorage();
 
 const validRecord = (value: unknown): ContentTranslationSessionRecord | null => {
   if (!value || typeof value !== "object") return null;
@@ -94,16 +98,52 @@ const validRecord = (value: unknown): ContentTranslationSessionRecord | null => 
   };
 };
 
-const storedRecords = (storage: SessionStorageLike | null): ContentTranslationSessionRecord[] => {
+const storedRecords = (
+  storage: TranslationStorageLike | null,
+  storageKey = contentTranslationSessionStorageKey,
+  sessionId = browserSessionPersistenceId()
+): ContentTranslationSessionRecord[] => {
   if (!storage) return [];
   try {
-    const parsed = JSON.parse(storage.getItem(contentTranslationSessionStorageKey) ?? "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed
+    const parsed = JSON.parse(storage.getItem(storageKey) ?? "null") as
+      | ContentTranslationSessionEnvelope
+      | unknown[];
+    const records = Array.isArray(parsed)
+      ? storageKey === legacyContentTranslationSessionStorageKey
+        ? parsed
+        : []
+      : parsed && typeof parsed === "object" &&
+          (parsed as Partial<ContentTranslationSessionEnvelope>).sessionId === sessionId &&
+          Array.isArray((parsed as Partial<ContentTranslationSessionEnvelope>).records)
+        ? (parsed as ContentTranslationSessionEnvelope).records
+        : [];
+    return records
       .map(validRecord)
       .filter((record): record is ContentTranslationSessionRecord => Boolean(record));
   } catch {
     return [];
+  }
+};
+
+const migrateLegacyBrowserSessionRecords = (storage: TranslationStorageLike | null) => {
+  if (!storage || typeof window === "undefined") return;
+  try {
+    if (storage.getItem(contentTranslationSessionStorageKey) !== null) return;
+    const legacyRecords = storedRecords(
+      window.sessionStorage,
+      legacyContentTranslationSessionStorageKey,
+      nonBrowserSessionPersistenceId
+    )
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, maxContentTranslationSessionEntries);
+    if (legacyRecords.length === 0) return;
+    storage.setItem(contentTranslationSessionStorageKey, JSON.stringify({
+      sessionId: browserSessionPersistenceId(),
+      records: legacyRecords
+    } satisfies ContentTranslationSessionEnvelope));
+    window.sessionStorage.removeItem(legacyContentTranslationSessionStorageKey);
+  } catch {
+    // Keep the legacy tab-local copy available if migration is blocked.
   }
 };
 
@@ -114,8 +154,10 @@ export const peekContentTranslationSession = (
 
 export const readContentTranslationSession = (
   identity: ContentTranslationSessionIdentity,
-  storage: SessionStorageLike | null = browserSessionStorage()
+  storage: TranslationStorageLike | null = browserTranslationStorage(),
+  sessionId = browserSessionPersistenceId()
 ): ContentTranslationSessionEntry | null => {
+  migrateLegacyBrowserSessionRecords(storage);
   const key = contentTranslationSessionIdentityKey(identity);
   const memoryEntry = memoryEntries.get(key);
   if (memoryEntry) return memoryEntry;
@@ -124,8 +166,16 @@ export const readContentTranslationSession = (
     viewerHandle: normalizedViewerHandle(identity.viewerHandle),
     sourceRevision: Math.max(1, Math.trunc(identity.sourceRevision))
   };
-  const record = storedRecords(storage).find((candidate) =>
-    contentTranslationSessionIdentityKey(candidate) === contentTranslationSessionIdentityKey(normalizedIdentity)
+  const matchesIdentity = (candidate: ContentTranslationSessionRecord) =>
+    contentTranslationSessionIdentityKey(candidate) === contentTranslationSessionIdentityKey(normalizedIdentity);
+  const record = storedRecords(storage, contentTranslationSessionStorageKey, sessionId).find(matchesIdentity) ?? (
+    typeof window === "undefined"
+      ? undefined
+      : storedRecords(
+          window.sessionStorage,
+          legacyContentTranslationSessionStorageKey,
+          nonBrowserSessionPersistenceId
+        ).find(matchesIdentity)
   );
   if (!record) return null;
   const entry = {
@@ -141,12 +191,14 @@ export const rememberContentTranslationSession = ({
   viewerHandle,
   result,
   showTranslation,
-  storage = browserSessionStorage()
+  storage = browserTranslationStorage(),
+  sessionId = browserSessionPersistenceId()
 }: {
   viewerHandle: string;
   result: ContentTranslationResultContract;
   showTranslation: boolean;
-  storage?: SessionStorageLike | null;
+  storage?: TranslationStorageLike | null;
+  sessionId?: string;
 }) => {
   if (result.status !== "translated") return;
   const record = validRecord({
@@ -169,7 +221,7 @@ export const rememberContentTranslationSession = ({
   if (!storage) return;
   const nextRecords = [
     record,
-    ...storedRecords(storage).filter((candidate) =>
+    ...storedRecords(storage, contentTranslationSessionStorageKey, sessionId).filter((candidate) =>
       !(
         normalizedViewerHandle(candidate.viewerHandle) === normalizedViewerHandle(record.viewerHandle) &&
         candidate.sourceType === record.sourceType &&
@@ -180,10 +232,42 @@ export const rememberContentTranslationSession = ({
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, maxContentTranslationSessionEntries);
   try {
-    storage.setItem(contentTranslationSessionStorageKey, JSON.stringify(nextRecords));
+    storage.setItem(contentTranslationSessionStorageKey, JSON.stringify({
+      sessionId,
+      records: nextRecords
+    } satisfies ContentTranslationSessionEnvelope));
   } catch {
     // The in-memory handoff still preserves navigation continuity if storage is unavailable or full.
   }
+};
+
+export const readContentTranslationSessionStorageUpdate = (
+  identity: ContentTranslationSessionIdentity,
+  storageKey: string | null,
+  storage: TranslationStorageLike | null = browserTranslationStorage(),
+  sessionId = browserSessionPersistenceId()
+) => {
+  if (storageKey !== contentTranslationSessionStorageKey) {
+    return { handled: false as const, entry: null };
+  }
+  memoryEntries.delete(contentTranslationSessionIdentityKey(identity));
+  return {
+    handled: true as const,
+    entry: readContentTranslationSession(identity, storage, sessionId)
+  };
+};
+
+export const subscribeContentTranslationSession = (
+  identity: ContentTranslationSessionIdentity,
+  listener: (entry: ContentTranslationSessionEntry | null) => void
+) => {
+  if (typeof window === "undefined") return () => {};
+  const handleStorage = (event: StorageEvent) => {
+    const update = readContentTranslationSessionStorageUpdate(identity, event.key);
+    if (update.handled) listener(update.entry);
+  };
+  window.addEventListener("storage", handleStorage);
+  return () => window.removeEventListener("storage", handleStorage);
 };
 
 export const resetContentTranslationSessionsForTests = () => {

@@ -9,7 +9,8 @@ import {
   contentTranslationSessionIdentityKey,
   peekContentTranslationSession,
   readContentTranslationSession,
-  rememberContentTranslationSession
+  rememberContentTranslationSession,
+  subscribeContentTranslationSession
 } from "@/features/translation/contentTranslationSession";
 import { translatedDocumentForSource } from "@/lib/documentModel";
 import type { InquiryAttachment, ResearchProfile } from "@/lib/mockData";
@@ -55,15 +56,19 @@ export const useContentTranslation = ({
   const retryRef = useRef<{ fingerprint: string; key: string } | null>(null);
 
   useEffect(() => {
+    const applyRestoredSession = (restored: ReturnType<typeof readContentTranslationSession>) => {
+      setResult(restored?.result ?? null);
+      setResultSessionIdentityKey(restored ? sessionIdentityKey : null);
+      setLanguage(restored?.result.targetLanguage ?? "english");
+      setShowTranslationState(restored?.showTranslation ?? false);
+    };
     const restored = readContentTranslationSession(sessionIdentity);
     setOpen(false);
     setBusy(false);
     setError("");
-    setResult(restored?.result ?? null);
-    setResultSessionIdentityKey(restored ? sessionIdentityKey : null);
-    setLanguage(restored?.result.targetLanguage ?? "english");
-    setShowTranslationState(restored?.showTranslation ?? false);
+    applyRestoredSession(restored);
     retryRef.current = null;
+    return subscribeContentTranslationSession(sessionIdentity, applyRestoredSession);
   }, [sessionIdentityKey, sourceId, sourceRevision, sourceType, viewerHandle]);
 
   const activeResult = (

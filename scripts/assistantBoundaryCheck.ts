@@ -62,7 +62,10 @@ import {
   visionLayoutToPdfBlock
 } from "@/features/attachments/AttachmentViews";
 import {
+  applyDocumentViewerSessionStorageUpdate,
+  documentViewerSessionStorageKey,
   documentViewerSessionSnapshot,
+  maxDocumentViewerSessionEntries,
   readDocumentReadingPosition,
   reapplyDocumentReadingPosition,
   rememberDocumentReadingPosition,
@@ -80,6 +83,7 @@ import {
   maxContentTranslationSessionEntries,
   peekContentTranslationSession,
   readContentTranslationSession,
+  readContentTranslationSessionStorageUpdate,
   rememberContentTranslationSession,
   resetContentTranslationSessionsForTests
 } from "@/features/translation/contentTranslationSession";
@@ -563,19 +567,50 @@ const validDocumentTranslationResult = documentTranslationResultSchema.parse({
   createdAt: new Date().toISOString(),
   quota: { dailyLimit: 10, remainingToday: 9, monthlyBudgetUsd: 40, extremelyLimited: true }
 });
+const documentViewerSessionValues = new Map<string, string>();
+const documentViewerSessionStorage = {
+  getItem: (key: string) => documentViewerSessionValues.get(key) ?? null,
+  setItem: (key: string, value: string) => {
+    documentViewerSessionValues.set(key, value);
+  }
+};
+const documentBrowserSessionId = "assistant-document-session";
 resetDocumentViewerSessionsForTests();
-rememberDocumentTranslation(documentTranslationInput.attachmentId, validDocumentTranslationResult);
+rememberDocumentTranslation(
+  documentTranslationInput.attachmentId,
+  validDocumentTranslationResult,
+  documentViewerSessionStorage,
+  documentBrowserSessionId
+);
 assert.equal(
-  documentViewerSessionSnapshot(documentTranslationInput.attachmentId).resultsByPage[7],
+  documentViewerSessionSnapshot(
+    documentTranslationInput.attachmentId,
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  ).resultsByPage[7],
   validDocumentTranslationResult
 );
 assert.equal(
-  documentViewerSessionSnapshot(documentTranslationInput.attachmentId).translatedVisiblePages.has(7),
+  documentViewerSessionSnapshot(
+    documentTranslationInput.attachmentId,
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  ).translatedVisiblePages.has(7),
   true
 );
-setDocumentTranslationVisible(documentTranslationInput.attachmentId, 7, false);
+setDocumentTranslationVisible(
+  documentTranslationInput.attachmentId,
+  7,
+  false,
+  documentViewerSessionStorage,
+  documentBrowserSessionId
+);
 assert.equal(
-  documentViewerSessionSnapshot(documentTranslationInput.attachmentId).translatedVisiblePages.has(7),
+  documentViewerSessionSnapshot(
+    documentTranslationInput.attachmentId,
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  ).translatedVisiblePages.has(7),
   false
 );
 let observedPositionPage = 0;
@@ -590,18 +625,175 @@ const unsubscribePosition = subscribeDocumentReadingPosition(
 rememberDocumentReadingPosition(documentTranslationInput.attachmentId, {
   pageNumber: 3,
   pageProgress: 0.42
-}, "assistant-boundary-check");
+}, "assistant-boundary-check", documentViewerSessionStorage, documentBrowserSessionId);
 assert.equal(observedPositionPage, 3);
-assert.deepEqual(readDocumentReadingPosition(documentTranslationInput.attachmentId), {
+assert.deepEqual(readDocumentReadingPosition(
+  documentTranslationInput.attachmentId,
+  documentViewerSessionStorage,
+  documentBrowserSessionId
+), {
   pageNumber: 3,
   pageProgress: 0.42
 });
 reapplyDocumentReadingPosition(documentTranslationInput.attachmentId, {
   pageNumber: 3,
   pageProgress: 0.42
-}, "assistant-boundary-reapply");
+}, "assistant-boundary-reapply", documentViewerSessionStorage, documentBrowserSessionId);
 assert.equal(observedPositionCount, 2);
 unsubscribePosition();
+resetDocumentViewerSessionsForTests();
+assert.equal(
+  documentViewerSessionSnapshot(
+    documentTranslationInput.attachmentId,
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  ).resultsByPage[7]?.targetLanguage,
+  "spanish"
+);
+assert.equal(
+  documentViewerSessionSnapshot(
+    documentTranslationInput.attachmentId,
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  ).translatedVisiblePages.has(7),
+  false
+);
+assert.deepEqual(readDocumentReadingPosition(
+  documentTranslationInput.attachmentId,
+  documentViewerSessionStorage,
+  documentBrowserSessionId
+), {
+  pageNumber: 3,
+  pageProgress: 0.42
+});
+const crossTabDocumentEnvelope = JSON.parse(
+  documentViewerSessionValues.get(documentViewerSessionStorageKey) ?? "{}"
+) as {
+  sessionId: string;
+  documents: Array<{
+    attachmentId: string;
+    translatedVisiblePages: number[];
+    position?: { pageNumber: number; pageProgress: number };
+  }>;
+};
+assert.equal(crossTabDocumentEnvelope.sessionId, documentBrowserSessionId);
+const crossTabDocumentRecord = crossTabDocumentEnvelope.documents.find(
+  (record) => record.attachmentId === documentTranslationInput.attachmentId
+);
+assert.ok(crossTabDocumentRecord);
+crossTabDocumentRecord.translatedVisiblePages = [7];
+crossTabDocumentRecord.position = { pageNumber: 7, pageProgress: 0.77 };
+documentViewerSessionStorage.setItem(
+  documentViewerSessionStorageKey,
+  JSON.stringify(crossTabDocumentEnvelope)
+);
+assert.equal(
+  applyDocumentViewerSessionStorageUpdate(
+    "unrelated-storage-key",
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  ),
+  false
+);
+assert.equal(
+  applyDocumentViewerSessionStorageUpdate(
+    documentViewerSessionStorageKey,
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  ),
+  true
+);
+assert.equal(
+  documentViewerSessionSnapshot(
+    documentTranslationInput.attachmentId,
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  ).translatedVisiblePages.has(7),
+  true
+);
+assert.deepEqual(readDocumentReadingPosition(
+  documentTranslationInput.attachmentId,
+  documentViewerSessionStorage,
+  documentBrowserSessionId
+), {
+  pageNumber: 7,
+  pageProgress: 0.77
+});
+resetDocumentViewerSessionsForTests();
+assert.equal(
+  documentViewerSessionSnapshot(
+    documentTranslationInput.attachmentId,
+    documentViewerSessionStorage,
+    "different-browser-session"
+  ).resultsByPage[7],
+  undefined
+);
+resetDocumentViewerSessionsForTests();
+Array.from({ length: maxDocumentViewerSessionEntries + 4 }, (_, index) => index).forEach((index) => {
+  const attachmentId = `document-cross-tab-stress-${index}`;
+  rememberDocumentTranslation(
+    attachmentId,
+    {
+      ...validDocumentTranslationResult,
+      attachmentId
+    },
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  );
+  rememberDocumentReadingPosition(
+    attachmentId,
+    { pageNumber: index + 1, pageProgress: (index % 10) / 10 },
+    "document-cross-tab-stress",
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  );
+});
+const boundedDocumentEnvelope = JSON.parse(
+  documentViewerSessionValues.get(documentViewerSessionStorageKey) ?? "{}"
+) as { documents: Array<{ attachmentId: string }> };
+assert.equal(boundedDocumentEnvelope.documents.length, maxDocumentViewerSessionEntries);
+assert.equal(
+  boundedDocumentEnvelope.documents.some((record) =>
+    record.attachmentId === "document-cross-tab-stress-0"
+  ),
+  false
+);
+documentViewerSessionValues.set(documentViewerSessionStorageKey, "{malformed");
+resetDocumentViewerSessionsForTests();
+assert.deepEqual(
+  documentViewerSessionSnapshot(
+    "document-cross-tab-stress-11",
+    documentViewerSessionStorage,
+    documentBrowserSessionId
+  ),
+  {
+    resultsByPage: {},
+    translatedVisiblePages: new Set()
+  }
+);
+const throwingDocumentViewerSessionStorage = {
+  getItem: () => {
+    throw new Error("document session storage unavailable");
+  },
+  setItem: () => {
+    throw new Error("document session storage quota exceeded");
+  }
+};
+resetDocumentViewerSessionsForTests();
+rememberDocumentTranslation(
+  documentTranslationInput.attachmentId,
+  validDocumentTranslationResult,
+  throwingDocumentViewerSessionStorage,
+  documentBrowserSessionId
+);
+assert.equal(
+  documentViewerSessionSnapshot(
+    documentTranslationInput.attachmentId,
+    throwingDocumentViewerSessionStorage,
+    documentBrowserSessionId
+  ).resultsByPage[7],
+  validDocumentTranslationResult
+);
 resetDocumentViewerSessionsForTests();
 
 const contentTranslationModelInput = {
@@ -737,38 +929,89 @@ const contentTranslationSessionIdentity = {
   sourceId: translatedContentResult.sourceId,
   sourceRevision: translatedContentResult.sourceRevision
 };
+const contentBrowserSessionId = "assistant-content-session";
 resetContentTranslationSessionsForTests();
-assert.equal(readContentTranslationSession(contentTranslationSessionIdentity, contentTranslationSessionStorage), null);
+assert.equal(readContentTranslationSession(
+  contentTranslationSessionIdentity,
+  contentTranslationSessionStorage,
+  contentBrowserSessionId
+), null);
 rememberContentTranslationSession({
   viewerHandle: contentTranslationSessionIdentity.viewerHandle,
   result: translatedContentResult,
   showTranslation: true,
-  storage: contentTranslationSessionStorage
+  storage: contentTranslationSessionStorage,
+  sessionId: contentBrowserSessionId
 });
 assert.equal(peekContentTranslationSession(contentTranslationSessionIdentity)?.result.targetLanguage, "french");
 assert.equal(
-  readContentTranslationSession(contentTranslationSessionIdentity, contentTranslationSessionStorage)?.showTranslation,
+  readContentTranslationSession(
+    contentTranslationSessionIdentity,
+    contentTranslationSessionStorage,
+    contentBrowserSessionId
+  )?.showTranslation,
   true
 );
 assert.equal(readContentTranslationSession({
   ...contentTranslationSessionIdentity,
   viewerHandle: "@different-user"
-}, contentTranslationSessionStorage), null);
+}, contentTranslationSessionStorage, contentBrowserSessionId), null);
 assert.equal(readContentTranslationSession({
   ...contentTranslationSessionIdentity,
   sourceRevision: contentTranslationSessionIdentity.sourceRevision + 1
-}, contentTranslationSessionStorage), null);
+}, contentTranslationSessionStorage, contentBrowserSessionId), null);
 rememberContentTranslationSession({
   viewerHandle: contentTranslationSessionIdentity.viewerHandle,
   result: translatedContentResult,
   showTranslation: false,
-  storage: contentTranslationSessionStorage
+  storage: contentTranslationSessionStorage,
+  sessionId: contentBrowserSessionId
 });
 resetContentTranslationSessionsForTests();
 assert.equal(
-  readContentTranslationSession(contentTranslationSessionIdentity, contentTranslationSessionStorage)?.showTranslation,
+  readContentTranslationSession(
+    contentTranslationSessionIdentity,
+    contentTranslationSessionStorage,
+    contentBrowserSessionId
+  )?.showTranslation,
   false
 );
+const crossTabTranslationEnvelope = JSON.parse(
+  contentTranslationSessionValues.get(contentTranslationSessionStorageKey) ?? "{}"
+) as {
+  sessionId: string;
+  records: Array<{ sourceId: string; showTranslation: boolean }>;
+};
+assert.equal(crossTabTranslationEnvelope.sessionId, contentBrowserSessionId);
+const crossTabTranslationRecords = crossTabTranslationEnvelope.records;
+const crossTabTranslationRecord = crossTabTranslationRecords.find(
+  (record) => record.sourceId === contentTranslationSessionIdentity.sourceId
+);
+assert.ok(crossTabTranslationRecord);
+crossTabTranslationRecord.showTranslation = true;
+contentTranslationSessionStorage.setItem(
+  contentTranslationSessionStorageKey,
+  JSON.stringify(crossTabTranslationEnvelope)
+);
+assert.deepEqual(
+  readContentTranslationSessionStorageUpdate(
+    contentTranslationSessionIdentity,
+    "unrelated-storage-key",
+    contentTranslationSessionStorage,
+    contentBrowserSessionId
+  ),
+  { handled: false, entry: null }
+);
+assert.equal(peekContentTranslationSession(contentTranslationSessionIdentity)?.showTranslation, false);
+const crossTabTranslationUpdate = readContentTranslationSessionStorageUpdate(
+  contentTranslationSessionIdentity,
+  contentTranslationSessionStorageKey,
+  contentTranslationSessionStorage,
+  contentBrowserSessionId
+);
+assert.equal(crossTabTranslationUpdate.handled, true);
+assert.equal(crossTabTranslationUpdate.entry?.showTranslation, true);
+assert.equal(peekContentTranslationSession(contentTranslationSessionIdentity)?.showTranslation, true);
 Array.from({ length: maxContentTranslationSessionEntries + 3 }, (_, index) => index).forEach((index) => {
   rememberContentTranslationSession({
     viewerHandle: contentTranslationSessionIdentity.viewerHandle,
@@ -777,11 +1020,14 @@ Array.from({ length: maxContentTranslationSessionEntries + 3 }, (_, index) => in
       sourceId: `bounded-post-${index}`
     },
     showTranslation: true,
-    storage: contentTranslationSessionStorage
+    storage: contentTranslationSessionStorage,
+    sessionId: contentBrowserSessionId
   });
 });
 assert.equal(
-  (JSON.parse(contentTranslationSessionValues.get(contentTranslationSessionStorageKey) ?? "[]") as unknown[]).length,
+  (JSON.parse(contentTranslationSessionValues.get(contentTranslationSessionStorageKey) ?? "{}") as {
+    records: unknown[];
+  }).records.length,
   maxContentTranslationSessionEntries
 );
 assert.equal(peekContentTranslationSession({
@@ -790,7 +1036,11 @@ assert.equal(peekContentTranslationSession({
 }), null);
 contentTranslationSessionValues.set(contentTranslationSessionStorageKey, "{malformed");
 resetContentTranslationSessionsForTests();
-assert.equal(readContentTranslationSession(contentTranslationSessionIdentity, contentTranslationSessionStorage), null);
+assert.equal(readContentTranslationSession(
+  contentTranslationSessionIdentity,
+  contentTranslationSessionStorage,
+  contentBrowserSessionId
+), null);
 
 const throwingContentTranslationSessionStorage = {
   getItem: () => {
@@ -861,14 +1111,16 @@ Array.from({ length: 1_024 }, (_, index) => index).forEach((index) => {
     sourceRevision
   }, stressedContentTranslationSessionStorage), null);
 });
-const stressedContentTranslationSessionRecords = JSON.parse(
-  stressedContentTranslationSessionValues.get(contentTranslationSessionStorageKey) ?? "[]"
-) as Array<{
-  viewerHandle: string;
-  sourceType: "post" | "comment";
-  sourceId: string;
-  sourceRevision: number;
-}>;
+const stressedContentTranslationSessionRecords = (JSON.parse(
+  stressedContentTranslationSessionValues.get(contentTranslationSessionStorageKey) ?? "{}"
+) as {
+  records: Array<{
+    viewerHandle: string;
+    sourceType: "post" | "comment";
+    sourceId: string;
+    sourceRevision: number;
+  }>;
+}).records;
 assert.equal(stressedContentTranslationSessionRecords.length, maxContentTranslationSessionEntries);
 resetContentTranslationSessionsForTests();
 stressedContentTranslationSessionRecords.forEach((record) => {
@@ -895,13 +1147,29 @@ resetContentTranslationSessionsForTests();
     storage: revisionReplacementSessionStorage
   });
 });
-const revisionReplacementRecords = JSON.parse(
-  revisionReplacementSessionValues.get(contentTranslationSessionStorageKey) ?? "[]"
-) as Array<{ sourceId: string; sourceRevision: number }>;
+const revisionReplacementRecords = (JSON.parse(
+  revisionReplacementSessionValues.get(contentTranslationSessionStorageKey) ?? "{}"
+) as {
+  records: Array<{ sourceId: string; sourceRevision: number }>;
+}).records;
 assert.deepEqual(
   revisionReplacementRecords.filter((record) => record.sourceId === "revision-stress-source")
     .map((record) => record.sourceRevision),
   [5]
+);
+resetContentTranslationSessionsForTests();
+assert.equal(
+  readContentTranslationSession(
+    {
+      viewerHandle: "@revision-user",
+      sourceType: "post",
+      sourceId: "revision-stress-source",
+      sourceRevision: 5
+    },
+    revisionReplacementSessionStorage,
+    "different-browser-session"
+  ),
+  null
 );
 
 const richSourceLayout = {
@@ -1164,6 +1432,7 @@ const documentTranslationControl = readFileSync("features/attachments/DocumentTr
 const translationLanguagePicker = readFileSync("features/translation/TranslationLanguagePicker.tsx", "utf8");
 const contentTranslationSession = readFileSync("features/translation/contentTranslationSession.ts", "utf8");
 const documentViewerSession = readFileSync("features/attachments/documentViewerSession.ts", "utf8");
+const browserSessionPersistence = readFileSync("lib/browserSessionPersistence.ts", "utf8");
 const contentTranslationControl = readFileSync("features/translation/ContentTranslationControl.tsx", "utf8");
 const tabletStyles = readFileSync("styles/92-ai-tablet.css", "utf8");
 const postViews = readFileSync("features/posts/PostViews.tsx", "utf8");
@@ -1345,6 +1614,7 @@ assert.match(contentTranslationControl, /translatedDocumentForSource/);
 assert.doesNotMatch(contentTranslationControl, /content-translation-copy/);
 assert.match(contentTranslationControl, /readContentTranslationSession/);
 assert.match(contentTranslationControl, /rememberContentTranslationSession/);
+assert.match(contentTranslationControl, /subscribeContentTranslationSession/);
 assert.match(contentTranslationControl, /viewerHandle/);
 assert.match(contentTranslationControl, /resultSessionIdentityKey === sessionIdentityKey/);
 assert.equal(
@@ -1352,10 +1622,14 @@ assert.equal(
   1,
   "Only a completed translation may replace the remembered translated result"
 );
-assert.match(contentTranslationSession, /window\.sessionStorage/);
+assert.match(browserSessionPersistence, /window\.localStorage/);
+assert.match(contentTranslationSession, /window\.addEventListener\("storage"/);
+assert.match(browserSessionPersistence, /browserSessionPersistenceCookieName/);
+assert.match(browserSessionPersistence, /SameSite=Lax/);
+assert.match(contentTranslationSession, /sessionId/);
 assert.match(contentTranslationSession, /maxContentTranslationSessionEntries = 12/);
 assert.match(contentTranslationSession, /contentTranslationResultSchema\.safeParse/);
-assert.doesNotMatch(contentTranslationSession, /localStorage/);
+assert.match(contentTranslationSession, /legacyContentTranslationSessionStorageKey/);
 assert.match(postViews, /sourceType: "post",[\s\S]*viewerHandle: actorHandle/);
 assert.match(commentThread, /sourceType: "comment",[\s\S]*viewerHandle: actorHandle/);
 assert.match(profileViews, /sourceType: "comment",[\s\S]*viewerHandle: actorHandle/);
@@ -1379,6 +1653,10 @@ assert.match(documentTranslationControl, /useSyncExternalStore/);
 assert.match(documentTranslationControl, /rememberDocumentTranslation/);
 assert.match(documentViewerSession, /rememberDocumentReadingPosition/);
 assert.match(documentViewerSession, /subscribeDocumentReadingPosition/);
+assert.match(documentViewerSession, /window\.addEventListener\("storage"/);
+assert.match(documentViewerSession, /documentViewerSessionStorageKey/);
+assert.match(documentViewerSession, /documentTranslationResultSchema\.safeParse/);
+assert.match(documentViewerSession, /sessionId/);
 assert.match(attachmentStyles, /min-height: var\(--docx-original-page-height/);
 assert.match(attachmentStyles, /\.attachment-pdf-parallel-canvas/);
 assert.match(attachmentStyles, /\.attachment-pdf-parallel-text-layer/);
