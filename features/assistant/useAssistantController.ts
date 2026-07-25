@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import { assistantRequestIntentFor } from "@/features/assistant/assistantRequestIntent";
-import { orderAssistantThreadsByLatestMessage } from "@/features/assistant/assistantThreadOrdering";
+import {
+  orderAssistantThreadsByLatestMessage,
+  reconcileAssistantThreadSummary
+} from "@/features/assistant/assistantThreadOrdering";
 import type {
   AssistantContextUpdateResultContract,
   AssistantMessageContract,
@@ -123,6 +126,8 @@ export function useAssistantController({
   const submissionLockRef = useRef(false);
   const contextLockRef = useRef(false);
   const threadActionLockRef = useRef(false);
+  const explicitNewThreadRef = useRef(false);
+  const suppressedRequestedConversationIdRef = useRef<string | null>(null);
   const messageRetryRef = useRef<RetryMutation | null>(null);
   const contextRetryRef = useRef<RetryMutation | null>(null);
   const sourceRetryRef = useRef<RetryMutation | null>(null);
@@ -203,10 +208,14 @@ export function useAssistantController({
   }, []);
 
   const replaceThreadSummary = useCallback((next: AssistantThreadStateContract) => {
-    setThreads((current) => orderAssistantThreadsByLatestMessage([
+    setThreads((current) => reconcileAssistantThreadSummary(
+      current,
       threadSummary(next),
-      ...current.filter((candidate) => candidate.id !== next.id)
-    ]));
+      {
+        status: threadLibraryStatusRef.current,
+        hasSearch: Boolean(threadSearchRef.current)
+      }
+    ));
   }, []);
 
   const broadcastThreadChange = useCallback((
@@ -333,6 +342,8 @@ export function useAssistantController({
   const openThread = useCallback(async (id: string) => {
     const normalized = id.trim();
     if (!normalized) return;
+    explicitNewThreadRef.current = false;
+    suppressedRequestedConversationIdRef.current = null;
     draftsRef.current.set(currentDraftKey(), draftRef.current);
     const request = ++threadRequestRef.current;
     setConversationId(normalized);
@@ -377,6 +388,8 @@ export function useAssistantController({
   const startNewThread = useCallback((
     mode: AssistantNewThreadContextMode = "blank"
   ) => {
+    suppressedRequestedConversationIdRef.current = conversationIdRef.current ?? null;
+    explicitNewThreadRef.current = true;
     draftsRef.current.set(currentDraftKey(), draftRef.current);
     threadRequestRef.current += 1;
     newThreadContextModeRef.current = mode;
@@ -557,6 +570,8 @@ export function useAssistantController({
     submissionLockRef.current = false;
     contextLockRef.current = false;
     threadActionLockRef.current = false;
+    explicitNewThreadRef.current = false;
+    suppressedRequestedConversationIdRef.current = null;
     messageRetryRef.current = null;
     contextRetryRef.current = null;
     sourceRetryRef.current = null;
@@ -608,14 +623,24 @@ export function useAssistantController({
     );
     if (!selectedAlreadyLoaded) setThreadLoading(true);
     void refreshThreads().then((page) => {
-      if (cancelled || requestedConversationId || conversationIdRef.current) return;
+      if (
+        cancelled ||
+        explicitNewThreadRef.current ||
+        requestedConversationId ||
+        conversationIdRef.current
+      ) return;
       const contextKey = contextKeyFor(contextRef.current);
       const loadedMatch = page.threads.find(
         (candidate) => candidate.activeContextKey === contextKey
       );
       return loadedMatch ?? findActiveThreadForContext(contextKey);
     }).then((matching) => {
-      if (cancelled || requestedConversationId || conversationIdRef.current) return;
+      if (
+        cancelled ||
+        explicitNewThreadRef.current ||
+        requestedConversationId ||
+        conversationIdRef.current
+      ) return;
       if (matching) void openThread(matching.id);
       else {
         newThreadContextModeRef.current = "current";
@@ -643,8 +668,10 @@ export function useAssistantController({
     if (!enabled) return;
     if (!requestedConversationId) {
       requestedAttemptRef.current = null;
+      suppressedRequestedConversationIdRef.current = null;
       return;
     }
+    if (suppressedRequestedConversationIdRef.current === requestedConversationId) return;
     if (loadedConversationIdRef.current === requestedConversationId) return;
     if (requestedAttemptRef.current === requestedConversationId) return;
     requestedAttemptRef.current = requestedConversationId;
@@ -1017,6 +1044,8 @@ export function useAssistantController({
         await refreshThreads({ silent: true }).catch(() => null);
         return;
       }
+      explicitNewThreadRef.current = false;
+      suppressedRequestedConversationIdRef.current = null;
       setConversationId(response.conversationId);
       loadedConversationIdRef.current = response.conversationId;
       if (response.thread) {

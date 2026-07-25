@@ -60,7 +60,10 @@ import {
 } from "@/packages/contracts/src/translationLanguages";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
 import { assistantRequestIntentFor } from "@/features/assistant/assistantRequestIntent";
-import { orderAssistantThreadsByLatestMessage } from "@/features/assistant/assistantThreadOrdering";
+import {
+  orderAssistantThreadsByLatestMessage,
+  reconcileAssistantThreadSummary
+} from "@/features/assistant/assistantThreadOrdering";
 import { initialAssistantMessageFor } from "@/features/assistant/useAssistantController";
 import {
   pdfTextItemsToPlainText,
@@ -284,6 +287,43 @@ assert.deepEqual(
     { ...threadSummaryFixture, id: "169b5a8d-cdea-43b9-b871-3afce65eca46", lastMessageAt: "2026-07-21T20:00:00.000Z" }
   ]).map((thread) => thread.id),
   [historicalSourceId, "169b5a8d-cdea-43b9-b871-3afce65eca46"]
+);
+const activeThreadFixture = {
+  ...threadSummaryFixture,
+  id: historicalSourceId,
+  lastMessageAt: "2026-07-20T20:00:00.000Z"
+};
+const archivedThreadFixture = {
+  ...activeThreadFixture,
+  archivedAt: "2026-07-25T22:00:00.000Z"
+};
+assert.deepEqual(
+  reconcileAssistantThreadSummary([archivedThreadFixture], activeThreadFixture, {
+    status: "archived",
+    hasSearch: false
+  }),
+  []
+);
+assert.deepEqual(
+  reconcileAssistantThreadSummary([activeThreadFixture], archivedThreadFixture, {
+    status: "active",
+    hasSearch: false
+  }),
+  []
+);
+assert.deepEqual(
+  reconcileAssistantThreadSummary([], activeThreadFixture, {
+    status: "active",
+    hasSearch: true
+  }),
+  []
+);
+assert.deepEqual(
+  reconcileAssistantThreadSummary([], activeThreadFixture, {
+    status: "active",
+    hasSearch: false
+  }),
+  [activeThreadFixture]
 );
 assert.match(assistantPrompt(validInput.context, validInput.message), /ACTIVE VIEW/);
 assert.match(assistantPrompt(validInput.context, validInput.message, [{ ...validInput.context, title: "Attached paper" }]), /ATTACHED SOURCES[\s\S]*Attached paper/);
@@ -1703,6 +1743,9 @@ assert.match(databaseSchema, /ai_conversations_metadata_revision_check/);
 assert.match(assistantController, /orderAssistantThreadsByLatestMessage/);
 assert.match(assistantController, /findActiveThreadForContext/);
 assert.match(assistantController, /threadListRequestRef\.current \+= 1/);
+assert.match(assistantController, /explicitNewThreadRef\.current = true/);
+assert.match(assistantController, /suppressedRequestedConversationIdRef\.current = conversationIdRef\.current \?\? null/);
+assert.match(assistantController, /suppressedRequestedConversationIdRef\.current === requestedConversationId/);
 assert.match(assistantController, /setThreadLibraryFilters/);
 assert.match(assistantController, /loadMoreThreads/);
 assert.match(assistantController, /operation: "changed" \| "deleted"/);
