@@ -39,7 +39,7 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Add source-specific reading tools for posts, comments, notes, workspace documents, attachments, messages, and the visible selection.
 - Make answer claims link back to the relevant Symposium passage or attachment location.
 
-### 3. Full AI Workspace shell — implementation complete; fresh deployed browser gate pending
+### 3. Full AI Workspace shell — shipped
 
 - Expand the compact AI Tablet into a dedicated three-column research workspace without creating a second conversation or assistant state owner.
 - Keep Research Threads and bounded recent-thread search on the left, the active transcript and composer in the center, and the full-height Context Dock on the right.
