@@ -67,7 +67,7 @@ type PreparedAssistant = {
   usageId: string;
   reservedCostMicros: number;
   history: HistoryMessage[];
-  context: AssistantContextContract;
+  context: AssistantContextContract | null;
   attachedContexts: AssistantContextContract[];
   evidence: AssistantMessageContract["evidence"];
   thread: AssistantThreadStateContract;
@@ -78,6 +78,16 @@ type PreparedAssistant = {
 
 const assistantContextKey = (context: AssistantContextContract) =>
   `${context.surface}:${context.entityId?.trim() || context.route.trim() || "/"}`.slice(0, 800);
+
+const assistantContextTypeFor = (
+  surface: AssistantContextContract["surface"]
+): ParsedInput["contextType"] => {
+  if (surface === "post" || surface === "opportunity" || surface === "attachment") return "post";
+  if (surface === "community") return "community";
+  if (surface === "workspace") return "note";
+  if (surface === "room") return "room";
+  return "general";
+};
 
 export const assistantThreadSources = (value: unknown): AssistantThreadSourceContract[] => {
   if (!Array.isArray(value)) return [];
@@ -367,6 +377,67 @@ export const updateAssistantConversationContext = async (
       });
     }
 
+    if (input.mode === "clear") {
+      const sources = assistantThreadSources(row.contextSources).map((source) => ({
+        ...source,
+        included: false
+      }));
+      const updated = await client.query<ConversationRow>(
+        `UPDATE ai_conversations
+         SET context_sources = $3::jsonb,
+             context_type = 'general',
+             active_context_key = NULL,
+             active_source_id = NULL,
+             context_id = NULL,
+             context_revision = context_revision + 1,
+             updated_at = now()
+         WHERE id = $1 AND owner_handle = $2
+         RETURNING ${conversationSelect}`,
+        [conversationId, owner, JSON.stringify(sources)]
+      );
+      const messageResult = await client.query<{
+        id: string;
+        conversationId: string;
+        role: "system";
+        body: string;
+        createdAt: Date | string;
+      }>(
+        `INSERT INTO ai_messages (conversation_id, role, body, metadata)
+         VALUES ($1, 'system', $2, $3)
+         RETURNING id, conversation_id AS "conversationId", role, body, created_at AS "createdAt"`,
+        [
+          conversationId,
+          "Context cleared. This chat is now using no explicit Symposium source.",
+          JSON.stringify({ event: "context_update", mode: "clear", contextKey: null })
+        ]
+      );
+      const response: AssistantContextUpdateResultContract = {
+        thread: assistantThreadState(updated.rows[0]!),
+        message: messageFromRow(messageResult.rows[0]!)
+      };
+      await stageAuditLog(client, {
+        actorHandle: owner,
+        action: "assistant.context.update",
+        subjectType: "ai_conversation",
+        subjectId: conversationId,
+        metadata: mutationAuditMetadata(mutation, {
+          mode: "clear",
+          contextKey: null,
+          contextRevision: response.thread.contextRevision
+        })
+      });
+      await completeMutation(client, owner, mutation, response);
+      const event = await stageEvent(client, {
+        kind: "assistant.context.updated",
+        actorHandle: owner,
+        subjectType: "ai_conversation",
+        subjectId: conversationId,
+        visibility: "private",
+        payload: { mode: "clear", contextKey: null, contextRevision: response.thread.contextRevision }
+      });
+      return { value: response, events: [event] };
+    }
+
     const contextKey = assistantContextKey(input.context);
     let sources = assistantThreadSources(row.contextSources);
     const latestForKey = sources.filter((entry) => entry.key === contextKey).at(-1);
@@ -390,6 +461,7 @@ export const updateAssistantConversationContext = async (
       : row.activeSourceId;
     const activeContextKey = sources.find((entry) => entry.id === activeSourceId)?.key ?? source.key;
     sources = sources.map((entry) => entry.id === activeSourceId ? { ...entry, included: true } : entry);
+    const activeContext = sources.find((entry) => entry.id === activeSourceId)?.context ?? source.context;
     if (sources.filter((entry) => entry.included).length > 5) {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
@@ -408,11 +480,20 @@ export const updateAssistantConversationContext = async (
            active_context_key = $4,
            active_source_id = $5,
            context_revision = context_revision + 1,
-           context_id = CASE WHEN $6 = 'use' THEN $7 ELSE context_id END,
+           context_type = $6,
+           context_id = $7,
            updated_at = now()
        WHERE id = $1 AND owner_handle = $2
        RETURNING ${conversationSelect}`,
-      [conversationId, owner, JSON.stringify(sources), activeContextKey, activeSourceId, input.mode, input.context.entityId ?? null]
+      [
+        conversationId,
+        owner,
+        JSON.stringify(sources),
+        activeContextKey,
+        activeSourceId,
+        assistantContextTypeFor(activeContext.surface),
+        activeContext.entityId ?? null
+      ]
     );
     const systemBody = input.mode === "use"
       ? `Active view changed to ${input.context.title || "the current view"}.`
@@ -513,6 +594,7 @@ export const updateAssistantConversationSource = async (
            active_source_id = $4,
            active_context_key = $5,
            context_id = CASE WHEN $6 = 'use' THEN $7 ELSE context_id END,
+           context_type = CASE WHEN $6 = 'use' THEN $8 ELSE context_type END,
            context_revision = context_revision + 1,
            updated_at = now()
        WHERE id = $1 AND owner_handle = $2
@@ -524,7 +606,8 @@ export const updateAssistantConversationSource = async (
         activeSourceId,
         activeContextKey,
         input.action,
-        source.context.entityId ?? null
+        source.context.entityId ?? null,
+        assistantContextTypeFor(source.context.surface)
       ]
     );
     const systemBody = input.action === "use"
@@ -595,7 +678,7 @@ const prepareAssistant = async (
   let history: HistoryMessage[] = [];
   let conversationRow: ConversationRow;
   if (!conversationId) {
-    const source = sourceForContext(input.context);
+    const source = input.context ? sourceForContext(input.context) : null;
     const conversation = await client.query<ConversationRow>(
       `INSERT INTO ai_conversations (
          owner_handle,
@@ -613,11 +696,11 @@ const prepareAssistant = async (
       [
         owner,
         input.message.slice(0, 80),
-        input.contextType,
-        input.contextId ?? input.context.entityId ?? null,
-        JSON.stringify([source]),
-        source.key,
-        source.id
+        input.context ? input.contextType : "general",
+        input.context ? input.contextId ?? input.context.entityId ?? null : null,
+        JSON.stringify(source ? [source] : []),
+        source?.key ?? null,
+        source?.id ?? null
       ]
     );
     conversationRow = conversation.rows[0]!;
@@ -645,37 +728,27 @@ const prepareAssistant = async (
     history = historyResult.rows;
   }
 
-  let sources = assistantThreadSources(conversationRow.contextSources);
-  let activeSource = sources.find((source) => source.id === conversationRow.activeSourceId)
+  const sources = assistantThreadSources(conversationRow.contextSources);
+  const activeSource = sources.find((source) => source.id === conversationRow.activeSourceId)
     ?? sources.filter((source) => source.key === conversationRow.activeContextKey).at(-1);
-  if (!activeSource) {
-    activeSource = sourceForContext(input.context, sources);
-    sources = [...sources, activeSource].slice(-24);
-    const hydrated = await client.query<ConversationRow>(
-      `UPDATE ai_conversations
-       SET context_sources = $3::jsonb,
-           active_context_key = $4,
-           active_source_id = $5,
-           origin_source_id = COALESCE(origin_source_id, $5),
-           context_revision = context_revision + 1
-       WHERE id = $1 AND owner_handle = $2
-       RETURNING ${conversationSelect}`,
-      [conversationId, owner, JSON.stringify(sources), activeSource.key, activeSource.id]
-    );
-    conversationRow = hydrated.rows[0]!;
+  const context = activeSource ? assistantContextSchema.parse(activeSource.context) : null;
+  if (input.intent === "translate" && !context) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Attach a Symposium source before starting a source translation."
+    });
   }
-  const context = assistantContextSchema.parse(activeSource.context);
-  const evidenceSources = [
+  const evidenceSources = activeSource ? [
     activeSource,
     ...sources
-      .filter((source) => source.included && source.id !== activeSource!.id)
+      .filter((source) => source.included && source.id !== activeSource.id)
       .slice(-4)
-  ];
+  ] : [];
   const attachedContexts = evidenceSources
-    .filter((source) => source.id !== activeSource!.id)
+    .filter((source) => source.id !== activeSource?.id)
     .slice(-4)
     .map((source) => source.context);
-  const evidence = evidenceForSources(evidenceSources, activeSource.id);
+  const evidence = evidenceForSources(evidenceSources, activeSource?.id ?? null);
   const renderedInput = assistantRenderedInput({
     history,
     context,
@@ -695,11 +768,12 @@ const prepareAssistant = async (
      VALUES ($1, 'user', $2, $3)
      RETURNING created_at AS "createdAt"`,
     [conversationId, input.message, JSON.stringify({
-      context,
-      contextKey: activeSource.key,
+      context: context ?? null,
+      contextKey: activeSource?.key ?? null,
       evidence,
-      activeSourceId: activeSource.id,
-      attachedSourceIds: evidenceSources.filter((source) => source.id !== activeSource!.id).map((source) => source.id),
+      activeSourceId: activeSource?.id ?? null,
+      attachedSourceIds: evidenceSources.filter((source) => source.id !== activeSource?.id).map((source) => source.id),
+      grounding: context ? "sources" : "none",
       contextType: conversationRow.contextType,
       contextId: conversationRow.contextId
     })]
@@ -736,7 +810,7 @@ const finalizeAssistant = async (
 ): Promise<AssistantResponseContract> => runAtomic(async (client) => {
   const providerError = !result;
   const body = result?.body ?? failure?.body ?? "The AI service could not complete this answer. No daily answer was used; you can retry.";
-  const translation = result?.translation && prepared.input.targetLanguage
+  const translation = result?.translation && prepared.input.targetLanguage && prepared.context
     ? {
         ...result.translation,
         targetLanguage: prepared.input.targetLanguage,
@@ -749,7 +823,7 @@ const finalizeAssistant = async (
         }
       }
     : undefined;
-  const quickNote = result?.quickNote
+  const quickNote = result?.quickNote && prepared.context
       ? {
         ...result.quickNote,
         source: {
@@ -842,7 +916,7 @@ const finalizeAssistant = async (
     metadata: mutationAuditMetadata(mutation, {
       contextId: prepared.input.contextId,
       contextType: prepared.input.contextType,
-      surface: prepared.context.surface,
+      surface: prepared.context?.surface ?? null,
       intent: prepared.input.intent,
       targetLanguage: prepared.input.targetLanguage,
       model: response.model,

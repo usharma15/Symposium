@@ -4101,7 +4101,7 @@ function SymposiumExperience({
     );
   };
 
-  const tabletContext = ((): AssistantMessageInputContract["context"] => {
+  const tabletContext = ((): NonNullable<AssistantMessageInputContract["context"]> => {
     const trimContent = (value: string) => {
       const limit = 12000;
       if (value.length <= limit) return value;

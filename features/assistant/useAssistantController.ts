@@ -21,7 +21,8 @@ import type {
   AssistantTranslationContract
 } from "@/packages/contracts/src";
 
-export type AssistantContext = AssistantMessageInputContract["context"];
+export type AssistantContext = NonNullable<AssistantMessageInputContract["context"]>;
+export type AssistantNewThreadContextMode = "current" | "blank";
 
 export type AssistantMessageView = {
   id: string;
@@ -61,10 +62,14 @@ const contextTypeFor = (
   return "general";
 };
 
-const initialMessageFor = (context: AssistantContext): AssistantMessageView => ({
-  id: `intro:${contextKeyFor(context)}`,
+export const initialAssistantMessageFor = (
+  context: AssistantContext | null
+): AssistantMessageView => ({
+  id: context ? `intro:${contextKeyFor(context)}` : "intro:blank",
   role: "assistant",
-  body: `I’m looking at ${context.title}. Ask me about what is actually on this screen.`
+  body: context
+    ? `You’re on ${context.title}. Ask about this view, or remove it to start without context.`
+    : "What’s on your mind?"
 });
 
 const threadSummary = (
@@ -105,6 +110,7 @@ export function useAssistantController({
   const messageRetryRef = useRef<RetryMutation | null>(null);
   const contextRetryRef = useRef<RetryMutation | null>(null);
   const sourceRetryRef = useRef<RetryMutation | null>(null);
+  const newThreadContextModeRef = useRef<AssistantNewThreadContextMode>("current");
 
   const [conversationId, setConversationIdState] = useState<string | undefined>(
     requestedConversationId ?? undefined
@@ -113,8 +119,10 @@ export function useAssistantController({
   const [threads, setThreads] = useState<AssistantThreadSummaryContract[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [messages, setMessages] = useState<AssistantMessageView[]>(() => [
-    initialMessageFor(context)
+    initialAssistantMessageFor(context)
   ]);
+  const [newThreadContextMode, setNewThreadContextModeState] =
+    useState<AssistantNewThreadContextMode>("current");
   const [draft, setDraftState] = useState("");
   const [busy, setBusy] = useState(false);
   const [contextBusy, setContextBusy] = useState(false);
@@ -133,7 +141,9 @@ export function useAssistantController({
 
   const currentDraftKey = useCallback(
     (id = conversationIdRef.current) =>
-      id ?? `new:${contextKeyFor(contextRef.current)}`,
+      id ?? (newThreadContextModeRef.current === "blank"
+        ? "new:blank"
+        : `new:${contextKeyFor(contextRef.current)}`),
     []
   );
 
@@ -152,6 +162,18 @@ export function useAssistantController({
   const setConversationId = useCallback((id?: string) => {
     conversationIdRef.current = id;
     setConversationIdState(id);
+  }, []);
+
+  const setNewThreadContextMode = useCallback((
+    mode: AssistantNewThreadContextMode
+  ) => {
+    newThreadContextModeRef.current = mode;
+    setNewThreadContextModeState(mode);
+    if (!conversationIdRef.current) {
+      setMessages([
+        initialAssistantMessageFor(mode === "current" ? contextRef.current : null)
+      ]);
+    }
   }, []);
 
   const replaceThreadSummary = useCallback((next: AssistantThreadStateContract) => {
@@ -222,7 +244,9 @@ export function useAssistantController({
       setConversationId(undefined);
       loadedConversationIdRef.current = null;
       setThread(null);
-      setMessages([initialMessageFor(contextRef.current)]);
+      newThreadContextModeRef.current = "current";
+      setNewThreadContextModeState("current");
+      setMessages([initialAssistantMessageFor(contextRef.current)]);
       restoreDraft(undefined);
       setError(errorMessage(caught, "That research thread could not be loaded."));
     } finally {
@@ -236,14 +260,20 @@ export function useAssistantController({
     setConversationId
   ]);
 
-  const startNewThread = useCallback(() => {
+  const startNewThread = useCallback((
+    mode: AssistantNewThreadContextMode = "blank"
+  ) => {
     draftsRef.current.set(currentDraftKey(), draftRef.current);
     threadRequestRef.current += 1;
+    newThreadContextModeRef.current = mode;
+    setNewThreadContextModeState(mode);
     setConversationId(undefined);
     loadedConversationIdRef.current = null;
     requestedAttemptRef.current = null;
     setThread(null);
-    setMessages([initialMessageFor(contextRef.current)]);
+    setMessages([
+      initialAssistantMessageFor(mode === "current" ? contextRef.current : null)
+    ]);
     restoreDraft(undefined);
     setThreadLoading(false);
     setError("");
@@ -260,10 +290,12 @@ export function useAssistantController({
     setConversationId(undefined);
     loadedConversationIdRef.current = null;
     requestedAttemptRef.current = null;
+    newThreadContextModeRef.current = "current";
+    setNewThreadContextModeState("current");
     setThread(null);
     setThreads([]);
     setNextCursor(null);
-    setMessages([initialMessageFor(contextRef.current)]);
+    setMessages([initialAssistantMessageFor(contextRef.current)]);
     rememberDraft("");
     setThreadLoading(enabled);
     setQuotaLoading(enabled);
@@ -327,7 +359,9 @@ export function useAssistantController({
       if (matching) {
         void openThread(matching.id);
       } else {
-        setMessages([initialMessageFor(contextRef.current)]);
+        newThreadContextModeRef.current = "current";
+        setNewThreadContextModeState("current");
+        setMessages([initialAssistantMessageFor(contextRef.current)]);
       }
     }).catch((caught) => {
       if (!cancelled) {
@@ -360,7 +394,11 @@ export function useAssistantController({
 
   useEffect(() => {
     if (!conversationIdRef.current) {
-      setMessages([initialMessageFor(context)]);
+      setMessages([
+        initialAssistantMessageFor(
+          newThreadContextModeRef.current === "current" ? context : null
+        )
+      ]);
       restoreDraft(undefined);
     }
   }, [contextKey, restoreDraft]);
@@ -420,7 +458,7 @@ export function useAssistantController({
   }, [enabled, refreshSelectedThread, refreshThreads]);
 
   const changeThreadContext = useCallback(async (
-    mode: "use" | "attach" | "refresh"
+    mode: "use" | "attach" | "refresh" | "clear"
   ) => {
     const id = conversationIdRef.current;
     if (
@@ -433,12 +471,18 @@ export function useAssistantController({
     ) {
       return;
     }
-    const input = {
-      actorHandle,
-      mode,
-      context: contextRef.current,
-      expectedRevision: thread.contextRevision
-    };
+    const input = mode === "clear"
+      ? {
+          actorHandle,
+          mode,
+          expectedRevision: thread.contextRevision
+        }
+      : {
+          actorHandle,
+          mode,
+          context: contextRef.current,
+          expectedRevision: thread.contextRevision
+        };
     const fingerprint = JSON.stringify({ id, ...input });
     if (contextRetryRef.current?.fingerprint !== fingerprint) {
       contextRetryRef.current = {
@@ -488,6 +532,22 @@ export function useAssistantController({
     replaceThreadSummary,
     thread
   ]);
+
+  const useCurrentView = useCallback(() => {
+    if (conversationIdRef.current) {
+      void changeThreadContext("use");
+      return;
+    }
+    setNewThreadContextMode("current");
+  }, [changeThreadContext, setNewThreadContextMode]);
+
+  const clearContext = useCallback(() => {
+    if (conversationIdRef.current) {
+      void changeThreadContext("clear");
+      return;
+    }
+    setNewThreadContextMode("blank");
+  }, [changeThreadContext, setNewThreadContextMode]);
 
   const changeSavedSource = useCallback(async (
     source: AssistantThreadSourceContract,
@@ -573,8 +633,20 @@ export function useAssistantController({
     ) {
       return;
     }
-    const requestIntent = assistantRequestIntentFor(message);
-    if (requestIntent.translationRequested && !requestIntent.targetLanguage) {
+    const id = conversationIdRef.current;
+    const activeSource = id
+      ? thread?.sources.find((source) => source.id === thread.activeSourceId)
+      : null;
+    const selectedContext = id
+      ? activeSource?.context ?? null
+      : newThreadContextModeRef.current === "current"
+        ? contextRef.current
+        : null;
+    const detectedIntent = assistantRequestIntentFor(message);
+    const requestIntent: ReturnType<typeof assistantRequestIntentFor> = selectedContext
+      ? detectedIntent
+      : { translationRequested: false, intent: "answer" as const };
+    if (selectedContext && requestIntent.translationRequested && !requestIntent.targetLanguage) {
       setError("Name a supported target language in your translation request.");
       return;
     }
@@ -584,9 +656,7 @@ export function useAssistantController({
       role: "user",
       body: message
     };
-    const id = conversationIdRef.current;
-    const activeContext = contextRef.current;
-    const fingerprint = JSON.stringify({ id, message, activeContext });
+    const fingerprint = JSON.stringify({ id, message, selectedContext });
     if (messageRetryRef.current?.fingerprint !== fingerprint) {
       messageRetryRef.current = {
         fingerprint,
@@ -612,9 +682,9 @@ export function useAssistantController({
             ...(requestIntent.targetLanguage
               ? { targetLanguage: requestIntent.targetLanguage }
               : {}),
-            contextType: contextTypeFor(activeContext.surface),
-            contextId: activeContext.entityId,
-            context: activeContext
+            contextType: selectedContext ? contextTypeFor(selectedContext.surface) : "general",
+            contextId: selectedContext?.entityId,
+            context: selectedContext
           }
         }
       );
@@ -669,6 +739,7 @@ export function useAssistantController({
     rememberDraft,
     replaceThreadSummary,
     setConversationId,
+    thread,
     threadLoading
   ]);
 
@@ -683,6 +754,12 @@ export function useAssistantController({
   return {
     actorHandle,
     context,
+    activeContext: conversationId
+      ? thread?.sources.find((source) => source.id === thread.activeSourceId)?.context ?? null
+      : newThreadContextMode === "current"
+        ? context
+        : null,
+    newThreadContextMode,
     contextKey,
     conversationId,
     thread,
@@ -704,6 +781,8 @@ export function useAssistantController({
     setError,
     openThread,
     startNewThread,
+    useCurrentView,
+    clearContext,
     refreshThreads,
     refreshSelectedThread,
     changeThreadContext,

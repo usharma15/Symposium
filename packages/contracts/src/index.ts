@@ -1318,10 +1318,13 @@ export const assistantMessageInputSchema = z.object({
   targetLanguage: assistantTranslationLanguageSchema.optional(),
   contextType: z.enum(["general", "room", "post", "community", "note"]).default("general"),
   contextId: z.string().trim().min(1).max(240).optional(),
-  context: assistantContextSchema
+  context: assistantContextSchema.nullable().default(null)
 }).superRefine((input, context) => {
   if (input.intent === "translate" && !input.targetLanguage) {
     context.addIssue({ code: "custom", path: ["targetLanguage"], message: "Choose a translation language." });
+  }
+  if (input.intent === "translate" && !input.context) {
+    context.addIssue({ code: "custom", path: ["context"], message: "Attach a Symposium source before starting a source translation." });
   }
 });
 
@@ -1331,11 +1334,17 @@ export const assistantConversationListQuerySchema = z.object({
   contextKey: z.string().trim().max(800).optional()
 });
 
-export const assistantContextUpdateInputSchema = z.object({
-  mode: z.enum(["use", "attach", "refresh"]),
-  context: assistantContextSchema,
-  expectedRevision: z.number().int().positive()
-});
+export const assistantContextUpdateInputSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.enum(["use", "attach", "refresh"]),
+    context: assistantContextSchema,
+    expectedRevision: z.number().int().positive()
+  }),
+  z.object({
+    mode: z.literal("clear"),
+    expectedRevision: z.number().int().positive()
+  })
+]);
 
 export const assistantSourceUpdateInputSchema = z.object({
   sourceId: z.string().uuid(),

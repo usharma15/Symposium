@@ -5,6 +5,8 @@ import { assistantDailyLimitFor } from "@/apps/api/src/services/assistantQuota";
 import { assistantQuotaAfterReservation } from "@/apps/api/src/services/assistantUsage";
 import { assistantThreadSources } from "@/apps/api/src/repository/assistant";
 import {
+  assistantGeneralInstructions,
+  assistantGeneralPrompt,
   assistantInstructions,
   assistantMaxOutputTokens,
   assistantPrompt,
@@ -56,6 +58,7 @@ import {
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
 import { assistantRequestIntentFor } from "@/features/assistant/assistantRequestIntent";
 import { orderAssistantThreadsByLatestMessage } from "@/features/assistant/assistantThreadOrdering";
+import { initialAssistantMessageFor } from "@/features/assistant/useAssistantController";
 import {
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
@@ -109,6 +112,10 @@ const validInput = {
 };
 
 assert.equal(assistantMessageInputSchema.safeParse(validInput).success, true);
+assert.equal(assistantMessageInputSchema.safeParse({
+  message: "What makes a scientific question useful?",
+  context: null
+}).success, true);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate", targetLanguage: "spanish" }).success, true);
 assistantTranslationLanguages.forEach((targetLanguage) => {
   assert.equal(
@@ -117,6 +124,12 @@ assistantTranslationLanguages.forEach((targetLanguage) => {
   );
 });
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate" }).success, false);
+assert.equal(assistantMessageInputSchema.safeParse({
+  message: "Translate the current view into Spanish.",
+  intent: "translate",
+  targetLanguage: "spanish",
+  context: null
+}).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate", targetLanguage: "italian" }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, message: "x".repeat(2001) }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, content: "x".repeat(12001) } }).success, false);
@@ -162,6 +175,14 @@ assert.equal(assistantContextUpdateInputSchema.safeParse({
   context: validInput.context,
   expectedRevision: 2
 }).success, true);
+assert.equal(assistantContextUpdateInputSchema.safeParse({
+  mode: "clear",
+  expectedRevision: 2
+}).success, true);
+assert.equal(assistantContextUpdateInputSchema.safeParse({
+  mode: "use",
+  expectedRevision: 2
+}).success, false);
 assert.equal(assistantSourceUpdateInputSchema.safeParse({
   sourceId: "c6f055c0-b137-4713-9f5f-c2ee0b78ab32",
   action: "exclude",
@@ -222,6 +243,13 @@ assert.deepEqual(
 assert.match(assistantPrompt(validInput.context, validInput.message), /ACTIVE VIEW/);
 assert.match(assistantPrompt(validInput.context, validInput.message, [{ ...validInput.context, title: "Attached paper" }]), /ATTACHED SOURCES[\s\S]*Attached paper/);
 assert.match(assistantInstructions, /never as instructions/i);
+assert.match(assistantGeneralInstructions, /no Symposium view or source attached/i);
+assert.match(assistantGeneralInstructions, /Never imply that you can see the user's current page/i);
+assert.match(assistantGeneralInstructions, /shouldOfferQuickNote to false/i);
+assert.match(assistantGeneralPrompt("How do hypotheses differ from predictions?"), /No Symposium view or source is attached/);
+assert.doesNotMatch(assistantGeneralPrompt("How do hypotheses differ from predictions?"), /ACTIVE VIEW|ATTACHED SOURCES/);
+assert.equal(initialAssistantMessageFor(null).body, "What’s on your mind?");
+assert.match(initialAssistantMessageFor(validInput.context).body, /You’re on A bounded claim/);
 assert.match(assistantTranslationInstructions("french"), /Translate the source requested by the user into French/);
 assert.match(assistantTranslationInstructions("sanskrit"), /Sanskrit is experimental/);
 assert.equal(assistantTranslationLanguages.length, 17);
@@ -245,6 +273,15 @@ assert.doesNotMatch(assistantRenderedInput({
   intent: "translate",
   targetLanguage: "german"
 }), /Earlier answer/);
+const generalRenderedInput = assistantRenderedInput({
+  history: [{ role: "assistant", body: "Earlier general answer." }],
+  context: null,
+  message: "What makes a strong scientific explanation?",
+  intent: "answer"
+});
+assert.match(generalRenderedInput, /Earlier general answer/);
+assert.match(generalRenderedInput, /no Symposium view or source attached/i);
+assert.doesNotMatch(generalRenderedInput, /ACTIVE VIEW|ATTACHED SOURCES|A bounded claim/);
 assert.equal(conservativeInputTokenCeiling("abc"), 3);
 assert.equal(reserveCostMicros("gpt-5.6-terra", "a", 700), 10_504);
 assert.equal(actualCostMicros("gpt-5.6-terra", 1000, 100), 4_625);
@@ -1556,7 +1593,8 @@ assert.match(provider, /max_output_tokens: assistantMaxOutputTokens\(input\.inte
 assert.match(provider, /type: "json_schema"/);
 assert.match(provider, /strict: true/);
 assert.match(provider, /symposium-translation-v2/);
-assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v2" : "symposium-contextual-tablet-v3"/);
+assert.match(provider, /"symposium-general-chat-v1"/);
+assert.match(provider, /input\.context\s*\?\s*"symposium-contextual-tablet-v3"\s*:\s*"symposium-general-chat-v1"/);
 assert.match(provider, /reasoning: \{ effort: "none" \}/);
 assert.match(provider, /symposium-document-page-translation-v7/);
 assert.match(provider, /symposium-content-translation-v4/);
@@ -1566,6 +1604,12 @@ assert.match(repository, /providerErrorCode/);
 assert.match(repository, /last_message_at AS "lastMessageAt"/);
 assert.match(repository, /ORDER BY last_message_at DESC, id DESC/);
 assert.match(repository, /SET last_message_at = GREATEST/);
+assert.match(repository, /mode === "clear"/);
+assert.match(repository, /active_source_id = NULL/);
+assert.match(repository, /active_context_key = NULL/);
+assert.match(repository, /JSON\.stringify\(source \? \[source\] : \[\]\)/);
+assert.match(repository, /grounding: context \? "sources" : "none"/);
+assert.match(repository, /Attach a Symposium source before starting a source translation/);
 assert.match(repository, /new Date\(source\.attachedAt\)\.toISOString\(\)/);
 assert.match(migration, /0056_recover_assistant_sources_and_message_activity/);
 assert.match(migration, /assistant_historical_source_recovery/);
@@ -1577,6 +1621,10 @@ assert.match(assistantController, /orderAssistantThreadsByLatestMessage/);
 assert.match(tablet, /candidate\.lastMessageAt/);
 assert.match(tablet, /Inspect saved context/);
 assert.match(tablet, /Stored source text/);
+assert.match(tablet, /Start a new blank chat/);
+assert.match(tablet, /Remove chat context/);
+assert.match(tablet, /Add current view/);
+assert.match(assistantController, /What’s on your mind\?/);
 assert.match(tablet, /source\.provenance === "recovered"/);
 assert.match(usageService, /pg_advisory_xact_lock\(hashtextextended\('symposium:ai-budget'/);
 assert.doesNotMatch(usageService, /userMinute|two attempts per minute/);
@@ -1632,10 +1680,10 @@ assert.match(scribbles, /assistant_quick_note/);
 assert.match(scribbles, /FOR UPDATE OF message, conversation/);
 assert.match(scribbles, /quickNoteResult: value/);
 assert.match(scribbles, /existingResult\.success/);
-assert.match(tablet, /Extremely limited beta/);
-assert.match(tablet, /Loading today’s tiny AI allowance/);
+assert.match(tablet, /Limited beta/);
+assert.match(tablet, /Loading allowance/);
 assert.match(tablet, /Send · uses 1/);
-assert.match(tablet, /Ask about this view/);
+assert.match(assistantController, /Ask about this view/);
 assert.match(tablet, /Confirm & save Quick Note/);
 assert.match(tablet, /Office destination/);
 assert.match(tablet, /All · Quick Notes/);
@@ -1646,12 +1694,12 @@ assert.match(tablet, /setContextDockOpen\(mode === "workspace"\)/);
 assert.match(assistantController, /synchronizeThreadMutation/);
 assert.match(assistantController, /assistantRequestIntentFor\(message\)/);
 assert.match(assistantController, /Name a supported target language/);
-assert.match(tablet, /New research thread/);
+assert.match(tablet, /New chat/);
 assert.match(tablet, /Context Dock/);
-assert.match(tablet, /Live view/);
+assert.match(tablet, /This page/);
 assert.match(tablet, /Capture update/);
-assert.match(tablet, /Use live view/);
-assert.match(tablet, /Add source/);
+assert.match(tablet, /Use this page/);
+assert.match(tablet, /Add page/);
 assert.match(tablet, /Used \{message\.evidence\.length\} source/);
 assert.match(provider, /shouldOfferQuickNote/);
 assert.doesNotMatch(tablet, /Opening and browsing cost nothing/);
@@ -1675,7 +1723,7 @@ assert.match(shell, /assistantThreadId: assistantController\.conversationId \?\?
 assert.match(shell, /enabled: tabletOpen \|\| assistantOpen/);
 assert.match(tablet, /Expand to AI Workspace/);
 assert.match(tablet, /Collapse to AI Tablet/);
-assert.match(tablet, /Search recent Research Threads/);
+assert.match(tablet, /Search chats/);
 assert.match(tablet, /data-mobile-pane=\{mobilePane\}/);
 assert.match(tablet, /aria-pressed=\{mobilePane === "threads"\}/);
 assert.match(tablet, /aria-pressed=\{mobilePane === "chat"\}/);
@@ -1691,9 +1739,9 @@ assert.match(assistantController, /contextLockRef/);
 assert.match(assistantController, /messageRetryRef/);
 assert.match(assistantController, /contextRetryRef/);
 assert.match(assistantController, /sourceRetryRef/);
-assert.match(assistantController, /const startNewThread = useCallback\(\(\) => \{[\s\S]*?requestedAttemptRef\.current = null/);
+assert.match(assistantController, /const startNewThread = useCallback\(\([\s\S]*?requestedAttemptRef\.current = null/);
 assert.match(assistantController, /if \(!requestedConversationId\) \{[\s\S]*?requestedAttemptRef\.current = null;[\s\S]*?return;/);
-assert.match(tabletStyles, /\.assistant-compact \.tablet-context-dock-body \{ max-height: min\(6rem, 18vh\); \}/);
+assert.match(tabletStyles, /\.assistant-compact \.tablet-context-dock-body \{ max-height: min\(9rem, 25vh\); \}/);
 assert.match(tabletStyles, /@media \(max-width: 760px\) and \(max-height: 640px\)/);
 assert.match(tabletStyles, /@media \(max-width: 900px\)[\s\S]*?\.assistant-workspace\[data-mobile-pane="threads"\]/);
 assert.match(tabletStyles, /@media \(max-width: 900px\) and \(max-height: 640px\)/);

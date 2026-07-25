@@ -6,6 +6,7 @@ process.env.OPENAI_API_KEY ||= "provider-boundary-test-key";
 const main = async () => {
   const {
     assistantProviderFailure,
+    callAssistantModel,
     callContentTranslationModel,
     callDocumentTranslationModel
   } = await import("@/apps/api/src/services/openaiResponses");
@@ -69,6 +70,85 @@ const main = async () => {
   assert.equal(completionValues[1], "failed");
   assert.equal(completionValues[2], 0);
   assert.equal(completionValues[8], "invalid_json_schema");
+
+  const assistantOutput = {
+    body: "A strong scientific question is specific, answerable, and capable of changing what we believe.",
+    shouldOfferQuickNote: false,
+    quickNoteTitle: "",
+    quickNoteBody: ""
+  };
+  let generalAssistantPayloadJson = "";
+  const generalAssistantFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    generalAssistantPayloadJson = String(init?.body);
+    return new Response(JSON.stringify({
+      id: "resp_general_assistant_provider_check",
+      model: "gpt-5.6-terra",
+      status: "completed",
+      output_text: JSON.stringify(assistantOutput),
+      usage: { input_tokens: 60, output_tokens: 24 }
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  const generalAssistantResult = await callAssistantModel({
+    ownerHandle: "provider-check",
+    history: [{ role: "assistant", body: "Earlier general answer." }],
+    context: null,
+    message: "What makes a strong scientific question?",
+    intent: "answer",
+    fetchImpl: generalAssistantFetch
+  });
+  assert.equal(generalAssistantResult.body, assistantOutput.body);
+  assert.equal(generalAssistantResult.quickNote, undefined);
+  const generalAssistantPayload = JSON.parse(generalAssistantPayloadJson) as {
+    instructions: string;
+    input: Array<{ role: string; content: string }>;
+    prompt_cache_key: string;
+  };
+  assert.equal(generalAssistantPayload.prompt_cache_key, "symposium-general-chat-v1");
+  assert.match(generalAssistantPayload.instructions, /no Symposium view or source attached/i);
+  assert.match(generalAssistantPayload.instructions, /Never imply that you can see the user's current page/i);
+  assert.equal(generalAssistantPayload.input[0]?.content, "Earlier general answer.");
+  assert.match(generalAssistantPayload.input.at(-1)?.content ?? "", /No Symposium view or source is attached/);
+  assert.doesNotMatch(
+    JSON.stringify(generalAssistantPayload.input),
+    /ACTIVE VIEW|ATTACHED SOURCES|provider-check-hidden-view/
+  );
+
+  let contextualAssistantPayloadJson = "";
+  const contextualAssistantFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    contextualAssistantPayloadJson = String(init?.body);
+    return new Response(JSON.stringify({
+      id: "resp_contextual_assistant_provider_check",
+      model: "gpt-5.6-terra",
+      status: "completed",
+      output_text: JSON.stringify(assistantOutput),
+      usage: { input_tokens: 90, output_tokens: 24 }
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  await callAssistantModel({
+    ownerHandle: "provider-check",
+    history: [],
+    context: {
+      surface: "post",
+      route: "/posts/provider-check",
+      title: "Provider check paper",
+      summary: "A bounded source.",
+      content: "provider-check-hidden-view",
+      entityType: "post",
+      entityId: "provider-check"
+    },
+    message: "Summarize this source.",
+    intent: "answer",
+    fetchImpl: contextualAssistantFetch
+  });
+  const contextualAssistantPayload = JSON.parse(contextualAssistantPayloadJson) as {
+    instructions: string;
+    input: Array<{ role: string; content: string }>;
+    prompt_cache_key: string;
+  };
+  assert.equal(contextualAssistantPayload.prompt_cache_key, "symposium-contextual-tablet-v3");
+  assert.match(contextualAssistantPayload.instructions, /contextual AI tablet/i);
+  assert.match(contextualAssistantPayload.input.at(-1)?.content ?? "", /ACTIVE VIEW/);
+  assert.match(contextualAssistantPayload.input.at(-1)?.content ?? "", /provider-check-hidden-view/);
 
   const contentRequest = {
     sourceType: "post" as const,

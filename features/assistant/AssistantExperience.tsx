@@ -219,19 +219,25 @@ function TranslationCard({
 
 function ContextDock({
   context,
+  activeContext,
   thread,
   open,
   busy,
   onToggle,
+  onUseCurrentView,
+  onClearContext,
   onContextChange,
   onSourceChange
 }: {
   context: AssistantContext;
+  activeContext: AssistantContext | null;
   thread: AssistantThreadStateContract | null;
   open: boolean;
   busy: boolean;
   onToggle: () => void;
-  onContextChange: (mode: "use" | "attach" | "refresh") => void;
+  onUseCurrentView: () => void;
+  onClearContext: () => void;
+  onContextChange: (mode: "use" | "attach" | "refresh" | "clear") => void;
   onSourceChange: (source: AssistantThreadSourceContract, action: "use" | "include" | "exclude") => void;
 }) {
   const contextKey = `${context.surface}:${context.entityId ?? context.route}`;
@@ -247,48 +253,102 @@ function ContextDock({
         <span>
           <BookOpen size={14} />
           <strong>Context Dock</strong>
-          <small>{thread ? `${includedCount} included · ${thread.sourceRevisionCount} snapshot${thread.sourceRevisionCount === 1 ? "" : "s"}` : "Current view becomes the origin"}</small>
+          <small>
+            {thread
+              ? activeContext
+                ? `${includedCount} active · ${thread.sourceRevisionCount} saved`
+                : `${thread.sourceRevisionCount} saved · none active`
+              : activeContext
+                ? "Current view ready"
+                : "No context attached"}
+          </small>
         </span>
         <ChevronDown size={14} />
       </button>
       {open ? (
         <div className="tablet-context-dock-body">
           {!thread ? (
-            <div className="tablet-context-empty">
-              <strong>{context.title}</strong>
-              <span>Sending the first message captures this view as the immutable thread origin. Opening and arranging context costs nothing.</span>
+            <div className={`tablet-context-start${activeContext ? " attached" : ""}`}>
+              <div>
+                <span>{activeContext ? "Starting context" : "Blank chat"}</span>
+                <strong>{activeContext?.title ?? "No context attached"}</strong>
+                <small>
+                  {activeContext
+                    ? "This view will be captured when you send your first message."
+                    : "Start with a question. You can attach this page whenever it becomes useful."}
+                </small>
+              </div>
+              {activeContext ? (
+                <button
+                  type="button"
+                  aria-label="Remove current view context"
+                  title="Remove current view context"
+                  disabled={busy}
+                  onClick={onClearContext}
+                >
+                  <X size={14} />
+                </button>
+              ) : (
+                <button type="button" disabled={busy} onClick={onUseCurrentView}>
+                  <Link2 size={13} />Use current view
+                </button>
+              )}
             </div>
           ) : (
             <>
+              <div className={`tablet-context-status${activeSource ? " attached" : ""}`}>
+                <div>
+                  <span>{activeSource ? "Working context" : "Plain chat"}</span>
+                  <strong>{activeSource?.context.title ?? "No context attached"}</strong>
+                  <small>
+                    {activeSource
+                      ? "Answers can use this source and the included material below."
+                      : "Answers use only this conversation and general knowledge."}
+                  </small>
+                </div>
+                {activeSource ? (
+                  <button
+                    type="button"
+                    aria-label="Clear active chat context"
+                    title="Continue without explicit context"
+                    disabled={busy}
+                    onClick={onClearContext}
+                  >
+                    <X size={14} />
+                  </button>
+                ) : null}
+              </div>
               <div className={`tablet-live-context${thread.activeContextKey !== contextKey ? " changed" : ""}`}>
                 <span>
                   <RefreshCw size={13} />
-                  <strong>Live view</strong>
+                  <strong>This page</strong>
                   <small>{context.title}</small>
                 </span>
                 <p>
                   {!latestCurrent
-                    ? "This view is not attached to the thread."
+                    ? "This page is not saved in this chat."
                     : currentChanged
-                      ? `The live view has changed since saved revision ${latestCurrent.revision}.`
+                      ? `This page changed since saved revision ${latestCurrent.revision}.`
                       : latestCurrent.id === thread.activeSourceId
-                        ? `Matches active revision ${latestCurrent.revision}.`
-                        : `Saved as revision ${latestCurrent.revision}, but the thread is using ${activeSource?.context.title ?? "another source"}.`}
+                        ? `Using saved revision ${latestCurrent.revision}.`
+                        : `Saved as revision ${latestCurrent.revision}, but not currently in use.`}
                 </p>
                 <div>
                   {!latestCurrent ? (
                     <>
-                      <button type="button" disabled={busy || includedCount >= 5} onClick={() => onContextChange("attach")}>
-                        <Link2 size={12} />Add source
-                      </button>
-                      <button type="button" disabled={busy} onClick={() => onContextChange("use")}>Use live view</button>
+                      {activeSource ? (
+                        <button type="button" disabled={busy || includedCount >= 5} onClick={() => onContextChange("attach")}>
+                          <Link2 size={12} />Add page
+                        </button>
+                      ) : null}
+                      <button type="button" disabled={busy} onClick={() => onContextChange("use")}>Use this page</button>
                     </>
                   ) : currentChanged ? (
                     <button type="button" disabled={busy} onClick={() => onContextChange("refresh")}>
                       <FileClock size={12} />Capture update
                     </button>
                   ) : latestCurrent.id !== thread.activeSourceId ? (
-                    <button type="button" disabled={busy} onClick={() => onContextChange("use")}>Use live view</button>
+                    <button type="button" disabled={busy} onClick={() => onContextChange("use")}>Use this page</button>
                   ) : (
                     <button type="button" disabled={busy} onClick={() => onContextChange("refresh")}>
                       <FileClock size={12} />Save new revision
@@ -296,7 +356,7 @@ function ContextDock({
                   )}
                 </div>
               </div>
-              <div className="tablet-source-list" aria-label="Saved source revisions">
+              {orderedSources.length ? <div className="tablet-source-list" aria-label="Saved source revisions">
                 {orderedSources.map((source) => {
                   const active = source.id === thread.activeSourceId;
                   const origin = source.id === thread.originSourceId;
@@ -378,7 +438,7 @@ function ContextDock({
                     </article>
                   );
                 })}
-              </div>
+              </div> : null}
             </>
           )}
         </div>
@@ -405,6 +465,7 @@ export function AssistantExperience({
   const {
     actorHandle,
     context,
+    activeContext,
     conversationId,
     thread,
     threads,
@@ -424,6 +485,8 @@ export function AssistantExperience({
     setDraft,
     openThread,
     startNewThread,
+    useCurrentView,
+    clearContext,
     changeThreadContext,
     changeSavedSource,
     synchronizeThreadMutation,
@@ -483,7 +546,7 @@ export function AssistantExperience({
       <header className="tablet-header assistant-header">
         <div>
           <span><BrainCircuit size={16} />{mode === "workspace" ? "AI Workspace" : "AI Tablet"}</span>
-          <small>{mode === "workspace" ? "Research continuity · inspectable context · confirmed actions" : "Contextual answers · confirmed actions"}</small>
+          <small>{mode === "workspace" ? "Conversations with inspectable working context" : "Ask anything · add Symposium context when useful"}</small>
         </div>
         <div className="assistant-header-actions">
           {mode === "compact" ? (
@@ -506,7 +569,7 @@ export function AssistantExperience({
 
       <nav className="assistant-mobile-nav" aria-label="AI Workspace panels">
         <button type="button" aria-pressed={mobilePane === "threads"} className={mobilePane === "threads" ? "active" : ""} onClick={() => setMobilePane("threads")}>
-          <History size={14} />Threads
+          <History size={14} />Chats
         </button>
         <button type="button" aria-pressed={mobilePane === "chat"} className={mobilePane === "chat" ? "active" : ""} onClick={() => setMobilePane("chat")}>
           <BrainCircuit size={14} />Chat
@@ -516,8 +579,8 @@ export function AssistantExperience({
         </button>
       </nav>
 
-      <aside className="assistant-left" aria-label="Research Threads">
-        <section className="tablet-thread-bar" aria-label="Research thread controls">
+      <aside className="assistant-left" aria-label="Chats">
+        <section className="tablet-thread-bar" aria-label="Chat controls">
           {mode === "compact" ? (
             <button
               type="button"
@@ -527,29 +590,31 @@ export function AssistantExperience({
             >
               <History size={14} />
               <span>
-                <strong>{thread?.title ?? "New research thread"}</strong>
-                <small>{thread ? `${thread.sourceCount} source${thread.sourceCount === 1 ? "" : "s"} · saved history` : "Starts when you send"}</small>
+                <strong>{thread?.title ?? "New chat"}</strong>
+                <small>{thread ? `${thread.sourceCount} active source${thread.sourceCount === 1 ? "" : "s"}` : activeContext ? "Current view ready" : "No context attached"}</small>
               </span>
             </button>
           ) : (
             <div className="tablet-thread-current" aria-label="Current research thread">
               <History size={14} />
               <span>
-                <strong>{thread?.title ?? "New research thread"}</strong>
-                <small>{thread ? `${thread.sourceCount} source${thread.sourceCount === 1 ? "" : "s"} · saved history` : "Starts when you send"}</small>
+                <strong>{thread?.title ?? "New chat"}</strong>
+                <small>{thread ? `${thread.sourceCount} active source${thread.sourceCount === 1 ? "" : "s"}` : activeContext ? "Current view ready" : "No context attached"}</small>
               </span>
             </div>
           )}
           <button
             type="button"
-            title="Start a new research thread"
+            className="tablet-new-chat"
+            aria-label="Start a new blank chat"
+            title="Start a new blank chat"
             onClick={() => {
-              startNewThread();
+              startNewThread("blank");
               setThreadsOpen(false);
               setMobilePane("chat");
             }}
           >
-            <Plus size={15} />
+            <Plus size={15} /><span>New chat</span>
           </button>
           {mode === "compact" && threadsOpen ? (
           <div className="tablet-thread-menu">
@@ -563,7 +628,7 @@ export function AssistantExperience({
                 <strong>{candidate.title}</strong>
                 <small>{candidate.sourceCount} source{candidate.sourceCount === 1 ? "" : "s"} · {assistantThreadActivityLabel(candidate.lastMessageAt)}</small>
               </button>
-            )) : <p>No saved research threads yet.</p>}
+            )) : <p>No saved chats yet.</p>}
           </div>
           ) : null}
         </section>
@@ -573,8 +638,8 @@ export function AssistantExperience({
             type="search"
             value={threadQuery}
             onChange={(event) => setThreadQuery(event.target.value)}
-            placeholder="Search recent threads"
-            aria-label="Search recent Research Threads"
+            placeholder="Search chats"
+            aria-label="Search chats"
           />
         </div>
         <div className="assistant-thread-list">
@@ -591,20 +656,41 @@ export function AssistantExperience({
               <time dateTime={candidate.lastMessageAt}>{assistantThreadActivityLabel(candidate.lastMessageAt)}</time>
             </button>
           )) : (
-            <p>{threadQuery.trim() ? "No recent threads match this search." : "No saved Research Threads yet."}</p>
+            <p>{threadQuery.trim() ? "No chats match this search." : "No saved chats yet."}</p>
           )}
           {nextCursor ? <small>Showing the 50 most recently chatted threads.</small> : null}
         </div>
       </aside>
 
-      <section className="assistant-center" aria-label="Active Research Thread">
+      <section className="assistant-center" aria-label="Chat">
         <section className="tablet-limit-notice" aria-label="AI usage limits">
-          <AlertTriangle size={15} />
-          <div>
-            <strong>Extremely limited beta</strong>
-            <span>{quotaLoading ? "Loading today’s tiny AI allowance…" : `Only ${remainingToday} of ${dailyLimit} answers left today. Capacity is shared and AI stops at the daily or $${monthlyBudgetUsd} monthly app cap.`}</span>
-          </div>
+          <AlertTriangle size={13} />
+          <strong>Limited beta</strong>
+          <span>{quotaLoading ? "Loading allowance…" : `${remainingToday} of ${dailyLimit} answers left today · shared $${monthlyBudgetUsd} monthly cap`}</span>
         </section>
+
+        <div className={`tablet-active-context${activeContext ? " attached" : ""}`} aria-label="Chat context">
+          <span>
+            <BookOpen size={13} />
+            <small>{activeContext ? "Using context" : "Plain chat"}</small>
+            <strong>{activeContext?.title ?? "No Symposium context"}</strong>
+          </span>
+          {activeContext ? (
+            <button
+              type="button"
+              aria-label="Remove chat context"
+              title="Continue without explicit context"
+              disabled={busy || contextBusy}
+              onClick={clearContext}
+            >
+              <X size={14} />
+            </button>
+          ) : (
+            <button type="button" disabled={busy || contextBusy} onClick={useCurrentView}>
+              <Link2 size={12} />Add current view
+            </button>
+          )}
+        </div>
 
         <div className="tablet-transcript" aria-live="polite" ref={transcriptRef}>
           {threadLoading ? <article className="tablet-message assistant pending"><span>Tablet</span><p>Loading research threads…</p></article> : null}
@@ -650,7 +736,7 @@ export function AssistantExperience({
               ) : null}
             </article>
           ))}
-          {busy ? <article className="tablet-message assistant pending"><span>Tablet</span><p>Reading this view and thinking…</p></article> : null}
+          {busy ? <article className="tablet-message assistant pending"><span>Tablet</span><p>{activeContext ? "Reading the context and thinking…" : "Thinking…"}</p></article> : null}
         </div>
 
         {error ? <div className="tablet-error" role="alert">{error}</div> : null}
@@ -666,7 +752,13 @@ export function AssistantExperience({
             }}
             maxLength={2000}
             rows={mode === "workspace" ? 3 : 2}
-            placeholder={quotaLoading ? "Loading AI allowance" : remainingToday > 0 ? "Ask about this view" : "Daily AI limit reached"}
+            placeholder={quotaLoading
+              ? "Loading AI allowance"
+              : remainingToday > 0
+                ? activeContext
+                  ? `Ask about ${activeContext.title}`
+                  : "Message Symposium AI"
+                : "Daily AI limit reached"}
             disabled={busy || contextBusy || threadLoading || quotaLoading || remainingToday <= 0 || !providerEnabled || !providerConfigured}
           />
           <button
@@ -683,10 +775,13 @@ export function AssistantExperience({
       <aside className="assistant-right" aria-label="Thread context">
         <ContextDock
           context={context}
+          activeContext={activeContext}
           thread={thread}
           open={contextDockOpen}
           busy={busy || contextBusy}
           onToggle={() => setContextDockOpen((current) => !current)}
+          onUseCurrentView={useCurrentView}
+          onClearContext={clearContext}
           onContextChange={(change) => void changeThreadContext(change)}
           onSourceChange={(source, action) => void changeSavedSource(source, action)}
         />

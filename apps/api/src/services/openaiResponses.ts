@@ -239,6 +239,15 @@ export const assistantInstructions = [
   "Never claim you already changed, saved, published, messaged, or searched anything. A Quick Note is only saved after the user confirms the separate interface action."
 ].join("\n");
 
+export const assistantGeneralInstructions = [
+  "You are Symposium AI, a thoughtful general assistant inside a serious scientific research and discussion workspace.",
+  "This conversation has no Symposium view or source attached. Answer from the user's question, recent conversation, and general knowledge.",
+  "Never imply that you can see the user's current page, private workspace, sources, or platform state. If the question depends on one, ask the user to attach the relevant Symposium view.",
+  "Be accurate, direct, warm, and concise. Distinguish established knowledge from inference and uncertainty. Do not invent citations, findings, people, or platform actions.",
+  "Do not offer a Quick Note while no source is attached: set shouldOfferQuickNote to false and return empty quickNoteTitle and quickNoteBody strings.",
+  "Never claim you already changed, saved, published, messaged, searched, or attached anything."
+].join("\n");
+
 export const assistantTranslationInstructions = (targetLanguage: AssistantTranslationLanguageContract) => [
   "You are the translation workspace inside Symposium, a serious scientific research and discussion product.",
   `Translate the source requested by the user into ${translationLanguageLabels[targetLanguage]}.`,
@@ -266,6 +275,15 @@ export const assistantPrompt = (context: unknown, message: string, attachedConte
     message
   ].join("\n");
 
+export const assistantGeneralPrompt = (message: string) =>
+  [
+    "CONTEXT STATUS:",
+    "No Symposium view or source is attached to this conversation.",
+    "",
+    "USER QUESTION:",
+    message
+  ].join("\n");
+
 export const assistantTranslationPrompt = (context: unknown, message: string) =>
   [
     "CURRENT VIEW (user-visible source context):",
@@ -280,7 +298,7 @@ export const assistantMaxOutputTokens = (intent: AssistantRequestIntentContract)
 
 export const assistantRenderedInput = (input: {
   history: AssistantHistoryMessage[];
-  context: unknown;
+  context: unknown | null;
   attachedContexts?: unknown[];
   message: string;
   intent: AssistantRequestIntentContract;
@@ -288,15 +306,18 @@ export const assistantRenderedInput = (input: {
 }) => {
   if (input.intent === "translate") {
     if (!input.targetLanguage) throw new Error("A translation language is required.");
+    if (!input.context) throw new Error("A source context is required for source translation.");
     return [
       assistantTranslationInstructions(input.targetLanguage),
       assistantTranslationPrompt(input.context, input.message)
     ].join("\n");
   }
   return [
-    assistantInstructions,
+    input.context ? assistantInstructions : assistantGeneralInstructions,
     ...input.history.map((entry) => `${entry.role}: ${entry.body}`),
-    assistantPrompt(input.context, input.message, input.attachedContexts)
+    input.context
+      ? assistantPrompt(input.context, input.message, input.attachedContexts)
+      : assistantGeneralPrompt(input.message)
   ].join("\n");
 };
 
@@ -636,7 +657,7 @@ const responseText = (payload: OpenAIResponsePayload) => {
 export const callAssistantModel = async (input: {
   ownerHandle: string;
   history: AssistantHistoryMessage[];
-  context: unknown;
+  context: unknown | null;
   attachedContexts?: unknown[];
   message: string;
   intent: AssistantRequestIntentContract;
@@ -647,12 +668,17 @@ export const callAssistantModel = async (input: {
   const fetchImpl = input.fetchImpl ?? fetch;
   const translating = input.intent === "translate";
   if (translating && !input.targetLanguage) throw new Error("A translation language is required.");
+  if (translating && !input.context) throw new Error("A source context is required for source translation.");
   const instructions = translating
     ? assistantTranslationInstructions(input.targetLanguage!)
-    : assistantInstructions;
+    : input.context
+      ? assistantInstructions
+      : assistantGeneralInstructions;
   const prompt = translating
     ? assistantTranslationPrompt(input.context, input.message)
-    : assistantPrompt(input.context, input.message, input.attachedContexts);
+    : input.context
+      ? assistantPrompt(input.context, input.message, input.attachedContexts)
+      : assistantGeneralPrompt(input.message);
   const response = await fetchImpl("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -671,7 +697,11 @@ export const callAssistantModel = async (input: {
         { role: "user", content: prompt }
       ],
       text: { format: translating ? translationResponseFormat : answerResponseFormat },
-      prompt_cache_key: translating ? "symposium-translation-v2" : "symposium-contextual-tablet-v3",
+      prompt_cache_key: translating
+        ? "symposium-translation-v2"
+        : input.context
+          ? "symposium-contextual-tablet-v3"
+          : "symposium-general-chat-v1",
       safety_identifier: createHash("sha256").update(input.ownerHandle).digest("hex").slice(0, 64)
     }),
     signal: AbortSignal.timeout(45_000)
