@@ -381,10 +381,11 @@ export function AssistantExperience({
     submit
   } = controller;
   const [threadsOpen, setThreadsOpen] = useState(false);
-  const [contextDockOpen, setContextDockOpen] = useState(true);
+  const [contextDockOpen, setContextDockOpen] = useState(mode === "workspace");
   const [threadQuery, setThreadQuery] = useState("");
   const [mobilePane, setMobilePane] = useState<"threads" | "chat" | "context">("chat");
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const previousModeRef = useRef(mode);
 
   const filteredThreads = useMemo(() => {
     const query = threadQuery.trim().toLocaleLowerCase();
@@ -399,6 +400,12 @@ export function AssistantExperience({
     setMobilePane("chat");
     void openThread(id);
   };
+
+  useEffect(() => {
+    if (previousModeRef.current === mode) return;
+    previousModeRef.current = mode;
+    setContextDockOpen(mode === "workspace");
+  }, [mode]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
