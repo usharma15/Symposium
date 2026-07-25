@@ -1,14 +1,23 @@
 import assert from "node:assert/strict";
 import {
+  canonicalAssistantBackdropIds,
   canonicalRouteForRoom,
   canonicalRouteHref,
+  parseAssistantBackdrop,
   parseCanonicalRoute
 } from "@/features/navigation/canonicalRoute";
 import {
+  assistantBackdropForView,
   canonicalRouteForView,
   roomForCanonicalRoute,
   snapshotForCanonicalRoute
 } from "@/features/navigation/viewState";
+import {
+  assistantBackdropRender,
+  communityRenders,
+  messageRenders,
+  roomRenders
+} from "@/features/rooms/roomRenderAssets";
 
 assert.equal(canonicalRouteHref({ kind: "hall" }), "/");
 assert.deepEqual(canonicalRouteForRoom("office"), { kind: "workspace" });
@@ -50,24 +59,62 @@ assert.deepEqual(parseCanonicalRoute("/messages", "?conversation=niko-varga"), {
   conversationId: "niko-varga"
 });
 assert.equal(
-  canonicalRouteHref({ kind: "assistant", threadId: "thread one" }),
-  "/assistant/threads/thread%20one"
+  canonicalRouteHref({ kind: "assistant", threadId: "thread one", backdrop: "library" }),
+  "/assistant/threads/thread%20one?backdrop=library"
 );
 assert.deepEqual(parseCanonicalRoute("/assistant"), { kind: "assistant" });
-assert.deepEqual(parseCanonicalRoute("/assistant/threads/thread%20one"), {
+assert.deepEqual(parseCanonicalRoute("/assistant/threads/thread%20one", "?backdrop=messages"), {
   kind: "assistant",
-  threadId: "thread one"
+  threadId: "thread one",
+  backdrop: "messages"
 });
+assert.deepEqual(parseCanonicalRoute("/assistant", "?backdrop=../../private"), { kind: "assistant" });
+assert.equal(parseAssistantBackdrop(["messages", "library"]), "messages");
+assert.equal(parseAssistantBackdrop("not-a-backdrop"), undefined);
+canonicalAssistantBackdropIds.forEach((backdrop) => {
+  const href = canonicalRouteHref({ kind: "assistant", backdrop });
+  const url = new URL(href, "https://symposium.test");
+  assert.deepEqual(
+    parseCanonicalRoute(url.pathname, url.search),
+    { kind: "assistant", backdrop }
+  );
+});
+assert.equal(assistantBackdropRender("day", "library"), roomRenders.day.library);
+assert.equal(assistantBackdropRender("night", "messages"), messageRenders.night);
+assert.equal(
+  assistantBackdropRender("day", "community-selected"),
+  communityRenders.day.selected
+);
 assert.equal(roomForCanonicalRoute({ kind: "assistant", threadId: "thread-one" }), "hall");
+assert.equal(
+  roomForCanonicalRoute({ kind: "assistant", threadId: "thread-one", backdrop: "library" }),
+  "library"
+);
+assert.equal(
+  assistantBackdropForView({ activeRoom: "library", messagesOpen: false, selectedCommunityId: null }),
+  "library"
+);
+assert.equal(
+  assistantBackdropForView({ activeRoom: "hall", messagesOpen: true, selectedCommunityId: null }),
+  "messages"
+);
+assert.equal(
+  assistantBackdropForView({ activeRoom: "communities", messagesOpen: false, selectedCommunityId: "community-one" }),
+  "community-selected"
+);
 const assistantSnapshot = snapshotForCanonicalRoute({
   kind: "assistant",
-  threadId: "thread-one"
+  threadId: "thread-one",
+  backdrop: "opportunities"
 });
 assert.equal(assistantSnapshot.assistantOpen, true);
 assert.equal(assistantSnapshot.assistantThreadId, "thread-one");
+assert.equal(assistantSnapshot.assistantBackdrop, "opportunities");
+assert.equal(assistantSnapshot.activeRoom, "opportunities");
 assert.deepEqual(canonicalRouteForView(assistantSnapshot), {
   kind: "assistant",
-  threadId: "thread-one"
+  threadId: "thread-one",
+  backdrop: "opportunities"
 });
 assert.equal(
   canonicalRouteHref({ kind: "post", postId: "post/one", commentId: "comment one" }),

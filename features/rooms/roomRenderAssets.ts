@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import type { AssistantBackdropId } from "@/features/navigation/canonicalRoute";
 import type { RoomId } from "@/lib/mockData";
 
 export type Theme = "day" | "night";
@@ -45,6 +46,12 @@ export const communityRenders: Record<Theme, { directory: string; selected: stri
 export const messageRenders: Record<Theme, string> = {
   day: "/symposium-renders/messages-v1.avif",
   night: "/symposium-renders/messages-night-v1.avif"
+};
+
+export const assistantBackdropRender = (theme: Theme, backdrop: AssistantBackdropId) => {
+  if (backdrop === "messages") return messageRenders[theme];
+  if (backdrop === "community-selected") return communityRenders[theme].selected;
+  return roomRenders[theme][backdrop];
 };
 
 const likelyDestination: Record<RoomId, RoomId> = {

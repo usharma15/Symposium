@@ -543,29 +543,22 @@ export function AssistantExperience({
       data-mobile-pane={mobilePane}
       aria-label={mode === "workspace" ? "AI Workspace" : "AI Tablet"}
     >
-      <header className="tablet-header assistant-header">
-        <div>
-          <span><BrainCircuit size={16} />{mode === "workspace" ? "AI Workspace" : "AI Tablet"}</span>
-          <small>{mode === "workspace" ? "Conversations with inspectable working context" : "Ask anything · add Symposium context when useful"}</small>
-        </div>
-        <div className="assistant-header-actions">
-          {mode === "compact" ? (
+      {mode === "compact" ? (
+        <header className="tablet-header assistant-header">
+          <div>
+            <span><BrainCircuit size={16} />AI Tablet</span>
+            <small>Ask anything · add Symposium context when useful</small>
+          </div>
+          <div className="assistant-header-actions">
             <button type="button" title="Expand to AI Workspace" onClick={onExpand}>
               <Maximize2 size={16} /><span>Expand</span>
             </button>
-          ) : null}
-          {mode === "workspace" ? (
-            <button type="button" title="Collapse to AI Tablet" onClick={onCollapse}>
-              <Minimize2 size={16} /><span>Tablet</span>
-            </button>
-          ) : null}
-          {mode === "compact" ? (
             <button type="button" title="Close AI Tablet" onClick={onClose}>
               <X size={16} />
             </button>
-          ) : null}
-        </div>
-      </header>
+          </div>
+        </header>
+      ) : null}
 
       <nav className="assistant-mobile-nav" aria-label="AI Workspace panels">
         <button type="button" aria-pressed={mobilePane === "threads"} className={mobilePane === "threads" ? "active" : ""} onClick={() => setMobilePane("threads")}>
@@ -595,11 +588,11 @@ export function AssistantExperience({
               </span>
             </button>
           ) : (
-            <div className="tablet-thread-current" aria-label="Current research thread">
+            <div className="tablet-thread-current assistant-panel-title" aria-label="Chat history">
               <History size={14} />
               <span>
-                <strong>{thread?.title ?? "New chat"}</strong>
-                <small>{thread ? `${thread.sourceCount} active source${thread.sourceCount === 1 ? "" : "s"}` : activeContext ? "Current view ready" : "No context attached"}</small>
+                <strong>Chats</strong>
+                <small>{threads.length ? `${threads.length} recent conversation${threads.length === 1 ? "" : "s"}` : "Your conversation history"}</small>
               </span>
             </div>
           )}
@@ -663,6 +656,17 @@ export function AssistantExperience({
       </aside>
 
       <section className="assistant-center" aria-label="Chat">
+        {mode === "workspace" ? (
+          <header className="assistant-panel-heading assistant-chat-heading">
+            <div>
+              <span><BrainCircuit size={16} />AI Workspace</span>
+              <small>{thread?.title ?? "New chat"} · {activeContext ? "working with context" : "plain conversation"}</small>
+            </div>
+            <button type="button" title="Collapse to AI Tablet" onClick={onCollapse}>
+              <Minimize2 size={16} /><span>Tablet</span>
+            </button>
+          </header>
+        ) : null}
         <section className="tablet-limit-notice" aria-label="AI usage limits">
           <AlertTriangle size={13} />
           <strong>Limited beta</strong>

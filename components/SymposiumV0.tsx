@@ -109,10 +109,12 @@ import {
 } from "@/features/live-sync/inquiryActionReconciler";
 import {
   parseCanonicalRoute,
+  type AssistantBackdropId,
   type CanonicalRoute,
   type ProfileSocialView
 } from "@/features/navigation/canonicalRoute";
 import {
+  assistantBackdropForView,
   canonicalRouteForView as routeForViewSnapshot,
   detailOriginFromSnapshot,
   officeModeForCanonicalRoute,
@@ -238,6 +240,7 @@ import {
   resolveCachedBootstrap
 } from "@/features/bootstrap/cachedBootstrap";
 import {
+  assistantBackdropRender,
   communityRenders,
   entranceRenders,
   getThemePreloadRenders,
@@ -631,6 +634,12 @@ function SymposiumExperience({
   const [assistantThreadId, setAssistantThreadId] = useState<string | null>(
     initialRoute.kind === "assistant" ? initialRoute.threadId ?? null : null
   );
+  const [assistantBackdrop, setAssistantBackdrop] = useState<AssistantBackdropId | null>(
+    initialRoute.kind === "assistant" ? initialRoute.backdrop ?? "hall" : null
+  );
+  const [assistantOriginContext, setAssistantOriginContext] = useState<
+    NonNullable<AssistantMessageInputContract["context"]> | null
+  >(null);
   const assistantCollapseThreadIdRef = useRef<string | null | undefined>(undefined);
   const [composerOpen, setComposerOpen] = useState(false);
   const [quoteSelection, setQuoteSelection] = useState<QuoteSelection | null>(null);
@@ -772,12 +781,21 @@ function SymposiumExperience({
     activeRoom === "communities" && selectedCommunityId
         ? themedCommunityRenders.selected
         : themedRoomRenders[activeRoom];
-  const activeShellRender = messagesOpen ? messageRenders[theme] : activeRoomRender;
+  const activeAssistantBackdrop = assistantOpen
+    ? assistantBackdrop ?? assistantBackdropForView({ activeRoom, messagesOpen, selectedCommunityId })
+    : null;
+  const activeShellRender = activeAssistantBackdrop
+    ? assistantBackdropRender(theme, activeAssistantBackdrop)
+    : messagesOpen
+      ? messageRenders[theme]
+      : activeRoomRender;
   const themePreloadRenders = useMemo(
-    () => messagesOpen
-      ? [messageRenders[theme === "day" ? "night" : "day"]]
-      : getThemePreloadRenders(theme, activeRoom),
-    [activeRoom, messagesOpen, theme]
+    () => activeAssistantBackdrop
+      ? [assistantBackdropRender(theme === "day" ? "night" : "day", activeAssistantBackdrop)]
+      : messagesOpen
+        ? [messageRenders[theme === "day" ? "night" : "day"]]
+        : getThemePreloadRenders(theme, activeRoom),
+    [activeAssistantBackdrop, activeRoom, messagesOpen, theme]
   );
   const selectedItemCandidate = items.find((item) => item.id === selectedItemId) ?? null;
   if (selectedItemCandidate) selectedItemFallbackRef.current = selectedItemCandidate;
@@ -1857,6 +1875,10 @@ function SymposiumExperience({
     setSelectedCommunityId(snapshot.selectedCommunityId);
     setMessagesOpen(snapshot.messagesOpen);
     setSelectedConversationId(snapshot.selectedConversationId);
+    setAssistantOpen(snapshot.assistantOpen);
+    setAssistantThreadId(snapshot.assistantThreadId);
+    setAssistantBackdrop(snapshot.assistantBackdrop);
+    setAssistantOriginContext(null);
     commentSegmentStacksRef.current = {};
     visibleCommentSegmentStacksRef.current = {};
     setCommentSegmentStacks({});
@@ -2780,6 +2802,7 @@ function SymposiumExperience({
       selectedConversationId,
       assistantOpen,
       assistantThreadId,
+      assistantBackdrop,
       commentSegmentStacks: cloneCommentSegmentStacks({
         ...commentSegmentStacksRef.current,
         ...visibleCommentSegmentStacksRef.current,
@@ -2854,6 +2877,8 @@ function SymposiumExperience({
         ? collapsedAssistantThreadId
         : snapshot.assistantThreadId ?? null
     );
+    setAssistantBackdrop(snapshot.assistantBackdrop ?? null);
+    setAssistantOriginContext(null);
     restoreScrollPosition(snapshot);
   };
 
@@ -2877,6 +2902,7 @@ function SymposiumExperience({
 
   const collapseAssistantToTablet = (threadId: string | null) => {
     assistantCollapseThreadIdRef.current = threadId;
+    setAssistantOriginContext(null);
     setTabletOpen(true);
     goBack();
   };
@@ -2920,6 +2946,14 @@ function SymposiumExperience({
           : next.assistantOpen
             ? currentSnapshot.assistantThreadId
             : null,
+      assistantBackdrop:
+        next.assistantBackdrop !== undefined
+          ? next.assistantBackdrop
+          : next.assistantOpen
+            ? currentSnapshot.assistantOpen
+              ? currentSnapshot.assistantBackdrop ?? assistantBackdropForView(currentSnapshot)
+              : assistantBackdropForView(currentSnapshot)
+            : null,
       scrollAnchor: null,
       scrollY: scrollY ?? currentSnapshot.scrollY,
       detailOrigin: next.detailOrigin !== undefined ? next.detailOrigin : currentSnapshot.detailOrigin
@@ -2954,6 +2988,8 @@ function SymposiumExperience({
     } else if (!next.assistantOpen) {
       setAssistantThreadId(null);
     }
+    setAssistantBackdrop(nextSnapshot.assistantBackdrop);
+    if (!nextSnapshot.assistantOpen) setAssistantOriginContext(null);
     if (scrollY !== null) {
       window.setTimeout(() => window.scrollTo({ top: scrollY, behavior: "auto" }), 0);
     }
@@ -3025,6 +3061,7 @@ function SymposiumExperience({
       return;
     }
     if (tabletOpen) {
+      setAssistantOriginContext(tabletContext);
       navigateView({
         assistantOpen: true,
         assistantThreadId
@@ -4323,9 +4360,23 @@ function SymposiumExperience({
     };
   })();
 
+  const assistantVisibleContext =
+    assistantOpen && assistantOriginContext
+      ? assistantOriginContext
+      : assistantOpen && assistantBackdrop === "messages"
+        ? {
+            surface: "messages" as const,
+            route: "/messages",
+            title: "Messages",
+            summary: "The Messages conversation list.",
+            content: "No conversation is selected.",
+            metadata: { privateConversation: false }
+          }
+        : tabletContext;
+
   const assistantController = useAssistantController({
     actorHandle: currentProfile.handle,
-    context: tabletContext,
+    context: assistantVisibleContext,
     requestedConversationId: assistantThreadId,
     enabled: tabletOpen || assistantOpen
   });
@@ -4337,12 +4388,14 @@ function SymposiumExperience({
     if (assistantOpen) {
       replaceCanonicalRoute({
         kind: "assistant",
-        threadId: selectedThreadId ?? undefined
+        threadId: selectedThreadId ?? undefined,
+        backdrop: assistantBackdrop ?? undefined
       });
     }
   }, [
     assistantController.conversationId,
     assistantOpen,
+    assistantBackdrop,
     assistantThreadId,
     replaceCanonicalRoute
   ]);
@@ -4409,6 +4462,7 @@ function SymposiumExperience({
       className={`symposium-shell ${theme}`}
       data-room={activeRoom}
       data-community-selected={selectedCommunity ? "true" : undefined}
+      data-assistant-backdrop={activeAssistantBackdrop ?? undefined}
       data-view={assistantOpen ? "assistant" : messagesOpen ? "messages" : applicationReviewItem ? "opportunity-applications" : selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
       style={{ "--room-bg": `url(${activeShellRender})` } as CSSProperties}
     >
@@ -4800,6 +4854,7 @@ function SymposiumExperience({
           onClose={() => setTabletOpen(false)}
           onExpand={() => {
             setTabletOpen(true);
+            setAssistantOriginContext(tabletContext);
             navigateView({
               assistantOpen: true,
               assistantThreadId: assistantController.conversationId ?? null

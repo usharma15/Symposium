@@ -6,7 +6,7 @@ export type CanonicalRoute =
   | { kind: "opportunities" }
   | { kind: "opportunityApplications"; postId: string; applicationId?: string }
   | { kind: "messages"; conversationId?: string }
-  | { kind: "assistant"; threadId?: string }
+  | { kind: "assistant"; threadId?: string; backdrop?: AssistantBackdropId }
   | { kind: "post"; postId: string; commentId?: string }
   | { kind: "profile"; handle: string; social?: ProfileSocialView; tab?: ProfileTab }
   | { kind: "communities" }
@@ -14,6 +14,27 @@ export type CanonicalRoute =
 
 export const canonicalRoomIds = ["symposium", "library", "amphitheater"] as const;
 export type CanonicalRoomId = (typeof canonicalRoomIds)[number];
+export const canonicalAssistantBackdropIds = [
+  "hall",
+  "office",
+  "symposium",
+  "library",
+  "amphitheater",
+  "funding",
+  "communities",
+  "community-selected",
+  "opportunities",
+  "messages"
+] as const;
+export type AssistantBackdropId = (typeof canonicalAssistantBackdropIds)[number];
+export const parseAssistantBackdrop = (
+  value: string | string[] | undefined
+): AssistantBackdropId | undefined => {
+  const candidate = (Array.isArray(value) ? value[0] : value)?.trim();
+  return canonicalAssistantBackdropIds.includes(candidate as AssistantBackdropId)
+    ? candidate as AssistantBackdropId
+    : undefined;
+};
 export type ProfileSocialView = "followers" | "following";
 export const canonicalProfileTabs = ["all", "papers", "thoughts", "proposals", "opportunities", "comments", "reshares", "likes", "saved"] as const;
 export type ProfileTab = (typeof canonicalProfileTabs)[number];
@@ -61,7 +82,10 @@ export const canonicalRouteHref = (route: CanonicalRoute) => {
     return route.conversationId ? `/messages?conversation=${encoded(route.conversationId)}` : "/messages";
   }
   if (route.kind === "assistant") {
-    return route.threadId ? `/assistant/threads/${encoded(route.threadId)}` : "/assistant";
+    const base = route.threadId ? `/assistant/threads/${encoded(route.threadId)}` : "/assistant";
+    if (!route.backdrop) return base;
+    const parameters = new URLSearchParams({ backdrop: route.backdrop });
+    return `${base}?${parameters.toString()}`;
   }
   if (route.kind === "post") {
     const base = `/posts/${encoded(route.postId)}`;
@@ -103,9 +127,12 @@ export const parseCanonicalRoute = (pathname: string, search = ""): CanonicalRou
     return conversationId ? { kind: "messages", conversationId } : { kind: "messages" };
   }
   if (segments[0] === "assistant") {
+    const backdrop = parseAssistantBackdrop(
+      new URLSearchParams(search).get("backdrop") ?? undefined
+    );
     return segments[1] === "threads" && segments[2]
-      ? { kind: "assistant", threadId: segments[2] }
-      : { kind: "assistant" };
+      ? { kind: "assistant", threadId: segments[2], ...(backdrop ? { backdrop } : {}) }
+      : { kind: "assistant", ...(backdrop ? { backdrop } : {}) };
   }
   if (segments[0] === "posts" && segments[1]) {
     if (segments[2] === "applications") {

@@ -1586,6 +1586,10 @@ const restoreViewStart = shell.indexOf("const restoreView");
 const navigateViewStart = shell.indexOf("const navigateView", restoreViewStart);
 const restoreViewBlock = shell.slice(restoreViewStart, navigateViewStart);
 const navigateViewBlock = shell.slice(navigateViewStart, shell.indexOf("const enterRoom", navigateViewStart));
+const assistantWorkspaceBaseBlock = tabletStyles.slice(
+  tabletStyles.indexOf(".assistant-workspace {"),
+  tabletStyles.indexOf(".assistant-workspace .assistant-left")
+);
 
 assert.match(provider, /store: false/);
 assert.match(provider, /service_tier: "default"/);
@@ -1728,7 +1732,8 @@ assert.match(tablet, /data-mobile-pane=\{mobilePane\}/);
 assert.match(tablet, /aria-pressed=\{mobilePane === "threads"\}/);
 assert.match(tablet, /aria-pressed=\{mobilePane === "chat"\}/);
 assert.match(tablet, /aria-pressed=\{mobilePane === "context"\}/);
-assert.match(tablet, /<div className="tablet-thread-current" aria-label="Current research thread">/);
+assert.match(tablet, /className="tablet-thread-current assistant-panel-title" aria-label="Chat history"/);
+assert.match(tablet, /className="assistant-panel-heading assistant-chat-heading"/);
 assert.match(assistantController, /limit=50/);
 assert.match(assistantController, /if \(!enabled\) return;/);
 assert.match(assistantController, /new BroadcastChannel\(assistantBroadcastChannel\)/);
@@ -1743,11 +1748,25 @@ assert.match(assistantController, /const startNewThread = useCallback\(\([\s\S]*
 assert.match(assistantController, /if \(!requestedConversationId\) \{[\s\S]*?requestedAttemptRef\.current = null;[\s\S]*?return;/);
 assert.match(tabletStyles, /\.assistant-compact \.tablet-context-dock-body \{ max-height: min\(9rem, 25vh\); \}/);
 assert.match(tabletStyles, /@media \(max-width: 760px\) and \(max-height: 640px\)/);
-assert.match(tabletStyles, /@media \(max-width: 900px\)[\s\S]*?\.assistant-workspace\[data-mobile-pane="threads"\]/);
-assert.match(tabletStyles, /@media \(max-width: 900px\) and \(max-height: 640px\)/);
+assert.match(tabletStyles, /@media \(max-width: 1100px\)[\s\S]*?\.assistant-workspace\[data-mobile-pane="threads"\]/);
+assert.match(tabletStyles, /@media \(max-width: 1100px\) and \(max-height: 640px\)/);
+assert.match(assistantWorkspaceBaseBlock, /gap: 12px/);
+assert.match(assistantWorkspaceBaseBlock, /grid-template-columns: minmax\(14\.5rem, 18rem\) minmax\(24rem, 1fr\) minmax\(18rem, 22rem\)/);
+assert.match(assistantWorkspaceBaseBlock, /overflow: visible/);
+assert.doesNotMatch(assistantWorkspaceBaseBlock, /background:|box-shadow:|border:/);
+assert.match(tabletStyles, /\.assistant-workspace \.assistant-left,[\s\S]*?border-radius: 14px/);
 assert.match(canonicalRoutes, /\/assistant\/threads\/\$\{encoded\(route\.threadId\)\}/);
+assert.match(canonicalRoutes, /canonicalAssistantBackdropIds/);
+assert.match(canonicalRoutes, /new URLSearchParams\(\{ backdrop: route\.backdrop \}\)/);
 assert.match(assistantPage, /kind: "assistant"/);
 assert.match(assistantThreadPage, /kind: "assistant", threadId/);
+assert.match(shell, /assistantBackdropForView/);
+assert.match(shell, /assistantBackdropRender/);
+assert.match(shell, /setAssistantOriginContext\(tabletContext\)/);
+assert.match(shell, /const assistantVisibleContext =/);
+assert.match(shell, /assistantOpen && assistantBackdrop === "messages"/);
+assert.match(shell, /context: assistantVisibleContext/);
+assert.match(shell, /data-assistant-backdrop=\{activeAssistantBackdrop \?\? undefined\}/);
 assert.match(shell, /Visible discussion/);
 assert.match(shell, /Visible post results/);
 assert.match(shell, /Visible feed items/);

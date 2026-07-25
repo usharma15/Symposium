@@ -1,5 +1,10 @@
 import type { RoomId } from "@/lib/mockData";
-import type { CanonicalRoute, ProfileSocialView, ProfileTab } from "@/features/navigation/canonicalRoute";
+import type {
+  AssistantBackdropId,
+  CanonicalRoute,
+  ProfileSocialView,
+  ProfileTab
+} from "@/features/navigation/canonicalRoute";
 
 export type OfficeMode = "desk" | "saved" | "notes";
 
@@ -37,6 +42,7 @@ export type DetailOriginSnapshot = {
   selectedConversationId: string | null;
   assistantOpen: boolean;
   assistantThreadId: string | null;
+  assistantBackdrop: AssistantBackdropId | null;
   commentSegmentStacks: Record<string, string[]>;
   scrollAnchor: { id: string; top: number; commentSegmentKey?: string; commentSegmentStack?: string[] } | null;
   scrollY: number;
@@ -47,6 +53,22 @@ export type ViewSnapshot = DetailOriginSnapshot & {
 };
 
 export const detailOriginFromSnapshot = ({ detailOrigin: _detailOrigin, ...snapshot }: ViewSnapshot): DetailOriginSnapshot => snapshot;
+
+export const roomForAssistantBackdrop = (backdrop: AssistantBackdropId): RoomId => {
+  if (backdrop === "messages") return "hall";
+  if (backdrop === "community-selected") return "communities";
+  return backdrop;
+};
+
+export const assistantBackdropForView = (
+  snapshot: Pick<DetailOriginSnapshot, "activeRoom" | "messagesOpen" | "selectedCommunityId">
+): AssistantBackdropId => {
+  if (snapshot.messagesOpen) return "messages";
+  if (snapshot.activeRoom === "communities" && snapshot.selectedCommunityId) {
+    return "community-selected";
+  }
+  return snapshot.activeRoom;
+};
 
 export const roomForCanonicalRoute = (
   route: CanonicalRoute,
@@ -59,7 +81,7 @@ export const roomForCanonicalRoute = (
   if (route.kind === "funding") return "funding";
   if (route.kind === "opportunities") return "opportunities";
   if (route.kind === "community" || route.kind === "communities") return "communities";
-  if (route.kind === "assistant") return "hall";
+  if (route.kind === "assistant") return roomForAssistantBackdrop(route.backdrop ?? "hall");
   return "hall";
 };
 
@@ -73,7 +95,8 @@ export const canonicalRouteForView = (
   if (snapshot.assistantOpen) {
     return {
       kind: "assistant",
-      threadId: snapshot.assistantThreadId ?? undefined
+      threadId: snapshot.assistantThreadId ?? undefined,
+      backdrop: snapshot.assistantBackdrop ?? undefined
     };
   }
   if (snapshot.messagesOpen) {
@@ -144,6 +167,7 @@ export const snapshotForCanonicalRoute = (
   selectedConversationId: route.kind === "messages" ? route.conversationId ?? null : null,
   assistantOpen: route.kind === "assistant",
   assistantThreadId: route.kind === "assistant" ? route.threadId ?? null : null,
+  assistantBackdrop: route.kind === "assistant" ? route.backdrop ?? "hall" : null,
   commentSegmentStacks: {},
   scrollAnchor: null,
   scrollY: 0,
