@@ -788,6 +788,10 @@ export const aiConversations = pgTable(
     ownerHandle: text("owner_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
     kind: text("kind").default("research_thread").notNull(),
     title: text("title").notNull(),
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    metadataRevision: integer("metadata_revision").default(1).notNull(),
     contextType: text("context_type").default("general").notNull(),
     contextId: text("context_id"),
     contextSources: jsonb("context_sources").$type<AssistantThreadSourceContract[]>().default(jsonArray).notNull(),
@@ -806,7 +810,8 @@ export const aiConversations = pgTable(
     index("ai_conversations_owner_kind_updated_idx").on(table.ownerHandle, table.kind, table.updatedAt.desc(), table.id.desc()),
     index("ai_conversations_owner_kind_last_message_idx").on(table.ownerHandle, table.kind, table.lastMessageAt.desc(), table.id.desc()),
     check("ai_conversations_kind_check", sql`${table.kind} IN ('research_thread', 'document_translation', 'content_translation')`),
-    check("ai_conversations_context_revision_check", sql`${table.contextRevision} >= 1`)
+    check("ai_conversations_context_revision_check", sql`${table.contextRevision} >= 1`),
+    check("ai_conversations_metadata_revision_check", sql`${table.metadataRevision} >= 1`)
   ]
 );
 

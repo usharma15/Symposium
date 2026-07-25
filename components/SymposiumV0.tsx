@@ -135,7 +135,7 @@ import {
 import type { PdfAttachmentViewContext } from "@/features/attachments/pdfAttachmentClient";
 import { buildTabletAttachmentContext } from "@/features/assistant/tabletAttachmentContext";
 import { AssistantExperience } from "@/features/assistant/AssistantExperience";
-import { useAssistantController } from "@/features/assistant/useAssistantController";
+import { useAssistantController, type AssistantThreadLiveEvent } from "@/features/assistant/useAssistantController";
 import {
   confirmAttachmentUpload,
   prepareAttachmentUpload,
@@ -650,6 +650,7 @@ function SymposiumExperience({
   const [messagesQuickOpen, setMessagesQuickOpen] = useState(false);
   const [quickConversationId, setQuickConversationId] = useState<string | null>(null);
   const [messagingEvents, setMessagingEvents] = useState<SymposiumLiveEvent[]>([]);
+  const [assistantEvents, setAssistantEvents] = useState<AssistantThreadLiveEvent[]>([]);
   const [messageTabletContext, setMessageTabletContext] = useState<{ conversationId: string; title: string; content: string } | null>(null);
   const [workspaceTabletDocument, setWorkspaceTabletDocument] = useState<WorkspaceDocument | null>(null);
   const [notificationEvents, setNotificationEvents] = useState<SymposiumLiveEvent[]>([]);
@@ -1720,6 +1721,15 @@ function SymposiumExperience({
       event.kind.startsWith("notification.")
     ) {
       setNotificationEvents((current) => [...current, event].slice(-1000));
+    }
+    if (event.kind.startsWith("assistant.")) {
+      setAssistantEvents((current) => [...current, {
+        id: event.id,
+        cursor: event.cursor,
+        kind: event.kind,
+        subjectId: event.subjectId
+      }].slice(-100));
+      return;
     }
     if (
       event.kind.startsWith("message.") ||
@@ -4378,7 +4388,8 @@ function SymposiumExperience({
     actorHandle: currentProfile.handle,
     context: assistantVisibleContext,
     requestedConversationId: assistantThreadId,
-    enabled: tabletOpen || assistantOpen
+    enabled: tabletOpen || assistantOpen,
+    liveEvents: assistantEvents
   });
 
   useEffect(() => {

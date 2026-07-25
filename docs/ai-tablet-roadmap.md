@@ -49,7 +49,11 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Refresh the selected thread across tabs and focused sessions, retain retry identities after failed writes, and reload revision-conflicted context before asking the user to try again.
 - Reset all assistant-owned state when the authenticated Symposium identity changes.
 - Adapt the three columns to explicit Threads, Chat, and Context panes on narrow screens without horizontal page overflow.
-- Do not invent Projects, folders, long-term memory, automatic actions, thread rename/archive controls, or unbounded history before those systems have real persistence and product rules.
+- Keep the left conversation library manageable with durable rename, pin, archive, restore, and privacy-preserving delete controls. **Shipped.**
+- Search titles and user/assistant message bodies on the server, paginate with stable cursors, and keep pinned chats ahead of otherwise last-chatted ordering. **Shipped.**
+- Synchronize conversation-library mutations through live events and same-browser broadcasts, with revision conflicts reloaded before retry. **Shipped.**
+- Preserve the AI usage ledger when a chat is deleted while removing its transcript, context snapshots, and completed mutation receipts; discard rather than persist an answer that finishes after deletion. **Shipped.**
+- Do not invent Projects, folders, long-term memory, automatic actions, or unbounded history before those systems have real persistence and product rules.
 
 ### 4. Whole-content translation — structured post/comment and page translation shipped; whole-document action remains
 
@@ -110,7 +114,7 @@ A phase is complete only when it has:
 
 ## Decisions intentionally left open
 
-- Whether a thread is manually named, automatically titled, or both.
+- Chats receive an automatic initial title and can now be renamed manually; richer automatic retitling remains optional.
 - “Update view” now creates a preserved source revision; the product still needs a longer-term archival policy beyond the current bounded revision history.
 - Which read permissions can become standing per-user preferences.
 - Which reversible draft actions can eventually run without confirmation.

@@ -39,3 +39,33 @@ export async function POST(request: Request, context: Context) {
     { status: 503, headers: { "Cache-Control": "no-store" } }
   );
 }
+
+const proxyMutation = async (
+  request: Request,
+  context: Context,
+  method: "PATCH" | "DELETE"
+) => {
+  const body = await readJson<Record<string, unknown> & { actorHandle?: string }>(request);
+  const actorHandle = workspaceActorHandle(request, body?.actorHandle);
+  const payload = { ...body };
+  delete payload.actorHandle;
+  const live = await proxyLiveBackend(await livePath(request, context), {
+    method,
+    body: payload,
+    actorHandle,
+    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+  });
+  if (live) return live;
+  return Response.json(
+    { error: "Research threads require the cost-controlled live backend." },
+    { status: 503, headers: { "Cache-Control": "no-store" } }
+  );
+};
+
+export async function PATCH(request: Request, context: Context) {
+  return proxyMutation(request, context, "PATCH");
+}
+
+export async function DELETE(request: Request, context: Context) {
+  return proxyMutation(request, context, "DELETE");
+}

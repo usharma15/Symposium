@@ -36,8 +36,11 @@ import {
 } from "@/apps/api/src/repository/documentTranslations";
 import {
   assistantContextUpdateInputSchema,
+  assistantConversationListQuerySchema,
   assistantMessageInputSchema,
   assistantSourceUpdateInputSchema,
+  assistantThreadDeleteInputSchema,
+  assistantThreadUpdateInputSchema,
   assistantQuickNoteResultSchema,
   assistantResponseSchema,
   assistantTranslationDraftSchema,
@@ -188,6 +191,38 @@ assert.equal(assistantSourceUpdateInputSchema.safeParse({
   action: "exclude",
   expectedRevision: 3
 }).success, true);
+assert.deepEqual(
+  assistantConversationListQuerySchema.parse({}),
+  { limit: 20, status: "active" }
+);
+assert.equal(assistantConversationListQuerySchema.safeParse({
+  search: "methodological break",
+  status: "archived",
+  limit: 50
+}).success, true);
+assert.equal(assistantConversationListQuerySchema.safeParse({ search: "x".repeat(161) }).success, false);
+assert.equal(assistantConversationListQuerySchema.safeParse({ status: "deleted" }).success, false);
+assert.equal(assistantThreadUpdateInputSchema.safeParse({
+  title: "Heisenberg methodology",
+  expectedRevision: 2
+}).success, true);
+assert.equal(assistantThreadUpdateInputSchema.safeParse({
+  pinned: true,
+  expectedRevision: 2
+}).success, true);
+assert.equal(assistantThreadUpdateInputSchema.safeParse({
+  archived: true,
+  expectedRevision: 2
+}).success, true);
+assert.equal(assistantThreadUpdateInputSchema.safeParse({
+  pinned: true,
+  archived: true,
+  expectedRevision: 2
+}).success, false);
+assert.equal(assistantThreadUpdateInputSchema.safeParse({ expectedRevision: 2 }).success, false);
+assert.equal(assistantThreadUpdateInputSchema.safeParse({ title: " ", expectedRevision: 2 }).success, false);
+assert.equal(assistantThreadDeleteInputSchema.safeParse({ expectedRevision: 2 }).success, true);
+assert.equal(assistantThreadDeleteInputSchema.safeParse({ expectedRevision: 0 }).success, false);
 assert.equal(assistantContextUpdateInputSchema.safeParse({
   mode: "silent",
   context: validInput.context,
@@ -222,6 +257,9 @@ assert.equal(historicalSources[0]?.provenance, "recovered");
 const threadSummaryFixture = {
   kind: "research_thread" as const,
   title: "Thread",
+  pinned: false,
+  archivedAt: null,
+  metadataRevision: 1,
   contextType: "post",
   contextId: "paper-1",
   activeContextKey: "post:paper-1",
@@ -239,6 +277,13 @@ assert.deepEqual(
     { ...threadSummaryFixture, id: historicalSourceId, lastMessageAt: "2026-07-20T20:00:00.000Z" }
   ]).map((thread) => thread.id),
   ["169b5a8d-cdea-43b9-b871-3afce65eca46", historicalSourceId]
+);
+assert.deepEqual(
+  orderAssistantThreadsByLatestMessage([
+    { ...threadSummaryFixture, id: historicalSourceId, pinned: true, lastMessageAt: "2026-07-20T20:00:00.000Z" },
+    { ...threadSummaryFixture, id: "169b5a8d-cdea-43b9-b871-3afce65eca46", lastMessageAt: "2026-07-21T20:00:00.000Z" }
+  ]).map((thread) => thread.id),
+  [historicalSourceId, "169b5a8d-cdea-43b9-b871-3afce65eca46"]
 );
 assert.match(assistantPrompt(validInput.context, validInput.message), /ACTIVE VIEW/);
 assert.match(assistantPrompt(validInput.context, validInput.message, [{ ...validInput.context, title: "Attached paper" }]), /ATTACHED SOURCES[\s\S]*Attached paper/);
@@ -1485,6 +1530,20 @@ assert.equal(assistantResponseSchema.safeParse({
   quota: { dailyLimit: 3, remainingToday: 2, monthlyBudgetUsd: 40, extremelyLimited: true },
   message: { id: "message", conversationId: "conversation", role: "assistant", body: "Answer" }
 }).success, true);
+assert.equal(assistantResponseSchema.safeParse({
+  conversationId: "4de47155-28c2-4e19-8628-d15f339ce71b",
+  providerConfigured: true,
+  status: "discarded",
+  model: "gpt-5.6-terra",
+  quota: { dailyLimit: 3, remainingToday: 2, monthlyBudgetUsd: 40, extremelyLimited: true },
+  message: {
+    id: "c6f055c0-b137-4713-9f5f-c2ee0b78ab32",
+    conversationId: "4de47155-28c2-4e19-8628-d15f339ce71b",
+    role: "assistant",
+    body: "This chat was deleted while the answer was being prepared, so the answer was discarded.",
+    evidence: []
+  }
+}).success, true);
 const quickNote = {
   title: "Strategy 2032 argument",
   body: "The visible page argues for independent youth labs and a metascience group.",
@@ -1556,7 +1615,9 @@ const contentRepository = readFileSync("apps/api/src/repository/contentTranslati
 const scribbles = readFileSync("apps/api/src/repository/workspaceScribbles.ts", "utf8");
 const provider = readFileSync("apps/api/src/services/openaiResponses.ts", "utf8");
 const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
+const databaseSchema = readFileSync("apps/api/src/db/schema.ts", "utf8");
 const route = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
+const assistantConversationRoute = readFileSync("app/api/assistant/conversations/[...segments]/route.ts", "utf8");
 const tablet = readFileSync("features/assistant/AssistantExperience.tsx", "utf8");
 const assistantController = readFileSync("features/assistant/useAssistantController.ts", "utf8");
 const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
@@ -1606,7 +1667,11 @@ assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
 assert.match(provider, /insufficient_quota/);
 assert.match(repository, /providerErrorCode/);
 assert.match(repository, /last_message_at AS "lastMessageAt"/);
-assert.match(repository, /ORDER BY last_message_at DESC, id DESC/);
+assert.match(repository, /conversation\.pinned_at IS NOT NULL\) DESC,[\s\S]*conversation\.last_message_at DESC/);
+assert.match(repository, /message\.body ILIKE \$\$\{values\.length\} ESCAPE/);
+assert.match(repository, /conversation\.archived_at IS NOT NULL/);
+assert.match(repository, /conversation\.archived_at IS NULL/);
+assert.match(repository, /conversation\.deleted_at IS NULL/);
 assert.match(repository, /SET last_message_at = GREATEST/);
 assert.match(repository, /mode === "clear"/);
 assert.match(repository, /active_source_id = NULL/);
@@ -1621,8 +1686,36 @@ assert.match(migration, /message\.metadata -> 'context'/);
 assert.match(migration, /'provenance', 'recovered'/);
 assert.match(migration, /assistant_message\.metadata -> 'evidence'/);
 assert.match(migration, /ai_conversations_owner_kind_last_message_idx/);
+assert.match(migration, /0057_assistant_chat_library/);
+assert.match(migration, /pinned_at TIMESTAMPTZ/);
+assert.match(migration, /archived_at TIMESTAMPTZ/);
+assert.match(migration, /deleted_at TIMESTAMPTZ/);
+assert.match(migration, /metadata_revision INTEGER NOT NULL DEFAULT 1/);
+assert.match(migration, /ai_conversations_active_library_idx/);
+assert.match(migration, /ai_conversations_archived_library_idx/);
+assert.match(migration, /ai_conversations_title_trgm_idx/);
+assert.match(migration, /ai_messages_body_trgm_idx/);
+assert.match(databaseSchema, /pinnedAt: timestamp\("pinned_at"/);
+assert.match(databaseSchema, /archivedAt: timestamp\("archived_at"/);
+assert.match(databaseSchema, /deletedAt: timestamp\("deleted_at"/);
+assert.match(databaseSchema, /metadataRevision: integer\("metadata_revision"\)\.default\(1\)\.notNull\(\)/);
+assert.match(databaseSchema, /ai_conversations_metadata_revision_check/);
 assert.match(assistantController, /orderAssistantThreadsByLatestMessage/);
+assert.match(assistantController, /findActiveThreadForContext/);
+assert.match(assistantController, /threadListRequestRef\.current \+= 1/);
+assert.match(assistantController, /setThreadLibraryFilters/);
+assert.match(assistantController, /loadMoreThreads/);
+assert.match(assistantController, /operation: "changed" \| "deleted"/);
+assert.match(assistantController, /change\.operation === "deleted"/);
+assert.match(assistantController, /event\.kind\.startsWith\("assistant\."\)/);
+assert.match(assistantController, /assistant\.thread\.deleted/);
+assert.match(assistantController, /threadMutationRetryRef/);
 assert.match(tablet, /candidate\.lastMessageAt/);
+assert.match(tablet, /Search titles and messages/);
+assert.match(tablet, /Load more chats/);
+assert.match(tablet, /Delete this chat permanently/);
+assert.match(tablet, /This chat is archived/);
+assert.match(tablet, /Restore this chat to continue/);
 assert.match(tablet, /Inspect saved context/);
 assert.match(tablet, /Stored source text/);
 assert.match(tablet, /Start a new blank chat/);
@@ -1664,8 +1757,22 @@ assert.match(migration, /kind TEXT NOT NULL DEFAULT 'research_thread'/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS content_translations/);
 assert.match(repository, /listAssistantConversations/);
 assert.match(repository, /getAssistantConversation/);
+assert.match(repository, /updateAssistantConversation/);
+assert.match(repository, /deleteAssistantConversation/);
 assert.match(repository, /updateAssistantConversationContext/);
 assert.match(repository, /updateAssistantConversationSource/);
+assert.match(repository, /assistant\.thread\.update/);
+assert.match(repository, /assistant\.thread\.delete/);
+assert.match(repository, /DELETE FROM ai_messages WHERE conversation_id = \$1/);
+assert.match(repository, /title = 'Deleted chat'/);
+assert.match(repository, /preservedUsageLedger: true/);
+assert.doesNotMatch(repository, /DELETE FROM ai_conversations/);
+assert.match(repository, /SELECT deleted_at AS "deletedAt"[\s\S]*FOR UPDATE/);
+assert.match(repository, /status: "discarded"/);
+assert.match(repository, /assistant\.message\.discard/);
+assert.match(repository, /reason: "conversation_deleted"/);
+assert.match(repository, /answer was discarded/);
+assert.match(assistantController, /response\.status === "discarded"/);
 assert.match(repository, /assistant\.context\.updated/);
 assert.match(repository, /kind = 'research_thread'/);
 assert.match(repository, /origin_source_id/);
@@ -1674,6 +1781,10 @@ assert.match(repository, /attachedContexts/);
 assert.match(route, /shared: true, scope: "assistant", limit: 10/);
 assert.match(route, /\/v1\/assistant\/conversations\/:id\/context/);
 assert.match(route, /\/v1\/assistant\/conversations\/:id\/sources/);
+assert.match(route, /app\.patch<\{ Params: RouteParams \}>\("\/v1\/assistant\/conversations\/:id"/);
+assert.match(route, /app\.delete<\{ Params: RouteParams \}>\("\/v1\/assistant\/conversations\/:id"/);
+assert.match(assistantConversationRoute, /export async function PATCH/);
+assert.match(assistantConversationRoute, /export async function DELETE/);
 assert.match(route, /\/v1\/assistant\/document-translations/);
 assert.match(route, /\/v1\/assistant\/content-translations/);
 assert.match(route, /\/v1\/assistant\/quick-notes/);
@@ -1725,6 +1836,8 @@ assert.match(shell, /aria-expanded=\{tabletOpen \|\| assistantOpen\}/);
 assert.match(shell, /\{tabletOpen \|\| assistantOpen \? \([\s\S]*?mode=\{assistantOpen \? "workspace" : "compact"\}/);
 assert.match(shell, /assistantThreadId: assistantController\.conversationId \?\? null/);
 assert.match(shell, /enabled: tabletOpen \|\| assistantOpen/);
+assert.match(shell, /liveEvents: assistantEvents/);
+assert.match(shell, /event\.kind\.startsWith\("assistant\."\)/);
 assert.match(tablet, /Expand to AI Workspace/);
 assert.match(tablet, /Collapse to AI Tablet/);
 assert.match(tablet, /Search chats/);
@@ -1734,7 +1847,7 @@ assert.match(tablet, /aria-pressed=\{mobilePane === "chat"\}/);
 assert.match(tablet, /aria-pressed=\{mobilePane === "context"\}/);
 assert.match(tablet, /className="tablet-thread-current assistant-panel-title" aria-label="Chat history"/);
 assert.match(tablet, /className="assistant-panel-heading assistant-chat-heading"/);
-assert.match(assistantController, /limit=50/);
+assert.match(assistantController, /limit: "20"/);
 assert.match(assistantController, /if \(!enabled\) return;/);
 assert.match(assistantController, /new BroadcastChannel\(assistantBroadcastChannel\)/);
 assert.match(assistantController, /This thread changed in another session/);
@@ -1744,9 +1857,13 @@ assert.match(assistantController, /contextLockRef/);
 assert.match(assistantController, /messageRetryRef/);
 assert.match(assistantController, /contextRetryRef/);
 assert.match(assistantController, /sourceRetryRef/);
+assert.match(assistantController, /threadActionLockRef/);
 assert.match(assistantController, /const startNewThread = useCallback\(\([\s\S]*?requestedAttemptRef\.current = null/);
 assert.match(assistantController, /if \(!requestedConversationId\) \{[\s\S]*?requestedAttemptRef\.current = null;[\s\S]*?return;/);
 assert.match(tabletStyles, /\.assistant-compact \.tablet-context-dock-body \{ max-height: min\(9rem, 25vh\); \}/);
+assert.match(tabletStyles, /\.assistant-thread-filters/);
+assert.match(tabletStyles, /\.assistant-thread-popover/);
+assert.match(tabletStyles, /\.assistant-archived-notice/);
 assert.match(tabletStyles, /@media \(max-width: 760px\) and \(max-height: 640px\)/);
 assert.match(tabletStyles, /@media \(max-width: 1100px\)[\s\S]*?\.assistant-workspace\[data-mobile-pane="threads"\]/);
 assert.match(tabletStyles, /@media \(max-width: 1100px\) and \(max-height: 640px\)/);

@@ -5,9 +5,11 @@ import { sendError } from "../http/errors";
 import { mutationContextFromRequest } from "../services/mutations";
 import {
   askAssistant,
+  deleteAssistantConversation,
   getAssistantConversation,
   getAssistantQuota,
   listAssistantConversations,
+  updateAssistantConversation,
   updateAssistantConversationContext,
   updateAssistantConversationSource
 } from "../repository/assistant";
@@ -489,6 +491,34 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
       return reply.send(await getAssistantConversation(
         z.string().uuid().parse(request.params.id),
         await withReadActor(request)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: RouteParams }>("/v1/assistant/conversations/:id", async (request, reply) => {
+    try {
+      const conversationId = z.string().uuid().parse(request.params.id);
+      return reply.send(await updateAssistantConversation(
+        conversationId,
+        request.body,
+        await withWriteActor(request, { shared: true, scope: "assistant-action", limit: 30 }),
+        mutationContextFromRequest(request, "assistant.thread.update", { conversationId, body: request.body })
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: RouteParams }>("/v1/assistant/conversations/:id", async (request, reply) => {
+    try {
+      const conversationId = z.string().uuid().parse(request.params.id);
+      return reply.send(await deleteAssistantConversation(
+        conversationId,
+        request.body,
+        await withWriteActor(request, { shared: true, scope: "assistant-action", limit: 30 }),
+        mutationContextFromRequest(request, "assistant.thread.delete", { conversationId, body: request.body })
       ));
     } catch (error) {
       return sendError(app, reply, error);

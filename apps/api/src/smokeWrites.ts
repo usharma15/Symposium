@@ -17,7 +17,7 @@ const authHeaders = () =>
       };
 
 const requestJson = async <T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
   extraHeaders: Record<string, string> = {}
@@ -429,7 +429,12 @@ const main = async () => {
     contextType: "general"
   };
   const assistantKey = `smoke-assistant-${Date.now().toString(36)}`;
-  const assistant = await requestJson<{ conversationId?: string; message?: { id?: string }; status?: string }>(
+  const assistant = await requestJson<{
+    conversationId?: string;
+    message?: { id?: string };
+    status?: string;
+    thread?: { metadataRevision?: number };
+  }>(
     "POST",
     "/v1/assistant/messages",
     assistantPayload,
@@ -438,6 +443,10 @@ const main = async () => {
   assertOk("POST /v1/assistant/messages", assistant);
   const assistantConversationId = requireId("Assistant conversation", assistant.body.conversationId);
   const assistantMessageId = requireId("Assistant message", assistant.body.message?.id);
+  let assistantMetadataRevision = assistant.body.thread?.metadataRevision;
+  if (!Number.isInteger(assistantMetadataRevision) || (assistantMetadataRevision ?? 0) < 1) {
+    throw new Error(`Assistant thread did not return a metadata revision: ${JSON.stringify(assistant.body.thread)}`);
+  }
   const replayedAssistant = await requestJson<{ conversationId?: string; message?: { id?: string } }>(
     "POST",
     "/v1/assistant/messages",
@@ -446,6 +455,46 @@ const main = async () => {
   );
   assertOk("Replay assistant message", replayedAssistant);
   if (replayedAssistant.body.message?.id !== assistantMessageId) throw new Error("Assistant replay diverged.");
+
+  const assistantTitle = `Smoke assistant chat ${stamp}`;
+  const renameAssistantKey = `smoke-assistant-rename-${Date.now().toString(36)}`;
+  const renamedAssistant = await requestJson<{ thread?: { title?: string; metadataRevision?: number } }>(
+    "PATCH",
+    `/v1/assistant/conversations/${assistantConversationId}`,
+    { title: assistantTitle, expectedRevision: assistantMetadataRevision },
+    { "idempotency-key": renameAssistantKey }
+  );
+  assertOk("PATCH assistant chat title", renamedAssistant);
+  if (renamedAssistant.body.thread?.title !== assistantTitle) throw new Error("Assistant title update diverged.");
+  assistantMetadataRevision = renamedAssistant.body.thread?.metadataRevision;
+  const replayedRename = await requestJson<{ thread?: { title?: string; metadataRevision?: number } }>(
+    "PATCH",
+    `/v1/assistant/conversations/${assistantConversationId}`,
+    { title: assistantTitle, expectedRevision: assistant.body.thread?.metadataRevision },
+    { "idempotency-key": renameAssistantKey }
+  );
+  assertOk("Replay assistant chat title", replayedRename);
+  if (replayedRename.body.thread?.metadataRevision !== assistantMetadataRevision) {
+    throw new Error("Assistant title replay changed its revision.");
+  }
+
+  const pinnedAssistant = await requestJson<{ thread?: { pinned?: boolean; metadataRevision?: number } }>(
+    "PATCH",
+    `/v1/assistant/conversations/${assistantConversationId}`,
+    { pinned: true, expectedRevision: assistantMetadataRevision },
+    { "idempotency-key": `smoke-assistant-pin-${Date.now().toString(36)}` }
+  );
+  assertOk("Pin assistant chat", pinnedAssistant);
+  if (!pinnedAssistant.body.thread?.pinned) throw new Error("Assistant pin did not persist.");
+  assistantMetadataRevision = pinnedAssistant.body.thread?.metadataRevision;
+
+  const searchedAssistant = await requestJson<{ threads?: Array<{ id?: string; pinned?: boolean }> }>(
+    "GET",
+    `/v1/assistant/conversations?search=${encodeURIComponent(assistantTitle)}&status=active&limit=20`
+  );
+  assertOk("Search assistant chats", searchedAssistant);
+  const searchedThread = searchedAssistant.body.threads?.find((candidate) => candidate.id === assistantConversationId);
+  if (!searchedThread?.pinned) throw new Error("Server-side assistant search did not return the pinned chat.");
 
   if (!smokeToken && alternateHandle) {
     const foreignAssistant = await requestJson<{ error?: string }>(
@@ -457,7 +506,86 @@ const main = async () => {
     if (foreignAssistant.status !== 404) {
       throw new Error(`Foreign assistant conversation write returned ${foreignAssistant.status}.`);
     }
+    const foreignAssistantUpdate = await requestJson<{ error?: string }>(
+      "PATCH",
+      `/v1/assistant/conversations/${assistantConversationId}`,
+      { title: "Foreign title", expectedRevision: assistantMetadataRevision },
+      {
+        "x-symposium-handle": alternateHandle,
+        "x-symposium-name": "Boundary actor",
+        "idempotency-key": `smoke-assistant-foreign-update-${Date.now().toString(36)}`
+      }
+    );
+    if (foreignAssistantUpdate.status !== 404) {
+      throw new Error(`Foreign assistant conversation update returned ${foreignAssistantUpdate.status}.`);
+    }
+    const foreignAssistantDelete = await requestJson<{ error?: string }>(
+      "DELETE",
+      `/v1/assistant/conversations/${assistantConversationId}`,
+      { expectedRevision: assistantMetadataRevision },
+      {
+        "x-symposium-handle": alternateHandle,
+        "x-symposium-name": "Boundary actor",
+        "idempotency-key": `smoke-assistant-foreign-delete-${Date.now().toString(36)}`
+      }
+    );
+    if (foreignAssistantDelete.status !== 404) {
+      throw new Error(`Foreign assistant conversation delete returned ${foreignAssistantDelete.status}.`);
+    }
   }
+
+  const archivedAssistant = await requestJson<{ thread?: { archivedAt?: string | null; metadataRevision?: number } }>(
+    "PATCH",
+    `/v1/assistant/conversations/${assistantConversationId}`,
+    { archived: true, expectedRevision: assistantMetadataRevision },
+    { "idempotency-key": `smoke-assistant-archive-${Date.now().toString(36)}` }
+  );
+  assertOk("Archive assistant chat", archivedAssistant);
+  if (!archivedAssistant.body.thread?.archivedAt) throw new Error("Assistant archive did not persist.");
+  assistantMetadataRevision = archivedAssistant.body.thread?.metadataRevision;
+
+  const archivedSearch = await requestJson<{ threads?: Array<{ id?: string }> }>(
+    "GET",
+    `/v1/assistant/conversations?search=${encodeURIComponent(assistantTitle)}&status=archived&limit=20`
+  );
+  assertOk("Search archived assistant chats", archivedSearch);
+  if (!archivedSearch.body.threads?.some((candidate) => candidate.id === assistantConversationId)) {
+    throw new Error("Archived assistant chat was not discoverable in the archive.");
+  }
+
+  const restoredAssistant = await requestJson<{ thread?: { archivedAt?: string | null; metadataRevision?: number } }>(
+    "PATCH",
+    `/v1/assistant/conversations/${assistantConversationId}`,
+    { archived: false, expectedRevision: assistantMetadataRevision },
+    { "idempotency-key": `smoke-assistant-restore-${Date.now().toString(36)}` }
+  );
+  assertOk("Restore assistant chat", restoredAssistant);
+  if (restoredAssistant.body.thread?.archivedAt !== null) throw new Error("Assistant restore did not persist.");
+  assistantMetadataRevision = restoredAssistant.body.thread?.metadataRevision;
+
+  const deleteAssistantKey = `smoke-assistant-delete-${Date.now().toString(36)}`;
+  const deletedAssistant = await requestJson<{ conversationId?: string; deleted?: boolean }>(
+    "DELETE",
+    `/v1/assistant/conversations/${assistantConversationId}`,
+    { expectedRevision: assistantMetadataRevision },
+    { "idempotency-key": deleteAssistantKey }
+  );
+  assertOk("Delete assistant chat", deletedAssistant);
+  if (!deletedAssistant.body.deleted || deletedAssistant.body.conversationId !== assistantConversationId) {
+    throw new Error("Assistant delete receipt diverged.");
+  }
+  const replayedDelete = await requestJson<{ conversationId?: string; deleted?: boolean }>(
+    "DELETE",
+    `/v1/assistant/conversations/${assistantConversationId}`,
+    { expectedRevision: assistantMetadataRevision },
+    { "idempotency-key": deleteAssistantKey }
+  );
+  assertOk("Replay assistant chat delete", replayedDelete);
+  const deletedDetail = await requestJson<{ error?: string }>(
+    "GET",
+    `/v1/assistant/conversations/${assistantConversationId}`
+  );
+  if (deletedDetail.status !== 404) throw new Error(`Deleted assistant chat returned ${deletedDetail.status}.`);
 
   console.log(
     JSON.stringify(

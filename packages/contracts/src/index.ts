@@ -1331,7 +1331,9 @@ export const assistantMessageInputSchema = z.object({
 export const assistantConversationListQuerySchema = z.object({
   cursor: z.string().trim().max(500).optional(),
   limit: z.coerce.number().int().positive().max(50).default(20),
-  contextKey: z.string().trim().max(800).optional()
+  contextKey: z.string().trim().max(800).optional(),
+  search: z.string().trim().max(160).optional(),
+  status: z.enum(["active", "archived"]).default("active")
 });
 
 export const assistantContextUpdateInputSchema = z.discriminatedUnion("mode", [
@@ -1349,6 +1351,24 @@ export const assistantContextUpdateInputSchema = z.discriminatedUnion("mode", [
 export const assistantSourceUpdateInputSchema = z.object({
   sourceId: z.string().uuid(),
   action: z.enum(["use", "include", "exclude"]),
+  expectedRevision: z.number().int().positive()
+});
+
+export const assistantThreadUpdateInputSchema = z.object({
+  title: z.string().trim().min(1).max(300).optional(),
+  pinned: z.boolean().optional(),
+  archived: z.boolean().optional(),
+  expectedRevision: z.number().int().positive()
+}).superRefine((input, context) => {
+  if (input.title === undefined && input.pinned === undefined && input.archived === undefined) {
+    context.addIssue({ code: "custom", message: "Choose a chat detail to update." });
+  }
+  if (input.pinned === true && input.archived === true) {
+    context.addIssue({ code: "custom", message: "An archived chat cannot be pinned." });
+  }
+});
+
+export const assistantThreadDeleteInputSchema = z.object({
   expectedRevision: z.number().int().positive()
 });
 
@@ -1959,6 +1979,9 @@ export const assistantThreadSummarySchema = z.object({
   id: z.string().uuid(),
   kind: z.literal("research_thread"),
   title: z.string().trim().min(1).max(300),
+  pinned: z.boolean(),
+  archivedAt: z.string().datetime().nullable(),
+  metadataRevision: z.number().int().positive(),
   contextType: z.string().trim().min(1).max(80),
   contextId: z.string().trim().max(240).nullable(),
   activeContextKey: z.string().trim().max(800).nullable(),
@@ -1992,6 +2015,15 @@ export const assistantContextUpdateResultSchema = z.object({
 
 export const assistantSourceUpdateResultSchema = assistantContextUpdateResultSchema;
 
+export const assistantThreadUpdateResultSchema = z.object({
+  thread: assistantThreadStateSchema
+});
+
+export const assistantThreadDeleteResultSchema = z.object({
+  conversationId: z.string().uuid(),
+  deleted: z.literal(true)
+});
+
 export const assistantQuotaSchema = z.object({
   dailyLimit: z.number().int().positive(),
   remainingToday: z.number().int().nonnegative(),
@@ -2010,7 +2042,7 @@ export const assistantResponseSchema = z.object({
   conversationId: z.string(),
   message: assistantMessageSchema,
   providerConfigured: z.boolean(),
-  status: z.enum(["answered", "provider_not_configured", "disabled", "provider_error"]),
+  status: z.enum(["answered", "provider_not_configured", "disabled", "provider_error", "discarded"]),
   model: z.string().optional(),
   quota: assistantQuotaSchema.optional(),
   thread: assistantThreadStateSchema.optional(),
@@ -2223,6 +2255,8 @@ export type AssistantMessageInputContract = z.infer<typeof assistantMessageInput
 export type AssistantConversationListQueryContract = z.infer<typeof assistantConversationListQuerySchema>;
 export type AssistantContextUpdateInputContract = z.infer<typeof assistantContextUpdateInputSchema>;
 export type AssistantSourceUpdateInputContract = z.infer<typeof assistantSourceUpdateInputSchema>;
+export type AssistantThreadUpdateInputContract = z.infer<typeof assistantThreadUpdateInputSchema>;
+export type AssistantThreadDeleteInputContract = z.infer<typeof assistantThreadDeleteInputSchema>;
 export type AssistantMessageContract = z.infer<typeof assistantMessageSchema>;
 export type AssistantThreadSourceContract = z.infer<typeof assistantThreadSourceSchema>;
 export type AssistantThreadSummaryContract = z.infer<typeof assistantThreadSummarySchema>;
@@ -2231,6 +2265,8 @@ export type AssistantThreadDetailContract = z.infer<typeof assistantThreadDetail
 export type AssistantThreadPageContract = z.infer<typeof assistantThreadPageSchema>;
 export type AssistantContextUpdateResultContract = z.infer<typeof assistantContextUpdateResultSchema>;
 export type AssistantSourceUpdateResultContract = z.infer<typeof assistantSourceUpdateResultSchema>;
+export type AssistantThreadUpdateResultContract = z.infer<typeof assistantThreadUpdateResultSchema>;
+export type AssistantThreadDeleteResultContract = z.infer<typeof assistantThreadDeleteResultSchema>;
 export type AssistantQuotaStatusContract = z.infer<typeof assistantQuotaStatusSchema>;
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;
 export type SaveAssistantQuickNoteInputContract = z.infer<typeof saveAssistantQuickNoteInputSchema>;

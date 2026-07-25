@@ -13,11 +13,13 @@ import type {
   AssistantQuotaStatusContract,
   AssistantResponseContract,
   AssistantSourceUpdateResultContract,
+  AssistantThreadDeleteResultContract,
   AssistantThreadDetailContract,
   AssistantThreadPageContract,
   AssistantThreadSourceContract,
   AssistantThreadStateContract,
   AssistantThreadSummaryContract,
+  AssistantThreadUpdateResultContract,
   AssistantTranslationContract
 } from "@/packages/contracts/src";
 
@@ -39,6 +41,7 @@ export type AssistantMessageView = {
 type AssistantBroadcast = {
   actorHandle: string;
   conversationId: string;
+  operation: "changed" | "deleted";
   updatedAt: number;
 };
 
@@ -47,7 +50,16 @@ type RetryMutation = {
   key: string;
 };
 
+export type AssistantThreadLibraryStatus = "active" | "archived";
+export type AssistantThreadLiveEvent = {
+  id?: string;
+  cursor?: string;
+  kind: string;
+  subjectId: string;
+};
+
 const assistantBroadcastChannel = "symposium:assistant-threads:v1";
+const emptyAssistantLiveEvents: AssistantThreadLiveEvent[] = [];
 
 const contextKeyFor = (context: AssistantContext) =>
   `${context.surface}:${context.entityId ?? context.route}`;
@@ -86,12 +98,14 @@ export function useAssistantController({
   actorHandle,
   context,
   requestedConversationId = null,
-  enabled = true
+  enabled = true,
+  liveEvents = emptyAssistantLiveEvents
 }: {
   actorHandle: string;
   context: AssistantContext;
   requestedConversationId?: string | null;
   enabled?: boolean;
+  liveEvents?: AssistantThreadLiveEvent[];
 }) {
   const contextRef = useRef(context);
   const actorHandleRef = useRef(actorHandle);
@@ -103,14 +117,20 @@ export function useAssistantController({
   const requestedAttemptRef = useRef<string | null>(null);
   const loadedConversationIdRef = useRef<string | null>(null);
   const threadRequestRef = useRef(0);
+  const threadListRequestRef = useRef(0);
   const draftsRef = useRef(new Map<string, string>());
   const broadcastRef = useRef<BroadcastChannel | null>(null);
   const submissionLockRef = useRef(false);
   const contextLockRef = useRef(false);
+  const threadActionLockRef = useRef(false);
   const messageRetryRef = useRef<RetryMutation | null>(null);
   const contextRetryRef = useRef<RetryMutation | null>(null);
   const sourceRetryRef = useRef<RetryMutation | null>(null);
+  const threadMutationRetryRef = useRef(new Map<string, RetryMutation>());
+  const processedLiveEventKeysRef = useRef<string[]>([]);
   const newThreadContextModeRef = useRef<AssistantNewThreadContextMode>("current");
+  const threadSearchRef = useRef("");
+  const threadLibraryStatusRef = useRef<AssistantThreadLibraryStatus>("active");
 
   const [conversationId, setConversationIdState] = useState<string | undefined>(
     requestedConversationId ?? undefined
@@ -118,6 +138,12 @@ export function useAssistantController({
   const [thread, setThread] = useState<AssistantThreadStateContract | null>(null);
   const [threads, setThreads] = useState<AssistantThreadSummaryContract[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [threadSearch, setThreadSearchState] = useState("");
+  const [threadLibraryStatus, setThreadLibraryStatusState] =
+    useState<AssistantThreadLibraryStatus>("active");
+  const [threadListLoading, setThreadListLoading] = useState(false);
+  const [threadListLoadingMore, setThreadListLoadingMore] = useState(false);
+  const [threadActionBusyId, setThreadActionBusyId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AssistantMessageView[]>(() => [
     initialAssistantMessageFor(context)
   ]);
@@ -183,22 +209,110 @@ export function useAssistantController({
     ]));
   }, []);
 
-  const broadcastThreadChange = useCallback((id: string) => {
+  const broadcastThreadChange = useCallback((
+    id: string,
+    operation: AssistantBroadcast["operation"] = "changed"
+  ) => {
     broadcastRef.current?.postMessage({
       actorHandle,
       conversationId: id,
+      operation,
       updatedAt: Date.now()
     } satisfies AssistantBroadcast);
   }, [actorHandle]);
 
-  const refreshThreads = useCallback(async () => {
+  const refreshThreads = useCallback(async ({
+    append = false,
+    cursor = null,
+    search = threadSearchRef.current,
+    status = threadLibraryStatusRef.current,
+    silent = false
+  }: {
+    append?: boolean;
+    cursor?: string | null;
+    search?: string;
+    status?: AssistantThreadLibraryStatus;
+    silent?: boolean;
+  } = {}) => {
+    const request = ++threadListRequestRef.current;
+    if (!silent) {
+      if (append) setThreadListLoadingMore(true);
+      else setThreadListLoading(true);
+    }
+    const params = new URLSearchParams({
+      actorHandle,
+      limit: "20",
+      status
+    });
+    if (search.trim()) params.set("search", search.trim());
+    if (cursor) params.set("cursor", cursor);
+    try {
+      const page = await symposiumApi.request<AssistantThreadPageContract>(
+        `/api/assistant/conversations?${params.toString()}`,
+        { cache: "no-store" }
+      );
+      if (request === threadListRequestRef.current) {
+        setThreads((current) => orderAssistantThreadsByLatestMessage(
+          append
+            ? [
+                ...current,
+                ...page.threads.filter((candidate) =>
+                  current.every((existing) => existing.id !== candidate.id)
+                )
+              ]
+            : page.threads
+        ));
+        setNextCursor(page.nextCursor);
+      }
+      return page;
+    } finally {
+      if (!silent && request === threadListRequestRef.current) {
+        if (append) setThreadListLoadingMore(false);
+        else setThreadListLoading(false);
+      }
+    }
+  }, [actorHandle]);
+
+  const setThreadLibraryFilters = useCallback((
+    search: string,
+    status: AssistantThreadLibraryStatus
+  ) => {
+    const normalizedSearch = search.trim().slice(0, 160);
+    threadSearchRef.current = normalizedSearch;
+    threadLibraryStatusRef.current = status;
+    setThreadSearchState(normalizedSearch);
+    setThreadLibraryStatusState(status);
+    setNextCursor(null);
+    void refreshThreads({ search: normalizedSearch, status }).catch((caught) => {
+      setThreadListLoading(false);
+      setError(errorMessage(caught, "Chat history could not be searched."));
+    });
+  }, [refreshThreads]);
+
+  const loadMoreThreads = useCallback(async () => {
+    const cursor = nextCursor;
+    if (!cursor || threadListLoadingMore) return;
+    setError("");
+    try {
+      await refreshThreads({ append: true, cursor });
+    } catch (caught) {
+      setThreadListLoadingMore(false);
+      setError(errorMessage(caught, "More chats could not be loaded."));
+    }
+  }, [nextCursor, refreshThreads, threadListLoadingMore]);
+
+  const findActiveThreadForContext = useCallback(async (contextKey: string) => {
+    const params = new URLSearchParams({
+      actorHandle,
+      contextKey,
+      limit: "1",
+      status: "active"
+    });
     const page = await symposiumApi.request<AssistantThreadPageContract>(
-      `/api/assistant/conversations?actorHandle=${encodeURIComponent(actorHandle)}&limit=50`,
+      `/api/assistant/conversations?${params.toString()}`,
       { cache: "no-store" }
     );
-    setThreads(orderAssistantThreadsByLatestMessage(page.threads));
-    setNextCursor(page.nextCursor);
-    return page;
+    return page.threads[0] ?? null;
   }, [actorHandle]);
 
   const refreshSelectedThread = useCallback(async () => {
@@ -282,10 +396,143 @@ export function useAssistantController({
     sourceRetryRef.current = null;
   }, [currentDraftKey, restoreDraft, setConversationId]);
 
+  const updateThreadDetails = useCallback(async (
+    candidate: AssistantThreadSummaryContract,
+    changes: {
+      title?: string;
+      pinned?: boolean;
+      archived?: boolean;
+    }
+  ) => {
+    if (threadActionLockRef.current) return null;
+    const selected = conversationIdRef.current === candidate.id ? thread : null;
+    const expectedRevision = selected?.metadataRevision ?? candidate.metadataRevision;
+    const input = {
+      actorHandle,
+      ...changes,
+      expectedRevision
+    };
+    const fingerprint = JSON.stringify(input);
+    const retryKey = `update:${candidate.id}`;
+    const existingRetry = threadMutationRetryRef.current.get(retryKey);
+    if (existingRetry?.fingerprint !== fingerprint) {
+      threadMutationRetryRef.current.set(retryKey, {
+        fingerprint,
+        key: createClientMutationId("assistant-thread-update")
+      });
+    }
+    threadActionLockRef.current = true;
+    setThreadActionBusyId(candidate.id);
+    setError("");
+    try {
+      const result = await symposiumApi.request<AssistantThreadUpdateResultContract>(
+        `/api/assistant/conversations/${encodeURIComponent(candidate.id)}`,
+        {
+          method: "PATCH",
+          idempotencyKey: threadMutationRetryRef.current.get(retryKey)!.key,
+          body: input
+        }
+      );
+      threadMutationRetryRef.current.delete(retryKey);
+      if (conversationIdRef.current === result.thread.id) {
+        if (changes.archived === true) {
+          draftsRef.current.delete(result.thread.id);
+          startNewThread("blank");
+        } else {
+          setThread(result.thread);
+        }
+      }
+      await refreshThreads().catch(() => null);
+      broadcastThreadChange(result.thread.id);
+      return result.thread;
+    } catch (caught) {
+      if (caught instanceof SymposiumApiError && caught.status === 409) {
+        if (conversationIdRef.current === candidate.id) {
+          await refreshSelectedThread().catch(() => null);
+        }
+        await refreshThreads().catch(() => null);
+        setError("This chat changed in another session. The latest details are loaded; review them and try again.");
+      } else {
+        setError(errorMessage(caught, "The chat details could not be updated."));
+      }
+      return null;
+    } finally {
+      threadActionLockRef.current = false;
+      setThreadActionBusyId(null);
+    }
+  }, [
+    actorHandle,
+    broadcastThreadChange,
+    refreshSelectedThread,
+    refreshThreads,
+    startNewThread,
+    thread
+  ]);
+
+  const deleteThread = useCallback(async (
+    candidate: AssistantThreadSummaryContract
+  ) => {
+    if (threadActionLockRef.current) return false;
+    const selected = conversationIdRef.current === candidate.id ? thread : null;
+    const expectedRevision = selected?.metadataRevision ?? candidate.metadataRevision;
+    const input = { actorHandle, expectedRevision };
+    const fingerprint = JSON.stringify(input);
+    const retryKey = `delete:${candidate.id}`;
+    const existingRetry = threadMutationRetryRef.current.get(retryKey);
+    if (existingRetry?.fingerprint !== fingerprint) {
+      threadMutationRetryRef.current.set(retryKey, {
+        fingerprint,
+        key: createClientMutationId("assistant-thread-delete")
+      });
+    }
+    threadActionLockRef.current = true;
+    setThreadActionBusyId(candidate.id);
+    setError("");
+    try {
+      const result = await symposiumApi.request<AssistantThreadDeleteResultContract>(
+        `/api/assistant/conversations/${encodeURIComponent(candidate.id)}`,
+        {
+          method: "DELETE",
+          idempotencyKey: threadMutationRetryRef.current.get(retryKey)!.key,
+          body: input
+        }
+      );
+      threadMutationRetryRef.current.delete(retryKey);
+      draftsRef.current.delete(result.conversationId);
+      setThreads((current) => current.filter((entry) => entry.id !== result.conversationId));
+      if (conversationIdRef.current === result.conversationId) startNewThread("blank");
+      await refreshThreads().catch(() => null);
+      broadcastThreadChange(result.conversationId, "deleted");
+      return true;
+    } catch (caught) {
+      if (caught instanceof SymposiumApiError && caught.status === 409) {
+        if (conversationIdRef.current === candidate.id) {
+          await refreshSelectedThread().catch(() => null);
+        }
+        await refreshThreads().catch(() => null);
+        setError("This chat changed in another session. The latest details are loaded; review them and try again.");
+      } else {
+        setError(errorMessage(caught, "The chat could not be deleted."));
+      }
+      return false;
+    } finally {
+      threadActionLockRef.current = false;
+      setThreadActionBusyId(null);
+    }
+  }, [
+    actorHandle,
+    broadcastThreadChange,
+    refreshSelectedThread,
+    refreshThreads,
+    startNewThread,
+    thread
+  ]);
+
   useEffect(() => {
     if (actorHandleRef.current === actorHandle) return;
     actorHandleRef.current = actorHandle;
     threadRequestRef.current += 1;
+    threadListRequestRef.current += 1;
     draftsRef.current.clear();
     setConversationId(undefined);
     loadedConversationIdRef.current = null;
@@ -295,6 +542,13 @@ export function useAssistantController({
     setThread(null);
     setThreads([]);
     setNextCursor(null);
+    threadSearchRef.current = "";
+    threadLibraryStatusRef.current = "active";
+    setThreadSearchState("");
+    setThreadLibraryStatusState("active");
+    setThreadListLoading(false);
+    setThreadListLoadingMore(false);
+    setThreadActionBusyId(null);
     setMessages([initialAssistantMessageFor(contextRef.current)]);
     rememberDraft("");
     setThreadLoading(enabled);
@@ -302,9 +556,12 @@ export function useAssistantController({
     setError("");
     submissionLockRef.current = false;
     contextLockRef.current = false;
+    threadActionLockRef.current = false;
     messageRetryRef.current = null;
     contextRetryRef.current = null;
     sourceRetryRef.current = null;
+    threadMutationRetryRef.current.clear();
+    processedLiveEventKeysRef.current = [];
   }, [actorHandle, enabled, rememberDraft, setConversationId]);
 
   useEffect(() => {
@@ -353,12 +610,14 @@ export function useAssistantController({
     void refreshThreads().then((page) => {
       if (cancelled || requestedConversationId || conversationIdRef.current) return;
       const contextKey = contextKeyFor(contextRef.current);
-      const matching = page.threads.find(
+      const loadedMatch = page.threads.find(
         (candidate) => candidate.activeContextKey === contextKey
       );
-      if (matching) {
-        void openThread(matching.id);
-      } else {
+      return loadedMatch ?? findActiveThreadForContext(contextKey);
+    }).then((matching) => {
+      if (cancelled || requestedConversationId || conversationIdRef.current) return;
+      if (matching) void openThread(matching.id);
+      else {
         newThreadContextModeRef.current = "current";
         setNewThreadContextModeState("current");
         setMessages([initialAssistantMessageFor(contextRef.current)]);
@@ -378,7 +637,7 @@ export function useAssistantController({
     return () => {
       cancelled = true;
     };
-  }, [actorHandle, enabled, openThread, refreshThreads]);
+  }, [actorHandle, enabled, findActiveThreadForContext, openThread, refreshThreads, requestedConversationId]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -422,31 +681,78 @@ export function useAssistantController({
     broadcastRef.current = channel;
     channel.onmessage = (event: MessageEvent<AssistantBroadcast>) => {
       const change = event.data;
+      if (!change || change.actorHandle !== actorHandle) return;
       if (
-        !change ||
-        change.actorHandle !== actorHandle ||
-        change.conversationId !== conversationIdRef.current
+        change.operation === "deleted" &&
+        change.conversationId === conversationIdRef.current
       ) {
-        return;
+        draftsRef.current.delete(change.conversationId);
+        startNewThread("blank");
       }
+      const selectedRefresh =
+        change.operation !== "deleted" &&
+        change.conversationId === conversationIdRef.current
+          ? refreshSelectedThread().catch(() => null)
+          : Promise.resolve(null);
       void Promise.all([
-        refreshSelectedThread().catch(() => null),
-        refreshThreads().catch(() => null)
+        selectedRefresh,
+        refreshThreads({ silent: true }).catch(() => null)
       ]);
     };
     return () => {
       if (broadcastRef.current === channel) broadcastRef.current = null;
       channel.close();
     };
-  }, [actorHandle, enabled, refreshSelectedThread, refreshThreads]);
+  }, [actorHandle, enabled, refreshSelectedThread, refreshThreads, startNewThread]);
+
+  useEffect(() => {
+    if (!enabled || !liveEvents.length) return;
+    let refreshLibrary = false;
+    let refreshSelected = false;
+    let selectedDeleted = false;
+    const processed = new Set(processedLiveEventKeysRef.current);
+    for (const event of liveEvents) {
+      if (!event.kind.startsWith("assistant.")) continue;
+      const key = event.id ?? event.cursor ?? `${event.kind}:${event.subjectId}`;
+      if (processed.has(key)) continue;
+      processed.add(key);
+      refreshLibrary = true;
+      if (event.subjectId === conversationIdRef.current) {
+        if (event.kind === "assistant.thread.deleted") selectedDeleted = true;
+        else refreshSelected = true;
+      }
+    }
+    processedLiveEventKeysRef.current = [...processed].slice(-100);
+    if (!refreshLibrary) return;
+    if (selectedDeleted && conversationIdRef.current) {
+      draftsRef.current.delete(conversationIdRef.current);
+      startNewThread("blank");
+    }
+    const selectedRefresh = refreshSelected && !selectedDeleted
+      ? refreshSelectedThread().catch(() => null)
+      : Promise.resolve(null);
+    void Promise.all([
+      selectedRefresh,
+      refreshThreads({ silent: true }).catch(() => null)
+    ]);
+  }, [
+    enabled,
+    liveEvents,
+    refreshSelectedThread,
+    refreshThreads,
+    startNewThread
+  ]);
 
   useEffect(() => {
     if (!enabled) return;
     const refresh = () => {
-      if (document.visibilityState === "hidden" || !conversationIdRef.current) return;
+      if (document.visibilityState === "hidden") return;
+      const selectedRefresh = conversationIdRef.current
+        ? refreshSelectedThread().catch(() => null)
+        : Promise.resolve(null);
       void Promise.all([
-        refreshSelectedThread().catch(() => null),
-        refreshThreads().catch(() => null)
+        selectedRefresh,
+        refreshThreads({ silent: true }).catch(() => null)
       ]);
     };
     window.addEventListener("focus", refresh);
@@ -464,6 +770,7 @@ export function useAssistantController({
     if (
       !id ||
       !thread ||
+      thread.archivedAt !== null ||
       busy ||
       contextBusy ||
       submissionLockRef.current ||
@@ -557,6 +864,7 @@ export function useAssistantController({
     if (
       !id ||
       !thread ||
+      thread.archivedAt !== null ||
       busy ||
       contextBusy ||
       submissionLockRef.current ||
@@ -621,6 +929,7 @@ export function useAssistantController({
     const message = draft.trim();
     if (
       !message ||
+      thread?.archivedAt !== null ||
       busy ||
       contextBusy ||
       submissionLockRef.current ||
@@ -688,6 +997,26 @@ export function useAssistantController({
           }
         }
       );
+      if (response.status === "discarded") {
+        setMessages((current) => current.filter(
+          (candidate) => candidate.id !== optimisticId
+        ));
+        rememberDraft("");
+        setRemainingToday(
+          response.quota?.remainingToday ?? Math.max(0, remainingToday - 1)
+        );
+        if (response.quota) {
+          window.dispatchEvent(
+            new CustomEvent("symposium-ai-quota-change", {
+              detail: response.quota
+            })
+          );
+        }
+        setError(response.message.body);
+        messageRetryRef.current = null;
+        await refreshThreads({ silent: true }).catch(() => null);
+        return;
+      }
       setConversationId(response.conversationId);
       loadedConversationIdRef.current = response.conversationId;
       if (response.thread) {
@@ -737,6 +1066,7 @@ export function useAssistantController({
     quotaLoading,
     remainingToday,
     rememberDraft,
+    refreshThreads,
     replaceThreadSummary,
     setConversationId,
     thread,
@@ -765,6 +1095,11 @@ export function useAssistantController({
     thread,
     threads,
     nextCursor,
+    threadSearch,
+    threadLibraryStatus,
+    threadListLoading,
+    threadListLoadingMore,
+    threadActionBusyId,
     messages,
     draft,
     busy,
@@ -781,6 +1116,10 @@ export function useAssistantController({
     setError,
     openThread,
     startNewThread,
+    setThreadLibraryFilters,
+    loadMoreThreads,
+    updateThreadDetails,
+    deleteThread,
     useCurrentView,
     clearContext,
     refreshThreads,

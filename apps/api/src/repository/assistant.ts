@@ -7,17 +7,21 @@ import {
   assistantMessageSchema,
   assistantMessageInputSchema,
   assistantSourceUpdateInputSchema,
+  assistantThreadDeleteInputSchema,
   assistantThreadSourceSchema,
+  assistantThreadUpdateInputSchema,
   type AssistantContextContract,
   type AssistantContextUpdateResultContract,
   type AssistantMessageContract,
   type AssistantQuotaStatusContract,
   type AssistantResponseContract,
   type AssistantSourceUpdateResultContract,
+  type AssistantThreadDeleteResultContract,
   type AssistantThreadDetailContract,
   type AssistantThreadPageContract,
   type AssistantThreadSourceContract,
-  type AssistantThreadStateContract
+  type AssistantThreadStateContract,
+  type AssistantThreadUpdateResultContract
 } from "../../../../packages/contracts/src";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
@@ -49,6 +53,10 @@ type ConversationRow = {
   id: string;
   kind: "research_thread";
   title: string;
+  pinnedAt: Date | string | null;
+  archivedAt: Date | string | null;
+  deletedAt: Date | string | null;
+  metadataRevision: number;
   contextType: string;
   contextId: string | null;
   contextSources: unknown;
@@ -111,6 +119,9 @@ const assistantThreadState = (row: ConversationRow): AssistantThreadStateContrac
     id: row.id,
     kind: row.kind,
     title: row.title,
+    pinned: row.pinnedAt !== null,
+    archivedAt: row.archivedAt === null ? null : isoString(row.archivedAt),
+    metadataRevision: row.metadataRevision,
     contextType: row.contextType,
     contextId: row.contextId,
     activeContextKey: row.activeContextKey,
@@ -182,6 +193,10 @@ const conversationSelect = `
   id,
   kind,
   title,
+  pinned_at AS "pinnedAt",
+  archived_at AS "archivedAt",
+  deleted_at AS "deletedAt",
+  metadata_revision AS "metadataRevision",
   context_type AS "contextType",
   context_id AS "contextId",
   context_sources AS "contextSources",
@@ -194,15 +209,24 @@ const conversationSelect = `
   last_message_at AS "lastMessageAt"
 `;
 
-type AssistantCursor = { lastMessageAt: string; id: string };
+type AssistantCursor = { pinned: boolean; lastMessageAt: string; id: string };
 
-const encodeAssistantCursor = (row: { lastMessageAt: Date | string; id: string }) =>
-  Buffer.from(JSON.stringify({ lastMessageAt: isoString(row.lastMessageAt), id: row.id } satisfies AssistantCursor)).toString("base64url");
+const encodeAssistantCursor = (row: { pinnedAt?: Date | string | null; lastMessageAt: Date | string; id: string }) =>
+  Buffer.from(JSON.stringify({
+    pinned: Boolean(row.pinnedAt),
+    lastMessageAt: isoString(row.lastMessageAt),
+    id: row.id
+  } satisfies AssistantCursor)).toString("base64url");
 
 const parseAssistantCursor = (cursor: string): AssistantCursor => {
   try {
     const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<AssistantCursor>;
-    if (typeof value.lastMessageAt !== "string" || Number.isNaN(Date.parse(value.lastMessageAt)) || typeof value.id !== "string") {
+    if (
+      typeof value.pinned !== "boolean" ||
+      typeof value.lastMessageAt !== "string" ||
+      Number.isNaN(Date.parse(value.lastMessageAt)) ||
+      typeof value.id !== "string"
+    ) {
       throw new Error("Invalid cursor.");
     }
     return value as AssistantCursor;
@@ -277,21 +301,59 @@ export const listAssistantConversations = async (
   await ensureLiveData();
   const cursor = query.cursor ? parseAssistantCursor(query.cursor) : null;
   const values: unknown[] = [owner];
-  const clauses = ["owner_handle = $1", "kind = 'research_thread'"];
+  const clauses = [
+    "conversation.owner_handle = $1",
+    "conversation.kind = 'research_thread'",
+    "conversation.deleted_at IS NULL",
+    query.status === "archived"
+      ? "conversation.archived_at IS NOT NULL"
+      : "conversation.archived_at IS NULL"
+  ];
   if (cursor) {
-    values.push(cursor.lastMessageAt, cursor.id);
-    clauses.push(`(last_message_at, id) < ($${values.length - 1}::timestamptz, $${values.length}::uuid)`);
+    if (cursor.pinned) {
+      values.push(cursor.lastMessageAt, cursor.id);
+      clauses.push(`(
+        (
+          conversation.pinned_at IS NOT NULL
+          AND (conversation.last_message_at, conversation.id)
+            < ($${values.length - 1}::timestamptz, $${values.length}::uuid)
+        )
+        OR conversation.pinned_at IS NULL
+      )`);
+    } else {
+      values.push(cursor.lastMessageAt, cursor.id);
+      clauses.push(`conversation.pinned_at IS NULL
+        AND (conversation.last_message_at, conversation.id)
+          < ($${values.length - 1}::timestamptz, $${values.length}::uuid)`);
+    }
   }
   if (query.contextKey) {
     values.push(JSON.stringify([{ key: query.contextKey }]));
-    clauses.push(`context_sources @> $${values.length}::jsonb`);
+    clauses.push(`conversation.context_sources @> $${values.length}::jsonb`);
+  }
+  if (query.search) {
+    const escaped = query.search.replace(/[\\%_]/g, "\\$&");
+    values.push(`%${escaped}%`);
+    clauses.push(`(
+      conversation.title ILIKE $${values.length} ESCAPE '\\'
+      OR EXISTS (
+        SELECT 1
+        FROM ai_messages message
+        WHERE message.conversation_id = conversation.id
+          AND message.role IN ('user', 'assistant')
+          AND message.body ILIKE $${values.length} ESCAPE '\\'
+      )
+    )`);
   }
   values.push(query.limit + 1);
   const result = await getPool().query<ConversationRow>(
     `SELECT ${conversationSelect}
-     FROM ai_conversations
+     FROM ai_conversations conversation
      WHERE ${clauses.join(" AND ")}
-     ORDER BY last_message_at DESC, id DESC
+     ORDER BY
+       (conversation.pinned_at IS NOT NULL) DESC,
+       conversation.last_message_at DESC,
+       conversation.id DESC
      LIMIT $${values.length}`,
     values
   );
@@ -316,9 +378,12 @@ export const getAssistantConversation = async (
   const owner = await ensureProfileHandle(actorHandle(actor));
   await ensureLiveData();
   const conversation = await getPool().query<ConversationRow>(
-    `SELECT ${conversationSelect}
+     `SELECT ${conversationSelect}
      FROM ai_conversations
-     WHERE id = $1 AND owner_handle = $2 AND kind = 'research_thread'`,
+     WHERE id = $1
+       AND owner_handle = $2
+       AND kind = 'research_thread'
+       AND deleted_at IS NULL`,
     [conversationId, owner]
   );
   const row = conversation.rows[0];
@@ -348,6 +413,194 @@ export const getAssistantConversation = async (
   };
 };
 
+export const updateAssistantConversation = async (
+  conversationId: string,
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+): Promise<AssistantThreadUpdateResultContract> => {
+  const input = assistantThreadUpdateInputSchema.parse(rawInput);
+  if (!hasDatabase()) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Research threads require the live database." });
+  }
+  const owner = await ensureProfileHandle(actorHandle(actor));
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<AssistantThreadUpdateResultContract>(client, owner, mutation);
+    if (claim.replayed) return { value: claim.response };
+    const conversation = await client.query<ConversationRow>(
+      `SELECT ${conversationSelect}
+       FROM ai_conversations
+       WHERE id = $1
+         AND owner_handle = $2
+         AND kind = 'research_thread'
+         AND deleted_at IS NULL
+       FOR UPDATE`,
+      [conversationId, owner]
+    );
+    const row = conversation.rows[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Research thread not found." });
+    if (row.metadataRevision !== input.expectedRevision) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "This chat changed elsewhere. Reload it before changing its details."
+      });
+    }
+    if (input.pinned === true && row.archivedAt !== null && input.archived !== false) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Restore this chat before pinning it."
+      });
+    }
+
+    const updated = await client.query<ConversationRow>(
+      `UPDATE ai_conversations
+       SET title = CASE WHEN $3::text IS NULL THEN title ELSE $3::text END,
+           pinned_at = CASE
+             WHEN $5::boolean = true THEN NULL
+             WHEN $4::boolean IS NULL THEN pinned_at
+             WHEN $4::boolean = true AND pinned_at IS NULL THEN now()
+             WHEN $4::boolean = true THEN pinned_at
+             ELSE NULL
+           END,
+           archived_at = CASE
+             WHEN $5::boolean IS NULL THEN archived_at
+             WHEN $5::boolean = true AND archived_at IS NULL THEN now()
+             WHEN $5::boolean = true THEN archived_at
+             ELSE NULL
+           END,
+           metadata_revision = metadata_revision + 1,
+           updated_at = now()
+       WHERE id = $1 AND owner_handle = $2
+       RETURNING ${conversationSelect}`,
+      [
+        conversationId,
+        owner,
+        input.title ?? null,
+        input.pinned ?? null,
+        input.archived ?? null
+      ]
+    );
+    const response: AssistantThreadUpdateResultContract = {
+      thread: assistantThreadState(updated.rows[0]!)
+    };
+    await stageAuditLog(client, {
+      actorHandle: owner,
+      action: "assistant.thread.update",
+      subjectType: "ai_conversation",
+      subjectId: conversationId,
+      metadata: mutationAuditMetadata(mutation, {
+        renamed: input.title !== undefined,
+        pinned: input.pinned ?? null,
+        archived: input.archived ?? null,
+        metadataRevision: response.thread.metadataRevision
+      })
+    });
+    await completeMutation(client, owner, mutation, response);
+    const event = await stageEvent(client, {
+      kind: "assistant.thread.updated",
+      actorHandle: owner,
+      subjectType: "ai_conversation",
+      subjectId: conversationId,
+      visibility: "private",
+      payload: {
+        renamed: input.title !== undefined,
+        pinned: response.thread.pinned,
+        archived: response.thread.archivedAt !== null,
+        metadataRevision: response.thread.metadataRevision
+      }
+    });
+    return { value: response, events: [event] };
+  });
+};
+
+export const deleteAssistantConversation = async (
+  conversationId: string,
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+): Promise<AssistantThreadDeleteResultContract> => {
+  const input = assistantThreadDeleteInputSchema.parse(rawInput);
+  if (!hasDatabase()) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Research threads require the live database." });
+  }
+  const owner = await ensureProfileHandle(actorHandle(actor));
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<AssistantThreadDeleteResultContract>(client, owner, mutation);
+    if (claim.replayed) return { value: claim.response };
+    const conversation = await client.query<ConversationRow>(
+      `SELECT ${conversationSelect}
+       FROM ai_conversations
+       WHERE id = $1
+         AND owner_handle = $2
+         AND kind = 'research_thread'
+         AND deleted_at IS NULL
+       FOR UPDATE`,
+      [conversationId, owner]
+    );
+    const row = conversation.rows[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Research thread not found." });
+    if (row.metadataRevision !== input.expectedRevision) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "This chat changed elsewhere. Reload it before deleting it."
+      });
+    }
+
+    await client.query("DELETE FROM ai_messages WHERE conversation_id = $1", [conversationId]);
+    await client.query(
+      `DELETE FROM mutation_receipts
+       WHERE actor_handle = $1
+         AND (
+           response ->> 'conversationId' = $2
+           OR response -> 'thread' ->> 'id' = $2
+         )`,
+      [owner, conversationId]
+    );
+    await client.query(
+      `UPDATE ai_conversations
+       SET title = 'Deleted chat',
+           context_type = 'general',
+           context_id = NULL,
+           context_sources = '[]'::jsonb,
+           active_context_key = NULL,
+           active_source_id = NULL,
+           origin_source_id = NULL,
+           pinned_at = NULL,
+           archived_at = NULL,
+           deleted_at = now(),
+           metadata_revision = metadata_revision + 1,
+           updated_at = now()
+       WHERE id = $1 AND owner_handle = $2`,
+      [conversationId, owner]
+    );
+    const response: AssistantThreadDeleteResultContract = {
+      conversationId,
+      deleted: true
+    };
+    await stageAuditLog(client, {
+      actorHandle: owner,
+      action: "assistant.thread.delete",
+      subjectType: "ai_conversation",
+      subjectId: conversationId,
+      metadata: mutationAuditMetadata(mutation, {
+        preservedUsageLedger: true
+      })
+    });
+    await completeMutation(client, owner, mutation, response);
+    const event = await stageEvent(client, {
+      kind: "assistant.thread.deleted",
+      actorHandle: owner,
+      subjectType: "ai_conversation",
+      subjectId: conversationId,
+      visibility: "private",
+      payload: { deleted: true }
+    });
+    return { value: response, events: [event] };
+  });
+};
+
 export const updateAssistantConversationContext = async (
   conversationId: string,
   rawInput: unknown,
@@ -362,9 +615,13 @@ export const updateAssistantConversationContext = async (
     const claim = await claimMutation<AssistantContextUpdateResultContract>(client, owner, mutation);
     if (claim.replayed) return { value: claim.response };
     const conversation = await client.query<ConversationRow>(
-      `SELECT ${conversationSelect}
+       `SELECT ${conversationSelect}
        FROM ai_conversations
-       WHERE id = $1 AND owner_handle = $2 AND kind = 'research_thread'
+       WHERE id = $1
+         AND owner_handle = $2
+         AND kind = 'research_thread'
+         AND archived_at IS NULL
+         AND deleted_at IS NULL
        FOR UPDATE`,
       [conversationId, owner]
     );
@@ -559,7 +816,11 @@ export const updateAssistantConversationSource = async (
     const conversation = await client.query<ConversationRow>(
       `SELECT ${conversationSelect}
        FROM ai_conversations
-       WHERE id = $1 AND owner_handle = $2 AND kind = 'research_thread'
+       WHERE id = $1
+         AND owner_handle = $2
+         AND kind = 'research_thread'
+         AND archived_at IS NULL
+         AND deleted_at IS NULL
        FOR UPDATE`,
       [conversationId, owner]
     );
@@ -709,7 +970,11 @@ const prepareAssistant = async (
     const ownedConversation = await client.query<ConversationRow>(
       `SELECT ${conversationSelect}
        FROM ai_conversations
-       WHERE id = $1 AND owner_handle = $2 AND kind = 'research_thread'
+       WHERE id = $1
+         AND owner_handle = $2
+         AND kind = 'research_thread'
+         AND archived_at IS NULL
+         AND deleted_at IS NULL
        FOR SHARE`,
       [conversationId, owner]
     );
@@ -842,6 +1107,59 @@ const finalizeAssistant = async (
         ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, failure.inputTokens, failure.outputTokens)
         : prepared.reservedCostMicros
       : 0;
+  const conversation = await client.query<{ deletedAt: Date | string | null }>(
+    `SELECT deleted_at AS "deletedAt"
+     FROM ai_conversations
+     WHERE id = $1 AND owner_handle = $2
+     FOR UPDATE`,
+    [prepared.conversationId, prepared.owner]
+  );
+  if (!conversation.rowCount || conversation.rows[0]!.deletedAt) {
+    await completeAssistantUsage(client, {
+      usageId: prepared.usageId,
+      owner: prepared.owner,
+      providerError,
+      actualCostMicros: actualMicros,
+      inputTokens: result?.inputTokens ?? failure?.inputTokens ?? 0,
+      cachedInputTokens: result?.cachedInputTokens ?? failure?.cachedInputTokens ?? 0,
+      cacheWriteTokens: result?.cacheWriteTokens ?? failure?.cacheWriteTokens ?? 0,
+      outputTokens: result?.outputTokens ?? failure?.outputTokens ?? 0,
+      providerResponseId: result?.providerResponseId ?? failure?.providerResponseId,
+      errorCode: failure?.code
+    });
+    const discardedResponse: AssistantResponseContract = {
+      conversationId: prepared.conversationId,
+      providerConfigured: true,
+      status: "discarded",
+      model: result?.model ?? env.SYMPOSIUM_AI_MODEL,
+      quota: assistantQuotaAfterReservation(
+        prepared.dailyLimit,
+        prepared.remainingToday,
+        !providerError
+      ),
+      message: {
+        id: randomUUID(),
+        conversationId: prepared.conversationId,
+        role: "assistant",
+        body: "This chat was deleted while the answer was being prepared, so the answer was discarded.",
+        createdAt: new Date().toISOString(),
+        evidence: []
+      }
+    };
+    await stageAuditLog(client, {
+      actorHandle: prepared.owner,
+      action: "assistant.message.discard",
+      subjectType: "ai_conversation",
+      subjectId: prepared.conversationId,
+      metadata: mutationAuditMetadata(mutation, {
+        reason: "conversation_deleted",
+        providerCompleted: Boolean(result),
+        actualCostMicros: actualMicros
+      })
+    });
+    await completeMutation(client, prepared.owner, mutation, discardedResponse);
+    return { value: discardedResponse };
+  }
   const assistantMessage = await client.query<{
     id: string;
     conversationId: string;

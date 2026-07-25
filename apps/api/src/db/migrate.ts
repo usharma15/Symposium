@@ -2965,6 +2965,55 @@ const migrations: Migration[] = [
       FROM recovered_evidence recovered
       WHERE message.id = recovered.message_id;
     `
+  },
+  {
+    id: "0057_assistant_chat_library",
+    sql: `
+      ALTER TABLE ai_conversations
+        ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS metadata_revision INTEGER NOT NULL DEFAULT 1;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'ai_conversations_metadata_revision_check'
+        ) THEN
+          ALTER TABLE ai_conversations
+            ADD CONSTRAINT ai_conversations_metadata_revision_check
+            CHECK (metadata_revision >= 1);
+        END IF;
+      END $$;
+
+      CREATE INDEX IF NOT EXISTS ai_conversations_active_library_idx
+        ON ai_conversations (
+          owner_handle,
+          kind,
+          (pinned_at IS NOT NULL) DESC,
+          last_message_at DESC,
+          id DESC
+        )
+        WHERE archived_at IS NULL AND deleted_at IS NULL;
+
+      CREATE INDEX IF NOT EXISTS ai_conversations_archived_library_idx
+        ON ai_conversations (
+          owner_handle,
+          kind,
+          last_message_at DESC,
+          id DESC
+        )
+        WHERE archived_at IS NOT NULL AND deleted_at IS NULL;
+
+      CREATE INDEX IF NOT EXISTS ai_conversations_title_trgm_idx
+        ON ai_conversations USING gin (title gin_trgm_ops)
+        WHERE deleted_at IS NULL;
+
+      CREATE INDEX IF NOT EXISTS ai_messages_body_trgm_idx
+        ON ai_messages USING gin (body gin_trgm_ops);
+    `
   }
 ];
 

@@ -192,6 +192,28 @@
   width: 100%;
 }
 
+.assistant-thread-filters {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 0.28rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0.42rem 0.72rem;
+}
+
+.assistant-thread-filters button {
+  background: transparent;
+  border-color: transparent;
+  font-size: 0.65rem;
+  min-height: 1.85rem;
+  padding: 0.25rem 0.42rem;
+}
+
+.assistant-thread-filters button.active {
+  background: color-mix(in srgb, var(--aqua) 18%, var(--document-control-solid));
+  border-color: color-mix(in srgb, var(--aqua) 38%, var(--line));
+  font-weight: 850;
+}
+
 .assistant-thread-list {
   display: flex;
   flex: 1 1 auto;
@@ -202,10 +224,25 @@
   padding: 0.6rem;
 }
 
-.assistant-thread-list > button {
+.assistant-thread-item {
   background: transparent;
-  border-color: transparent;
+  border: 1px solid transparent;
   border-radius: 0.72rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  position: relative;
+}
+
+.assistant-thread-item.active {
+  background: color-mix(in srgb, var(--aqua) 17%, var(--document-control-solid));
+  border-color: color-mix(in srgb, var(--aqua) 45%, var(--line));
+}
+
+.assistant-thread-select {
+  background: transparent;
+  border: 0;
+  border-radius: 0.68rem;
   display: grid;
   gap: 0.22rem;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -213,30 +250,157 @@
   text-align: left;
 }
 
-.assistant-thread-list > button.active {
-  background: color-mix(in srgb, var(--aqua) 17%, var(--document-control-solid));
-  border-color: color-mix(in srgb, var(--aqua) 45%, var(--line));
+.assistant-thread-more {
+  align-self: start;
+  background: transparent;
+  border-color: transparent;
+  margin: 0.42rem 0.38rem 0 0;
+  min-height: 1.9rem;
+  min-width: 1.9rem;
+  padding: 0.25rem;
 }
 
-.assistant-thread-list strong {
+.assistant-thread-more:hover,
+.assistant-thread-more[aria-expanded="true"] {
+  background: var(--document-control-solid);
+  border-color: var(--line);
+}
+
+.assistant-thread-select strong {
+  align-items: center;
+  display: flex;
   font-size: 0.76rem;
+  gap: 0.25rem;
   grid-column: 1 / -1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.assistant-thread-list span,
-.assistant-thread-list time,
+.assistant-thread-select span,
+.assistant-thread-select time,
 .assistant-thread-list > small,
 .assistant-thread-list > p {
   color: var(--muted);
   font-size: 0.62rem;
 }
 
-.assistant-thread-list time { text-align: right; }
+.assistant-thread-select time { text-align: right; }
 .assistant-thread-list > p { line-height: 1.45; margin: 0; padding: 0.6rem 0.35rem; }
 .assistant-thread-list > small { line-height: 1.4; padding: 0.35rem; }
+
+.assistant-thread-popover {
+  background: color-mix(in srgb, var(--document-surface-solid) 96%, var(--aqua));
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.24rem;
+  grid-column: 1 / -1;
+  padding: 0.42rem;
+}
+
+.assistant-thread-popover > button,
+.assistant-thread-popover > span > button,
+.assistant-thread-popover form button {
+  align-items: center;
+  display: inline-flex;
+  font-size: 0.66rem;
+  gap: 0.3rem;
+  justify-content: flex-start;
+  min-height: 2rem;
+  padding: 0.32rem 0.46rem;
+}
+
+.assistant-thread-popover > button {
+  background: transparent;
+  border-color: transparent;
+  width: 100%;
+}
+
+.assistant-thread-popover .danger {
+  color: #a83d47;
+}
+
+[data-theme="night"] .assistant-thread-popover .danger {
+  color: #ff9ea7;
+}
+
+.assistant-thread-popover form {
+  display: grid;
+  gap: 0.38rem;
+}
+
+.assistant-thread-popover form label,
+.assistant-thread-popover.delete > strong {
+  font-size: 0.67rem;
+}
+
+.assistant-thread-popover form input {
+  background: var(--document-control-solid);
+  border: 1px solid var(--line);
+  border-radius: 0.48rem;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.7rem;
+  min-height: 2rem;
+  min-width: 0;
+  padding: 0.34rem 0.42rem;
+  width: 100%;
+}
+
+.assistant-thread-popover > p {
+  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.assistant-thread-popover > span,
+.assistant-thread-popover form > span {
+  display: flex;
+  gap: 0.34rem;
+  justify-content: flex-end;
+}
+
+.assistant-thread-load-more {
+  align-items: center;
+  display: inline-flex;
+  font-size: 0.66rem;
+  gap: 0.3rem;
+  justify-content: center;
+  margin-top: 0.2rem;
+  min-height: 2.1rem;
+  width: 100%;
+}
+
+.assistant-archived-notice {
+  align-items: center;
+  background: color-mix(in srgb, var(--bronze) 13%, var(--document-control-solid));
+  border-bottom: 1px solid color-mix(in srgb, var(--bronze) 36%, var(--line));
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.55rem;
+  justify-content: space-between;
+  padding: 0.48rem 0.72rem;
+}
+
+.assistant-archived-notice > span {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.65rem;
+  gap: 0.28rem;
+  line-height: 1.35;
+}
+
+.assistant-archived-notice > button {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.64rem;
+  gap: 0.28rem;
+  min-height: 1.9rem;
+  padding: 0.3rem 0.42rem;
+}
 
 .assistant-workspace .tablet-context-dock {
   border-bottom: 0;
@@ -364,7 +528,7 @@
 }
 .tablet-thread-menu button { display: grid; gap: 0.1rem; padding: 0.4rem 0.46rem; text-align: left; }
 .tablet-thread-menu button.active { background: color-mix(in srgb, var(--aqua) 16%, var(--document-control-solid)); }
-.tablet-thread-menu strong { font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tablet-thread-menu strong { align-items: center; display: flex; font-size: 0.65rem; gap: 0.22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tablet-thread-menu small { color: var(--muted); font-size: 0.55rem; }
 .tablet-thread-menu p { color: var(--muted); font-size: 0.62rem; margin: 0; padding: 0.5rem; }
 

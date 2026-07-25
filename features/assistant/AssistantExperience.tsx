@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, BookOpen, BrainCircuit, CheckCircle2, ChevronDown, ExternalLink, Eye, EyeOff, FileClock, Folder, FolderPlus, History, Languages, Link2, LoaderCircle, Maximize2, Minimize2, Plus, RefreshCw, Save, Search, Send, X } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { AlertTriangle, Archive, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronDown, Ellipsis, ExternalLink, Eye, EyeOff, FileClock, Folder, FolderPlus, History, Languages, Link2, LoaderCircle, Maximize2, Minimize2, Pencil, Pin, PinOff, Plus, RefreshCw, RotateCcw, Save, Search, Send, Trash2, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import type {
   AssistantQuickNoteResultContract,
   AssistantQuickNoteContract,
   AssistantThreadSourceContract,
   AssistantThreadStateContract,
+  AssistantThreadSummaryContract,
   AssistantTranslationContract,
   AssistantTranslationLanguageContract
 } from "@/packages/contracts/src";
@@ -447,6 +448,192 @@ function ContextDock({
   );
 }
 
+type ThreadHistoryItemMode = "closed" | "menu" | "rename" | "delete";
+
+function ThreadHistoryItem({
+  candidate,
+  selected,
+  disabled,
+  busy,
+  onSelect,
+  onUpdate,
+  onDelete
+}: {
+  candidate: AssistantThreadSummaryContract;
+  selected: boolean;
+  disabled: boolean;
+  busy: boolean;
+  onSelect: () => void;
+  onUpdate: (changes: { title?: string; pinned?: boolean; archived?: boolean }) => Promise<boolean>;
+  onDelete: () => Promise<boolean>;
+}) {
+  const [itemMode, setItemMode] = useState<ThreadHistoryItemMode>("closed");
+  const [title, setTitle] = useState(candidate.title);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const deleteCancelRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    setTitle(candidate.title);
+  }, [candidate.title]);
+
+  useEffect(() => {
+    if (itemMode === "closed") return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setItemMode("closed");
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setItemMode("closed");
+        window.requestAnimationFrame(() => moreButtonRef.current?.focus());
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [itemMode]);
+
+  useEffect(() => {
+    if (itemMode !== "rename") return;
+    renameInputRef.current?.focus();
+    renameInputRef.current?.select();
+  }, [itemMode]);
+
+  useEffect(() => {
+    if (itemMode === "delete") deleteCancelRef.current?.focus();
+  }, [itemMode]);
+
+  const closeActions = () => {
+    setItemMode("closed");
+    window.requestAnimationFrame(() => moreButtonRef.current?.focus());
+  };
+
+  const runUpdate = async (changes: { title?: string; pinned?: boolean; archived?: boolean }) => {
+    const updated = await onUpdate(changes);
+    if (updated) closeActions();
+  };
+
+  return (
+    <div
+      className={`assistant-thread-item${selected ? " active" : ""}${candidate.pinned ? " pinned" : ""}`}
+      data-assistant-thread-id={candidate.id}
+      ref={rootRef}
+    >
+      <button
+        type="button"
+        className="assistant-thread-select"
+        aria-current={selected ? "page" : undefined}
+        onClick={() => {
+          setItemMode("closed");
+          onSelect();
+        }}
+      >
+        <strong>{candidate.pinned ? <Pin size={11} aria-label="Pinned" /> : null}{candidate.title}</strong>
+        <span>{candidate.sourceCount} source{candidate.sourceCount === 1 ? "" : "s"}</span>
+        <time dateTime={candidate.lastMessageAt}>{assistantThreadActivityLabel(candidate.lastMessageAt)}</time>
+      </button>
+      <button
+        type="button"
+        className="assistant-thread-more"
+        ref={moreButtonRef}
+        aria-label={`Manage ${candidate.title}`}
+        aria-haspopup="menu"
+        aria-expanded={itemMode !== "closed"}
+        disabled={disabled}
+        onClick={() => setItemMode((current) => current === "closed" ? "menu" : "closed")}
+      >
+        {busy ? <LoaderCircle className="spin" size={14} /> : <Ellipsis size={15} />}
+      </button>
+
+      {itemMode !== "closed" ? (
+        <div
+          className={`assistant-thread-popover ${itemMode}`}
+          role={itemMode === "menu" ? "menu" : itemMode === "delete" ? "alertdialog" : "dialog"}
+          aria-label={itemMode === "menu" ? `Chat actions for ${candidate.title}` : undefined}
+        >
+          {itemMode === "menu" ? (
+            <>
+              <button type="button" role="menuitem" onClick={() => setItemMode("rename")}>
+                <Pencil size={13} />Rename
+              </button>
+              {!candidate.archivedAt ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void runUpdate({ pinned: !candidate.pinned })}
+                >
+                  {candidate.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+                  {candidate.pinned ? "Unpin" : "Pin"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void runUpdate({ archived: candidate.archivedAt === null })}
+              >
+                {candidate.archivedAt ? <RotateCcw size={13} /> : <Archive size={13} />}
+                {candidate.archivedAt ? "Restore" : "Archive"}
+              </button>
+              <button type="button" role="menuitem" className="danger" onClick={() => setItemMode("delete")}>
+                <Trash2 size={13} />Delete
+              </button>
+            </>
+          ) : itemMode === "rename" ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                const normalized = title.trim();
+                if (!normalized || normalized === candidate.title) {
+                  closeActions();
+                  return;
+                }
+                void runUpdate({ title: normalized });
+              }}
+            >
+              <label htmlFor={`assistant-thread-title-${candidate.id}`}>Rename chat</label>
+              <input
+                id={`assistant-thread-title-${candidate.id}`}
+                ref={renameInputRef}
+                value={title}
+                maxLength={300}
+                onChange={(event) => setTitle(event.target.value)}
+              />
+              <span>
+                <button type="button" onClick={closeActions}><X size={13} />Cancel</button>
+                <button type="submit" className="primary" disabled={!title.trim()}><Check size={13} />Save</button>
+              </span>
+            </form>
+          ) : (
+            <>
+              <strong>Delete this chat permanently?</strong>
+              <p>Its messages and saved context will be removed. Office notes already saved from it will remain.</p>
+              <span>
+                <button type="button" ref={deleteCancelRef} onClick={closeActions}>Keep chat</button>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => {
+                    void onDelete().then((deleted) => {
+                      if (deleted) closeActions();
+                    });
+                  }}
+                >
+                  <Trash2 size={13} />Delete
+                </button>
+              </span>
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export type AssistantExperienceMode = "compact" | "workspace";
 
 export function AssistantExperience({
@@ -470,6 +657,11 @@ export function AssistantExperience({
     thread,
     threads,
     nextCursor,
+    threadSearch,
+    threadLibraryStatus,
+    threadListLoading,
+    threadListLoadingMore,
+    threadActionBusyId,
     messages,
     draft,
     busy,
@@ -485,6 +677,10 @@ export function AssistantExperience({
     setDraft,
     openThread,
     startNewThread,
+    setThreadLibraryFilters,
+    loadMoreThreads,
+    updateThreadDetails,
+    deleteThread,
     useCurrentView,
     clearContext,
     changeThreadContext,
@@ -494,18 +690,10 @@ export function AssistantExperience({
   } = controller;
   const [threadsOpen, setThreadsOpen] = useState(false);
   const [contextDockOpen, setContextDockOpen] = useState(mode === "workspace");
-  const [threadQuery, setThreadQuery] = useState("");
+  const [threadQuery, setThreadQuery] = useState(threadSearch);
   const [mobilePane, setMobilePane] = useState<"threads" | "chat" | "context">("chat");
   const transcriptRef = useRef<HTMLDivElement>(null);
   const previousModeRef = useRef(mode);
-
-  const filteredThreads = useMemo(() => {
-    const query = threadQuery.trim().toLocaleLowerCase();
-    if (!query) return threads;
-    return threads.filter((candidate) =>
-      candidate.title.toLocaleLowerCase().includes(query)
-    );
-  }, [threadQuery, threads]);
 
   const selectThread = (id: string) => {
     setThreadsOpen(false);
@@ -517,7 +705,19 @@ export function AssistantExperience({
     if (previousModeRef.current === mode) return;
     previousModeRef.current = mode;
     setContextDockOpen(mode === "workspace");
-  }, [mode]);
+    if (mode === "compact" && (threadLibraryStatus !== "active" || threadSearch)) {
+      setThreadQuery("");
+      setThreadLibraryFilters("", "active");
+    }
+  }, [mode, setThreadLibraryFilters, threadLibraryStatus, threadSearch]);
+
+  useEffect(() => {
+    if (threadQuery === threadSearch) return;
+    const timeout = window.setTimeout(() => {
+      setThreadLibraryFilters(threadQuery, threadLibraryStatus);
+    }, 280);
+    return () => window.clearTimeout(timeout);
+  }, [setThreadLibraryFilters, threadLibraryStatus, threadQuery, threadSearch]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -592,7 +792,7 @@ export function AssistantExperience({
               <History size={14} />
               <span>
                 <strong>Chats</strong>
-                <small>{threads.length ? `${threads.length} recent conversation${threads.length === 1 ? "" : "s"}` : "Your conversation history"}</small>
+                <small>{threads.length ? `${threads.length}${nextCursor ? "+" : ""} ${threadLibraryStatus} chat${threads.length === 1 ? "" : "s"}` : "Your conversation history"}</small>
               </span>
             </div>
           )}
@@ -618,7 +818,7 @@ export function AssistantExperience({
                 key={candidate.id}
                 onClick={() => selectThread(candidate.id)}
               >
-                <strong>{candidate.title}</strong>
+                <strong>{candidate.pinned ? <Pin size={10} aria-label="Pinned" /> : null}{candidate.title}</strong>
                 <small>{candidate.sourceCount} source{candidate.sourceCount === 1 ? "" : "s"} · {assistantThreadActivityLabel(candidate.lastMessageAt)}</small>
               </button>
             )) : <p>No saved chats yet.</p>}
@@ -626,32 +826,68 @@ export function AssistantExperience({
           ) : null}
         </section>
         <div className="assistant-thread-search">
-          <Search size={14} />
+          {threadListLoading ? <LoaderCircle className="spin" size={14} /> : <Search size={14} />}
           <input
             type="search"
             value={threadQuery}
             onChange={(event) => setThreadQuery(event.target.value)}
-            placeholder="Search chats"
+            maxLength={160}
+            placeholder="Search titles and messages"
             aria-label="Search chats"
           />
         </div>
+        <nav className="assistant-thread-filters" aria-label="Chat history view">
+          <button
+            type="button"
+            className={threadLibraryStatus === "active" ? "active" : undefined}
+            aria-pressed={threadLibraryStatus === "active"}
+            onClick={() => setThreadLibraryFilters(threadQuery, "active")}
+          >
+            Active
+          </button>
+          <button
+            type="button"
+            className={threadLibraryStatus === "archived" ? "active" : undefined}
+            aria-pressed={threadLibraryStatus === "archived"}
+            onClick={() => setThreadLibraryFilters(threadQuery, "archived")}
+          >
+            Archived
+          </button>
+        </nav>
         <div className="assistant-thread-list">
-          {filteredThreads.length ? filteredThreads.map((candidate) => (
+          {threads.length ? threads.map((candidate) => (
+            <ThreadHistoryItem
+              key={candidate.id}
+              candidate={candidate}
+              selected={candidate.id === conversationId}
+              disabled={threadActionBusyId !== null}
+              busy={threadActionBusyId === candidate.id}
+              onSelect={() => selectThread(candidate.id)}
+              onUpdate={async (changes) => Boolean(await updateThreadDetails(candidate, changes))}
+              onDelete={() => deleteThread(candidate)}
+            />
+          )) : (
+            <p>
+              {threadListLoading
+                ? "Loading chats…"
+                : threadQuery.trim()
+                  ? `No ${threadLibraryStatus} chats match this search.`
+                  : threadLibraryStatus === "archived"
+                    ? "No archived chats."
+                    : "No saved chats yet."}
+            </p>
+          )}
+          {nextCursor ? (
             <button
               type="button"
-              className={candidate.id === conversationId ? "active" : undefined}
-              aria-current={candidate.id === conversationId ? "page" : undefined}
-              key={candidate.id}
-              onClick={() => selectThread(candidate.id)}
+              className="assistant-thread-load-more"
+              disabled={threadListLoadingMore}
+              onClick={() => void loadMoreThreads()}
             >
-              <strong>{candidate.title}</strong>
-              <span>{candidate.sourceCount} source{candidate.sourceCount === 1 ? "" : "s"}</span>
-              <time dateTime={candidate.lastMessageAt}>{assistantThreadActivityLabel(candidate.lastMessageAt)}</time>
+              {threadListLoadingMore ? <LoaderCircle className="spin" size={13} /> : <ChevronDown size={13} />}
+              {threadListLoadingMore ? "Loading…" : "Load more chats"}
             </button>
-          )) : (
-            <p>{threadQuery.trim() ? "No chats match this search." : "No saved chats yet."}</p>
-          )}
-          {nextCursor ? <small>Showing the 50 most recently chatted threads.</small> : null}
+          ) : threads.length ? <small>All matching chats are shown.</small> : null}
         </div>
       </aside>
 
@@ -660,7 +896,7 @@ export function AssistantExperience({
           <header className="assistant-panel-heading assistant-chat-heading">
             <div>
               <span><BrainCircuit size={16} />AI Workspace</span>
-              <small>{thread?.title ?? "New chat"} · {activeContext ? "working with context" : "plain conversation"}</small>
+              <small>{thread?.title ?? "New chat"} · {thread?.archivedAt ? "archived" : activeContext ? "working with context" : "plain conversation"}</small>
             </div>
             <button type="button" title="Collapse to AI Tablet" onClick={onCollapse}>
               <Minimize2 size={16} /><span>Tablet</span>
@@ -673,6 +909,20 @@ export function AssistantExperience({
           <span>{quotaLoading ? "Loading allowance…" : `${remainingToday} of ${dailyLimit} answers left today · shared $${monthlyBudgetUsd} monthly cap`}</span>
         </section>
 
+        {thread?.archivedAt ? (
+          <section className="assistant-archived-notice" aria-label="Archived chat">
+            <span><Archive size={14} /><strong>This chat is archived.</strong> Restore it to continue the conversation or change its context.</span>
+            <button
+              type="button"
+              disabled={threadActionBusyId !== null}
+              onClick={() => void updateThreadDetails(thread, { archived: false })}
+            >
+              {threadActionBusyId === thread.id ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}
+              Restore
+            </button>
+          </section>
+        ) : null}
+
         <div className={`tablet-active-context${activeContext ? " attached" : ""}`} aria-label="Chat context">
           <span>
             <BookOpen size={13} />
@@ -684,13 +934,13 @@ export function AssistantExperience({
               type="button"
               aria-label="Remove chat context"
               title="Continue without explicit context"
-              disabled={busy || contextBusy}
+              disabled={busy || contextBusy || Boolean(thread?.archivedAt)}
               onClick={clearContext}
             >
               <X size={14} />
             </button>
           ) : (
-            <button type="button" disabled={busy || contextBusy} onClick={useCurrentView}>
+            <button type="button" disabled={busy || contextBusy || Boolean(thread?.archivedAt)} onClick={useCurrentView}>
               <Link2 size={12} />Add current view
             </button>
           )}
@@ -756,19 +1006,21 @@ export function AssistantExperience({
             }}
             maxLength={2000}
             rows={mode === "workspace" ? 3 : 2}
-            placeholder={quotaLoading
+            placeholder={thread?.archivedAt
+              ? "Restore this chat to continue"
+              : quotaLoading
               ? "Loading AI allowance"
               : remainingToday > 0
                 ? activeContext
                   ? `Ask about ${activeContext.title}`
                   : "Message Symposium AI"
                 : "Daily AI limit reached"}
-            disabled={busy || contextBusy || threadLoading || quotaLoading || remainingToday <= 0 || !providerEnabled || !providerConfigured}
+            disabled={Boolean(thread?.archivedAt) || busy || contextBusy || threadLoading || quotaLoading || remainingToday <= 0 || !providerEnabled || !providerConfigured}
           />
           <button
             type="submit"
             className="primary"
-            disabled={busy || contextBusy || threadLoading || quotaLoading || !draft.trim() || remainingToday <= 0 || !providerEnabled || !providerConfigured}
+            disabled={Boolean(thread?.archivedAt) || busy || contextBusy || threadLoading || quotaLoading || !draft.trim() || remainingToday <= 0 || !providerEnabled || !providerConfigured}
             title="Send one limited AI request"
           >
             <Send size={15} /><span>Send · uses 1</span>
@@ -782,7 +1034,7 @@ export function AssistantExperience({
           activeContext={activeContext}
           thread={thread}
           open={contextDockOpen}
-          busy={busy || contextBusy}
+          busy={busy || contextBusy || Boolean(thread?.archivedAt)}
           onToggle={() => setContextDockOpen((current) => !current)}
           onUseCurrentView={useCurrentView}
           onClearContext={clearContext}
