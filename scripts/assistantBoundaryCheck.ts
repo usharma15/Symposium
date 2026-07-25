@@ -1816,6 +1816,8 @@ assert.match(repository, /assistant\.message\.discard/);
 assert.match(repository, /reason: "conversation_deleted"/);
 assert.match(repository, /answer was discarded/);
 assert.match(assistantController, /response\.status === "discarded"/);
+assert.match(assistantController, /Boolean\(thread\?\.archivedAt\)/);
+assert.doesNotMatch(assistantController, /thread\?\.archivedAt !== null/);
 assert.match(repository, /assistant\.context\.updated/);
 assert.match(repository, /kind = 'research_thread'/);
 assert.match(repository, /origin_source_id/);

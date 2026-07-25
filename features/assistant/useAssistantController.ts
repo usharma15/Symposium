@@ -956,7 +956,7 @@ export function useAssistantController({
     const message = draft.trim();
     if (
       !message ||
-      thread?.archivedAt !== null ||
+      Boolean(thread?.archivedAt) ||
       busy ||
       contextBusy ||
       submissionLockRef.current ||
