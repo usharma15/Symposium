@@ -1,21 +1,21 @@
 export const assistantTranslationLanguages = [
+  "bengali",
   "english",
   "french",
   "german",
-  "spanish",
-  "hindi",
-  "bengali",
-  "punjabi",
-  "marathi",
-  "gujarati",
-  "telugu",
-  "tamil",
   "greek",
-  "portuguese",
+  "gujarati",
+  "hindi",
   "japanese",
   "korean",
+  "marathi",
+  "portuguese",
+  "punjabi",
+  "sanskrit",
   "simplified_chinese",
-  "sanskrit"
+  "spanish",
+  "tamil",
+  "telugu"
 ] as const;
 
 export type AssistantTranslationLanguageValue = typeof assistantTranslationLanguages[number];

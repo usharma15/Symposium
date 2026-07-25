@@ -713,7 +713,8 @@ export function FeedPost({
   const translation = useContentTranslation({
     sourceType: "post",
     sourceId: item.id,
-    sourceRevision: item.revision ?? 1
+    sourceRevision: item.revision ?? 1,
+    viewerHandle: actorHandle
   });
   const tone = postToneForItem(item);
   const feedKindLabel = itemHasPostType(item, "proposal")
@@ -1058,7 +1059,8 @@ export function DetailView({
   const translation = useContentTranslation({
     sourceType: "post",
     sourceId: item.id,
-    sourceRevision: item.revision ?? 1
+    sourceRevision: item.revision ?? 1,
+    viewerHandle: actorHandle
   });
 
   useEffect(() => {

@@ -622,7 +622,8 @@ function CommentNode({
   const translation = useContentTranslation({
     sourceType: "comment",
     sourceId: comment.id ?? `unavailable:${itemId}`,
-    sourceRevision: comment.revision ?? 1
+    sourceRevision: comment.revision ?? 1,
+    viewerHandle: actorHandle
   });
 
   useQualifiedView(nodeRef, {

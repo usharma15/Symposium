@@ -732,7 +732,8 @@ function ProfileCommentCard({
   const translation = useContentTranslation({
     sourceType: "comment",
     sourceId: activity.comment.id ?? `unavailable:${activity.item.id}`,
-    sourceRevision: activity.comment.revision ?? 1
+    sourceRevision: activity.comment.revision ?? 1,
+    viewerHandle: actorHandle
   });
   const openComment = () => {
     if (activity.comment.id && !commentDeleted && !interactionLocked) {

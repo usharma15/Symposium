@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type SetStateAction } from "react";
 import { Languages, LoaderCircle, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import { SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
 import { TranslationLanguagePicker } from "@/features/translation/TranslationLanguagePicker";
+import {
+  contentTranslationSessionIdentityKey,
+  peekContentTranslationSession,
+  readContentTranslationSession,
+  rememberContentTranslationSession
+} from "@/features/translation/contentTranslationSession";
 import { translatedDocumentForSource } from "@/lib/documentModel";
 import type { InquiryAttachment, ResearchProfile } from "@/lib/mockData";
 import {
@@ -20,28 +26,65 @@ import type {
 export const useContentTranslation = ({
   sourceType,
   sourceId,
-  sourceRevision
+  sourceRevision,
+  viewerHandle
 }: {
   sourceType: "post" | "comment";
   sourceId: string;
   sourceRevision: number;
+  viewerHandle: string;
 }) => {
+  const sessionIdentity = { viewerHandle, sourceType, sourceId, sourceRevision };
+  const sessionIdentityKey = contentTranslationSessionIdentityKey(sessionIdentity);
+  const initialSession = peekContentTranslationSession(sessionIdentity);
   const [open, setOpen] = useState(false);
-  const [language, setLanguage] = useState<AssistantTranslationLanguageContract>("english");
+  const [language, setLanguage] = useState<AssistantTranslationLanguageContract>(
+    initialSession?.result.targetLanguage ?? "english"
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<ContentTranslationResultContract | null>(null);
-  const [showTranslation, setShowTranslation] = useState(false);
+  const [result, setResult] = useState<ContentTranslationResultContract | null>(
+    initialSession?.result ?? null
+  );
+  const [resultSessionIdentityKey, setResultSessionIdentityKey] = useState<string | null>(
+    initialSession ? sessionIdentityKey : null
+  );
+  const [showTranslationState, setShowTranslationState] = useState(
+    initialSession?.showTranslation ?? false
+  );
   const retryRef = useRef<{ fingerprint: string; key: string } | null>(null);
 
   useEffect(() => {
+    const restored = readContentTranslationSession(sessionIdentity);
     setOpen(false);
     setBusy(false);
     setError("");
-    setResult(null);
-    setShowTranslation(false);
+    setResult(restored?.result ?? null);
+    setResultSessionIdentityKey(restored ? sessionIdentityKey : null);
+    setLanguage(restored?.result.targetLanguage ?? "english");
+    setShowTranslationState(restored?.showTranslation ?? false);
     retryRef.current = null;
-  }, [sourceId, sourceRevision, sourceType]);
+  }, [sessionIdentityKey, sourceId, sourceRevision, sourceType, viewerHandle]);
+
+  const activeResult = (
+    resultSessionIdentityKey === sessionIdentityKey &&
+    result?.sourceType === sourceType &&
+    result.sourceId === sourceId &&
+    result.sourceRevision === sourceRevision
+  ) ? result : null;
+  const showTranslation = Boolean(activeResult) && showTranslationState;
+
+  const setShowTranslation = (next: SetStateAction<boolean>) => {
+    const resolved = typeof next === "function" ? next(showTranslationState) : next;
+    setShowTranslationState(resolved);
+    if (activeResult?.status === "translated") {
+      rememberContentTranslationSession({
+        viewerHandle,
+        result: activeResult,
+        showTranslation: resolved
+      });
+    }
+  };
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -66,10 +109,17 @@ export const useContentTranslation = ({
         }
       );
       retryRef.current = null;
-      setResult(response);
       window.dispatchEvent(new CustomEvent("symposium-ai-quota-change", { detail: response.quota }));
       if (response.status === "translated") {
-        setShowTranslation(true);
+        setResult(response);
+        setResultSessionIdentityKey(sessionIdentityKey);
+        setLanguage(response.targetLanguage ?? language);
+        setShowTranslationState(true);
+        rememberContentTranslationSession({
+          viewerHandle,
+          result: response,
+          showTranslation: true
+        });
         setOpen(false);
       } else {
         setError(response.message);
@@ -90,7 +140,7 @@ export const useContentTranslation = ({
     setLanguage,
     busy,
     error,
-    result,
+    result: activeResult,
     showTranslation,
     setShowTranslation,
     submit

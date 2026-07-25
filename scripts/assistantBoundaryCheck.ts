@@ -75,6 +75,14 @@ import {
   filterTranslationLanguageOptions,
   translationLanguageSelectionPattern
 } from "@/features/translation/TranslationLanguagePicker";
+import {
+  contentTranslationSessionStorageKey,
+  maxContentTranslationSessionEntries,
+  peekContentTranslationSession,
+  readContentTranslationSession,
+  rememberContentTranslationSession,
+  resetContentTranslationSessionsForTests
+} from "@/features/translation/contentTranslationSession";
 import { translatedDocumentForSource } from "@/lib/documentModel";
 
 const validInput = {
@@ -134,8 +142,8 @@ assert.match(assistantTranslationInstructions("french"), /Translate the source r
 assert.match(assistantTranslationInstructions("sanskrit"), /Sanskrit is experimental/);
 assert.equal(assistantTranslationLanguages.length, 17);
 assert.equal(new Set(assistantTranslationLanguages).size, assistantTranslationLanguages.length);
-assert.equal(assistantTranslationLanguageOptions.at(-1)?.value, "sanskrit");
-assert.equal(assistantTranslationLanguageOptions.at(-1)?.label, "Sanskrit (experimental)");
+assert.equal(assistantTranslationLanguageOptions[12]?.value, "sanskrit");
+assert.equal(assistantTranslationLanguageOptions[12]?.label, "Sanskrit (experimental)");
 assert.deepEqual(filterTranslationLanguageOptions("gujrati").map((option) => option.value), ["gujarati"]);
 assert.deepEqual(filterTranslationLanguageOptions("chinese").map((option) => option.value), ["simplified_chinese"]);
 assert.deepEqual(filterTranslationLanguageOptions("does-not-exist"), []);
@@ -246,6 +254,29 @@ assert.equal(supportedLanguageFromInstruction("Gujrati"), "gujarati");
 assert.equal(supportedLanguageFromInstruction("Chinese"), "simplified_chinese");
 assert.equal(supportedLanguageFromInstruction("Italian"), null);
 assert.equal(supportedLanguageFromInstruction("French or Spanish"), null);
+assert.deepEqual(
+  assistantTranslationLanguageOptions.map((option) => option.label),
+  [
+    "Bengali",
+    "English",
+    "French",
+    "German",
+    "Greek",
+    "Gujarati",
+    "Hindi",
+    "Japanese",
+    "Korean",
+    "Marathi",
+    "Portuguese",
+    "Punjabi",
+    "Sanskrit (experimental)",
+    "Simplified Chinese",
+    "Spanish",
+    "Tamil",
+    "Telugu"
+  ]
+);
+assert.notEqual(assistantTranslationLanguageOptions.at(-1)?.value, "sanskrit");
 assert.match(documentTranslationInstructions, /one supplied source page/i);
 assert.match(documentTranslationInstructions, /source language may be any language/i);
 assert.match(documentTranslationRenderedInput(documentTranslationInput), /LANGUAGE INSTRUCTION/);
@@ -670,7 +701,7 @@ assert.equal(contentTranslationModelOutputSchema.parse({
 const contentFingerprint = contentTranslationFingerprint(contentTranslationModelInput);
 assert.match(contentFingerprint, /^[a-f0-9]{64}$/);
 assert.notEqual(contentFingerprint, contentTranslationFingerprint({ ...contentTranslationModelInput, sourceRevision: 3 }));
-assert.equal(contentTranslationResultSchema.safeParse({
+const translatedContentResult = contentTranslationResultSchema.parse({
   status: "translated",
   sourceType: "post",
   sourceId: "paper-1",
@@ -690,7 +721,188 @@ assert.equal(contentTranslationResultSchema.safeParse({
   model: "gpt-5.6-terra",
   createdAt: new Date().toISOString(),
   quota: { dailyLimit: 10, remainingToday: 9, monthlyBudgetUsd: 40, extremelyLimited: true }
-}).success, true);
+});
+assert.equal(contentTranslationResultSchema.safeParse(translatedContentResult).success, true);
+
+const contentTranslationSessionValues = new Map<string, string>();
+const contentTranslationSessionStorage = {
+  getItem: (key: string) => contentTranslationSessionValues.get(key) ?? null,
+  setItem: (key: string, value: string) => {
+    contentTranslationSessionValues.set(key, value);
+  }
+};
+const contentTranslationSessionIdentity = {
+  viewerHandle: "@ada",
+  sourceType: "post" as const,
+  sourceId: translatedContentResult.sourceId,
+  sourceRevision: translatedContentResult.sourceRevision
+};
+resetContentTranslationSessionsForTests();
+assert.equal(readContentTranslationSession(contentTranslationSessionIdentity, contentTranslationSessionStorage), null);
+rememberContentTranslationSession({
+  viewerHandle: contentTranslationSessionIdentity.viewerHandle,
+  result: translatedContentResult,
+  showTranslation: true,
+  storage: contentTranslationSessionStorage
+});
+assert.equal(peekContentTranslationSession(contentTranslationSessionIdentity)?.result.targetLanguage, "french");
+assert.equal(
+  readContentTranslationSession(contentTranslationSessionIdentity, contentTranslationSessionStorage)?.showTranslation,
+  true
+);
+assert.equal(readContentTranslationSession({
+  ...contentTranslationSessionIdentity,
+  viewerHandle: "@different-user"
+}, contentTranslationSessionStorage), null);
+assert.equal(readContentTranslationSession({
+  ...contentTranslationSessionIdentity,
+  sourceRevision: contentTranslationSessionIdentity.sourceRevision + 1
+}, contentTranslationSessionStorage), null);
+rememberContentTranslationSession({
+  viewerHandle: contentTranslationSessionIdentity.viewerHandle,
+  result: translatedContentResult,
+  showTranslation: false,
+  storage: contentTranslationSessionStorage
+});
+resetContentTranslationSessionsForTests();
+assert.equal(
+  readContentTranslationSession(contentTranslationSessionIdentity, contentTranslationSessionStorage)?.showTranslation,
+  false
+);
+Array.from({ length: maxContentTranslationSessionEntries + 3 }, (_, index) => index).forEach((index) => {
+  rememberContentTranslationSession({
+    viewerHandle: contentTranslationSessionIdentity.viewerHandle,
+    result: {
+      ...translatedContentResult,
+      sourceId: `bounded-post-${index}`
+    },
+    showTranslation: true,
+    storage: contentTranslationSessionStorage
+  });
+});
+assert.equal(
+  (JSON.parse(contentTranslationSessionValues.get(contentTranslationSessionStorageKey) ?? "[]") as unknown[]).length,
+  maxContentTranslationSessionEntries
+);
+assert.equal(peekContentTranslationSession({
+  ...contentTranslationSessionIdentity,
+  sourceId: "bounded-post-0"
+}), null);
+contentTranslationSessionValues.set(contentTranslationSessionStorageKey, "{malformed");
+resetContentTranslationSessionsForTests();
+assert.equal(readContentTranslationSession(contentTranslationSessionIdentity, contentTranslationSessionStorage), null);
+
+const throwingContentTranslationSessionStorage = {
+  getItem: () => {
+    throw new Error("session storage unavailable");
+  },
+  setItem: () => {
+    throw new Error("session storage quota exceeded");
+  }
+};
+resetContentTranslationSessionsForTests();
+rememberContentTranslationSession({
+  viewerHandle: "  @Ada  ",
+  result: {
+    ...translatedContentResult,
+    sourceId: "unicode:paper/%/संस्कृत"
+  },
+  showTranslation: true,
+  storage: throwingContentTranslationSessionStorage
+});
+assert.equal(peekContentTranslationSession({
+  viewerHandle: "@ada",
+  sourceType: "post",
+  sourceId: "unicode:paper/%/संस्कृत",
+  sourceRevision: translatedContentResult.sourceRevision
+})?.showTranslation, true);
+resetContentTranslationSessionsForTests();
+assert.equal(readContentTranslationSession(
+  contentTranslationSessionIdentity,
+  throwingContentTranslationSessionStorage
+), null);
+
+const stressedContentTranslationSessionValues = new Map<string, string>();
+const stressedContentTranslationSessionStorage = {
+  getItem: (key: string) => stressedContentTranslationSessionValues.get(key) ?? null,
+  setItem: (key: string, value: string) => {
+    stressedContentTranslationSessionValues.set(key, value);
+  }
+};
+resetContentTranslationSessionsForTests();
+Array.from({ length: 1_024 }, (_, index) => index).forEach((index) => {
+  const viewerHandle = `@stress-user-${index % 11}`;
+  const sourceType = index % 3 === 0 ? "comment" as const : "post" as const;
+  const sourceId = `stress:${index % 43}/%/${index % 7}`;
+  const sourceRevision = (index % 5) + 1;
+  const showTranslation = index % 2 === 0;
+  const result = {
+    ...translatedContentResult,
+    sourceType,
+    sourceId,
+    sourceRevision
+  };
+  rememberContentTranslationSession({
+    viewerHandle,
+    result,
+    showTranslation,
+    storage: stressedContentTranslationSessionStorage
+  });
+  assert.equal(peekContentTranslationSession({
+    viewerHandle: `  ${viewerHandle.toUpperCase()}  `,
+    sourceType,
+    sourceId,
+    sourceRevision
+  })?.showTranslation, showTranslation);
+  assert.equal(readContentTranslationSession({
+    viewerHandle: `@other-${viewerHandle}`,
+    sourceType,
+    sourceId,
+    sourceRevision
+  }, stressedContentTranslationSessionStorage), null);
+});
+const stressedContentTranslationSessionRecords = JSON.parse(
+  stressedContentTranslationSessionValues.get(contentTranslationSessionStorageKey) ?? "[]"
+) as Array<{
+  viewerHandle: string;
+  sourceType: "post" | "comment";
+  sourceId: string;
+  sourceRevision: number;
+}>;
+assert.equal(stressedContentTranslationSessionRecords.length, maxContentTranslationSessionEntries);
+resetContentTranslationSessionsForTests();
+stressedContentTranslationSessionRecords.forEach((record) => {
+  assert.notEqual(readContentTranslationSession(record, stressedContentTranslationSessionStorage), null);
+});
+
+const revisionReplacementSessionValues = new Map<string, string>();
+const revisionReplacementSessionStorage = {
+  getItem: (key: string) => revisionReplacementSessionValues.get(key) ?? null,
+  setItem: (key: string, value: string) => {
+    revisionReplacementSessionValues.set(key, value);
+  }
+};
+resetContentTranslationSessionsForTests();
+[1, 2, 3, 4, 5].forEach((sourceRevision) => {
+  rememberContentTranslationSession({
+    viewerHandle: "@revision-user",
+    result: {
+      ...translatedContentResult,
+      sourceId: "revision-stress-source",
+      sourceRevision
+    },
+    showTranslation: true,
+    storage: revisionReplacementSessionStorage
+  });
+});
+const revisionReplacementRecords = JSON.parse(
+  revisionReplacementSessionValues.get(contentTranslationSessionStorageKey) ?? "[]"
+) as Array<{ sourceId: string; sourceRevision: number }>;
+assert.deepEqual(
+  revisionReplacementRecords.filter((record) => record.sourceId === "revision-stress-source")
+    .map((record) => record.sourceRevision),
+  [5]
+);
 
 const richSourceLayout = {
   version: 1 as const,
@@ -950,11 +1162,13 @@ const attachmentContext = readFileSync("features/assistant/tabletAttachmentConte
 const attachmentViews = readFileSync("features/attachments/AttachmentViews.tsx", "utf8");
 const documentTranslationControl = readFileSync("features/attachments/DocumentTranslationControl.tsx", "utf8");
 const translationLanguagePicker = readFileSync("features/translation/TranslationLanguagePicker.tsx", "utf8");
+const contentTranslationSession = readFileSync("features/translation/contentTranslationSession.ts", "utf8");
 const documentViewerSession = readFileSync("features/attachments/documentViewerSession.ts", "utf8");
 const contentTranslationControl = readFileSync("features/translation/ContentTranslationControl.tsx", "utf8");
 const tabletStyles = readFileSync("styles/92-ai-tablet.css", "utf8");
 const postViews = readFileSync("features/posts/PostViews.tsx", "utf8");
 const commentThread = readFileSync("features/comments/CommentThread.tsx", "utf8");
+const profileViews = readFileSync("features/profiles/ProfileViews.tsx", "utf8");
 const attachmentModal = readFileSync("features/attachments/AttachmentPreviewModal.tsx", "utf8");
 const pdfClient = readFileSync("features/attachments/pdfAttachmentClient.ts", "utf8");
 const attachmentStyles = readFileSync("styles/20-legacy-content.css", "utf8");
@@ -1125,8 +1339,26 @@ assert.match(tabletStyles, /\.feed-post:has\(\.content-translation-menu\)[\s\S]*
 assert.match(attachmentStyles, /\.post-attachments:has\(\.document-translation-popover\)[\s\S]*overflow: visible/);
 assert.match(attachmentStyles, /\.stage:has\(\.document-translation-popover\),[\s\S]*\.stage:has\(\.content-translation-menu\)/);
 assert.match(attachmentStyles, /@media \(max-width: 680px\)[\s\S]*\.attachment-pagebar \.document-translation-control[\s\S]*position: static/);
+assert.match(attachmentStyles, /@media \(max-width: 680px\)[\s\S]*\.attachment-modal-fullscreen \.attachment-modal-header-controls[\s\S]*flex-wrap: wrap[\s\S]*width: 100%/);
+assert.match(attachmentStyles, /\.attachment-modal-fullscreen \.attachment-modal-header-controls > \*,[\s\S]*\.attachment-modal-fullscreen \.attachment-zoom-controls[\s\S]*flex: 0 0 auto/);
 assert.match(contentTranslationControl, /translatedDocumentForSource/);
 assert.doesNotMatch(contentTranslationControl, /content-translation-copy/);
+assert.match(contentTranslationControl, /readContentTranslationSession/);
+assert.match(contentTranslationControl, /rememberContentTranslationSession/);
+assert.match(contentTranslationControl, /viewerHandle/);
+assert.match(contentTranslationControl, /resultSessionIdentityKey === sessionIdentityKey/);
+assert.equal(
+  contentTranslationControl.match(/setResult\(response\)/g)?.length,
+  1,
+  "Only a completed translation may replace the remembered translated result"
+);
+assert.match(contentTranslationSession, /window\.sessionStorage/);
+assert.match(contentTranslationSession, /maxContentTranslationSessionEntries = 12/);
+assert.match(contentTranslationSession, /contentTranslationResultSchema\.safeParse/);
+assert.doesNotMatch(contentTranslationSession, /localStorage/);
+assert.match(postViews, /sourceType: "post",[\s\S]*viewerHandle: actorHandle/);
+assert.match(commentThread, /sourceType: "comment",[\s\S]*viewerHandle: actorHandle/);
+assert.match(profileViews, /sourceType: "comment",[\s\S]*viewerHandle: actorHandle/);
 assert.match(postViews, /<ScribbleCitable source=\{postScribbleSource\(item\)\}>[\s\S]*translation\.showTranslation[\s\S]*<TranslatedContent/);
 assert.match(commentThread, /<ScribbleCitable source=\{scribbleSource\}>[\s\S]*translation\.showTranslation[\s\S]*<TranslatedContent/);
 assert.match(attachmentViews, /attachment-pdf-stage-continuous/);

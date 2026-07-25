@@ -1291,6 +1291,28 @@
     position: static;
   }
 
+  .attachment-modal-fullscreen header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .attachment-modal-fullscreen .attachment-modal-title {
+    display: none;
+  }
+
+  .attachment-modal-fullscreen .attachment-modal-header-controls {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-left: 0;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .attachment-modal-fullscreen .attachment-modal-header-controls > *,
+  .attachment-modal-fullscreen .attachment-zoom-controls {
+    flex: 0 0 auto;
+  }
+
   .attachment-pagebar .document-translate-button span {
     display: none;
   }
