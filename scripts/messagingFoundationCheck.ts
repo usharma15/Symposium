@@ -526,7 +526,7 @@ const main = async () => {
   assert.match(client, /ownerType: "message"/);
   assert.match(client, /Open full messages/);
   assert.match(client, /IntersectionObserver/);
-  assert.match(shell, /data-view=\{messagesOpen \? "messages"/);
+  assert.match(shell, /data-view=\{assistantOpen \? "assistant" : messagesOpen \? "messages"/);
   assert.match(shell, /onMessage=\{/);
   assert.match(shell, /notificationEvents/);
   assert.match(shell, /setMessagingEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);

@@ -4,7 +4,11 @@ import {
   canonicalRouteHref,
   parseCanonicalRoute
 } from "@/features/navigation/canonicalRoute";
-import { roomForCanonicalRoute } from "@/features/navigation/viewState";
+import {
+  canonicalRouteForView,
+  roomForCanonicalRoute,
+  snapshotForCanonicalRoute
+} from "@/features/navigation/viewState";
 
 assert.equal(canonicalRouteHref({ kind: "hall" }), "/");
 assert.deepEqual(canonicalRouteForRoom("office"), { kind: "workspace" });
@@ -44,6 +48,26 @@ assert.equal(
 assert.deepEqual(parseCanonicalRoute("/messages", "?conversation=niko-varga"), {
   kind: "messages",
   conversationId: "niko-varga"
+});
+assert.equal(
+  canonicalRouteHref({ kind: "assistant", threadId: "thread one" }),
+  "/assistant/threads/thread%20one"
+);
+assert.deepEqual(parseCanonicalRoute("/assistant"), { kind: "assistant" });
+assert.deepEqual(parseCanonicalRoute("/assistant/threads/thread%20one"), {
+  kind: "assistant",
+  threadId: "thread one"
+});
+assert.equal(roomForCanonicalRoute({ kind: "assistant", threadId: "thread-one" }), "hall");
+const assistantSnapshot = snapshotForCanonicalRoute({
+  kind: "assistant",
+  threadId: "thread-one"
+});
+assert.equal(assistantSnapshot.assistantOpen, true);
+assert.equal(assistantSnapshot.assistantThreadId, "thread-one");
+assert.deepEqual(canonicalRouteForView(assistantSnapshot), {
+  kind: "assistant",
+  threadId: "thread-one"
 });
 assert.equal(
   canonicalRouteHref({ kind: "post", postId: "post/one", commentId: "comment one" }),
@@ -94,7 +118,7 @@ console.log(
       checked: [
         "room routes",
         "workspace draft-comment deep links and unified funding route",
-        "opportunities and messages",
+        "opportunities, messages, and the AI workspace",
         "post and comment round-trip",
         "profile filter and social-graph routes",
         "community routes",

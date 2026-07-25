@@ -39,7 +39,19 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Add source-specific reading tools for posts, comments, notes, workspace documents, attachments, messages, and the visible selection.
 - Make answer claims link back to the relevant Symposium passage or attachment location.
 
-### 3. Whole-content translation — structured post/comment and page translation shipped; whole-document action remains
+### 3. Full AI Workspace shell — implementation complete; fresh deployed browser gate pending
+
+- Expand the compact AI Tablet into a dedicated three-column research workspace without creating a second conversation or assistant state owner.
+- Keep Research Threads and bounded recent-thread search on the left, the active transcript and composer in the center, and the full-height Context Dock on the right.
+- Preserve the mounted conversation surface, unsent per-thread drafts, Quick Note cards, and transcript position while moving between compact Tablet and full Workspace modes.
+- Give the workspace canonical `/assistant` and `/assistant/threads/:threadId` routes with Back, Forward, direct-load, and saved-thread reload behavior.
+- Keep opening, browsing, searching, arranging context, and switching panes at zero AI-answer cost; do not fetch assistant state while both surfaces are closed.
+- Refresh the selected thread across tabs and focused sessions, retain retry identities after failed writes, and reload revision-conflicted context before asking the user to try again.
+- Reset all assistant-owned state when the authenticated Symposium identity changes.
+- Adapt the three columns to explicit Threads, Chat, and Context panes on narrow screens without horizontal page overflow.
+- Do not invent Projects, folders, long-term memory, automatic actions, thread rename/archive controls, or unbounded history before those systems have real persistence and product rules.
+
+### 4. Whole-content translation — structured post/comment and page translation shipped; whole-document action remains
 
 - Translate an entire post or individual comment on request while keeping the original one click away. **Shipped.**
 - Cache post/comment translations by canonical source revision and target language. **Shipped.**
@@ -54,7 +66,7 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Preserve headings, structure, citations, quantities, uncertainty, and scientific terminology. **Enforced through structured segments and provider-output identity checks.**
 - Cache translations by source revision, target language, and translation policy.
 
-### 4. Real in-app citations
+### 5. Real in-app citations
 
 - Let a user highlight a passage and insert a linked citation marker into a post, comment, or Office document.
 - Store a durable source snapshot and precise locator rather than only formatted text.
@@ -62,7 +74,7 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Generate and update APA, MLA, and Chicago bibliographies from the structured citation records.
 - Use AI for metadata recovery and formatting assistance, but keep deterministic citation records and rendering as the foundation.
 
-### 5. Permissioned site-wide actions
+### 6. Permissioned site-wide actions
 
 - Introduce a server-owned tool registry with strict input schemas and per-tool authorization.
 - Start with reversible drafts and organization:

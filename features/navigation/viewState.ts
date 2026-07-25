@@ -35,6 +35,8 @@ export type DetailOriginSnapshot = {
   selectedCommunityId: string | null;
   messagesOpen: boolean;
   selectedConversationId: string | null;
+  assistantOpen: boolean;
+  assistantThreadId: string | null;
   commentSegmentStacks: Record<string, string[]>;
   scrollAnchor: { id: string; top: number; commentSegmentKey?: string; commentSegmentStack?: string[] } | null;
   scrollY: number;
@@ -57,6 +59,7 @@ export const roomForCanonicalRoute = (
   if (route.kind === "funding") return "funding";
   if (route.kind === "opportunities") return "opportunities";
   if (route.kind === "community" || route.kind === "communities") return "communities";
+  if (route.kind === "assistant") return "hall";
   return "hall";
 };
 
@@ -67,6 +70,12 @@ export const canonicalRouteForView = (
   snapshot: ViewSnapshot,
   resolveProfileHandle: (nameOrHandle: string) => string = (value) => value
 ): CanonicalRoute => {
+  if (snapshot.assistantOpen) {
+    return {
+      kind: "assistant",
+      threadId: snapshot.assistantThreadId ?? undefined
+    };
+  }
   if (snapshot.messagesOpen) {
     return {
       kind: "messages",
@@ -133,6 +142,8 @@ export const snapshotForCanonicalRoute = (
   selectedCommunityId: route.kind === "community" ? route.communityId : null,
   messagesOpen: route.kind === "messages",
   selectedConversationId: route.kind === "messages" ? route.conversationId ?? null : null,
+  assistantOpen: route.kind === "assistant",
+  assistantThreadId: route.kind === "assistant" ? route.threadId ?? null : null,
   commentSegmentStacks: {},
   scrollAnchor: null,
   scrollY: 0,

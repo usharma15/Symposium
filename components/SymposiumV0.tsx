@@ -132,6 +132,8 @@ import {
 } from "@/features/attachments/AttachmentViews";
 import type { PdfAttachmentViewContext } from "@/features/attachments/pdfAttachmentClient";
 import { buildTabletAttachmentContext } from "@/features/assistant/tabletAttachmentContext";
+import { AssistantExperience } from "@/features/assistant/AssistantExperience";
+import { useAssistantController } from "@/features/assistant/useAssistantController";
 import {
   confirmAttachmentUpload,
   prepareAttachmentUpload,
@@ -208,7 +210,6 @@ import { useCommunityState } from "@/features/communities/useCommunityState";
 import { createCommunityController } from "@/features/communities/communityController";
 import { CommunityGovernanceProvider } from "@/features/communities/CommunityGovernanceContext";
 import { createContentDeletionController } from "@/features/moderation/contentDeletionController";
-import { TabletPanel } from "@/features/workspace/WorkspacePanels";
 import { WorkspaceView } from "@/features/workspace/WorkspaceView";
 import { savePostDraftToWorkspace } from "@/features/workspace/savePostDraftToWorkspace";
 import type { WorkspaceDocument, WorkspacePublicationResponse } from "@/lib/workspaceTypes";
@@ -625,7 +626,11 @@ function SymposiumExperience({
     selectedCommunityFeedView,
     setSelectedCommunityFeedView
   } = useCommunityState(currentProfile.handle, selectedCommunityId);
-  const [tabletOpen, setTabletOpen] = useState(false);
+  const [tabletOpen, setTabletOpen] = useState(initialRoute.kind === "assistant");
+  const [assistantOpen, setAssistantOpen] = useState(initialRoute.kind === "assistant");
+  const [assistantThreadId, setAssistantThreadId] = useState<string | null>(
+    initialRoute.kind === "assistant" ? initialRoute.threadId ?? null : null
+  );
   const [composerOpen, setComposerOpen] = useState(false);
   const [quoteSelection, setQuoteSelection] = useState<QuoteSelection | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -2772,6 +2777,8 @@ function SymposiumExperience({
       selectedCommunityId,
       messagesOpen,
       selectedConversationId,
+      assistantOpen,
+      assistantThreadId,
       commentSegmentStacks: cloneCommentSegmentStacks({
         ...commentSegmentStacksRef.current,
         ...visibleCommentSegmentStacksRef.current,
@@ -2837,6 +2844,8 @@ function SymposiumExperience({
     setMessagesQuickOpen(false);
     setMessagesOpen(snapshot.messagesOpen);
     setSelectedConversationId(snapshot.selectedConversationId ?? null);
+    setAssistantOpen(snapshot.assistantOpen ?? false);
+    setAssistantThreadId(snapshot.assistantThreadId ?? null);
     restoreScrollPosition(snapshot);
   };
 
@@ -2890,6 +2899,13 @@ function SymposiumExperience({
           : next.messagesOpen
             ? currentSnapshot.selectedConversationId
             : null,
+      assistantOpen: next.assistantOpen ?? false,
+      assistantThreadId:
+        next.assistantThreadId !== undefined
+          ? next.assistantThreadId
+          : next.assistantOpen
+            ? currentSnapshot.assistantThreadId
+            : null,
       scrollAnchor: null,
       scrollY: scrollY ?? currentSnapshot.scrollY,
       detailOrigin: next.detailOrigin !== undefined ? next.detailOrigin : currentSnapshot.detailOrigin
@@ -2918,6 +2934,12 @@ function SymposiumExperience({
     setMessagesOpen(next.messagesOpen ?? false);
     if (next.selectedConversationId !== undefined) setSelectedConversationId(next.selectedConversationId);
     else if (!next.messagesOpen) setSelectedConversationId(null);
+    setAssistantOpen(next.assistantOpen ?? false);
+    if (next.assistantThreadId !== undefined) {
+      setAssistantThreadId(next.assistantThreadId);
+    } else if (!next.assistantOpen) {
+      setAssistantThreadId(null);
+    }
     if (scrollY !== null) {
       window.setTimeout(() => window.scrollTo({ top: scrollY, behavior: "auto" }), 0);
     }
@@ -2984,8 +3006,16 @@ function SymposiumExperience({
     navigateView({ profileSocialView: null, profileTab: tab }, null);
   };
   const toggleTablet = () => {
+    if (assistantOpen) {
+      setTabletOpen(true);
+      goBack();
+      return;
+    }
     if (tabletOpen) {
-      setTabletOpen(false);
+      navigateView({
+        assistantOpen: true,
+        assistantThreadId
+      }, null);
       return;
     }
     setComposerOpen(false);
@@ -4280,6 +4310,30 @@ function SymposiumExperience({
     };
   })();
 
+  const assistantController = useAssistantController({
+    actorHandle: currentProfile.handle,
+    context: tabletContext,
+    requestedConversationId: assistantThreadId,
+    enabled: tabletOpen || assistantOpen
+  });
+
+  useEffect(() => {
+    const selectedThreadId = assistantController.conversationId ?? null;
+    if (selectedThreadId === assistantThreadId) return;
+    setAssistantThreadId(selectedThreadId);
+    if (assistantOpen) {
+      replaceCanonicalRoute({
+        kind: "assistant",
+        threadId: selectedThreadId ?? undefined
+      });
+    }
+  }, [
+    assistantController.conversationId,
+    assistantOpen,
+    assistantThreadId,
+    replaceCanonicalRoute
+  ]);
+
   const localSearchResults = useMemo<SearchResults>(() => {
     const term = normalizeSearchPhrase(searchQuery);
     if (!term) return { titleMatches: [] as InquiryItem[], contentMatches: [] as InquiryItem[], profileMatches: [] as ResearchProfile[] };
@@ -4342,7 +4396,7 @@ function SymposiumExperience({
       className={`symposium-shell ${theme}`}
       data-room={activeRoom}
       data-community-selected={selectedCommunity ? "true" : undefined}
-      data-view={messagesOpen ? "messages" : applicationReviewItem ? "opportunity-applications" : selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
+      data-view={assistantOpen ? "assistant" : messagesOpen ? "messages" : applicationReviewItem ? "opportunity-applications" : selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
       style={{ "--room-bg": `url(${activeShellRender})` } as CSSProperties}
     >
       <div className="ambient-layer" aria-hidden="true" />
@@ -4360,7 +4414,7 @@ function SymposiumExperience({
           canGoBack={
             hasViewHistory ||
             activeRoom !== "hall" ||
-            Boolean(selectedItemId || applicationReviewPostId || selectedProfileName || selectedCommunityId || messagesOpen)
+            Boolean(selectedItemId || applicationReviewPostId || selectedProfileName || selectedCommunityId || messagesOpen || assistantOpen)
           }
           canGoForward={hasViewFuture}
           onBack={goBack}
@@ -4462,7 +4516,9 @@ function SymposiumExperience({
 
       <section className="stage">
         <CommunityGovernanceProvider community={selectedCommunity} items={items}>
-        {messagesOpen ? (
+        {assistantOpen ? (
+          <div className="assistant-stage-placeholder" aria-hidden="true" />
+        ) : messagesOpen ? (
           <MessagesStage
             actor={currentProfile}
             profiles={profiles}
@@ -4716,19 +4772,30 @@ function SymposiumExperience({
       <button
         className={`pocket pocket-right bottom-action bottom-action-tablet tablet-launcher${tabletOpen ? " active" : ""}`}
         type="button"
-        title={tabletOpen ? "Close AI tablet" : "Open AI tablet"}
-        aria-expanded={tabletOpen}
+        title={assistantOpen ? "Collapse AI Workspace to Tablet" : tabletOpen ? "Expand AI Tablet" : "Open AI Tablet"}
+        aria-expanded={tabletOpen || assistantOpen}
         onClick={toggleTablet}
       >
         <BrainCircuit size={18} />
         <span>AI Tablet</span>
       </button>
 
-      {tabletOpen ? (
-        <TabletPanel
-          actorHandle={currentProfile.handle}
-          context={tabletContext}
+      {tabletOpen || assistantOpen ? (
+        <AssistantExperience
+          controller={assistantController}
+          mode={assistantOpen ? "workspace" : "compact"}
           onClose={() => setTabletOpen(false)}
+          onExpand={() => {
+            setTabletOpen(true);
+            navigateView({
+              assistantOpen: true,
+              assistantThreadId: assistantController.conversationId ?? null
+            }, null);
+          }}
+          onCollapse={() => {
+            setTabletOpen(true);
+            goBack();
+          }}
         />
       ) : null}
 
