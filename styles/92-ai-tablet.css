@@ -620,7 +620,9 @@
   .tablet-source-actions { display: flex; }
   .content-translation-view-toggle { min-width: 0; width: 100%; }
   .content-translation-label { font-size: 0.61rem; }
+}
 
+@media (max-width: 900px) {
   .assistant-workspace {
     border-radius: 10px;
     grid-template-columns: minmax(0, 1fr);
@@ -700,7 +702,12 @@
 }
 
 @media (max-width: 760px) and (max-height: 640px) {
-  .tablet-panel,
+  .tablet-panel {
+    top: 14px;
+  }
+}
+
+@media (max-width: 900px) and (max-height: 640px) {
   .assistant-workspace {
     top: 14px;
   }

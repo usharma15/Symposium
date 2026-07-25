@@ -1631,6 +1631,8 @@ assert.match(assistantController, /const startNewThread = useCallback\(\(\) => \
 assert.match(assistantController, /if \(!requestedConversationId\) \{[\s\S]*?requestedAttemptRef\.current = null;[\s\S]*?return;/);
 assert.match(tabletStyles, /\.assistant-compact \.tablet-context-dock-body \{ max-height: min\(6rem, 18vh\); \}/);
 assert.match(tabletStyles, /@media \(max-width: 760px\) and \(max-height: 640px\)/);
+assert.match(tabletStyles, /@media \(max-width: 900px\)[\s\S]*?\.assistant-workspace\[data-mobile-pane="threads"\]/);
+assert.match(tabletStyles, /@media \(max-width: 900px\) and \(max-height: 640px\)/);
 assert.match(canonicalRoutes, /\/assistant\/threads\/\$\{encoded\(route\.threadId\)\}/);
 assert.match(assistantPage, /kind: "assistant"/);
 assert.match(assistantThreadPage, /kind: "assistant", threadId/);
