@@ -1931,7 +1931,8 @@ export const assistantMessageSchema = z.object({
     active: z.boolean()
   })).max(5).default([]),
   translation: assistantTranslationSchema.optional(),
-  quickNote: assistantQuickNoteSchema.optional()
+  quickNote: assistantQuickNoteSchema.optional(),
+  quickNoteResult: assistantQuickNoteResultSchema.optional()
 });
 
 export const assistantThreadSourceSchema = z.object({

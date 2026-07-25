@@ -323,6 +323,7 @@
 .tablet-context-dock-heading > svg { flex: 0 0 auto; transition: transform 160ms ease; }
 .tablet-context-dock.open .tablet-context-dock-heading > svg { transform: rotate(180deg); }
 .tablet-context-dock-body { border-top: 1px solid var(--line); display: grid; max-height: min(15.5rem, 38vh); min-height: 0; overflow-y: auto; }
+.assistant-compact .tablet-context-dock-body { max-height: min(8rem, 20vh); }
 .tablet-context-empty { display: grid; gap: 0.18rem; padding: 0.55rem; }
 .tablet-context-empty strong { font-size: 0.67rem; }
 .tablet-context-empty span { color: var(--muted); font-size: 0.59rem; line-height: 1.4; }

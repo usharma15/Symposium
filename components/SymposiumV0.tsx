@@ -631,6 +631,7 @@ function SymposiumExperience({
   const [assistantThreadId, setAssistantThreadId] = useState<string | null>(
     initialRoute.kind === "assistant" ? initialRoute.threadId ?? null : null
   );
+  const assistantCollapseThreadIdRef = useRef<string | null | undefined>(undefined);
   const [composerOpen, setComposerOpen] = useState(false);
   const [quoteSelection, setQuoteSelection] = useState<QuoteSelection | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -2812,6 +2813,9 @@ function SymposiumExperience({
   };
 
   const restoreView = (snapshot: ViewSnapshot) => {
+    const collapsedAssistantThreadId = assistantCollapseThreadIdRef.current;
+    const isAssistantCollapse = collapsedAssistantThreadId !== undefined;
+    assistantCollapseThreadIdRef.current = undefined;
     dismissTransientSyncStatus();
     if (snapshot.selectedProfileName) flushPendingActivityRecency();
     setActiveRoom(snapshot.activeRoom);
@@ -2844,8 +2848,12 @@ function SymposiumExperience({
     setMessagesQuickOpen(false);
     setMessagesOpen(snapshot.messagesOpen);
     setSelectedConversationId(snapshot.selectedConversationId ?? null);
-    setAssistantOpen(snapshot.assistantOpen ?? false);
-    setAssistantThreadId(snapshot.assistantThreadId ?? null);
+    setAssistantOpen(isAssistantCollapse ? false : snapshot.assistantOpen ?? false);
+    setAssistantThreadId(
+      isAssistantCollapse
+        ? collapsedAssistantThreadId
+        : snapshot.assistantThreadId ?? null
+    );
     restoreScrollPosition(snapshot);
   };
 
@@ -2866,6 +2874,12 @@ function SymposiumExperience({
         (nameOrHandle) => findProfile(nameOrHandle)?.handle ?? nameOrHandle
       )
   });
+
+  const collapseAssistantToTablet = (threadId: string | null) => {
+    assistantCollapseThreadIdRef.current = threadId;
+    setTabletOpen(true);
+    goBack();
+  };
 
   const navigateView = (
     next: Partial<Omit<ViewSnapshot, "scrollY">>,
@@ -3007,8 +3021,7 @@ function SymposiumExperience({
   };
   const toggleTablet = () => {
     if (assistantOpen) {
-      setTabletOpen(true);
-      goBack();
+      collapseAssistantToTablet(assistantThreadId);
       return;
     }
     if (tabletOpen) {
@@ -4793,8 +4806,7 @@ function SymposiumExperience({
             }, null);
           }}
           onCollapse={() => {
-            setTabletOpen(true);
-            goBack();
+            collapseAssistantToTablet(assistantController.conversationId ?? null);
           }}
         />
       ) : null}

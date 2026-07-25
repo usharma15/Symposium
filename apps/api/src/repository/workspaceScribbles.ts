@@ -3,12 +3,14 @@ import { TRPCError } from "@trpc/server";
 import type { PoolClient } from "pg";
 import {
   assistantActionSourceSchema,
+  assistantQuickNoteResultSchema,
   discardScribbleInputSchema,
   fileScribbleInputSchema,
   restoreScribbleInputSchema,
   saveAssistantQuickNoteInputSchema,
   updateScribbleInputSchema,
   type AssistantActionSourceContract,
+  type AssistantQuickNoteResultContract,
   type VersionedDocumentContract
 } from "../../../../packages/contracts/src";
 import { hasDatabase } from "../db/client";
@@ -405,7 +407,7 @@ export const createAssistantQuickNote = async (rawInput: unknown, actor: Actor, 
   if (!hasDatabase()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "AI Quick Notes require the live workspace." });
   await ensureLiveData();
   return runAtomic(async (client) => {
-    const claim = await claimMutation<Record<string, unknown>>(client, handle, mutation);
+    const claim = await claimMutation<AssistantQuickNoteResultContract>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
     const assistantMessage = await client.query<{ id: string; metadata: Record<string, unknown> }>(
       `SELECT message.id, message.metadata
@@ -419,15 +421,20 @@ export const createAssistantQuickNote = async (rawInput: unknown, actor: Actor, 
            (message.metadata -> 'translation' IS NOT NULL AND message.metadata -> 'translation' <> 'null'::jsonb)
            OR (message.metadata -> 'quickNote' IS NOT NULL AND message.metadata -> 'quickNote' <> 'null'::jsonb)
          )
-       FOR SHARE OF message, conversation`,
+       FOR UPDATE OF message, conversation`,
       [input.assistantMessageId, input.conversationId, handle]
     );
     const actionMessage = assistantMessage.rows[0];
     if (!actionMessage) {
       throw new TRPCError({ code: "NOT_FOUND", message: "That Quick Note draft is not available to save." });
     }
-    const quickNoteMetadata = actionMessage.metadata.quickNote as { source?: unknown } | null | undefined;
-    const translationMetadata = actionMessage.metadata.translation as { source?: unknown } | null | undefined;
+    const existingResult = assistantQuickNoteResultSchema.safeParse(actionMessage.metadata.quickNoteResult);
+    if (existingResult.success) {
+      await completeMutation(client, handle, mutation, existingResult.data);
+      return { value: existingResult.data };
+    }
+    const quickNoteMetadata = actionMessage.metadata.quickNote as Record<string, unknown> | null | undefined;
+    const translationMetadata = actionMessage.metadata.translation as Record<string, unknown> | null | undefined;
     const source = assistantActionSourceSchema.parse(quickNoteMetadata?.source ?? translationMetadata?.source);
     const workspace = await ensureWorkspace(client, handle);
     const notebook = await ensureNotebook(client, workspace.id, handle, input.notebookId);
@@ -449,6 +456,27 @@ export const createAssistantQuickNote = async (rawInput: unknown, actor: Actor, 
       notebookName: notebook?.name ?? null,
       href: `/workspace?view=notes&note=${encodeURIComponent(note.id)}`
     };
+    const updatedMetadata: Record<string, unknown> = {
+      ...actionMessage.metadata,
+      quickNoteResult: value
+    };
+    if (quickNoteMetadata) {
+      updatedMetadata.quickNote = {
+        ...quickNoteMetadata,
+        title: input.title,
+        body: input.body
+      };
+    } else if (translationMetadata) {
+      updatedMetadata.translation = {
+        ...translationMetadata,
+        quickNoteTitle: input.title,
+        quickNoteBody: input.body
+      };
+    }
+    await client.query(
+      "UPDATE ai_messages SET metadata = $2 WHERE id = $1",
+      [input.assistantMessageId, JSON.stringify(updatedMetadata)]
+    );
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "assistant.quick_note.create",

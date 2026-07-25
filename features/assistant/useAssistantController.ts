@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
+import { assistantRequestIntentFor } from "@/features/assistant/assistantRequestIntent";
 import type {
   AssistantContextUpdateResultContract,
   AssistantMessageContract,
   AssistantMessageInputContract,
   AssistantQuickNoteContract,
+  AssistantQuickNoteResultContract,
   AssistantQuotaStatusContract,
   AssistantResponseContract,
   AssistantSourceUpdateResultContract,
@@ -29,6 +31,7 @@ export type AssistantMessageView = {
   evidence?: AssistantMessageContract["evidence"];
   translation?: AssistantTranslationContract;
   quickNote?: AssistantQuickNoteContract;
+  quickNoteResult?: AssistantQuickNoteResultContract;
 };
 
 type AssistantBroadcast = {
@@ -237,6 +240,7 @@ export function useAssistantController({
     threadRequestRef.current += 1;
     setConversationId(undefined);
     loadedConversationIdRef.current = null;
+    requestedAttemptRef.current = null;
     setThread(null);
     setMessages([initialMessageFor(contextRef.current)]);
     restoreDraft(undefined);
@@ -343,7 +347,10 @@ export function useAssistantController({
 
   useEffect(() => {
     if (!enabled) return;
-    if (!requestedConversationId) return;
+    if (!requestedConversationId) {
+      requestedAttemptRef.current = null;
+      return;
+    }
     if (loadedConversationIdRef.current === requestedConversationId) return;
     if (requestedAttemptRef.current === requestedConversationId) return;
     requestedAttemptRef.current = requestedConversationId;
@@ -565,6 +572,11 @@ export function useAssistantController({
     ) {
       return;
     }
+    const requestIntent = assistantRequestIntentFor(message);
+    if (requestIntent.translationRequested && !requestIntent.targetLanguage) {
+      setError("Name a supported target language in your translation request.");
+      return;
+    }
     const optimisticId = createClientMutationId("assistant-user");
     const optimistic: AssistantMessageView = {
       id: optimisticId,
@@ -595,6 +607,10 @@ export function useAssistantController({
             actorHandle,
             conversationId: id,
             message,
+            intent: requestIntent.intent,
+            ...(requestIntent.targetLanguage
+              ? { targetLanguage: requestIntent.targetLanguage }
+              : {}),
             contextType: contextTypeFor(activeContext.surface),
             contextId: activeContext.entityId,
             context: activeContext
@@ -655,6 +671,14 @@ export function useAssistantController({
     threadLoading
   ]);
 
+  const synchronizeThreadMutation = useCallback(async (id: string) => {
+    broadcastThreadChange(id);
+    await Promise.all([
+      refreshSelectedThread().catch(() => null),
+      refreshThreads().catch(() => null)
+    ]);
+  }, [broadcastThreadChange, refreshSelectedThread, refreshThreads]);
+
   return {
     actorHandle,
     context,
@@ -683,6 +707,7 @@ export function useAssistantController({
     refreshSelectedThread,
     changeThreadContext,
     changeSavedSource,
+    synchronizeThreadMutation,
     submit
   };
 }

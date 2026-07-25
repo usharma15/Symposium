@@ -20,25 +20,37 @@ function QuickNoteDraftCard({
   conversationId,
   messageId,
   quickNote,
-  targetLanguage
+  targetLanguage,
+  savedQuickNote,
+  onSaved
 }: {
   actorHandle: string;
   conversationId: string;
   messageId: string;
   quickNote: AssistantQuickNoteContract;
   targetLanguage?: AssistantTranslationLanguageContract;
+  savedQuickNote?: AssistantQuickNoteResultContract;
+  onSaved: () => void;
 }) {
   const [title, setTitle] = useState(quickNote.title);
   const [body, setBody] = useState(quickNote.body);
   const [notebooks, setNotebooks] = useState<ScribbleSnapshot["notebooks"]>([]);
-  const [notebookId, setNotebookId] = useState("");
+  const [notebookId, setNotebookId] = useState(savedQuickNote?.notebookId ?? "");
   const [notebooksLoading, setNotebooksLoading] = useState(true);
   const [newNotebookName, setNewNotebookName] = useState("");
   const [creatingNotebook, setCreatingNotebook] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState<AssistantQuickNoteResultContract | null>(null);
+  const [saved, setSaved] = useState<AssistantQuickNoteResultContract | null>(savedQuickNote ?? null);
   const retryRef = useRef<{ fingerprint: string; key: string } | null>(null);
+
+  useEffect(() => {
+    if (!savedQuickNote) return;
+    setTitle(quickNote.title);
+    setBody(quickNote.body);
+    setNotebookId(savedQuickNote.notebookId ?? "");
+    setSaved(savedQuickNote);
+  }, [quickNote.body, quickNote.title, savedQuickNote]);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,6 +116,7 @@ function QuickNoteDraftCard({
         }
       });
       setSaved(result);
+      onSaved();
       window.dispatchEvent(new Event("symposium-workspace-change"));
     } catch (caught) {
       setError(caught instanceof SymposiumApiError ? caught.message : "The Quick Note could not be saved.");
@@ -169,12 +182,16 @@ function TranslationCard({
   actorHandle,
   conversationId,
   messageId,
-  translation
+  translation,
+  savedQuickNote,
+  onSaved
 }: {
   actorHandle: string;
   conversationId: string;
   messageId: string;
   translation: AssistantTranslationContract;
+  savedQuickNote?: AssistantQuickNoteResultContract;
+  onSaved: () => void;
 }) {
   return (
     <section className="tablet-translation-card" aria-label={`${assistantTranslationLanguageLabels[translation.targetLanguage]} translation`}>
@@ -192,6 +209,8 @@ function TranslationCard({
         messageId={messageId}
         quickNote={{ title: translation.quickNoteTitle, body: translation.quickNoteBody, source: translation.source }}
         targetLanguage={translation.targetLanguage}
+        savedQuickNote={savedQuickNote}
+        onSaved={onSaved}
       />
     </section>
   );
@@ -358,6 +377,7 @@ export function AssistantExperience({
     startNewThread,
     changeThreadContext,
     changeSavedSource,
+    synchronizeThreadMutation,
     submit
   } = controller;
   const [threadsOpen, setThreadsOpen] = useState(false);
@@ -550,6 +570,8 @@ export function AssistantExperience({
                   conversationId={message.conversationId}
                   messageId={message.id}
                   translation={message.translation}
+                  savedQuickNote={message.quickNoteResult}
+                  onSaved={() => void synchronizeThreadMutation(message.conversationId!)}
                 />
               ) : null}
               {message.role === "assistant" && message.quickNote && message.conversationId ? (
@@ -558,6 +580,8 @@ export function AssistantExperience({
                   conversationId={message.conversationId}
                   messageId={message.id}
                   quickNote={message.quickNote}
+                  savedQuickNote={message.quickNoteResult}
+                  onSaved={() => void synchronizeThreadMutation(message.conversationId!)}
                 />
               ) : null}
             </article>

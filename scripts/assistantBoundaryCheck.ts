@@ -53,6 +53,7 @@ import {
   assistantTranslationLanguages
 } from "@/packages/contracts/src/translationLanguages";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
+import { assistantRequestIntentFor } from "@/features/assistant/assistantRequestIntent";
 import {
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
@@ -119,6 +120,36 @@ assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, message: "x"
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, content: "x".repeat(12001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, selection: "x".repeat(4001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, surface: "unknown" } }).success, false);
+assert.deepEqual(
+  assistantRequestIntentFor("Translate the current view summary into Spanish."),
+  { translationRequested: true, intent: "translate", targetLanguage: "spanish" }
+);
+assert.deepEqual(
+  assistantRequestIntentFor("Translate this French passage to English."),
+  { translationRequested: true, intent: "translate", targetLanguage: "english" }
+);
+assert.deepEqual(
+  assistantRequestIntentFor("Translate to Spanish from French."),
+  { translationRequested: true, intent: "translate", targetLanguage: "spanish" }
+);
+assert.deepEqual(
+  assistantRequestIntentFor("Please translate this into Chinese."),
+  { translationRequested: true, intent: "translate", targetLanguage: "simplified_chinese" }
+);
+assistantTranslationLanguageOptions.forEach(({ label, value }) => {
+  assert.equal(
+    assistantRequestIntentFor(`Translate this view into ${label}.`).targetLanguage,
+    value
+  );
+});
+assert.deepEqual(
+  assistantRequestIntentFor("Explain the current view in one sentence."),
+  { translationRequested: false, intent: "answer" }
+);
+assert.deepEqual(
+  assistantRequestIntentFor("Translate the current view."),
+  { translationRequested: true, intent: "answer" }
+);
 assert.equal(assistantContextUpdateInputSchema.safeParse({
   mode: "use",
   context: validInput.context,
@@ -1415,6 +1446,22 @@ assert.equal(assistantQuickNoteResultSchema.safeParse({
   notebookName: null,
   href: "/workspace?view=notes&note=df44a21f-e540-48ea-9f40-7e6b4c3bd753"
 }).success, true);
+assert.equal(assistantResponseSchema.shape.message.safeParse({
+  id: "c6f055c0-b137-4713-9f5f-c2ee0b78ab32",
+  conversationId: "4de47155-28c2-4e19-8628-d15f339ce71b",
+  role: "assistant",
+  body: "Quick Note saved.",
+  quickNote,
+  quickNoteResult: {
+    id: "df44a21f-e540-48ea-9f40-7e6b4c3bd753",
+    title: quickNote.title,
+    revision: 1,
+    createdAt: new Date().toISOString(),
+    notebookId: null,
+    notebookName: null,
+    href: "/workspace?view=notes&note=df44a21f-e540-48ea-9f40-7e6b4c3bd753"
+  }
+}).success, true);
 
 const repository = readFileSync("apps/api/src/repository/assistant.ts", "utf8");
 const usageService = readFileSync("apps/api/src/services/assistantUsage.ts", "utf8");
@@ -1494,6 +1541,7 @@ assert.match(migration, /0051_translation_layout_fidelity/);
 assert.match(migration, /0052_document_view_continuity/);
 assert.match(migration, /0053_failed_ai_usage_accounting/);
 assert.match(migration, /0054_expand_translation_languages/);
+assert.match(migration, /0055_persist_assistant_quick_note_results/);
 assert.match(migration, /'simplified_chinese', 'sanskrit'/);
 assert.match(migration, /actual_cost_micros = 0[\s\S]*error_code IN/);
 assert.match(migration, /kind TEXT NOT NULL DEFAULT 'research_thread'/);
@@ -1517,6 +1565,9 @@ assert.match(route, /scope: "assistant-action", limit: 30/);
 assert.match(scribbles, /conversation\.owner_handle = \$3/);
 assert.match(scribbles, /assistant\.quick_note\.create/);
 assert.match(scribbles, /assistant_quick_note/);
+assert.match(scribbles, /FOR UPDATE OF message, conversation/);
+assert.match(scribbles, /quickNoteResult: value/);
+assert.match(scribbles, /existingResult\.success/);
 assert.match(tablet, /Extremely limited beta/);
 assert.match(tablet, /Loading today’s tiny AI allowance/);
 assert.match(tablet, /Send · uses 1/);
@@ -1525,6 +1576,10 @@ assert.match(tablet, /Confirm & save Quick Note/);
 assert.match(tablet, /Office destination/);
 assert.match(tablet, /All · Quick Notes/);
 assert.match(tablet, /Create & select/);
+assert.match(tablet, /savedQuickNote=\{message\.quickNoteResult\}/);
+assert.match(assistantController, /synchronizeThreadMutation/);
+assert.match(assistantController, /assistantRequestIntentFor\(message\)/);
+assert.match(assistantController, /Name a supported target language/);
 assert.match(tablet, /New research thread/);
 assert.match(tablet, /Context Dock/);
 assert.match(tablet, /Live view/);
@@ -1541,7 +1596,10 @@ assert.match(provider, /If the user asks for a translation/);
 assert.match(shell, /surface: "messages"/);
 assert.match(shell, /surface: "workspace"/);
 assert.match(shell, /surface: "attachment"/);
-assert.match(shell, /const toggleTablet = \(\) => \{[\s\S]*?if \(assistantOpen\)[\s\S]*?goBack\(\)[\s\S]*?if \(tabletOpen\)[\s\S]*?assistantOpen: true/);
+assert.match(shell, /const toggleTablet = \(\) => \{[\s\S]*?if \(assistantOpen\)[\s\S]*?collapseAssistantToTablet\(assistantThreadId\)[\s\S]*?if \(tabletOpen\)[\s\S]*?assistantOpen: true/);
+assert.match(shell, /const assistantCollapseThreadIdRef = useRef<string \| null \| undefined>\(undefined\)/);
+assert.match(shell, /const collapseAssistantToTablet = \(threadId: string \| null\) => \{[\s\S]*?assistantCollapseThreadIdRef\.current = threadId;[\s\S]*?goBack\(\)/);
+assert.match(restoreViewBlock, /isAssistantCollapse[\s\S]*?setAssistantThreadId\([\s\S]*?collapsedAssistantThreadId/);
 assert.doesNotMatch(restoreViewBlock, /setTabletOpen\(false\)/);
 assert.doesNotMatch(navigateViewBlock, /setTabletOpen\(false\)/);
 assert.match(shell, /title=\{assistantOpen \? "Collapse AI Workspace to Tablet" : tabletOpen \? "Expand AI Tablet" : "Open AI Tablet"\}/);
@@ -1563,6 +1621,9 @@ assert.match(assistantController, /contextLockRef/);
 assert.match(assistantController, /messageRetryRef/);
 assert.match(assistantController, /contextRetryRef/);
 assert.match(assistantController, /sourceRetryRef/);
+assert.match(assistantController, /const startNewThread = useCallback\(\(\) => \{[\s\S]*?requestedAttemptRef\.current = null/);
+assert.match(assistantController, /if \(!requestedConversationId\) \{[\s\S]*?requestedAttemptRef\.current = null;[\s\S]*?return;/);
+assert.match(tabletStyles, /\.assistant-compact \.tablet-context-dock-body \{ max-height: min\(8rem, 20vh\); \}/);
 assert.match(canonicalRoutes, /\/assistant\/threads\/\$\{encoded\(route\.threadId\)\}/);
 assert.match(assistantPage, /kind: "assistant"/);
 assert.match(assistantThreadPage, /kind: "assistant", threadId/);

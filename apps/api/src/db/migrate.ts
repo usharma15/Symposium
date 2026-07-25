@@ -2662,6 +2662,72 @@ const migrations: Migration[] = [
           'greek', 'portuguese', 'japanese', 'korean', 'simplified_chinese', 'sanskrit'
         ));
     `
+  },
+  {
+    id: "0055_persist_assistant_quick_note_results",
+    sql: `
+      WITH saved_actions AS (
+        SELECT DISTINCT ON (audit.metadata ->> 'assistantMessageId')
+          audit.metadata ->> 'assistantMessageId' AS message_id,
+          note.title,
+          note.body,
+          jsonb_build_object(
+            'id', note.id::text,
+            'title', note.title,
+            'revision', note.revision,
+            'createdAt', note.created_at,
+            'notebookId', note.notebook_id,
+            'notebookName', notebook.name,
+            'href', '/workspace?view=notes&note=' || note.id::text
+          ) AS result
+        FROM audit_logs audit
+        JOIN notes note
+          ON note.id::text = audit.subject_id
+         AND note.deleted_at IS NULL
+        LEFT JOIN workspace_notebooks notebook
+          ON notebook.id = note.notebook_id
+         AND notebook.deleted_at IS NULL
+        WHERE audit.action = 'assistant.quick_note.create'
+          AND audit.metadata ->> 'assistantMessageId' IS NOT NULL
+        ORDER BY audit.metadata ->> 'assistantMessageId', audit.created_at DESC
+      ),
+      restored AS (
+        SELECT
+          message.id,
+          jsonb_set(
+            CASE
+              WHEN message.metadata -> 'quickNote' IS NOT NULL
+                AND message.metadata -> 'quickNote' <> 'null'::jsonb
+              THEN jsonb_set(
+                jsonb_set(message.metadata, '{quickNote,title}', to_jsonb(saved.title), true),
+                '{quickNote,body}',
+                to_jsonb(saved.body),
+                true
+              )
+              WHEN message.metadata -> 'translation' IS NOT NULL
+                AND message.metadata -> 'translation' <> 'null'::jsonb
+              THEN jsonb_set(
+                jsonb_set(message.metadata, '{translation,quickNoteTitle}', to_jsonb(saved.title), true),
+                '{translation,quickNoteBody}',
+                to_jsonb(saved.body),
+                true
+              )
+              ELSE message.metadata
+            END,
+            '{quickNoteResult}',
+            saved.result,
+            true
+          ) AS metadata
+        FROM ai_messages message
+        JOIN saved_actions saved ON saved.message_id = message.id::text
+        WHERE message.metadata -> 'quickNoteResult' IS NULL
+           OR message.metadata -> 'quickNoteResult' = 'null'::jsonb
+      )
+      UPDATE ai_messages message
+      SET metadata = restored.metadata
+      FROM restored
+      WHERE message.id = restored.id;
+    `
   }
 ];
 

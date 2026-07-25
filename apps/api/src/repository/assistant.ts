@@ -151,7 +151,8 @@ const messageFromRow = (row: {
     createdAt: isoString(row.createdAt),
     evidence: metadata.evidence ?? [],
     ...(metadata.translation ? { translation: metadata.translation } : {}),
-    ...(metadata.quickNote ? { quickNote: metadata.quickNote } : {})
+    ...(metadata.quickNote ? { quickNote: metadata.quickNote } : {}),
+    ...(metadata.quickNoteResult ? { quickNoteResult: metadata.quickNoteResult } : {})
   });
 };
 
