@@ -2728,6 +2728,243 @@ const migrations: Migration[] = [
       FROM restored
       WHERE message.id = restored.id;
     `
+  },
+  {
+    id: "0056_recover_assistant_sources_and_message_activity",
+    sql: `
+      ALTER TABLE ai_conversations
+        ADD COLUMN IF NOT EXISTS last_message_at TIMESTAMPTZ;
+
+      UPDATE ai_conversations conversation
+      SET last_message_at = COALESCE(
+        (
+          SELECT max(message.created_at)
+          FROM ai_messages message
+          WHERE message.conversation_id = conversation.id
+            AND message.role IN ('user', 'assistant')
+        ),
+        conversation.created_at
+      )
+      WHERE conversation.last_message_at IS NULL;
+
+      ALTER TABLE ai_conversations
+        ALTER COLUMN last_message_at SET DEFAULT now(),
+        ALTER COLUMN last_message_at SET NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS ai_conversations_owner_kind_last_message_idx
+        ON ai_conversations (owner_handle, kind, last_message_at DESC, id DESC);
+
+      WITH normalized_sources AS (
+        SELECT
+          conversation.id,
+          COALESCE(
+            jsonb_agg(
+              CASE
+                WHEN source.value ? 'attachedAt'
+                  AND NULLIF(source.value ->> 'attachedAt', '') IS NOT NULL
+                THEN jsonb_set(
+                  source.value,
+                  '{attachedAt}',
+                  to_jsonb(to_char(
+                    (source.value ->> 'attachedAt')::timestamptz AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                  )),
+                  true
+                )
+                ELSE source.value
+              END
+              ORDER BY source.ordinality
+            ) FILTER (WHERE source.value IS NOT NULL),
+            '[]'::jsonb
+          ) AS sources
+        FROM ai_conversations conversation
+        LEFT JOIN LATERAL jsonb_array_elements(conversation.context_sources)
+          WITH ORDINALITY AS source(value, ordinality) ON true
+        WHERE conversation.kind = 'research_thread'
+          AND jsonb_array_length(conversation.context_sources) > 0
+        GROUP BY conversation.id
+      )
+      UPDATE ai_conversations conversation
+      SET context_sources = normalized.sources
+      FROM normalized_sources normalized
+      WHERE conversation.id = normalized.id;
+
+      CREATE TEMP TABLE assistant_historical_source_recovery
+      ON COMMIT DROP
+      AS
+      WITH migration_boundary AS (
+        SELECT applied_at
+        FROM symposium_migrations
+        WHERE id = '0049_assistant_research_threads'
+      ),
+      historical_contexts AS (
+        SELECT
+          message.id AS source_id,
+          message.conversation_id,
+          message.metadata -> 'context' AS context,
+          message.created_at,
+          COALESCE(NULLIF(message.metadata -> 'context' ->> 'surface', ''), 'workspace')
+            || ':'
+            || COALESCE(
+              NULLIF(message.metadata -> 'context' ->> 'entityId', ''),
+              NULLIF(message.metadata -> 'context' ->> 'route', ''),
+              '/'
+            ) AS context_key
+        FROM ai_messages message
+        JOIN ai_conversations conversation ON conversation.id = message.conversation_id
+        CROSS JOIN migration_boundary boundary
+        WHERE conversation.kind = 'research_thread'
+          AND conversation.created_at < boundary.applied_at
+          AND message.created_at < boundary.applied_at
+          AND message.role = 'user'
+          AND jsonb_typeof(message.metadata -> 'context') = 'object'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM ai_messages context_event
+            WHERE context_event.conversation_id = conversation.id
+              AND context_event.role = 'system'
+              AND context_event.metadata ->> 'event' = 'context_update'
+          )
+      ),
+      unique_contexts AS (
+        SELECT DISTINCT ON (conversation_id, context)
+          source_id,
+          conversation_id,
+          context,
+          created_at,
+          context_key
+        FROM historical_contexts
+        ORDER BY conversation_id, context, created_at ASC, source_id ASC
+      ),
+      ranked_contexts AS (
+        SELECT
+          source_id,
+          conversation_id,
+          context,
+          created_at,
+          context_key,
+          row_number() OVER (
+            PARTITION BY conversation_id, context_key
+            ORDER BY created_at ASC, source_id ASC
+          )::integer AS source_revision,
+          row_number() OVER (
+            PARTITION BY conversation_id
+            ORDER BY created_at ASC, source_id ASC
+          )::integer AS source_ordinal,
+          count(*) OVER (PARTITION BY conversation_id)::integer AS source_total
+        FROM unique_contexts
+      ),
+      bounded_contexts AS (
+        SELECT *
+        FROM ranked_contexts
+        WHERE source_ordinal = 1
+           OR source_ordinal > source_total - 23
+      )
+      SELECT
+        source_id,
+        conversation_id,
+        context,
+        created_at,
+        context_key,
+        source_revision,
+        source_ordinal,
+        source_total,
+        lag(source_id) OVER (
+          PARTITION BY conversation_id, context_key
+          ORDER BY source_ordinal ASC
+        ) AS supersedes_source_id
+      FROM bounded_contexts;
+
+      WITH recovered_threads AS (
+        SELECT
+          conversation_id,
+          jsonb_agg(
+            jsonb_build_object(
+              'id', source_id::text,
+              'key', context_key,
+              'revision', source_revision,
+              'included', source_ordinal > source_total - 5,
+              'context', context,
+              'attachedAt', to_char(
+                created_at AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+              ),
+              'supersedesSourceId', supersedes_source_id,
+              'provenance', 'recovered'
+            )
+            ORDER BY source_ordinal ASC
+          ) AS sources,
+          (array_agg(source_id ORDER BY source_ordinal ASC))[1] AS origin_source_id,
+          (array_agg(source_id ORDER BY source_ordinal DESC))[1] AS active_source_id,
+          (array_agg(context_key ORDER BY source_ordinal DESC))[1] AS active_context_key
+        FROM assistant_historical_source_recovery
+        GROUP BY conversation_id
+      )
+      UPDATE ai_conversations conversation
+      SET
+        context_sources = recovered.sources,
+        origin_source_id = recovered.origin_source_id,
+        active_source_id = recovered.active_source_id,
+        active_context_key = recovered.active_context_key,
+        context_revision = context_revision + 1
+      FROM recovered_threads recovered
+      WHERE conversation.id = recovered.conversation_id;
+
+      WITH migration_boundary AS (
+        SELECT applied_at
+        FROM symposium_migrations
+        WHERE id = '0049_assistant_research_threads'
+      ),
+      recovered_evidence AS (
+        SELECT
+          assistant_message.id AS message_id,
+          source.source_id,
+          source.context_key,
+          source.source_revision,
+          source.context
+        FROM ai_messages assistant_message
+        JOIN ai_conversations conversation
+          ON conversation.id = assistant_message.conversation_id
+        CROSS JOIN migration_boundary boundary
+        JOIN LATERAL (
+          SELECT user_message.metadata -> 'context' AS context
+          FROM ai_messages user_message
+          WHERE user_message.conversation_id = assistant_message.conversation_id
+            AND user_message.role = 'user'
+            AND user_message.created_at <= assistant_message.created_at
+            AND jsonb_typeof(user_message.metadata -> 'context') = 'object'
+          ORDER BY user_message.created_at DESC, user_message.id DESC
+          LIMIT 1
+        ) preceding ON true
+        JOIN assistant_historical_source_recovery source
+          ON source.conversation_id = assistant_message.conversation_id
+         AND source.context = preceding.context
+        WHERE conversation.kind = 'research_thread'
+          AND assistant_message.role = 'assistant'
+          AND assistant_message.created_at < boundary.applied_at
+          AND (
+            assistant_message.metadata -> 'evidence' IS NULL
+            OR assistant_message.metadata -> 'evidence' = '[]'::jsonb
+          )
+      )
+      UPDATE ai_messages message
+      SET metadata = jsonb_set(
+        message.metadata,
+        '{evidence}',
+        jsonb_build_array(jsonb_build_object(
+          'sourceId', recovered.source_id::text,
+          'key', recovered.context_key,
+          'revision', recovered.source_revision,
+          'title', COALESCE(recovered.context ->> 'title', ''),
+          'surface', recovered.context ->> 'surface',
+          'route', COALESCE(recovered.context ->> 'route', '/'),
+          'active', true
+        )),
+        true
+      )
+      FROM recovered_evidence recovered
+      WHERE message.id = recovered.message_id;
+    `
   }
 ];
 

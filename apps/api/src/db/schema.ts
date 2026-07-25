@@ -796,13 +796,15 @@ export const aiConversations = pgTable(
     originSourceId: uuid("origin_source_id"),
     contextRevision: integer("context_revision").default(1).notNull(),
     createdAt: createdAtColumn(),
-    updatedAt: updatedAtColumn()
+    updatedAt: updatedAtColumn(),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }).defaultNow().notNull()
   },
   (table) => [
     index("ai_conversations_owner_idx").on(table.ownerHandle),
     index("ai_conversations_context_idx").on(table.contextType, table.contextId),
     index("ai_conversations_owner_updated_idx").on(table.ownerHandle, table.updatedAt.desc(), table.id.desc()),
     index("ai_conversations_owner_kind_updated_idx").on(table.ownerHandle, table.kind, table.updatedAt.desc(), table.id.desc()),
+    index("ai_conversations_owner_kind_last_message_idx").on(table.ownerHandle, table.kind, table.lastMessageAt.desc(), table.id.desc()),
     check("ai_conversations_kind_check", sql`${table.kind} IN ('research_thread', 'document_translation', 'content_translation')`),
     check("ai_conversations_context_revision_check", sql`${table.contextRevision} >= 1`)
   ]

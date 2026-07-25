@@ -1942,7 +1942,8 @@ export const assistantThreadSourceSchema = z.object({
   included: z.boolean(),
   context: assistantContextSchema,
   attachedAt: z.string().datetime(),
-  supersedesSourceId: z.string().uuid().nullable().default(null)
+  supersedesSourceId: z.string().uuid().nullable().default(null),
+  provenance: z.enum(["captured", "recovered"]).default("captured")
 });
 
 export const assistantThreadSummarySchema = z.object({
@@ -1958,7 +1959,8 @@ export const assistantThreadSummarySchema = z.object({
   sourceCount: z.number().int().nonnegative(),
   sourceRevisionCount: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime()
+  updatedAt: z.string().datetime(),
+  lastMessageAt: z.string().datetime()
 });
 
 export const assistantThreadStateSchema = assistantThreadSummarySchema.extend({

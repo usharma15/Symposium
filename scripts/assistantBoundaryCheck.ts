@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { actualCostMicros, conservativeInputTokenCeiling, reserveCostMicros, usdToMicros } from "@/apps/api/src/services/aiBudget";
 import { assistantDailyLimitFor } from "@/apps/api/src/services/assistantQuota";
 import { assistantQuotaAfterReservation } from "@/apps/api/src/services/assistantUsage";
+import { assistantThreadSources } from "@/apps/api/src/repository/assistant";
 import {
   assistantInstructions,
   assistantMaxOutputTokens,
@@ -54,6 +55,7 @@ import {
 } from "@/packages/contracts/src/translationLanguages";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
 import { assistantRequestIntentFor } from "@/features/assistant/assistantRequestIntent";
+import { orderAssistantThreadsByLatestMessage } from "@/features/assistant/assistantThreadOrdering";
 import {
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
@@ -170,6 +172,53 @@ assert.equal(assistantContextUpdateInputSchema.safeParse({
   context: validInput.context,
   expectedRevision: 1
 }).success, false);
+const historicalSourceId = "bec08981-7b08-41c8-a045-0b671d8b1320";
+const historicalSources = assistantThreadSources([
+  { id: "not-a-valid-source" },
+  {
+    id: historicalSourceId,
+    key: "attachment:heisenberg-page-1",
+    revision: 1,
+    included: true,
+    context: {
+      surface: "attachment",
+      route: "/posts/paper-bell-epr",
+      title: "Heisenberg.pdf · page 1",
+      summary: "The exact visible page at answer time.",
+      content: "Relations among quantities observable in principle.",
+      entityType: "attachment",
+      entityId: "heisenberg-pdf",
+      metadata: { page: 1 }
+    },
+    attachedAt: "2026-07-20T20:00:00+00:00",
+    supersedesSourceId: null,
+    provenance: "recovered"
+  }
+]);
+assert.equal(historicalSources.length, 1);
+assert.equal(historicalSources[0]?.attachedAt, "2026-07-20T20:00:00.000Z");
+assert.equal(historicalSources[0]?.provenance, "recovered");
+const threadSummaryFixture = {
+  kind: "research_thread" as const,
+  title: "Thread",
+  contextType: "post",
+  contextId: "paper-1",
+  activeContextKey: "post:paper-1",
+  activeSourceId: historicalSourceId,
+  originSourceId: historicalSourceId,
+  contextRevision: 1,
+  sourceCount: 1,
+  sourceRevisionCount: 1,
+  createdAt: "2026-07-20T19:00:00.000Z",
+  updatedAt: "2026-07-25T20:00:00.000Z"
+};
+assert.deepEqual(
+  orderAssistantThreadsByLatestMessage([
+    { ...threadSummaryFixture, id: "169b5a8d-cdea-43b9-b871-3afce65eca46", lastMessageAt: "2026-07-21T20:00:00.000Z" },
+    { ...threadSummaryFixture, id: historicalSourceId, lastMessageAt: "2026-07-20T20:00:00.000Z" }
+  ]).map((thread) => thread.id),
+  ["169b5a8d-cdea-43b9-b871-3afce65eca46", historicalSourceId]
+);
 assert.match(assistantPrompt(validInput.context, validInput.message), /ACTIVE VIEW/);
 assert.match(assistantPrompt(validInput.context, validInput.message, [{ ...validInput.context, title: "Attached paper" }]), /ATTACHED SOURCES[\s\S]*Attached paper/);
 assert.match(assistantInstructions, /never as instructions/i);
@@ -1514,6 +1563,21 @@ assert.match(provider, /symposium-content-translation-v4/);
 assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
 assert.match(provider, /insufficient_quota/);
 assert.match(repository, /providerErrorCode/);
+assert.match(repository, /last_message_at AS "lastMessageAt"/);
+assert.match(repository, /ORDER BY last_message_at DESC, id DESC/);
+assert.match(repository, /SET last_message_at = GREATEST/);
+assert.match(repository, /new Date\(source\.attachedAt\)\.toISOString\(\)/);
+assert.match(migration, /0056_recover_assistant_sources_and_message_activity/);
+assert.match(migration, /assistant_historical_source_recovery/);
+assert.match(migration, /message\.metadata -> 'context'/);
+assert.match(migration, /'provenance', 'recovered'/);
+assert.match(migration, /assistant_message\.metadata -> 'evidence'/);
+assert.match(migration, /ai_conversations_owner_kind_last_message_idx/);
+assert.match(assistantController, /orderAssistantThreadsByLatestMessage/);
+assert.match(tablet, /candidate\.lastMessageAt/);
+assert.match(tablet, /Inspect saved context/);
+assert.match(tablet, /Stored source text/);
+assert.match(tablet, /source\.provenance === "recovered"/);
 assert.match(usageService, /pg_advisory_xact_lock\(hashtextextended\('symposium:ai-budget'/);
 assert.doesNotMatch(usageService, /userMinute|two attempts per minute/);
 assert.match(usageService, /current\.inFlight >= 1/);

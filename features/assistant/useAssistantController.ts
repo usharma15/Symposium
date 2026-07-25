@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import { assistantRequestIntentFor } from "@/features/assistant/assistantRequestIntent";
+import { orderAssistantThreadsByLatestMessage } from "@/features/assistant/assistantThreadOrdering";
 import type {
   AssistantContextUpdateResultContract,
   AssistantMessageContract,
@@ -154,10 +155,10 @@ export function useAssistantController({
   }, []);
 
   const replaceThreadSummary = useCallback((next: AssistantThreadStateContract) => {
-    setThreads((current) => [
+    setThreads((current) => orderAssistantThreadsByLatestMessage([
       threadSummary(next),
       ...current.filter((candidate) => candidate.id !== next.id)
-    ]);
+    ]));
   }, []);
 
   const broadcastThreadChange = useCallback((id: string) => {
@@ -173,7 +174,7 @@ export function useAssistantController({
       `/api/assistant/conversations?actorHandle=${encodeURIComponent(actorHandle)}&limit=50`,
       { cache: "no-store" }
     );
-    setThreads(page.threads);
+    setThreads(orderAssistantThreadsByLatestMessage(page.threads));
     setNextCursor(page.nextCursor);
     return page;
   }, [actorHandle]);

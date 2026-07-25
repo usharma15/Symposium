@@ -14,6 +14,7 @@ import type {
 import { assistantTranslationLanguageLabels } from "@/packages/contracts/src/translationLanguages";
 import type { ScribbleSnapshot } from "@/lib/workspaceTypes";
 import type { AssistantContext, AssistantController } from "@/features/assistant/useAssistantController";
+import { assistantThreadActivityLabel } from "@/features/assistant/assistantThreadOrdering";
 
 function QuickNoteDraftCard({
   actorHandle,
@@ -299,16 +300,64 @@ function ContextDock({
                 {orderedSources.map((source) => {
                   const active = source.id === thread.activeSourceId;
                   const origin = source.id === thread.originSourceId;
+                  const storedMetadata = Object.entries(source.context.metadata);
+                  const sourceRoute = source.context.route.startsWith("/") ? source.context.route : "/";
                   return (
                     <article className={`${active ? "active " : ""}${source.included ? "included" : "excluded"}`} key={source.id}>
                       <div>
                         <span>
                           {active ? <strong>Active</strong> : null}
                           {origin ? <em>Origin</em> : null}
+                          {source.provenance === "recovered" ? <em>Recovered</em> : null}
                           <small>{source.context.surface} · v{source.revision}</small>
                         </span>
                         <h4>{source.context.title}</h4>
                         <p>{source.context.summary || source.context.route}</p>
+                        <div className="tablet-source-links">
+                          <a href={sourceRoute} target="_blank" rel="noreferrer">
+                            <ExternalLink size={11} />Open source
+                          </a>
+                          <time dateTime={source.attachedAt}>
+                            Captured {new Date(source.attachedAt).toLocaleString()}
+                          </time>
+                        </div>
+                        <details className="tablet-source-inspector">
+                          <summary>Inspect saved context</summary>
+                          <dl>
+                            <div><dt>Surface</dt><dd>{source.context.surface}</dd></div>
+                            <div><dt>Route</dt><dd>{source.context.route || "/"}</dd></div>
+                            {source.context.entityType ? <div><dt>Entity type</dt><dd>{source.context.entityType}</dd></div> : null}
+                            {source.context.entityId ? <div><dt>Entity ID</dt><dd>{source.context.entityId}</dd></div> : null}
+                          </dl>
+                          {source.context.summary ? (
+                            <section>
+                              <strong>Stored summary</strong>
+                              <p>{source.context.summary}</p>
+                            </section>
+                          ) : null}
+                          {source.context.selection ? (
+                            <section>
+                              <strong>Stored selection</strong>
+                              <pre>{source.context.selection}</pre>
+                            </section>
+                          ) : null}
+                          {source.context.content ? (
+                            <section>
+                              <strong>Stored source text</strong>
+                              <pre>{source.context.content}</pre>
+                            </section>
+                          ) : null}
+                          {storedMetadata.length ? (
+                            <section>
+                              <strong>Stored metadata</strong>
+                              <dl>
+                                {storedMetadata.map(([key, value]) => (
+                                  <div key={key}><dt>{key}</dt><dd>{value === null ? "null" : String(value)}</dd></div>
+                                ))}
+                              </dl>
+                            </section>
+                          ) : null}
+                        </details>
                       </div>
                       <div className="tablet-source-actions">
                         {!active ? (
@@ -512,7 +561,7 @@ export function AssistantExperience({
                 onClick={() => selectThread(candidate.id)}
               >
                 <strong>{candidate.title}</strong>
-                <small>{candidate.sourceCount} source{candidate.sourceCount === 1 ? "" : "s"} · {new Date(candidate.updatedAt).toLocaleDateString()}</small>
+                <small>{candidate.sourceCount} source{candidate.sourceCount === 1 ? "" : "s"} · {assistantThreadActivityLabel(candidate.lastMessageAt)}</small>
               </button>
             )) : <p>No saved research threads yet.</p>}
           </div>
@@ -539,12 +588,12 @@ export function AssistantExperience({
             >
               <strong>{candidate.title}</strong>
               <span>{candidate.sourceCount} source{candidate.sourceCount === 1 ? "" : "s"}</span>
-              <time dateTime={candidate.updatedAt}>{new Date(candidate.updatedAt).toLocaleDateString()}</time>
+              <time dateTime={candidate.lastMessageAt}>{assistantThreadActivityLabel(candidate.lastMessageAt)}</time>
             </button>
           )) : (
             <p>{threadQuery.trim() ? "No recent threads match this search." : "No saved Research Threads yet."}</p>
           )}
-          {nextCursor ? <small>Showing the 50 most recently updated threads.</small> : null}
+          {nextCursor ? <small>Showing the 50 most recently chatted threads.</small> : null}
         </div>
       </aside>
 

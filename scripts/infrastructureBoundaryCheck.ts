@@ -3,6 +3,7 @@ import { buildApp } from "@/apps/api/src/server";
 import { latestMigrationId, migrationIds } from "@/apps/api/src/db/migrate";
 import {
   aiUsage,
+  aiConversations,
   comments,
   communities,
   conversations,
@@ -37,7 +38,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0055_persist_assistant_quick_note_results");
+  assert.equal(latestMigrationId, "0056_recover_assistant_sources_and_message_activity");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -68,6 +69,7 @@ const main = async () => {
   assert.ok("revision" in notificationPreferences);
   assert.ok("reservedCostMicros" in aiUsage);
   assert.ok("actualCostMicros" in aiUsage);
+  assert.ok("lastMessageAt" in aiConversations);
   assert.ok("sourceFingerprint" in documentTranslations);
   assert.ok("sourceFingerprint" in contentTranslations);
   assert.ok("sourceRevision" in contentTranslations);

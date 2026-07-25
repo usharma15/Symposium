@@ -58,6 +58,7 @@ type ConversationRow = {
   contextRevision: number;
   createdAt: Date | string;
   updatedAt: Date | string;
+  lastMessageAt: Date | string;
 };
 
 type PreparedAssistant = {
@@ -78,9 +79,18 @@ type PreparedAssistant = {
 const assistantContextKey = (context: AssistantContextContract) =>
   `${context.surface}:${context.entityId?.trim() || context.route.trim() || "/"}`.slice(0, 800);
 
-const assistantThreadSources = (value: unknown): AssistantThreadSourceContract[] => {
-  const parsed = assistantThreadSourceSchema.array().max(24).safeParse(value);
-  return parsed.success ? parsed.data : [];
+export const assistantThreadSources = (value: unknown): AssistantThreadSourceContract[] => {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 24).flatMap((entry) => {
+    const normalized = (() => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+      const source = entry as Record<string, unknown>;
+      if (typeof source.attachedAt !== "string" || Number.isNaN(Date.parse(source.attachedAt))) return source;
+      return { ...source, attachedAt: new Date(source.attachedAt).toISOString() };
+    })();
+    const parsed = assistantThreadSourceSchema.safeParse(normalized);
+    return parsed.success ? [parsed.data] : [];
+  });
 };
 
 const isoString = (value: Date | string) => new Date(value).toISOString();
@@ -101,7 +111,8 @@ const assistantThreadState = (row: ConversationRow): AssistantThreadStateContrac
     sourceRevisionCount: sources.length,
     sources,
     createdAt: isoString(row.createdAt),
-    updatedAt: isoString(row.updatedAt)
+    updatedAt: isoString(row.updatedAt),
+    lastMessageAt: isoString(row.lastMessageAt)
   };
 };
 
@@ -116,7 +127,8 @@ const sourceForContext = (
   included: true,
   context,
   attachedAt,
-  supersedesSourceId: existing.filter((source) => source.key === assistantContextKey(context)).at(-1)?.id ?? null
+  supersedesSourceId: existing.filter((source) => source.key === assistantContextKey(context)).at(-1)?.id ?? null,
+  provenance: "captured"
 });
 
 const evidenceForSources = (
@@ -168,18 +180,19 @@ const conversationSelect = `
   origin_source_id AS "originSourceId",
   context_revision AS "contextRevision",
   created_at AS "createdAt",
-  updated_at AS "updatedAt"
+  updated_at AS "updatedAt",
+  last_message_at AS "lastMessageAt"
 `;
 
-type AssistantCursor = { updatedAt: string; id: string };
+type AssistantCursor = { lastMessageAt: string; id: string };
 
-const encodeAssistantCursor = (row: { updatedAt: Date | string; id: string }) =>
-  Buffer.from(JSON.stringify({ updatedAt: isoString(row.updatedAt), id: row.id } satisfies AssistantCursor)).toString("base64url");
+const encodeAssistantCursor = (row: { lastMessageAt: Date | string; id: string }) =>
+  Buffer.from(JSON.stringify({ lastMessageAt: isoString(row.lastMessageAt), id: row.id } satisfies AssistantCursor)).toString("base64url");
 
 const parseAssistantCursor = (cursor: string): AssistantCursor => {
   try {
     const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<AssistantCursor>;
-    if (typeof value.updatedAt !== "string" || Number.isNaN(Date.parse(value.updatedAt)) || typeof value.id !== "string") {
+    if (typeof value.lastMessageAt !== "string" || Number.isNaN(Date.parse(value.lastMessageAt)) || typeof value.id !== "string") {
       throw new Error("Invalid cursor.");
     }
     return value as AssistantCursor;
@@ -256,8 +269,8 @@ export const listAssistantConversations = async (
   const values: unknown[] = [owner];
   const clauses = ["owner_handle = $1", "kind = 'research_thread'"];
   if (cursor) {
-    values.push(cursor.updatedAt, cursor.id);
-    clauses.push(`(updated_at, id) < ($${values.length - 1}::timestamptz, $${values.length}::uuid)`);
+    values.push(cursor.lastMessageAt, cursor.id);
+    clauses.push(`(last_message_at, id) < ($${values.length - 1}::timestamptz, $${values.length}::uuid)`);
   }
   if (query.contextKey) {
     values.push(JSON.stringify([{ key: query.contextKey }]));
@@ -268,7 +281,7 @@ export const listAssistantConversations = async (
     `SELECT ${conversationSelect}
      FROM ai_conversations
      WHERE ${clauses.join(" AND ")}
-     ORDER BY updated_at DESC, id DESC
+     ORDER BY last_message_at DESC, id DESC
      LIMIT $${values.length}`,
     values
   );
@@ -677,9 +690,10 @@ const prepareAssistant = async (
     renderedInput,
     maxOutputTokens: assistantMaxOutputTokens(input.intent)
   });
-  await client.query(
+  const userMessage = await client.query<{ createdAt: Date | string }>(
     `INSERT INTO ai_messages (conversation_id, role, body, metadata)
-     VALUES ($1, 'user', $2, $3)`,
+     VALUES ($1, 'user', $2, $3)
+     RETURNING created_at AS "createdAt"`,
     [conversationId, input.message, JSON.stringify({
       context,
       contextKey: activeSource.key,
@@ -689,6 +703,12 @@ const prepareAssistant = async (
       contextType: conversationRow.contextType,
       contextId: conversationRow.contextId
     })]
+  );
+  await client.query(
+    `UPDATE ai_conversations
+     SET last_message_at = GREATEST(last_message_at, $3::timestamptz)
+     WHERE id = $1 AND owner_handle = $2`,
+    [conversationId, owner, userMessage.rows[0]?.createdAt ?? new Date()]
   );
   return {
     value: {
@@ -782,10 +802,14 @@ const finalizeAssistant = async (
   });
   const updatedConversation = await client.query<ConversationRow>(
     `UPDATE ai_conversations
-     SET updated_at = now()
+     SET updated_at = now(),
+         last_message_at = GREATEST(
+           last_message_at,
+           (SELECT created_at FROM ai_messages WHERE id = $3)
+         )
      WHERE id = $1 AND owner_handle = $2
      RETURNING ${conversationSelect}`,
-    [prepared.conversationId, prepared.owner]
+    [prepared.conversationId, prepared.owner, assistantMessage.rows[0]!.id]
   );
   const row = assistantMessage.rows[0]!;
   const response: AssistantResponseContract = {
