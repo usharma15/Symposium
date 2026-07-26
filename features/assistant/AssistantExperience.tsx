@@ -224,6 +224,7 @@ function ContextDock({
   thread,
   open,
   busy,
+  onCollapse,
   onToggle,
   onUseCurrentView,
   onClearContext,
@@ -235,6 +236,7 @@ function ContextDock({
   thread: AssistantThreadStateContract | null;
   open: boolean;
   busy: boolean;
+  onCollapse?: () => void;
   onToggle: () => void;
   onUseCurrentView: () => void;
   onClearContext: () => void;
@@ -250,22 +252,35 @@ function ContextDock({
 
   return (
     <section className={`tablet-context-dock${open ? " open" : ""}`} aria-label="Context Dock">
-      <button type="button" className="tablet-context-dock-heading" aria-expanded={open} onClick={onToggle}>
-        <span>
-          <BookOpen size={14} />
-          <strong>Context Dock</strong>
-          <small>
-            {thread
-              ? activeContext
-                ? `${includedCount} active · ${thread.sourceRevisionCount} saved`
-                : `${thread.sourceRevisionCount} saved · none active`
-              : activeContext
-                ? "Current view ready"
-                : "No context attached"}
-          </small>
-        </span>
-        <ChevronDown size={14} />
-      </button>
+      <div className="tablet-context-dock-header">
+        <button type="button" className="tablet-context-dock-heading" aria-expanded={open} onClick={onToggle}>
+          <span>
+            <BookOpen size={14} />
+            <strong>Context Dock</strong>
+            <small>
+              {thread
+                ? activeContext
+                  ? `${includedCount} active · ${thread.sourceRevisionCount} saved`
+                  : `${thread.sourceRevisionCount} saved · none active`
+                : activeContext
+                  ? "Current view ready"
+                  : "No context attached"}
+            </small>
+          </span>
+          <ChevronDown size={14} />
+        </button>
+        {onCollapse ? (
+          <button
+            type="button"
+            className="assistant-collapse-control"
+            title="Collapse to AI Tablet"
+            aria-label="Collapse to AI Tablet"
+            onClick={onCollapse}
+          >
+            <Minimize2 size={15} /><span>Tablet</span>
+          </button>
+        ) : null}
+      </div>
       {open ? (
         <div className="tablet-context-dock-body">
           {!thread ? (
@@ -693,6 +708,8 @@ export function AssistantExperience({
   const [threadQuery, setThreadQuery] = useState(threadSearch);
   const [mobilePane, setMobilePane] = useState<"threads" | "chat" | "context">("chat");
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const composerResizeRef = useRef(false);
   const previousModeRef = useRef(mode);
 
   const selectThread = (id: string) => {
@@ -727,6 +744,23 @@ export function AssistantExperience({
     return () => window.cancelAnimationFrame(frame);
   }, [busy, messages.length]);
 
+  useEffect(() => {
+    const textarea = composerRef.current;
+    if (!textarea) return;
+    if (!draft) delete textarea.dataset.manualHeight;
+    const style = window.getComputedStyle(textarea);
+    const lineHeight = Number.parseFloat(style.lineHeight) || 20;
+    const paddingHeight = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+    const borderHeight = Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth);
+    const verticalChrome = paddingHeight + borderHeight;
+    const minimumHeight = lineHeight * 2 + verticalChrome;
+    const automaticMaximum = lineHeight * 4 + verticalChrome;
+    const manualHeight = Number.parseFloat(textarea.dataset.manualHeight ?? "0");
+    textarea.style.height = "auto";
+    const contentHeight = Math.min(Math.max(textarea.scrollHeight + borderHeight, minimumHeight), automaticMaximum);
+    textarea.style.height = `${Math.max(contentHeight, manualHeight)}px`;
+  }, [draft, mode]);
+
   const submitForm = (event?: FormEvent) => {
     event?.preventDefault();
     void submit();
@@ -747,7 +781,6 @@ export function AssistantExperience({
         <header className="tablet-header assistant-header">
           <div>
             <span><BrainCircuit size={16} />AI Tablet</span>
-            <small>Ask anything · add Symposium context when useful</small>
           </div>
           <div className="assistant-header-actions">
             <button type="button" title="Expand to AI Workspace" onClick={onExpand}>
@@ -788,11 +821,10 @@ export function AssistantExperience({
               </span>
             </button>
           ) : (
-            <div className="tablet-thread-current assistant-panel-title" aria-label="Chat history">
-              <History size={14} />
+            <div className="tablet-thread-current assistant-panel-title" aria-label="Assistant chat history">
+              <BrainCircuit size={15} />
               <span>
-                <strong>Chats</strong>
-                <small>{threads.length ? `${threads.length}${nextCursor ? "+" : ""} ${threadLibraryStatus} chat${threads.length === 1 ? "" : "s"}` : "Your conversation history"}</small>
+                <strong>Assistant</strong>
               </span>
             </div>
           )}
@@ -892,17 +924,6 @@ export function AssistantExperience({
       </aside>
 
       <section className="assistant-center" aria-label="Chat">
-        {mode === "workspace" ? (
-          <header className="assistant-panel-heading assistant-chat-heading">
-            <div>
-              <span><BrainCircuit size={16} />AI Workspace</span>
-              <small>{thread?.title ?? "New chat"} · {thread?.archivedAt ? "archived" : activeContext ? "working with context" : "plain conversation"}</small>
-            </div>
-            <button type="button" title="Collapse to AI Tablet" onClick={onCollapse}>
-              <Minimize2 size={16} /><span>Tablet</span>
-            </button>
-          </header>
-        ) : null}
         <section className="tablet-limit-notice" aria-label="AI usage limits">
           <AlertTriangle size={13} />
           <strong>Limited beta</strong>
@@ -923,28 +944,30 @@ export function AssistantExperience({
           </section>
         ) : null}
 
-        <div className={`tablet-active-context${activeContext ? " attached" : ""}`} aria-label="Chat context">
-          <span>
-            <BookOpen size={13} />
-            <small>{activeContext ? "Using context" : "Plain chat"}</small>
-            <strong>{activeContext?.title ?? "No Symposium context"}</strong>
-          </span>
-          {activeContext ? (
-            <button
-              type="button"
-              aria-label="Remove chat context"
-              title="Continue without explicit context"
-              disabled={busy || contextBusy || Boolean(thread?.archivedAt)}
-              onClick={clearContext}
-            >
-              <X size={14} />
-            </button>
-          ) : (
-            <button type="button" disabled={busy || contextBusy || Boolean(thread?.archivedAt)} onClick={useCurrentView}>
-              <Link2 size={12} />Add current view
-            </button>
-          )}
-        </div>
+        {mode === "compact" ? (
+          <div className={`tablet-active-context${activeContext ? " attached" : ""}`} aria-label="Chat context">
+            <span>
+              <BookOpen size={13} />
+              <small>{activeContext ? "Using context" : "Plain chat"}</small>
+              <strong>{activeContext?.title ?? "No Symposium context"}</strong>
+            </span>
+            {activeContext ? (
+              <button
+                type="button"
+                aria-label="Remove chat context"
+                title="Continue without explicit context"
+                disabled={busy || contextBusy || Boolean(thread?.archivedAt)}
+                onClick={clearContext}
+              >
+                <X size={14} />
+              </button>
+            ) : (
+              <button type="button" disabled={busy || contextBusy || Boolean(thread?.archivedAt)} onClick={useCurrentView}>
+                <Link2 size={12} />Add current view
+              </button>
+            )}
+          </div>
+        ) : null}
 
         <div className="tablet-transcript" aria-live="polite" ref={transcriptRef}>
           {threadLoading ? <article className="tablet-message assistant pending"><span>Tablet</span><p>Loading research threads…</p></article> : null}
@@ -996,8 +1019,23 @@ export function AssistantExperience({
         {error ? <div className="tablet-error" role="alert">{error}</div> : null}
         <form className="tablet-composer" onSubmit={submitForm}>
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            onPointerDown={(event) => {
+              const textarea = event.currentTarget;
+              const nearResizeHandle =
+                event.nativeEvent.offsetX >= textarea.clientWidth - 24 &&
+                event.nativeEvent.offsetY >= textarea.clientHeight - 24;
+              if (!nearResizeHandle) return;
+              composerResizeRef.current = true;
+            }}
+            onPointerUp={(event) => {
+              if (!composerResizeRef.current) return;
+              composerResizeRef.current = false;
+              const textarea = event.currentTarget;
+              textarea.dataset.manualHeight = String(textarea.getBoundingClientRect().height);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
@@ -1005,7 +1043,8 @@ export function AssistantExperience({
               }
             }}
             maxLength={2000}
-            rows={mode === "workspace" ? 3 : 2}
+            rows={2}
+            aria-label="Message Symposium AI"
             placeholder={thread?.archivedAt
               ? "Restore this chat to continue"
               : quotaLoading
@@ -1028,20 +1067,23 @@ export function AssistantExperience({
         </form>
       </section>
 
-      <aside className="assistant-right" aria-label="Thread context">
-        <ContextDock
-          context={context}
-          activeContext={activeContext}
-          thread={thread}
-          open={contextDockOpen}
-          busy={busy || contextBusy || Boolean(thread?.archivedAt)}
-          onToggle={() => setContextDockOpen((current) => !current)}
-          onUseCurrentView={useCurrentView}
-          onClearContext={clearContext}
-          onContextChange={(change) => void changeThreadContext(change)}
-          onSourceChange={(source, action) => void changeSavedSource(source, action)}
-        />
-      </aside>
+      {mode === "workspace" ? (
+        <aside className="assistant-right" aria-label="Thread context">
+          <ContextDock
+            context={context}
+            activeContext={activeContext}
+            thread={thread}
+            open={contextDockOpen}
+            busy={busy || contextBusy || Boolean(thread?.archivedAt)}
+            onCollapse={onCollapse}
+            onToggle={() => setContextDockOpen((current) => !current)}
+            onUseCurrentView={useCurrentView}
+            onClearContext={clearContext}
+            onContextChange={(change) => void changeThreadContext(change)}
+            onSourceChange={(source, action) => void changeSavedSource(source, action)}
+          />
+        </aside>
+      ) : null}
     </section>
   );
 }
