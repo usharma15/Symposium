@@ -817,7 +817,7 @@ export function AssistantExperience({
               <History size={14} />
               <span>
                 <strong>{thread?.title ?? "New chat"}</strong>
-                <small>{thread ? `${thread.sourceCount} active source${thread.sourceCount === 1 ? "" : "s"}` : activeContext ? "Current view ready" : "No context attached"}</small>
+                {thread ? <small>{thread.sourceCount} active source{thread.sourceCount === 1 ? "" : "s"}</small> : null}
               </span>
             </button>
           ) : (

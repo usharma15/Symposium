@@ -725,11 +725,10 @@
   padding: 0.5rem 0.58rem;
 }
 .assistant-compact .tablet-composer button {
-  justify-self: end;
+  justify-self: stretch;
   min-height: 2.05rem;
-  min-width: 5.85rem;
   padding: 0.3rem 0.48rem;
-  width: auto;
+  width: 100%;
 }
 .assistant-compact .tablet-limit-notice {
   padding-block: 0.28rem;

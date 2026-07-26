@@ -1893,6 +1893,8 @@ assert.match(tablet, /aria-pressed=\{mobilePane === "chat"\}/);
 assert.match(tablet, /aria-pressed=\{mobilePane === "context"\}/);
 assert.match(tablet, /className="tablet-thread-current assistant-panel-title" aria-label="Assistant chat history"/);
 assert.match(tablet, /<strong>Assistant<\/strong>/);
+assert.match(tablet, /\{thread \? <small>\{thread\.sourceCount\} active source/);
+assert.doesNotMatch(tablet, /activeContext \? "Current view ready" : "No context attached"/);
 assert.doesNotMatch(tablet, /<span><BrainCircuit size=\{16\} \/>AI Workspace<\/span>/);
 assert.doesNotMatch(tablet, /assistant-chat-heading/);
 assert.match(tablet, /\{mode === "compact" \? \(\s*<div className=\{`tablet-active-context/);
@@ -1918,7 +1920,7 @@ assert.match(assistantController, /const startNewThread = useCallback\(\([\s\S]*
 assert.match(assistantController, /if \(!requestedConversationId\) \{[\s\S]*?requestedAttemptRef\.current = null;[\s\S]*?return;/);
 assert.match(tabletStyles, /\.assistant-compact \.assistant-thread-filters/);
 assert.match(tabletStyles, /\.assistant-compact \.tablet-composer[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/);
-assert.match(tabletStyles, /\.assistant-compact \.tablet-composer button[\s\S]*?justify-self: end/);
+assert.match(tabletStyles, /\.assistant-compact \.tablet-composer button[\s\S]*?justify-self: stretch[\s\S]*?width: 100%/);
 assert.match(tabletStyles, /\.assistant-workspace \.assistant-center[\s\S]*?height: calc\(100% \+ var\(--symposium-side-tool-bottom\) - var\(--symposium-shell-edge\)\)/);
 assert.match(tabletStyles, /\.assistant-workspace \.tablet-thread-bar[\s\S]*?min-height: 3\.25rem/);
 assert.match(tabletStyles, /\.assistant-collapse-control/);
