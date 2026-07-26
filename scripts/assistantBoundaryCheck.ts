@@ -1936,13 +1936,12 @@ assert.match(tabletStyles, /@media \(max-width: 760px\) and \(max-height: 640px\
 assert.match(tabletStyles, /@media \(max-width: 1100px\)[\s\S]*?\.assistant-workspace\[data-mobile-pane="threads"\]/);
 assert.match(tabletStyles, /@media \(max-width: 1100px\) and \(max-height: 640px\)/);
 assert.match(assistantWorkspaceBaseBlock, /gap: 12px/);
-assert.match(assistantWorkspaceBaseBlock, /--assistant-history-width: var\(--symposium-side-tool-width\)/);
-assert.match(assistantWorkspaceBaseBlock, /--assistant-context-width: clamp\([\s\S]*?16rem,[\s\S]*?calc\(40rem - var\(--assistant-history-width\)\),[\s\S]*?22rem/);
-assert.match(assistantWorkspaceBaseBlock, /grid-template-columns:[\s\S]*?minmax\(0, var\(--assistant-history-width\)\)[\s\S]*?minmax\(24rem, 1fr\)[\s\S]*?minmax\(0, var\(--assistant-history-width\)\)/);
+assert.match(assistantWorkspaceBaseBlock, /--assistant-aligned-side-width: calc\([\s\S]*?var\(--symposium-side-tool-width\) - var\(--symposium-shell-edge\)[\s\S]*?\)/);
+assert.match(assistantWorkspaceBaseBlock, /grid-template-columns:[\s\S]*?minmax\(0, var\(--assistant-aligned-side-width\)\)[\s\S]*?minmax\(24rem, 1fr\)[\s\S]*?minmax\(0, var\(--assistant-aligned-side-width\)\)/);
 assert.match(assistantWorkspaceBaseBlock, /overflow: visible/);
 assert.doesNotMatch(assistantWorkspaceBaseBlock, /background:|box-shadow:|border:/);
 assert.match(tabletStyles, /\.assistant-workspace \.assistant-left,[\s\S]*?border-radius: 14px/);
-assert.match(tabletStyles, /\.assistant-workspace \.assistant-right[\s\S]*?justify-self: end[\s\S]*?width: min\(100%, var\(--assistant-context-width\)\)/);
+assert.doesNotMatch(tabletStyles, /--assistant-history-width|--assistant-context-width/);
 assert.match(canonicalRoutes, /\/assistant\/threads\/\$\{encoded\(route\.threadId\)\}/);
 assert.match(canonicalRoutes, /canonicalAssistantBackdropIds/);
 assert.match(canonicalRoutes, /new URLSearchParams\(\{ backdrop: route\.backdrop \}\)/);

@@ -63,19 +63,16 @@
 }
 
 .assistant-workspace {
-  --assistant-history-width: var(--symposium-side-tool-width);
-  --assistant-context-width: clamp(
-    16rem,
-    calc(40rem - var(--assistant-history-width)),
-    22rem
+  --assistant-aligned-side-width: calc(
+    var(--symposium-side-tool-width) - var(--symposium-shell-edge)
   );
   bottom: var(--symposium-side-tool-bottom);
   display: grid;
   gap: 12px;
   grid-template-columns:
-    minmax(0, var(--assistant-history-width))
+    minmax(0, var(--assistant-aligned-side-width))
     minmax(24rem, 1fr)
-    minmax(0, var(--assistant-history-width));
+    minmax(0, var(--assistant-aligned-side-width));
   grid-template-rows: minmax(0, 1fr);
   left: var(--symposium-shell-edge);
   min-height: 0;
@@ -120,8 +117,6 @@
   background: color-mix(in srgb, var(--aqua) 5%, color-mix(in srgb, var(--document-surface-solid) 88%, transparent));
   grid-column: 3;
   grid-row: 1;
-  justify-self: end;
-  width: min(100%, var(--assistant-context-width));
 }
 
 .assistant-workspace .tablet-thread-bar {
