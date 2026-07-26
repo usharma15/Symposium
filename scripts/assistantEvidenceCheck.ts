@@ -253,6 +253,9 @@ const main = async () => {
   assert.match(tablet, /Direct evidence/);
   assert.match(tablet, /Insufficient context/);
   assert.match(tablet, /Source changed since capture/);
+  assert.match(tablet, /AssistantMessageBody/);
+  assert.match(tablet, /assistantInlineContent/);
+  assert.doesNotMatch(tablet, /dangerouslySetInnerHTML/);
   assert.match(messages, /id=\{`message-\$\{message\.id\}`\}/);
 
   console.log("Assistant evidence locators, source validation, provider references, persistence compatibility, and claim UI checks passed.");
