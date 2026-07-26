@@ -5,7 +5,7 @@ import { attachmentKindForContentType, validateAttachmentContentSignature } from
 import { officeArchiveFormatForContentType, validateOfficeArchive } from "@/lib/docxSecurity";
 import type { InquiryAttachment } from "@/lib/mockData";
 
-type LocalAttachmentOwnerType = "post" | "comment" | "message" | "note" | "note_comment" | "opportunity_application" | "profile";
+type LocalAttachmentOwnerType = "post" | "comment" | "message" | "assistant_message" | "note" | "note_comment" | "opportunity_application" | "profile";
 type LocalAttachmentStatus = "pending" | "uploaded";
 
 export type LocalAttachmentRecord = {
@@ -237,7 +237,9 @@ const localRecordToAttachment = (record: LocalAttachmentRecord): InquiryAttachme
   fileName: record.fileName,
   contentType: record.contentType,
   byteSize: record.byteSize,
-  url: record.ownerType === "note" || record.ownerType === "note_comment"
+  url: record.ownerType === "assistant_message"
+    ? `/api/assistant-attachments/${encodeURIComponent(record.attachmentId)}${record.actorHandle ? `?actorHandle=${encodeURIComponent(record.actorHandle)}` : ""}`
+    : record.ownerType === "note" || record.ownerType === "note_comment"
     ? `/api/workspace/attachments/${encodeURIComponent(record.attachmentId)}${record.actorHandle ? `?actorHandle=${encodeURIComponent(record.actorHandle)}` : ""}`
     : record.ownerType === "opportunity_application"
       ? `/api/opportunity-attachments/${encodeURIComponent(record.attachmentId)}${record.actorHandle ? `?actorHandle=${encodeURIComponent(record.actorHandle)}` : ""}`

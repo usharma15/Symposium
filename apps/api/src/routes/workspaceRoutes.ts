@@ -4,6 +4,7 @@ import { withReadActor, withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
 import { mutationContextFromRequest } from "../services/mutations";
 import {
+  assertAssistantAttachmentAccess,
   askAssistant,
   deleteAssistantConversation,
   getAssistantConversation,
@@ -473,6 +474,18 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
   app.get("/v1/assistant/quota", async (request, reply) => {
     try {
       return reply.send(await getAssistantQuota(await withReadActor(request)));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: { attachmentId: string } }>("/v1/assistant-attachments/:attachmentId/access", async (request, reply) => {
+    try {
+      const attachment = await assertAssistantAttachmentAccess(
+        z.string().uuid().parse(request.params.attachmentId),
+        await withReadActor(request)
+      );
+      return reply.send({ url: await createPrivateDownloadUrl(attachment.objectKey, 15 * 60) });
     } catch (error) {
       return sendError(app, reply, error);
     }

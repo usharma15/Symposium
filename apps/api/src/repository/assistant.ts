@@ -10,6 +10,7 @@ import {
   assistantThreadDeleteInputSchema,
   assistantThreadSourceSchema,
   assistantThreadUpdateInputSchema,
+  inquiryAttachmentSchema,
   type AssistantContextContract,
   type AssistantContextUpdateResultContract,
   type AssistantMessageContract,
@@ -21,8 +22,11 @@ import {
   type AssistantThreadPageContract,
   type AssistantThreadSourceContract,
   type AssistantThreadStateContract,
-  type AssistantThreadUpdateResultContract
+  type AssistantThreadUpdateResultContract,
+  type InquiryAttachmentContract
 } from "../../../../packages/contracts/src";
+import { attachmentKindForFile } from "../../../../packages/contracts/src";
+import { maxAssistantAttachmentBytes } from "@/lib/attachmentRules";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { actualCostMicros } from "../services/aiBudget";
@@ -45,6 +49,14 @@ import {
   type AssistantModelResult
 } from "../services/openaiResponses";
 import { runAtomic } from "../services/transactions";
+import {
+  replaceOwnerAttachments,
+  type OwnedAttachmentRow
+} from "../services/attachmentOwnership";
+import {
+  queueAttachmentsForOwnerStorageDeletion,
+  triggerStorageDeletion
+} from "../services/storageDeletion";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
 type ParsedInput = ReturnType<typeof assistantMessageInputSchema.parse>;
@@ -78,6 +90,7 @@ type PreparedAssistant = {
   context: AssistantContextContract | null;
   attachedContexts: AssistantContextContract[];
   evidence: AssistantMessageContract["evidence"];
+  userMessage: AssistantMessageContract;
   thread: AssistantThreadStateContract;
   input: ParsedInput;
   dailyLimit: number;
@@ -152,6 +165,69 @@ const sourceForContext = (
   provenance: "captured"
 });
 
+const assistantAttachmentFromRow = (
+  row: Pick<OwnedAttachmentRow, "id" | "fileName" | "contentType" | "byteSize" | "status" | "metadata" | "createdAt">
+): InquiryAttachmentContract => ({
+  id: row.id,
+  fileName: row.fileName,
+  contentType: row.contentType,
+  byteSize: row.byteSize,
+  status: row.status,
+  kind: attachmentKindForFile(row.contentType, row.fileName),
+  metadata: row.metadata && typeof row.metadata === "object"
+    ? row.metadata as Record<string, unknown>
+    : {},
+  createdAt: row.createdAt ? isoString(row.createdAt) : undefined
+});
+
+const assistantAttachmentsFromMetadata = (value: unknown): InquiryAttachmentContract[] => {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 5).flatMap((entry) => {
+    const parsed = inquiryAttachmentSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
+};
+
+const assistantAttachmentContext = (
+  row: OwnedAttachmentRow,
+  owner: string
+): AssistantContextContract => {
+  const attachment = assistantAttachmentFromRow(row);
+  const metadata = attachment.metadata ?? {};
+  const previewText = typeof metadata.previewText === "string"
+    ? metadata.previewText.trim()
+    : "";
+  const structuredPreview = metadata.structuredPreview && typeof metadata.structuredPreview === "object"
+    ? JSON.stringify(metadata.structuredPreview)
+    : "";
+  const extracted = (previewText || structuredPreview).slice(0, 12_000);
+  const kindLabel = attachment.kind === "pdf"
+    ? "PDF"
+    : attachment.kind.charAt(0).toUpperCase() + attachment.kind.slice(1);
+  const sizeLabel = `${Math.max(0.01, attachment.byteSize / (1024 * 1024)).toFixed(2)} MB`;
+  return assistantContextSchema.parse({
+    surface: "attachment",
+    route: `/api/assistant-attachments/${encodeURIComponent(attachment.id)}?actorHandle=${encodeURIComponent(owner)}`,
+    title: attachment.fileName,
+    summary: extracted
+      ? `${kindLabel} file · ${sizeLabel} · bounded text preview extracted for this limited beta.`
+      : `${kindLabel} file · ${sizeLabel} · no readable text was extracted; the AI can only use its file details.`,
+    content: extracted
+      ? `Extracted file preview:\n${extracted}`
+      : "No readable text preview is available for this file in the limited beta.",
+    entityType: "assistant_attachment",
+    entityId: attachment.id,
+    metadata: {
+      fileName: attachment.fileName,
+      contentType: attachment.contentType,
+      byteSize: attachment.byteSize,
+      kind: attachment.kind,
+      processing: extracted ? "bounded_text_extracted" : "file_details_only",
+      extractedCharacters: extracted.length
+    }
+  });
+};
+
 const evidenceForSources = (
   sources: AssistantThreadSourceContract[],
   activeSourceId: string | null
@@ -183,6 +259,7 @@ const messageFromRow = (row: {
     body: row.body,
     createdAt: isoString(row.createdAt),
     evidence: metadata.evidence ?? [],
+    attachments: assistantAttachmentsFromMetadata(metadata.attachments),
     ...(metadata.translation ? { translation: metadata.translation } : {}),
     ...(metadata.quickNote ? { quickNote: metadata.quickNote } : {}),
     ...(metadata.quickNoteResult ? { quickNoteResult: metadata.quickNoteResult } : {})
@@ -253,7 +330,8 @@ const unavailableResponse = (
       role: "assistant",
       body,
       createdAt: new Date().toISOString(),
-      evidence: []
+      evidence: [],
+      attachments: []
     }
   };
 };
@@ -526,7 +604,8 @@ export const deleteAssistantConversation = async (
   }
   const owner = await ensureProfileHandle(actorHandle(actor));
   await ensureLiveData();
-  return runAtomic(async (client) => {
+  let deletedAttachmentIds: string[] = [];
+  const response = await runAtomic(async (client) => {
     const claim = await claimMutation<AssistantThreadDeleteResultContract>(client, owner, mutation);
     if (claim.replayed) return { value: claim.response };
     const conversation = await client.query<ConversationRow>(
@@ -548,6 +627,16 @@ export const deleteAssistantConversation = async (
       });
     }
 
+    const messageIds = await client.query<{ id: string }>(
+      "SELECT id::text FROM ai_messages WHERE conversation_id = $1 FOR UPDATE",
+      [conversationId]
+    );
+    deletedAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(
+      client,
+      "assistant_message",
+      messageIds.rows.map((message) => message.id),
+      "assistant_chat_deleted"
+    );
     await client.query("DELETE FROM ai_messages WHERE conversation_id = $1", [conversationId]);
     await client.query(
       `DELETE FROM mutation_receipts
@@ -599,6 +688,10 @@ export const deleteAssistantConversation = async (
     });
     return { value: response, events: [event] };
   });
+  if (deletedAttachmentIds.length) {
+    await triggerStorageDeletion(deletedAttachmentIds);
+  }
+  return response;
 };
 
 export const updateAssistantConversationContext = async (
@@ -975,7 +1068,7 @@ const prepareAssistant = async (
          AND kind = 'research_thread'
          AND archived_at IS NULL
          AND deleted_at IS NULL
-       FOR SHARE`,
+       FOR UPDATE`,
       [conversationId, owner]
     );
     if (!ownedConversation.rowCount) throw new TRPCError({ code: "NOT_FOUND", message: "AI conversation not found." });
@@ -993,7 +1086,106 @@ const prepareAssistant = async (
     history = historyResult.rows;
   }
 
-  const sources = assistantThreadSources(conversationRow.contextSources);
+  const attachmentIds = input.attachmentIds;
+  const attachmentRows = attachmentIds.length
+    ? await client.query<OwnedAttachmentRow>(
+        `SELECT
+           id::text,
+           id::text AS "attachmentId",
+           owner_type AS "ownerType",
+           owner_id AS "ownerId",
+           uploader_handle AS "uploaderHandle",
+           bucket,
+           file_name AS "fileName",
+           content_type AS "contentType",
+           byte_size AS "byteSize",
+           status,
+           metadata,
+           object_key AS "objectKey",
+           upload_object_key AS "uploadObjectKey",
+           created_at AS "createdAt"
+         FROM attachments
+         WHERE id = ANY($1::uuid[])
+         FOR UPDATE`,
+        [attachmentIds]
+      )
+    : { rows: [] as OwnedAttachmentRow[], rowCount: 0 };
+  const attachmentRowsById = new Map(attachmentRows.rows.map((row) => [row.id, row]));
+  const orderedAttachmentRows = attachmentIds.map((id) => attachmentRowsById.get(id));
+  if (
+    orderedAttachmentRows.some((row) =>
+      !row ||
+      row.ownerType !== "assistant_message" ||
+      row.ownerId !== null ||
+      row.uploaderHandle !== owner ||
+      (row.status !== "uploaded" && row.status !== "previewed") ||
+      row.byteSize > maxAssistantAttachmentBytes
+    )
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "One or more AI chat files are unavailable, over 5 MB, or already attached elsewhere."
+    });
+  }
+  if (input.intent === "translate" && attachmentIds.length) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Whole-file translation is paused in this limited beta. Open a Symposium document page to use page translation."
+    });
+  }
+
+  let sources = assistantThreadSources(conversationRow.contextSources);
+  const attachmentSources = (orderedAttachmentRows as OwnedAttachmentRow[]).map((row) =>
+    sourceForContext(assistantAttachmentContext(row, owner), sources)
+  );
+  if (sources.filter((source) => source.included).length + attachmentSources.length > 5) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Only five sources can be included per answer. Exclude a saved source or remove a pending file before sending."
+    });
+  }
+  for (const source of attachmentSources) {
+    sources.push(source);
+  }
+  if (attachmentSources.length) {
+    const activeSourceId = conversationRow.activeSourceId ?? attachmentSources[0]!.id;
+    const activeSource = sources.find((source) => source.id === activeSourceId)!;
+    const protectedIds = new Set([
+      conversationRow.originSourceId,
+      activeSourceId,
+      ...attachmentSources.map((source) => source.id)
+    ].filter(Boolean));
+    while (sources.length > 24) {
+      const removable = sources.findIndex((source) =>
+        !source.included && !protectedIds.has(source.id)
+      );
+      if (removable < 0) break;
+      sources.splice(removable, 1);
+    }
+    const updated = await client.query<ConversationRow>(
+      `UPDATE ai_conversations
+       SET context_sources = $3::jsonb,
+           active_context_key = $4,
+           active_source_id = $5,
+           context_type = $6,
+           context_id = $7,
+           context_revision = context_revision + 1,
+           updated_at = now()
+       WHERE id = $1 AND owner_handle = $2
+       RETURNING ${conversationSelect}`,
+      [
+        conversationId,
+        owner,
+        JSON.stringify(sources),
+        activeSource.key,
+        activeSource.id,
+        assistantContextTypeFor(activeSource.context.surface),
+        activeSource.context.entityId ?? null
+      ]
+    );
+    conversationRow = updated.rows[0]!;
+  }
+
   const activeSource = sources.find((source) => source.id === conversationRow.activeSourceId)
     ?? sources.filter((source) => source.key === conversationRow.activeContextKey).at(-1);
   const context = activeSource ? assistantContextSchema.parse(activeSource.context) : null;
@@ -1028,10 +1220,18 @@ const prepareAssistant = async (
     renderedInput,
     maxOutputTokens: assistantMaxOutputTokens(input.intent)
   });
-  const userMessage = await client.query<{ createdAt: Date | string }>(
+  const attachments = (orderedAttachmentRows as OwnedAttachmentRow[]).map(assistantAttachmentFromRow);
+  const userMessage = await client.query<{
+    id: string;
+    conversationId: string;
+    role: "user";
+    body: string;
+    metadata: unknown;
+    createdAt: Date | string;
+  }>(
     `INSERT INTO ai_messages (conversation_id, role, body, metadata)
      VALUES ($1, 'user', $2, $3)
-     RETURNING created_at AS "createdAt"`,
+     RETURNING id, conversation_id AS "conversationId", role, body, metadata, created_at AS "createdAt"`,
     [conversationId, input.message, JSON.stringify({
       context: context ?? null,
       contextKey: activeSource?.key ?? null,
@@ -1040,9 +1240,18 @@ const prepareAssistant = async (
       attachedSourceIds: evidenceSources.filter((source) => source.id !== activeSource?.id).map((source) => source.id),
       grounding: context ? "sources" : "none",
       contextType: conversationRow.contextType,
-      contextId: conversationRow.contextId
+      contextId: conversationRow.contextId,
+      attachments
     })]
   );
+  if (attachmentIds.length) {
+    await replaceOwnerAttachments(client, {
+      attachmentIds,
+      ownerId: userMessage.rows[0]!.id,
+      ownerType: "assistant_message",
+      uploaderHandle: owner
+    });
+  }
   await client.query(
     `UPDATE ai_conversations
      SET last_message_at = GREATEST(last_message_at, $3::timestamptz)
@@ -1059,6 +1268,7 @@ const prepareAssistant = async (
       context,
       attachedContexts,
       evidence,
+      userMessage: messageFromRow(userMessage.rows[0]!),
       thread: assistantThreadState({ ...conversationRow, contextSources: sources }),
       input,
       dailyLimit: reservation.dailyLimit,
@@ -1143,7 +1353,8 @@ const finalizeAssistant = async (
         role: "assistant",
         body: "This chat was deleted while the answer was being prepared, so the answer was discarded.",
         createdAt: new Date().toISOString(),
-        evidence: []
+        evidence: [],
+        attachments: []
       }
     };
     await stageAuditLog(client, {
@@ -1223,6 +1434,7 @@ const finalizeAssistant = async (
       ...(translation ? { translation } : {}),
       ...(quickNote ? { quickNote } : {})
     }),
+    userMessage: prepared.userMessage,
     ...(translation ? { translation } : {}),
     ...(quickNote ? { quickNote } : {})
   };
@@ -1292,4 +1504,42 @@ export const askAssistant = async (
     console.error("SYMPOSIUM AI provider request failed.", error);
   }
   return finalizeAssistant(prepared, result, failure, mutation);
+};
+
+export const assertAssistantAttachmentAccess = async (
+  attachmentId: string,
+  actor: Actor
+) => {
+  const owner = await ensureProfileHandle(actorHandle(actor));
+  if (!hasDatabase()) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Attachment not found." });
+  }
+  await ensureLiveData();
+  const result = await getPool().query<{ objectKey: string }>(
+    `SELECT attachment.object_key AS "objectKey"
+     FROM attachments attachment
+     WHERE attachment.id = $1
+       AND attachment.owner_type = 'assistant_message'
+       AND attachment.status IN ('uploaded', 'previewed')
+       AND (
+         (attachment.owner_id IS NULL AND attachment.uploader_handle = $2)
+         OR EXISTS (
+           SELECT 1
+           FROM ai_messages message
+           JOIN ai_conversations conversation
+             ON conversation.id = message.conversation_id
+           WHERE message.id::text = attachment.owner_id
+             AND conversation.owner_handle = $2
+             AND conversation.kind = 'research_thread'
+             AND conversation.deleted_at IS NULL
+         )
+       )
+     LIMIT 1`,
+    [attachmentId, owner]
+  );
+  const attachment = result.rows[0];
+  if (!attachment) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Attachment not found." });
+  }
+  return attachment;
 };

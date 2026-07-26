@@ -1005,8 +1005,16 @@ export const createAttachmentUploadInputSchema = z.object({
   fileName: z.string().min(1).max(255),
   contentType: z.string().min(1).max(160),
   byteSize: z.number().int().positive().max(50 * 1024 * 1024),
-  ownerType: z.enum(["post", "comment", "message", "note", "note_comment", "opportunity_application", "profile"]),
+  ownerType: z.enum(["post", "comment", "message", "assistant_message", "note", "note_comment", "opportunity_application", "profile"]),
   ownerId: z.string().trim().min(1).max(200).optional()
+}).superRefine((input, context) => {
+  if (input.ownerType === "assistant_message" && input.byteSize > 5 * 1024 * 1024) {
+    context.addIssue({
+      code: "custom",
+      path: ["byteSize"],
+      message: "AI chat files must be 5 MB or smaller."
+    });
+  }
 });
 
 export const confirmAttachmentInputSchema = z.object({
@@ -1314,6 +1322,10 @@ export const assistantContextSchema = z.object({
 export const assistantMessageInputSchema = z.object({
   conversationId: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(2000),
+  attachmentIds: z.array(z.string().uuid()).max(5).refine(
+    (attachmentIds) => new Set(attachmentIds).size === attachmentIds.length,
+    "Each AI chat file can only be attached once."
+  ).default([]),
   intent: assistantRequestIntentSchema.default("answer"),
   targetLanguage: assistantTranslationLanguageSchema.optional(),
   contextType: z.enum(["general", "room", "post", "community", "note"]).default("general"),
@@ -1950,6 +1962,7 @@ export const assistantMessageSchema = z.object({
   role: aiMessageRoleSchema,
   body: z.string(),
   createdAt: z.string().optional(),
+  attachments: z.array(inquiryAttachmentSchema).max(5).default([]),
   evidence: z.array(z.object({
     sourceId: z.string().uuid(),
     key: z.string().trim().min(1).max(800),
@@ -2041,6 +2054,7 @@ export const assistantQuotaStatusSchema = z.object({
 export const assistantResponseSchema = z.object({
   conversationId: z.string(),
   message: assistantMessageSchema,
+  userMessage: assistantMessageSchema.optional(),
   providerConfigured: z.boolean(),
   status: z.enum(["answered", "provider_not_configured", "disabled", "provider_error", "discarded"]),
   model: z.string().optional(),

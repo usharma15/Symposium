@@ -138,6 +138,21 @@ assert.equal(assistantMessageInputSchema.safeParse({
 }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate", targetLanguage: "italian" }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, message: "x".repeat(2001) }).success, false);
+assert.equal(assistantMessageInputSchema.safeParse({
+  ...validInput,
+  attachmentIds: Array.from({ length: 5 }, (_unused, index) => `00000000-0000-4000-8000-00000000000${index + 1}`)
+}).success, true);
+assert.equal(assistantMessageInputSchema.safeParse({
+  ...validInput,
+  attachmentIds: Array.from({ length: 6 }, (_unused, index) => `00000000-0000-4000-8000-00000000000${index + 1}`)
+}).success, false);
+assert.equal(assistantMessageInputSchema.safeParse({
+  ...validInput,
+  attachmentIds: [
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000001"
+  ]
+}).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, content: "x".repeat(12001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, selection: "x".repeat(4001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, surface: "unknown" } }).success, false);
@@ -1657,6 +1672,11 @@ const provider = readFileSync("apps/api/src/services/openaiResponses.ts", "utf8"
 const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
 const databaseSchema = readFileSync("apps/api/src/db/schema.ts", "utf8");
 const route = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
+const assistantAttachmentRoute = readFileSync("app/api/assistant-attachments/[attachmentId]/route.ts", "utf8");
+const attachmentRepository = readFileSync("apps/api/src/repository/attachments.ts", "utf8");
+const attachmentOwnership = readFileSync("apps/api/src/services/attachmentOwnership.ts", "utf8");
+const attachmentUploadClient = readFileSync("features/attachments/attachmentUploadClient.ts", "utf8");
+const attachmentRules = readFileSync("lib/attachmentRules.ts", "utf8");
 const assistantConversationRoute = readFileSync("app/api/assistant/conversations/[...segments]/route.ts", "utf8");
 const tablet = readFileSync("features/assistant/AssistantExperience.tsx", "utf8");
 const assistantController = readFileSync("features/assistant/useAssistantController.ts", "utf8");
@@ -1727,6 +1747,9 @@ assert.match(migration, /'provenance', 'recovered'/);
 assert.match(migration, /assistant_message\.metadata -> 'evidence'/);
 assert.match(migration, /ai_conversations_owner_kind_last_message_idx/);
 assert.match(migration, /0057_assistant_chat_library/);
+assert.match(migration, /0058_assistant_message_attachments/);
+assert.match(migration, /owner_type IN \('post', 'comment', 'message', 'assistant_message'/);
+assert.match(migration, /attachments_assistant_message_owner_idx/);
 assert.match(migration, /pinned_at TIMESTAMPTZ/);
 assert.match(migration, /archived_at TIMESTAMPTZ/);
 assert.match(migration, /deleted_at TIMESTAMPTZ/);
@@ -1833,6 +1856,26 @@ assert.match(assistantConversationRoute, /export async function DELETE/);
 assert.match(route, /\/v1\/assistant\/document-translations/);
 assert.match(route, /\/v1\/assistant\/content-translations/);
 assert.match(route, /\/v1\/assistant\/quick-notes/);
+assert.match(route, /\/v1\/assistant-attachments\/:attachmentId\/access/);
+assert.match(route, /assertAssistantAttachmentAccess/);
+assert.match(assistantAttachmentRoute, /\/v1\/assistant-attachments\/\$\{encodeURIComponent\(attachmentId\)\}\/access/);
+assert.match(assistantAttachmentRoute, /Cache-Control": "private, no-store"/);
+assert.match(repository, /attachment\.owner_type = 'assistant_message'/);
+assert.match(repository, /conversation\.owner_handle = \$2/);
+assert.match(repository, /replaceOwnerAttachments\(client/);
+assert.match(repository, /ownerType: "assistant_message"/);
+assert.match(repository, /input\.intent === "translate" && attachmentIds\.length/);
+assert.match(repository, /Whole-file translation is paused in this limited beta/);
+assert.match(repository, /queueAttachmentsForOwnerStorageDeletion/);
+assert.match(repository, /"assistant_chat_deleted"/);
+assert.match(repository, /maxAssistantAttachmentBytes/);
+assert.match(repository, /assistantAttachmentContext/);
+assert.match(repository, /bounded text preview extracted/);
+assert.match(attachmentRepository, /input\.ownerType === "assistant_message"/);
+assert.match(attachmentOwnership, /"assistant_message"/);
+assert.match(attachmentUploadClient, /validateAssistantAttachmentDetails/);
+assert.match(attachmentUploadClient, /\/api\/assistant-attachments\//);
+assert.match(attachmentRules, /maxAssistantAttachmentBytes = 5 \* 1024 \* 1024/);
 assert.match(route, /scope: "assistant-action", limit: 30/);
 assert.match(scribbles, /conversation\.owner_handle = \$3/);
 assert.match(scribbles, /assistant\.quick_note\.create/);
@@ -1843,6 +1886,18 @@ assert.match(scribbles, /existingResult\.success/);
 assert.match(tablet, /Limited beta/);
 assert.match(tablet, /Loading allowance/);
 assert.match(tablet, /Send · uses 1/);
+assert.match(tablet, /Files up to 5 MB/);
+assert.match(tablet, /uploads use no answer/);
+assert.match(tablet, /scans, complex layouts, images, and video may not be understood/);
+assert.match(tablet, /aria-label="Attach files"/);
+assert.match(tablet, /className="tablet-attachment-input"/);
+assert.match(tabletStyles, /\.tablet-attachment-input \{ display: none; \}/);
+assert.match(tablet, /AttachmentPreviewModal/);
+assert.match(assistantController, /attachmentIds: submittedAttachmentIds/);
+assert.match(assistantController, /ownerType: "assistant_message"/);
+assert.match(assistantController, /attachmentDraftsRef/);
+assert.match(assistantController, /submissionThreadRequest/);
+assert.match(assistantController, /Whole-file translation is paused in this limited beta/);
 assert.match(assistantController, /Ask about this view/);
 assert.match(tablet, /Confirm & save Quick Note/);
 assert.match(tablet, /Office destination/);
@@ -1919,8 +1974,8 @@ assert.match(assistantController, /threadActionLockRef/);
 assert.match(assistantController, /const startNewThread = useCallback\(\([\s\S]*?requestedAttemptRef\.current = null/);
 assert.match(assistantController, /if \(!requestedConversationId\) \{[\s\S]*?requestedAttemptRef\.current = null;[\s\S]*?return;/);
 assert.match(tabletStyles, /\.assistant-compact \.assistant-thread-filters/);
-assert.match(tabletStyles, /\.assistant-compact \.tablet-composer[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/);
-assert.match(tabletStyles, /\.assistant-compact \.tablet-composer button[\s\S]*?justify-self: stretch[\s\S]*?width: 100%/);
+assert.match(tabletStyles, /\.tablet-composer-main[\s\S]*?grid-template-columns: auto minmax\(0, 1fr\)/);
+assert.match(tabletStyles, /\.assistant-compact \.tablet-composer \.tablet-send-button[\s\S]*?justify-self: stretch[\s\S]*?width: 100%/);
 assert.match(tabletStyles, /\.assistant-workspace \.assistant-center[\s\S]*?height: calc\(100% \+ var\(--symposium-side-tool-bottom\) - var\(--symposium-shell-edge\)\)/);
 assert.match(tabletStyles, /\.assistant-workspace \.tablet-thread-bar[\s\S]*?min-height: 3\.25rem/);
 assert.match(tabletStyles, /\.assistant-collapse-control/);

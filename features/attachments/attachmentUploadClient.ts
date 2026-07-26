@@ -1,6 +1,7 @@
 import {
   attachmentKindForContentType,
   inferAttachmentContentType,
+  validateAssistantAttachmentDetails,
   validatePostAttachmentDetails
 } from "@/lib/attachmentRules";
 import type { InquiryAttachment } from "@/lib/mockData";
@@ -104,10 +105,12 @@ export const uploadConfirmedAttachment = async (input: {
   file: File;
   idempotencyKey: string;
   metadata: Record<string, unknown>;
-  ownerType: "post" | "comment" | "message" | "note" | "note_comment" | "opportunity_application";
+  ownerType: "post" | "comment" | "message" | "assistant_message" | "note" | "note_comment" | "opportunity_application";
 }): Promise<InquiryAttachment> => {
   const contentType = inferAttachmentContentType(input.file.name, input.file.type);
-  const validationError = validatePostAttachmentDetails(input.file.name, contentType, input.file.size);
+  const validationError = input.ownerType === "assistant_message"
+    ? validateAssistantAttachmentDetails(input.file.name, contentType, input.file.size)
+    : validatePostAttachmentDetails(input.file.name, contentType, input.file.size);
   if (validationError) throw new Error(validationError);
 
   const uploadResponse = await prepareAttachmentUpload(
@@ -123,45 +126,55 @@ export const uploadConfirmedAttachment = async (input: {
   if (!uploadResponse.ok) throw await responseError(uploadResponse, "Could not prepare this attachment upload.");
 
   const upload = (await uploadResponse.json()) as AttachmentUploadResponse;
-  const privateWorkspaceAttachment = input.ownerType === "message" || input.ownerType === "note" || input.ownerType === "note_comment" || input.ownerType === "opportunity_application";
+  const privateWorkspaceAttachment = input.ownerType === "message" || input.ownerType === "assistant_message" || input.ownerType === "note" || input.ownerType === "note_comment" || input.ownerType === "opportunity_application";
   if (!upload.uploadUrl || !upload.attachmentId || (!privateWorkspaceAttachment && !upload.publicUrl)) {
     throw new Error("Could not prepare this attachment upload.");
   }
-  await uploadPreparedAttachmentContent({
-    actorHandle: input.actorHandle,
-    contentType,
-    file: input.file,
-    upload
-  });
+  try {
+    await uploadPreparedAttachmentContent({
+      actorHandle: input.actorHandle,
+      contentType,
+      file: input.file,
+      upload
+    });
 
-  const confirmResponse = await confirmAttachmentUpload({
-    actorHandle: input.actorHandle,
-    attachmentId: upload.attachmentId,
-    byteSize: input.file.size,
-    metadata: input.metadata
-  });
-  if (!confirmResponse.ok) throw await responseError(confirmResponse, "Could not confirm this attachment.");
+    const confirmResponse = await confirmAttachmentUpload({
+      actorHandle: input.actorHandle,
+      attachmentId: upload.attachmentId,
+      byteSize: input.file.size,
+      metadata: input.metadata
+    });
+    if (!confirmResponse.ok) throw await responseError(confirmResponse, "Could not confirm this attachment.");
 
-  const confirmed = (await confirmResponse.json()) as AttachmentConfirmResponse;
-  const publicUrl = privateWorkspaceAttachment
-    ? input.ownerType === "message"
-      ? `/api/message-attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
-      : input.ownerType === "opportunity_application"
-      ? `/api/opportunity-attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
-      : `/api/workspace/attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
-    : confirmed.publicUrl ?? upload.publicUrl;
-  if (!publicUrl) throw new Error("The confirmed attachment does not have a persistent delivery URL.");
-  return {
-    id: upload.attachmentId,
-    fileName: input.file.name,
-    contentType,
-    byteSize: input.file.size,
-    url: publicUrl,
-    status: "uploaded",
-    kind: attachmentKindForContentType(contentType, input.file.name),
-    metadata: input.metadata,
-    createdAt: new Date().toISOString()
-  };
+    const confirmed = (await confirmResponse.json()) as AttachmentConfirmResponse;
+    const publicUrl = privateWorkspaceAttachment
+      ? input.ownerType === "assistant_message"
+        ? `/api/assistant-attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
+        : input.ownerType === "message"
+        ? `/api/message-attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
+        : input.ownerType === "opportunity_application"
+        ? `/api/opportunity-attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
+        : `/api/workspace/attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
+      : confirmed.publicUrl ?? upload.publicUrl;
+    if (!publicUrl) throw new Error("The confirmed attachment does not have a persistent delivery URL.");
+    return {
+      id: upload.attachmentId,
+      fileName: input.file.name,
+      contentType,
+      byteSize: input.file.size,
+      url: publicUrl,
+      status: "uploaded",
+      kind: attachmentKindForContentType(contentType, input.file.name),
+      metadata: input.metadata,
+      createdAt: new Date().toISOString()
+    };
+  } catch (error) {
+    await fetch(
+      `/api/attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`,
+      { method: "DELETE" }
+    ).catch(() => undefined);
+    throw error;
+  }
 };
 
 export const uploadConfirmedPostAttachment = (

@@ -5,6 +5,8 @@ export type AttachmentKind = AttachmentKindContract;
 export const maxPostAttachments = 10;
 export const maxContentAttachments = 100;
 export const maxPostAttachmentBytes = 50 * 1024 * 1024;
+export const maxAssistantAttachments = 5;
+export const maxAssistantAttachmentBytes = 5 * 1024 * 1024;
 export const maxAttachmentPreviewTextLength = 50_000;
 
 const extensionContentTypes: Record<string, string> = {
@@ -133,6 +135,17 @@ export const allowedPostAttachmentTypes = new Set([
   "video/quicktime",
   "video/webm"
 ]);
+
+export const validateAssistantAttachmentDetails = (
+  fileName: string,
+  contentType: string,
+  byteSize: number
+) => {
+  if (byteSize > maxAssistantAttachmentBytes) {
+    return "AI chat files must be 5 MB or smaller.";
+  }
+  return validatePostAttachmentDetails(fileName, contentType, byteSize);
+};
 
 export const postAttachmentAccept = [
   "image/png",

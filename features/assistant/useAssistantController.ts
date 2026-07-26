@@ -23,8 +23,16 @@ import type {
   AssistantThreadStateContract,
   AssistantThreadSummaryContract,
   AssistantThreadUpdateResultContract,
-  AssistantTranslationContract
+  AssistantTranslationContract,
+  InquiryAttachmentContract
 } from "@/packages/contracts/src";
+import { uploadConfirmedAttachment } from "@/features/attachments/attachmentUploadClient";
+import { buildPostAttachmentMetadata } from "@/features/attachments/AttachmentViews";
+import {
+  inferAttachmentContentType,
+  maxAssistantAttachments,
+  validateAssistantAttachmentDetails
+} from "@/lib/attachmentRules";
 
 export type AssistantContext = NonNullable<AssistantMessageInputContract["context"]>;
 export type AssistantNewThreadContextMode = "current" | "blank";
@@ -39,6 +47,7 @@ export type AssistantMessageView = {
   translation?: AssistantTranslationContract;
   quickNote?: AssistantQuickNoteContract;
   quickNoteResult?: AssistantQuickNoteResultContract;
+  attachments?: InquiryAttachmentContract[];
 };
 
 type AssistantBroadcast = {
@@ -97,6 +106,14 @@ const threadSummary = (
 const errorMessage = (caught: unknown, fallback: string) =>
   caught instanceof SymposiumApiError ? caught.message : fallback;
 
+const discardAssistantAttachment = (
+  attachmentId: string,
+  actorHandle: string
+) => symposiumApi.request<{ attachmentId: string; discarded: true }>(
+  `/api/attachments/${encodeURIComponent(attachmentId)}?actorHandle=${encodeURIComponent(actorHandle)}`,
+  { method: "DELETE" }
+);
+
 export function useAssistantController({
   actorHandle,
   context,
@@ -122,6 +139,7 @@ export function useAssistantController({
   const threadRequestRef = useRef(0);
   const threadListRequestRef = useRef(0);
   const draftsRef = useRef(new Map<string, string>());
+  const attachmentDraftsRef = useRef(new Map<string, InquiryAttachmentContract[]>());
   const broadcastRef = useRef<BroadcastChannel | null>(null);
   const submissionLockRef = useRef(false);
   const contextLockRef = useRef(false);
@@ -155,6 +173,8 @@ export function useAssistantController({
   const [newThreadContextMode, setNewThreadContextModeState] =
     useState<AssistantNewThreadContextMode>("current");
   const [draft, setDraftState] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<InquiryAttachmentContract[]>([]);
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [contextBusy, setContextBusy] = useState(false);
   const [threadLoading, setThreadLoading] = useState(true);
@@ -188,6 +208,12 @@ export function useAssistantController({
     const restored = draftsRef.current.get(currentDraftKey(id)) ?? "";
     draftRef.current = restored;
     setDraftState(restored);
+  }, [currentDraftKey]);
+
+  const restorePendingAttachments = useCallback((id?: string) => {
+    setPendingAttachments(
+      attachmentDraftsRef.current.get(currentDraftKey(id)) ?? []
+    );
   }, [currentDraftKey]);
 
   const setConversationId = useCallback((id?: string) => {
@@ -345,12 +371,14 @@ export function useAssistantController({
     explicitNewThreadRef.current = false;
     suppressedRequestedConversationIdRef.current = null;
     draftsRef.current.set(currentDraftKey(), draftRef.current);
+    attachmentDraftsRef.current.set(currentDraftKey(), pendingAttachments);
     const request = ++threadRequestRef.current;
     setConversationId(normalized);
     loadedConversationIdRef.current = null;
     setThread(null);
     setMessages([]);
     restoreDraft(normalized);
+    restorePendingAttachments(normalized);
     setThreadLoading(true);
     setError("");
     try {
@@ -373,6 +401,7 @@ export function useAssistantController({
       setNewThreadContextModeState("current");
       setMessages([initialAssistantMessageFor(contextRef.current)]);
       restoreDraft(undefined);
+      restorePendingAttachments(undefined);
       setError(errorMessage(caught, "That research thread could not be loaded."));
     } finally {
       if (request === threadRequestRef.current) setThreadLoading(false);
@@ -381,7 +410,9 @@ export function useAssistantController({
     actorHandle,
     currentDraftKey,
     replaceThreadSummary,
+    pendingAttachments,
     restoreDraft,
+    restorePendingAttachments,
     setConversationId
   ]);
 
@@ -391,6 +422,7 @@ export function useAssistantController({
     suppressedRequestedConversationIdRef.current = conversationIdRef.current ?? null;
     explicitNewThreadRef.current = true;
     draftsRef.current.set(currentDraftKey(), draftRef.current);
+    attachmentDraftsRef.current.set(currentDraftKey(), pendingAttachments);
     threadRequestRef.current += 1;
     newThreadContextModeRef.current = mode;
     setNewThreadContextModeState(mode);
@@ -402,12 +434,13 @@ export function useAssistantController({
       initialAssistantMessageFor(mode === "current" ? contextRef.current : null)
     ]);
     restoreDraft(undefined);
+    restorePendingAttachments(undefined);
     setThreadLoading(false);
     setError("");
     messageRetryRef.current = null;
     contextRetryRef.current = null;
     sourceRetryRef.current = null;
-  }, [currentDraftKey, restoreDraft, setConversationId]);
+  }, [currentDraftKey, pendingAttachments, restoreDraft, restorePendingAttachments, setConversationId]);
 
   const updateThreadDetails = useCallback(async (
     candidate: AssistantThreadSummaryContract,
@@ -512,6 +545,11 @@ export function useAssistantController({
       );
       threadMutationRetryRef.current.delete(retryKey);
       draftsRef.current.delete(result.conversationId);
+      const unsentAttachments = attachmentDraftsRef.current.get(result.conversationId) ?? [];
+      attachmentDraftsRef.current.delete(result.conversationId);
+      for (const attachment of unsentAttachments) {
+        void discardAssistantAttachment(attachment.id, actorHandle).catch(() => undefined);
+      }
       setThreads((current) => current.filter((entry) => entry.id !== result.conversationId));
       if (conversationIdRef.current === result.conversationId) startNewThread("blank");
       await refreshThreads().catch(() => null);
@@ -543,10 +581,16 @@ export function useAssistantController({
 
   useEffect(() => {
     if (actorHandleRef.current === actorHandle) return;
+    const previousActorHandle = actorHandleRef.current;
+    const abandonedAttachments = Array.from(attachmentDraftsRef.current.values()).flat();
+    for (const attachment of abandonedAttachments) {
+      void discardAssistantAttachment(attachment.id, previousActorHandle).catch(() => undefined);
+    }
     actorHandleRef.current = actorHandle;
     threadRequestRef.current += 1;
     threadListRequestRef.current += 1;
     draftsRef.current.clear();
+    attachmentDraftsRef.current.clear();
     setConversationId(undefined);
     loadedConversationIdRef.current = null;
     requestedAttemptRef.current = null;
@@ -564,6 +608,8 @@ export function useAssistantController({
     setThreadActionBusyId(null);
     setMessages([initialAssistantMessageFor(contextRef.current)]);
     rememberDraft("");
+    setPendingAttachments([]);
+    setAttachmentUploading(false);
     setThreadLoading(enabled);
     setQuotaLoading(enabled);
     setError("");
@@ -952,13 +998,117 @@ export function useAssistantController({
     thread
   ]);
 
-  const submit = useCallback(async () => {
-    const message = draft.trim();
+  const includedSourceCount = conversationId
+    ? thread?.sources.filter((source) => source.included).length ?? 0
+    : newThreadContextMode === "current"
+      ? 1
+      : 0;
+  const attachmentCapacity = Math.max(
+    0,
+    maxAssistantAttachments - includedSourceCount
+  );
+
+  const uploadAssistantFiles = useCallback(async (selectedFiles: File[]) => {
     if (
-      !message ||
+      !selectedFiles.length ||
+      attachmentUploading ||
+      busy ||
+      contextBusy ||
+      threadLoading ||
+      Boolean(thread?.archivedAt)
+    ) {
+      return;
+    }
+    const available = Math.max(0, attachmentCapacity - pendingAttachments.length);
+    if (!available) {
+      setError("This chat already has five included sources. Exclude one in the Context Dock before attaching a file.");
+      return;
+    }
+    const files = selectedFiles.slice(0, available);
+    if (selectedFiles.length > available) {
+      setError(`Only ${available} more file${available === 1 ? "" : "s"} can be attached while this source set is active.`);
+    } else {
+      setError("");
+    }
+    const uploadDraftKey = currentDraftKey();
+    setAttachmentUploading(true);
+    try {
+      const results = await Promise.allSettled(files.map(async (file) => {
+        const contentType = inferAttachmentContentType(file.name, file.type);
+        const validationError = validateAssistantAttachmentDetails(
+          file.name,
+          contentType,
+          file.size
+        );
+        if (validationError) throw new Error(validationError);
+        const metadata = await buildPostAttachmentMetadata(file, contentType);
+        return uploadConfirmedAttachment({
+          actorHandle,
+          file,
+          idempotencyKey: createClientMutationId("assistant-attachment"),
+          metadata: { ...metadata, surface: "assistant" },
+          ownerType: "assistant_message"
+        });
+      }));
+      const uploaded = results.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : []
+      );
+      const existing = attachmentDraftsRef.current.get(uploadDraftKey) ?? [];
+      const next = [...existing, ...uploaded].slice(0, attachmentCapacity);
+      attachmentDraftsRef.current.set(uploadDraftKey, next);
+      if (uploadDraftKey === currentDraftKey()) setPendingAttachments(next);
+
+      const failures = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected"
+      );
+      if (failures.length) {
+        const first = failures[0]!.reason;
+        const detail = first instanceof Error ? first.message : "A file could not be uploaded.";
+        setError(failures.length === 1
+          ? detail
+          : `${failures.length} files could not be uploaded. ${detail}`);
+      }
+    } finally {
+      setAttachmentUploading(false);
+    }
+  }, [
+    actorHandle,
+    attachmentCapacity,
+    attachmentUploading,
+    busy,
+    contextBusy,
+    currentDraftKey,
+    pendingAttachments.length,
+    thread?.archivedAt,
+    threadLoading
+  ]);
+
+  const removePendingAttachment = useCallback((
+    attachment: InquiryAttachmentContract
+  ) => {
+    const key = currentDraftKey();
+    const next = pendingAttachments.filter((candidate) => candidate.id !== attachment.id);
+    attachmentDraftsRef.current.set(key, next);
+    setPendingAttachments(next);
+    setError("");
+    void discardAssistantAttachment(attachment.id, actorHandle).catch((caught) => {
+      setError(errorMessage(
+        caught,
+        "The unsent file was removed here, but storage cleanup could not be confirmed."
+      ));
+    });
+  }, [actorHandle, currentDraftKey, pendingAttachments]);
+
+  const submit = useCallback(async () => {
+    const message = draft.trim() || (pendingAttachments.length === 1
+      ? "Review the attached file."
+      : "Review the attached files.");
+    if (
+      (!draft.trim() && !pendingAttachments.length) ||
       Boolean(thread?.archivedAt) ||
       busy ||
       contextBusy ||
+      attachmentUploading ||
       submissionLockRef.current ||
       contextLockRef.current ||
       threadLoading ||
@@ -979,6 +1129,10 @@ export function useAssistantController({
         ? contextRef.current
         : null;
     const detectedIntent = assistantRequestIntentFor(message);
+    if (pendingAttachments.length && detectedIntent.translationRequested) {
+      setError("Whole-file translation is paused in this limited beta. Ask for a summary or explanation instead; page translation remains available from an opened Symposium document page.");
+      return;
+    }
     const requestIntent: ReturnType<typeof assistantRequestIntentFor> = selectedContext
       ? detectedIntent
       : { translationRequested: false, intent: "answer" as const };
@@ -990,9 +1144,21 @@ export function useAssistantController({
     const optimistic: AssistantMessageView = {
       id: optimisticId,
       role: "user",
-      body: message
+      body: message,
+      attachments: pendingAttachments
     };
-    const fingerprint = JSON.stringify({ id, message, selectedContext });
+    const submittedAttachments = pendingAttachments;
+    const submittedAttachmentIds = submittedAttachments.map((attachment) => attachment.id);
+    const draftKey = currentDraftKey();
+    const submissionThreadRequest = threadRequestRef.current;
+    const ownsSubmissionSurface = () =>
+      threadRequestRef.current === submissionThreadRequest;
+    const fingerprint = JSON.stringify({
+      id,
+      message,
+      selectedContext,
+      attachmentIds: submittedAttachmentIds
+    });
     if (messageRetryRef.current?.fingerprint !== fingerprint) {
       messageRetryRef.current = {
         fingerprint,
@@ -1002,6 +1168,8 @@ export function useAssistantController({
     submissionLockRef.current = true;
     setMessages((current) => [...current, optimistic]);
     rememberDraft("");
+    attachmentDraftsRef.current.set(draftKey, []);
+    setPendingAttachments([]);
     setError("");
     setBusy(true);
     try {
@@ -1014,6 +1182,7 @@ export function useAssistantController({
             actorHandle,
             conversationId: id,
             message,
+            attachmentIds: submittedAttachmentIds,
             intent: requestIntent.intent,
             ...(requestIntent.targetLanguage
               ? { targetLanguage: requestIntent.targetLanguage }
@@ -1025,10 +1194,12 @@ export function useAssistantController({
         }
       );
       if (response.status === "discarded") {
-        setMessages((current) => current.filter(
-          (candidate) => candidate.id !== optimisticId
-        ));
-        rememberDraft("");
+        if (ownsSubmissionSurface()) {
+          setMessages((current) => current.filter(
+            (candidate) => candidate.id !== optimisticId
+          ));
+          rememberDraft("");
+        }
         setRemainingToday(
           response.quota?.remainingToday ?? Math.max(0, remainingToday - 1)
         );
@@ -1039,18 +1210,24 @@ export function useAssistantController({
             })
           );
         }
-        setError(response.message.body);
+        if (ownsSubmissionSurface()) setError(response.message.body);
         messageRetryRef.current = null;
         await refreshThreads({ silent: true }).catch(() => null);
         return;
       }
-      explicitNewThreadRef.current = false;
-      suppressedRequestedConversationIdRef.current = null;
-      setConversationId(response.conversationId);
-      loadedConversationIdRef.current = response.conversationId;
-      if (response.thread) {
-        setThread(response.thread);
-        replaceThreadSummary(response.thread);
+      if (response.status === "disabled" || response.status === "provider_not_configured") {
+        draftsRef.current.set(draftKey, message);
+        attachmentDraftsRef.current.set(draftKey, submittedAttachments);
+        if (ownsSubmissionSurface()) {
+          setMessages((current) => current.filter(
+            (candidate) => candidate.id !== optimisticId
+          ));
+          draftRef.current = message;
+          setDraftState(message);
+          setPendingAttachments(submittedAttachments);
+          setError(response.message.body);
+        }
+        return;
       }
       setRemainingToday(
         response.quota?.remainingToday ?? Math.max(0, remainingToday - 1)
@@ -1062,8 +1239,23 @@ export function useAssistantController({
           })
         );
       }
+      if (!ownsSubmissionSurface()) {
+        messageRetryRef.current = null;
+        broadcastThreadChange(response.conversationId);
+        await refreshThreads({ silent: true }).catch(() => null);
+        return;
+      }
+      explicitNewThreadRef.current = false;
+      suppressedRequestedConversationIdRef.current = null;
+      setConversationId(response.conversationId);
+      loadedConversationIdRef.current = response.conversationId;
+      if (response.thread) {
+        setThread(response.thread);
+        replaceThreadSummary(response.thread);
+      }
       setMessages((current) => [
-        ...current,
+        ...current.filter((candidate) => candidate.id !== optimisticId),
+        response.userMessage ?? optimistic,
         {
           ...response.message,
           conversationId: response.conversationId,
@@ -1075,21 +1267,30 @@ export function useAssistantController({
       messageRetryRef.current = null;
       broadcastThreadChange(response.conversationId);
     } catch (caught) {
-      setMessages((current) => current.filter(
-        (candidate) => candidate.id !== optimisticId
-      ));
-      rememberDraft(message);
-      setError(errorMessage(caught, "The AI Tablet could not complete this request."));
+      draftsRef.current.set(draftKey, message);
+      attachmentDraftsRef.current.set(draftKey, submittedAttachments);
+      if (ownsSubmissionSurface()) {
+        setMessages((current) => current.filter(
+          (candidate) => candidate.id !== optimisticId
+        ));
+        draftRef.current = message;
+        setDraftState(message);
+        setPendingAttachments(submittedAttachments);
+        setError(errorMessage(caught, "The AI Tablet could not complete this request."));
+      }
     } finally {
       submissionLockRef.current = false;
       setBusy(false);
     }
   }, [
     actorHandle,
+    attachmentUploading,
     broadcastThreadChange,
     busy,
     contextBusy,
+    currentDraftKey,
     draft,
+    pendingAttachments,
     providerConfigured,
     providerEnabled,
     quotaLoading,
@@ -1131,6 +1332,9 @@ export function useAssistantController({
     threadActionBusyId,
     messages,
     draft,
+    pendingAttachments,
+    attachmentUploading,
+    attachmentCapacity,
     busy,
     contextBusy,
     threadLoading,
@@ -1143,6 +1347,8 @@ export function useAssistantController({
     providerConfigured,
     setDraft: rememberDraft,
     setError,
+    uploadAssistantFiles,
+    removePendingAttachment,
     openThread,
     startNewThread,
     setThreadLibraryFilters,

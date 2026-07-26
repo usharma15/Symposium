@@ -398,8 +398,11 @@
 .assistant-workspace .tablet-message.user { width: min(92%, 44rem); }
 
 .assistant-workspace .tablet-composer {
-  grid-template-columns: minmax(0, 1fr) auto;
   padding: 0.65rem clamp(0.8rem, 2vw, 1.5rem);
+}
+
+.assistant-workspace .tablet-composer-main {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .assistant-workspace .tablet-composer textarea {
@@ -407,8 +410,9 @@
   min-height: 3.35rem;
 }
 
-.assistant-workspace .tablet-composer button {
+.assistant-workspace .tablet-composer .tablet-send-button {
   align-self: stretch;
+  grid-column: auto;
   min-width: 7.8rem;
   width: auto;
 }
@@ -689,6 +693,23 @@
 .tablet-message-evidence > div { border-top: 1px solid var(--line); display: grid; gap: 0.2rem; padding: 0.32rem; }
 .tablet-message-evidence span { background: var(--document-control-solid); border-radius: 0.3rem; color: var(--muted); line-height: 1.3; padding: 0.25rem 0.3rem; }
 .tablet-message-evidence span.active { color: var(--ink); font-weight: 750; }
+.tablet-message-attachments { display: grid; gap: 0.28rem; margin-top: 0.25rem; }
+.tablet-message-attachments > button {
+  align-items: center;
+  background: color-mix(in srgb, var(--aqua) 7%, var(--document-control-solid));
+  border: 1px solid var(--line);
+  border-radius: 0.52rem;
+  color: var(--ink);
+  display: flex;
+  gap: 0.4rem;
+  max-width: min(100%, 24rem);
+  min-width: 0;
+  padding: 0.38rem 0.44rem;
+  text-align: left;
+}
+.tablet-message-attachments > button > span { display: grid; min-width: 0; }
+.tablet-message-attachments strong { font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tablet-message-attachments small { color: var(--muted); font-size: 0.56rem; }
 
 .tablet-translation-card { background: var(--document-surface-solid); border: 1px solid color-mix(in srgb, var(--aqua) 34%, var(--line)); border-radius: 0.64rem; display: grid; margin-top: 0.22rem; overflow: hidden; }
 .tablet-translation-card > header { align-items: start; background: color-mix(in srgb, var(--aqua) 11%, var(--document-control-solid)); border-bottom: 1px solid var(--line); display: grid; gap: 0.1rem; padding: 0.48rem 0.52rem; }
@@ -722,15 +743,72 @@
   gap: 0.48rem;
   padding: 0.62rem 0.7rem;
 }
+.tablet-composer-main {
+  align-items: end;
+  display: grid;
+  gap: 0.4rem;
+  grid-template-columns: auto minmax(0, 1fr);
+}
 .tablet-composer textarea { border-radius: 0.72rem; font: inherit; font-size: 0.82rem; line-height: 1.42; max-height: 14rem; min-height: 3.35rem; overflow-y: auto; padding: 0.65rem 0.72rem; resize: vertical; width: 100%; }
 .tablet-composer button { align-items: center; border-radius: 0.68rem; display: flex; font-size: 0.74rem; gap: 0.32rem; justify-content: center; min-height: 2.25rem; width: 100%; }
+.tablet-composer .tablet-attach-button {
+  align-self: stretch;
+  background: color-mix(in srgb, var(--aqua) 7%, var(--document-control-solid));
+  flex: 0 0 auto;
+  min-width: 2.65rem;
+  padding: 0;
+  width: 2.65rem;
+}
+.tablet-composer .tablet-send-button { grid-column: 1 / -1; }
+.tablet-pending-attachments { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.tablet-pending-attachments > div {
+  align-items: stretch;
+  background: color-mix(in srgb, var(--aqua) 7%, var(--document-control-solid));
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+.tablet-composer .tablet-pending-file {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  gap: 0.32rem;
+  justify-content: flex-start;
+  min-height: 2.25rem;
+  min-width: 0;
+  padding: 0.32rem 0.42rem;
+  text-align: left;
+  width: auto;
+}
+.tablet-pending-file > span { display: grid; min-width: 0; }
+.tablet-pending-file strong { font-size: 0.61rem; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tablet-pending-file small { color: var(--muted); font-size: 0.53rem; }
+.tablet-composer .tablet-pending-remove {
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  min-height: 2.25rem;
+  padding: 0 0.35rem;
+  width: auto;
+}
+.tablet-attachment-limit {
+  align-items: flex-start;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.55rem;
+  gap: 0.24rem;
+  line-height: 1.35;
+}
+.tablet-attachment-input { display: none; }
+.tablet-attachment-limit svg { flex: 0 0 auto; margin-top: 0.06rem; }
 .assistant-compact .tablet-composer {
-  align-items: end;
   gap: 0.4rem;
-  grid-template-columns: minmax(0, 1fr);
   padding: 0.5rem 0.58rem;
 }
-.assistant-compact .tablet-composer button {
+.assistant-compact .tablet-composer .tablet-send-button {
   justify-self: stretch;
   min-height: 2.05rem;
   padding: 0.3rem 0.48rem;
@@ -990,13 +1068,21 @@
   }
 
   .assistant-workspace .tablet-composer {
-    grid-template-columns: minmax(0, 1fr);
     padding: 0.5rem;
   }
 
-  .assistant-workspace .tablet-composer button {
+  .assistant-workspace .tablet-composer-main {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .assistant-workspace .tablet-composer .tablet-send-button {
+    grid-column: 1 / -1;
     min-height: 2.2rem;
     width: 100%;
+  }
+
+  .assistant-workspace .tablet-composer .tablet-attach-button {
+    width: 2.65rem;
   }
 
   .assistant-workspace .tablet-transcript { padding: 0.7rem 0.55rem; }

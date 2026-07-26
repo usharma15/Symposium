@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, Archive, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronDown, Ellipsis, ExternalLink, Eye, EyeOff, FileClock, Folder, FolderPlus, History, Languages, Link2, LoaderCircle, Maximize2, Minimize2, Pencil, Pin, PinOff, Plus, RefreshCw, RotateCcw, Save, Search, Send, Trash2, X } from "lucide-react";
+import { AlertTriangle, Archive, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronDown, Ellipsis, ExternalLink, Eye, EyeOff, File, FileClock, Folder, FolderPlus, History, Languages, Link2, LoaderCircle, Maximize2, Minimize2, Paperclip, Pencil, Pin, PinOff, Plus, RefreshCw, RotateCcw, Save, Search, Send, Trash2, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import type {
   AssistantQuickNoteResultContract,
@@ -10,12 +10,23 @@ import type {
   AssistantThreadStateContract,
   AssistantThreadSummaryContract,
   AssistantTranslationContract,
-  AssistantTranslationLanguageContract
+  AssistantTranslationLanguageContract,
+  InquiryAttachmentContract
 } from "@/packages/contracts/src";
 import { assistantTranslationLanguageLabels } from "@/packages/contracts/src/translationLanguages";
 import type { ScribbleSnapshot } from "@/lib/workspaceTypes";
 import type { AssistantContext, AssistantController } from "@/features/assistant/useAssistantController";
 import { assistantThreadActivityLabel } from "@/features/assistant/assistantThreadOrdering";
+import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
+import {
+  formatAttachmentBytes,
+  postAttachmentAccept
+} from "@/lib/attachmentRules";
+
+const assistantAttachmentUrl = (
+  attachment: InquiryAttachmentContract,
+  actorHandle: string
+) => attachment.url ?? `/api/assistant-attachments/${encodeURIComponent(attachment.id)}?actorHandle=${encodeURIComponent(actorHandle)}`;
 
 function QuickNoteDraftCard({
   actorHandle,
@@ -679,6 +690,9 @@ export function AssistantExperience({
     threadActionBusyId,
     messages,
     draft,
+    pendingAttachments,
+    attachmentUploading,
+    attachmentCapacity,
     busy,
     contextBusy,
     threadLoading,
@@ -690,6 +704,8 @@ export function AssistantExperience({
     providerEnabled,
     providerConfigured,
     setDraft,
+    uploadAssistantFiles,
+    removePendingAttachment,
     openThread,
     startNewThread,
     setThreadLibraryFilters,
@@ -709,8 +725,26 @@ export function AssistantExperience({
   const [mobilePane, setMobilePane] = useState<"threads" | "chat" | "context">("chat");
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const composerResizeRef = useRef(false);
   const previousModeRef = useRef(mode);
+  const [attachmentPreview, setAttachmentPreview] = useState<{
+    id: string;
+    attachments: InquiryAttachmentContract[];
+  } | null>(null);
+
+  const openAttachmentPreview = (
+    attachments: InquiryAttachmentContract[],
+    attachmentId: string
+  ) => {
+    setAttachmentPreview({
+      id: attachmentId,
+      attachments: attachments.map((attachment) => ({
+        ...attachment,
+        url: assistantAttachmentUrl(attachment, actorHandle)
+      }))
+    });
+  };
 
   const selectThread = (id: string) => {
     setThreadsOpen(false);
@@ -927,7 +961,7 @@ export function AssistantExperience({
         <section className="tablet-limit-notice" aria-label="AI usage limits">
           <AlertTriangle size={13} />
           <strong>Limited beta</strong>
-          <span>{quotaLoading ? "Loading allowance…" : `${remainingToday} of ${dailyLimit} answers left today · shared $${monthlyBudgetUsd} monthly cap`}</span>
+          <span>{quotaLoading ? "Loading allowance…" : `Less processing capacity · ${remainingToday} of ${dailyLimit} answers left today · shared $${monthlyBudgetUsd} monthly cap`}</span>
         </section>
 
         {thread?.archivedAt ? (
@@ -979,6 +1013,23 @@ export function AssistantExperience({
             >
               <span>{message.role === "assistant" ? "Tablet" : message.role === "system" ? "Context" : "You"}</span>
               <p>{message.body}</p>
+              {message.attachments?.length ? (
+                <div className="tablet-message-attachments" aria-label="Attached files">
+                  {message.attachments.map((attachment) => (
+                    <button
+                      type="button"
+                      key={attachment.id}
+                      onClick={() => openAttachmentPreview(message.attachments!, attachment.id)}
+                    >
+                      <File size={13} />
+                      <span>
+                        <strong>{attachment.fileName}</strong>
+                        <small>{formatAttachmentBytes(attachment.byteSize)}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {message.role === "assistant" && message.evidence?.length ? (
                 <details className="tablet-message-evidence">
                   <summary><BookOpen size={12} />Used {message.evidence.length} source{message.evidence.length === 1 ? "" : "s"}</summary>
@@ -1018,52 +1069,112 @@ export function AssistantExperience({
 
         {error ? <div className="tablet-error" role="alert">{error}</div> : null}
         <form className="tablet-composer" onSubmit={submitForm}>
-          <textarea
-            ref={composerRef}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onPointerDown={(event) => {
-              const textarea = event.currentTarget;
-              const nearResizeHandle =
-                event.nativeEvent.offsetX >= textarea.clientWidth - 24 &&
-                event.nativeEvent.offsetY >= textarea.clientHeight - 24;
-              if (!nearResizeHandle) return;
-              composerResizeRef.current = true;
-            }}
-            onPointerUp={(event) => {
-              if (!composerResizeRef.current) return;
-              composerResizeRef.current = false;
-              const textarea = event.currentTarget;
-              textarea.dataset.manualHeight = String(textarea.getBoundingClientRect().height);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                submitForm();
-              }
-            }}
-            maxLength={2000}
-            rows={2}
-            aria-label="Message Symposium AI"
-            placeholder={thread?.archivedAt
-              ? "Restore this chat to continue"
-              : quotaLoading
-              ? "Loading AI allowance"
-              : remainingToday > 0
-                ? activeContext
-                  ? `Ask about ${activeContext.title}`
-                  : "Message Symposium AI"
-                : "Daily AI limit reached"}
-            disabled={Boolean(thread?.archivedAt) || busy || contextBusy || threadLoading || quotaLoading || remainingToday <= 0 || !providerEnabled || !providerConfigured}
-          />
-          <button
-            type="submit"
-            className="primary"
-            disabled={Boolean(thread?.archivedAt) || busy || contextBusy || threadLoading || quotaLoading || !draft.trim() || remainingToday <= 0 || !providerEnabled || !providerConfigured}
-            title="Send one limited AI request"
-          >
-            <Send size={15} /><span>Send · uses 1</span>
-          </button>
+          {pendingAttachments.length ? (
+            <div className="tablet-pending-attachments" aria-label="Files ready to attach">
+              {pendingAttachments.map((attachment) => (
+                <div key={attachment.id}>
+                  <button
+                    type="button"
+                    className="tablet-pending-file"
+                    onClick={() => openAttachmentPreview(pendingAttachments, attachment.id)}
+                  >
+                    <File size={13} />
+                    <span>
+                      <strong>{attachment.fileName}</strong>
+                      <small>{formatAttachmentBytes(attachment.byteSize)}</small>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="tablet-pending-remove"
+                    aria-label={`Remove ${attachment.fileName}`}
+                    title="Remove unsent file"
+                    disabled={busy}
+                    onClick={() => removePendingAttachment(attachment)}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div className="tablet-composer-main">
+            <input
+              ref={attachmentInputRef}
+              className="tablet-attachment-input"
+              type="file"
+              multiple
+              accept={postAttachmentAccept}
+              aria-label="Attach files to this AI message"
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                event.target.value = "";
+                void uploadAssistantFiles(files);
+              }}
+            />
+            <button
+              type="button"
+              className="tablet-attach-button"
+              aria-label="Attach files"
+              title={attachmentCapacity > pendingAttachments.length
+                ? "Attach files up to 5 MB"
+                : "No more files fit in the five-source limit"}
+              disabled={Boolean(thread?.archivedAt) || busy || contextBusy || attachmentUploading || threadLoading || quotaLoading || attachmentCapacity <= pendingAttachments.length || remainingToday <= 0 || !providerEnabled || !providerConfigured}
+              onClick={() => attachmentInputRef.current?.click()}
+            >
+              {attachmentUploading ? <LoaderCircle className="spin" size={15} /> : <Paperclip size={15} />}
+            </button>
+            <textarea
+              ref={composerRef}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onPointerDown={(event) => {
+                const textarea = event.currentTarget;
+                const nearResizeHandle =
+                  event.nativeEvent.offsetX >= textarea.clientWidth - 24 &&
+                  event.nativeEvent.offsetY >= textarea.clientHeight - 24;
+                if (!nearResizeHandle) return;
+                composerResizeRef.current = true;
+              }}
+              onPointerUp={(event) => {
+                if (!composerResizeRef.current) return;
+                composerResizeRef.current = false;
+                const textarea = event.currentTarget;
+                textarea.dataset.manualHeight = String(textarea.getBoundingClientRect().height);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  submitForm();
+                }
+              }}
+              maxLength={2000}
+              rows={2}
+              aria-label="Message Symposium AI"
+              placeholder={thread?.archivedAt
+                ? "Restore this chat to continue"
+                : quotaLoading
+                ? "Loading AI allowance"
+                : remainingToday > 0
+                  ? activeContext
+                    ? `Ask about ${activeContext.title}`
+                    : "Message Symposium AI"
+                  : "Daily AI limit reached"}
+              disabled={Boolean(thread?.archivedAt) || busy || contextBusy || attachmentUploading || threadLoading || quotaLoading || remainingToday <= 0 || !providerEnabled || !providerConfigured}
+            />
+            <button
+              type="submit"
+              className="primary tablet-send-button"
+              disabled={Boolean(thread?.archivedAt) || busy || contextBusy || attachmentUploading || threadLoading || quotaLoading || (!draft.trim() && !pendingAttachments.length) || remainingToday <= 0 || !providerEnabled || !providerConfigured}
+              title="Send one limited AI request"
+            >
+              <Send size={15} /><span>Send · uses 1</span>
+            </button>
+          </div>
+          <small className="tablet-attachment-limit">
+            <Paperclip size={11} />
+            Files up to 5 MB · uploads use no answer · beta reads bounded extracted text, so scans, complex layouts, images, and video may not be understood.
+          </small>
         </form>
       </section>
 
@@ -1083,6 +1194,14 @@ export function AssistantExperience({
             onSourceChange={(source, action) => void changeSavedSource(source, action)}
           />
         </aside>
+      ) : null}
+      {attachmentPreview ? (
+        <AttachmentPreviewModal
+          attachments={attachmentPreview.attachments}
+          contextTitle="AI chat files"
+          attachmentId={attachmentPreview.id}
+          onClose={() => setAttachmentPreview(null)}
+        />
       ) : null}
     </section>
   );

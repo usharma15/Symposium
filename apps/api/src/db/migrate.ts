@@ -3014,6 +3014,19 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS ai_messages_body_trgm_idx
         ON ai_messages USING gin (body gin_trgm_ops);
     `
+  },
+  {
+    id: "0058_assistant_message_attachments",
+    sql: `
+      ALTER TABLE attachments DROP CONSTRAINT IF EXISTS attachments_owner_type_check;
+      ALTER TABLE attachments ADD CONSTRAINT attachments_owner_type_check
+        CHECK (owner_type IN ('post', 'comment', 'message', 'assistant_message', 'note', 'note_comment', 'opportunity_application', 'profile'));
+
+      CREATE INDEX IF NOT EXISTS attachments_assistant_message_owner_idx
+        ON attachments (owner_id, created_at, id)
+        WHERE owner_type = 'assistant_message'
+          AND status IN ('uploaded', 'previewed');
+    `
   }
 ];
 

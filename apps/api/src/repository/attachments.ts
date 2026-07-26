@@ -11,6 +11,7 @@ import {
   inferAttachmentContentType,
   validateAttachmentContentSignature,
   validateAttachmentNameAndContentType,
+  validateAssistantAttachmentDetails,
   validatePostAttachmentDetails
 } from "@/lib/attachmentRules";
 import { cleanHandle } from "@/lib/symposiumCore";
@@ -80,7 +81,7 @@ const requireAttachmentDatabase = (ownerType: string) => {
       message: "Persistent attachment storage is not configured."
     });
   }
-  if (ownerType !== "message" && ownerType !== "note" && ownerType !== "note_comment" && ownerType !== "opportunity_application" && !env.R2_PUBLIC_BASE_URL) {
+  if (ownerType !== "message" && ownerType !== "assistant_message" && ownerType !== "note" && ownerType !== "note_comment" && ownerType !== "opportunity_application" && !env.R2_PUBLIC_BASE_URL) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "Persistent public attachment delivery is not configured."
@@ -175,7 +176,7 @@ export const createAttachmentUpload = async (
   };
   const handle = actorHandle(actor);
 
-  if (!["post", "comment", "message", "note", "note_comment", "opportunity_application", "profile"].includes(input.ownerType)) {
+  if (!["post", "comment", "message", "assistant_message", "note", "note_comment", "opportunity_application", "profile"].includes(input.ownerType)) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "Unsupported attachment owner." });
   }
 
@@ -204,7 +205,9 @@ export const createAttachmentUpload = async (
         message: `A ${input.ownerType} attachment is assigned when its ${input.ownerType} is saved.`
       });
     }
-    const validationError = validatePostAttachmentDetails(input.fileName, input.contentType, input.byteSize);
+    const validationError = input.ownerType === "assistant_message"
+      ? validateAssistantAttachmentDetails(input.fileName, input.contentType, input.byteSize)
+      : validatePostAttachmentDetails(input.fileName, input.contentType, input.byteSize);
     if (validationError) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -252,7 +255,7 @@ export const createAttachmentUpload = async (
       attachmentId,
       objectKey,
       uploadObjectKey,
-      publicUrl: input.ownerType === "message" || input.ownerType === "note" || input.ownerType === "note_comment" || input.ownerType === "opportunity_application" ? null : publicObjectUrl(objectKey)
+      publicUrl: input.ownerType === "message" || input.ownerType === "assistant_message" || input.ownerType === "note" || input.ownerType === "note_comment" || input.ownerType === "opportunity_application" ? null : publicObjectUrl(objectKey)
     };
     await stageAuditLog(client, {
       actorHandle: handle,
@@ -437,7 +440,7 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
   if (existing.status === "uploaded" || existing.status === "previewed") {
     return {
       attachmentId: existing.attachmentId,
-      publicUrl: existing.ownerType === "message" || existing.ownerType === "note" || existing.ownerType === "note_comment" || existing.ownerType === "opportunity_application" ? null : publicObjectUrl(existing.objectKey),
+      publicUrl: existing.ownerType === "message" || existing.ownerType === "assistant_message" || existing.ownerType === "note" || existing.ownerType === "note_comment" || existing.ownerType === "opportunity_application" ? null : publicObjectUrl(existing.objectKey),
       status: existing.status
     };
   }
@@ -570,7 +573,8 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
       attachment.ownerType === "note" ||
       attachment.ownerType === "note_comment" ||
       attachment.ownerType === "opportunity_application" ||
-      attachment.ownerType === "message"
+      attachment.ownerType === "message" ||
+      attachment.ownerType === "assistant_message"
         ? null
         : publicObjectUrl(attachment.objectKey),
     status: "uploaded" as const

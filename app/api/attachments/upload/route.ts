@@ -2,6 +2,7 @@ import { jsonError, readJson } from "@/lib/api";
 import {
   inferAttachmentContentType,
   validateAttachmentNameAndContentType,
+  validateAssistantAttachmentDetails,
   validatePostAttachmentDetails
 } from "@/lib/attachmentRules";
 import { createLocalAttachmentUpload } from "@/lib/localAttachmentStore";
@@ -15,7 +16,7 @@ type UploadBody = {
   fileName?: string;
   contentType?: string;
   byteSize?: number;
-  ownerType?: "post" | "comment" | "message" | "note" | "note_comment" | "opportunity_application" | "profile";
+  ownerType?: "post" | "comment" | "message" | "assistant_message" | "note" | "note_comment" | "opportunity_application" | "profile";
   ownerId?: string;
 };
 
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
   const contentType = inferAttachmentContentType(String(body.fileName ?? ""), String(body.contentType ?? ""));
   const byteSize = Number(body.byteSize ?? 0);
 
-  if (!["post", "comment", "message", "note", "note_comment", "opportunity_application", "profile"].includes(ownerType)) {
+  if (!["post", "comment", "message", "assistant_message", "note", "note_comment", "opportunity_application", "profile"].includes(ownerType)) {
     return jsonError("Unsupported attachment owner.", 400);
   }
 
@@ -48,7 +49,9 @@ export async function POST(request: Request) {
     const nameTypeError = validateAttachmentNameAndContentType(String(body.fileName), contentType);
     if (nameTypeError) return jsonError(nameTypeError, 400);
   } else {
-    const validationError = validatePostAttachmentDetails(String(body.fileName ?? ""), contentType, byteSize);
+    const validationError = ownerType === "assistant_message"
+      ? validateAssistantAttachmentDetails(String(body.fileName ?? ""), contentType, byteSize)
+      : validatePostAttachmentDetails(String(body.fileName ?? ""), contentType, byteSize);
     if (validationError) return jsonError(validationError, 400);
   }
 

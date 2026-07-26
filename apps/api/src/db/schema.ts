@@ -582,7 +582,7 @@ export const attachments = pgTable(
     index("attachments_owner_idx").on(table.ownerType, table.ownerId),
     index("attachments_uploader_status_idx").on(table.uploaderHandle, table.status, table.createdAt),
     index("attachments_status_updated_idx").on(table.status, table.updatedAt),
-    check("attachments_owner_type_check", sql`${table.ownerType} IN ('post', 'comment', 'message', 'note', 'note_comment', 'opportunity_application', 'profile')`),
+    check("attachments_owner_type_check", sql`${table.ownerType} IN ('post', 'comment', 'message', 'assistant_message', 'note', 'note_comment', 'opportunity_application', 'profile')`),
     check("attachments_status_check", sql`${table.status} IN ('pending', 'verifying', 'uploaded', 'previewed', 'failed')`),
     check("attachments_byte_size_check", sql`${table.byteSize} > 0 AND ${table.byteSize} <= 52428800`)
   ]

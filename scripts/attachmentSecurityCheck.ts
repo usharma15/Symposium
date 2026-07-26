@@ -13,11 +13,16 @@ import {
   attachmentKindForContentType,
   attachmentContentTypesMatch,
   inferAttachmentContentType,
+  maxAssistantAttachmentBytes,
+  validateAssistantAttachmentDetails,
   validateAttachmentContentSignature,
   validateAttachmentNameAndContentType,
   validatePostAttachmentDetails
 } from "@/lib/attachmentRules";
-import { confirmAttachmentInputSchema } from "@/packages/contracts/src";
+import {
+  confirmAttachmentInputSchema,
+  createAttachmentUploadInputSchema
+} from "@/packages/contracts/src";
 
 const bytes = (...values: number[]) => Uint8Array.from(values);
 const ascii = (value: string) => new TextEncoder().encode(value);
@@ -61,6 +66,26 @@ assert.equal(attachmentKindForContentType("text/plain", "Model.java"), "code");
 assert.equal(attachmentKindForContentType("application/json", "experiment.ipynb"), "code");
 assert.equal(attachmentKindForContentType("text/csv", "results.csv"), "spreadsheet");
 assert.equal(attachmentKindForContentType("application/vnd.openxmlformats-officedocument.presentationml.presentation", "deck.pptx"), "presentation");
+assert.equal(
+  validateAssistantAttachmentDetails("notes.txt", "text/plain", maxAssistantAttachmentBytes),
+  null
+);
+assert.match(
+  validateAssistantAttachmentDetails("notes.txt", "text/plain", maxAssistantAttachmentBytes + 1) ?? "",
+  /5 MB or smaller/
+);
+assert.equal(createAttachmentUploadInputSchema.safeParse({
+  fileName: "notes.txt",
+  contentType: "text/plain",
+  byteSize: maxAssistantAttachmentBytes,
+  ownerType: "assistant_message"
+}).success, true);
+assert.equal(createAttachmentUploadInputSchema.safeParse({
+  fileName: "notes.txt",
+  contentType: "text/plain",
+  byteSize: maxAssistantAttachmentBytes + 1,
+  ownerType: "assistant_message"
+}).success, false);
 
 assert.equal(
   validateAttachmentContentSignature("image/png", bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)),
@@ -222,6 +247,7 @@ assert.match(repositorySource, /createBoundedAttachmentUploadStream/);
 assert.match(routeSource, /scope: "attachment-content", limit: 30/);
 assert.match(routeSource, /bodyLimit: 50 \* 1024 \* 1024/);
 assert.match(clientSource, /uploadTransport === "authenticated_api"/);
+assert.match(clientSource, /\/api\/attachments\/\$\{encodeURIComponent\(upload\.attachmentId\)\}[\s\S]*?\{ method: "DELETE" \}/);
 assert.match(serverSource, /addContentTypeParser\("application\/octet-stream"/);
 assert.match(serverSource, /"POST", "PUT", "PATCH"/);
 assert.doesNotMatch(storageSource, /PutBucketCorsCommand|GetBucketCorsCommand/);
@@ -243,6 +269,7 @@ console.log(
       checked: [
         "extension and MIME agreement",
         "browser MIME alias canonicalization",
+        "AI chat 5 MB client and contract boundary",
         "code, spreadsheet, and presentation classification",
         "image signatures",
         "document signatures",
@@ -255,6 +282,7 @@ console.log(
         "spreadsheet and presentation archive validation",
         "defense-in-depth DOCX render sanitization",
         "authenticated API upload ownership, rate, and body-size binding",
+        "failed prepared-upload cleanup",
         "durable and retry-safe R2 object cleanup"
       ]
     },
