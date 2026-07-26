@@ -721,10 +721,11 @@
 .assistant-compact .tablet-composer {
   align-items: end;
   gap: 0.4rem;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   padding: 0.5rem 0.58rem;
 }
 .assistant-compact .tablet-composer button {
+  justify-self: end;
   min-height: 2.05rem;
   min-width: 5.85rem;
   padding: 0.3rem 0.48rem;
