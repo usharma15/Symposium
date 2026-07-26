@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   Crop,
@@ -47,6 +48,7 @@ export function AttachmentPreviewModal({
   attachmentId,
   onClose,
   onCapture,
+  onNativeCapture,
   onViewContextChange
 }: {
   item?: InquiryItem;
@@ -55,6 +57,7 @@ export function AttachmentPreviewModal({
   attachmentId: string;
   onClose: () => void;
   onCapture?: (capture: AttachmentCitationCapture) => void;
+  onNativeCapture?: (capture: AttachmentCitationCapture) => void;
   onViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
 }) {
   const attachments = sourceAttachments ? visibleAttachments(sourceAttachments) : item ? postPreviewAttachments(item) : [];
@@ -277,15 +280,25 @@ export function AttachmentPreviewModal({
   const capture = (excerpt: string, locator: DocumentCitationLocatorContract) => {
     onCapture?.({ attachment: activeAttachment, excerpt: excerpt.trim().slice(0, 4000), locator });
   };
+  const captureNative = (excerpt: string, locator: DocumentCitationLocatorContract) => {
+    onNativeCapture?.({ attachment: activeAttachment, excerpt: excerpt.trim().slice(0, 4000), locator });
+  };
   const captureWholeAttachment = () => capture(activeAttachment.fileName, { kind: "whole" });
+  const captureWholeNative = () => captureNative(activeAttachment.fileName, { kind: "whole" });
   const captureImageRegion = () => {
     if (!imageRegion) return;
     capture(`Image region from ${activeAttachment.fileName}`, imageRegion);
     setImageSelectionActive(false);
     setImageRegion(null);
   };
+  const captureImageRegionNative = () => {
+    if (!imageRegion) return;
+    captureNative(`Image region from ${activeAttachment.fileName}`, imageRegion);
+    setImageSelectionActive(false);
+    setImageRegion(null);
+  };
   const inspectTextSelection = () => {
-    if (!onCapture || imageSelectionActive) {
+    if ((!onCapture && !onNativeCapture) || imageSelectionActive) {
       setTextSelection(null);
       return;
     }
@@ -325,15 +338,17 @@ export function AttachmentPreviewModal({
       locator
     });
   };
-  const captureControls = (compact: boolean) => onCapture ? (
-    <div className={`attachment-citation-controls${compact ? " compact" : ""}`} role="group" aria-label="Scribble citation controls">
-      <button type="button" className="attachment-citation-button" title="Add the whole attachment to Scribble" onClick={captureWholeAttachment}><PenLine size={15} />{compact ? null : <span>Whole file</span>}</button>
+  const captureControls = (compact: boolean) => onCapture || onNativeCapture ? (
+    <div className={`attachment-citation-controls${compact ? " compact" : ""}`} role="group" aria-label="Attachment citation controls">
+      {onNativeCapture ? <button type="button" className="attachment-citation-button" title="Stage the whole attachment as a native citation" onClick={captureWholeNative}><BookOpen size={15} />{compact ? null : <span>Cite file</span>}</button> : null}
+      {onCapture ? <button type="button" className="attachment-citation-button" title="Add the whole attachment to Scribble" onClick={captureWholeAttachment}><PenLine size={15} />{compact ? null : <span>Whole file</span>}</button> : null}
       {attachmentRenderKind(activeAttachment) === "image" ? <button type="button" className={`attachment-citation-button${imageSelectionActive ? " active" : ""}`} title={imageSelectionActive ? "Cancel image region selection" : "Select an image region"} aria-pressed={imageSelectionActive} onClick={() => {
         setImageSelectionActive((current) => !current);
         setImageRegion(null);
         setTextSelection(null);
       }}>{imageSelectionActive ? <X size={15} /> : <Crop size={15} />}{compact ? null : <span>{imageSelectionActive ? "Cancel region" : "Select region"}</span>}</button> : null}
-      {imageSelectionActive && imageRegion ? <button type="button" className="attachment-citation-button primary" title="Cite selected image region in Scribble" onClick={captureImageRegion}><PenLine size={15} />{compact ? null : <span>Add region</span>}</button> : null}
+      {imageSelectionActive && imageRegion && onNativeCapture ? <button type="button" className="attachment-citation-button primary" title="Stage selected image region as a native citation" onClick={captureImageRegionNative}><BookOpen size={15} />{compact ? null : <span>Cite region</span>}</button> : null}
+      {imageSelectionActive && imageRegion && onCapture ? <button type="button" className="attachment-citation-button" title="Cite selected image region in Scribble" onClick={captureImageRegion}><PenLine size={15} />{compact ? null : <span>Scribble region</span>}</button> : null}
     </div>
   ) : null;
 
@@ -384,17 +399,29 @@ export function AttachmentPreviewModal({
             imageSelectionActive={imageSelectionActive}
             imageRegion={imageRegion}
             onImageRegionChange={setImageRegion}
-            onCite={onCapture ? (excerpt, locator) => capture(excerpt, locator) : undefined}
+            onCite={onNativeCapture
+              ? (excerpt, locator) => captureNative(excerpt, locator)
+              : onCapture
+                ? (excerpt, locator) => capture(excerpt, locator)
+                : undefined}
             onViewContextChange={onViewContextChange}
           />
         </div>
 
-        {textSelection ? <button type="button" className="attachment-selection-citation-action" style={{ left: textSelection.left, top: textSelection.top }} onMouseDown={(event) => event.preventDefault()} onClick={(event) => {
-          event.stopPropagation();
-          capture(textSelection.excerpt, textSelection.locator);
-          window.getSelection()?.removeAllRanges();
-          setTextSelection(null);
-        }}><PenLine size={14} />Cite selection</button> : null}
+        {textSelection ? <div className="attachment-selection-citation-action native-citation-selection-actions" style={{ left: textSelection.left, top: textSelection.top }}>
+          {onNativeCapture ? <button type="button" title="Cite selection in draft" onMouseDown={(event) => event.preventDefault()} onClick={(event) => {
+            event.stopPropagation();
+            captureNative(textSelection.excerpt, textSelection.locator);
+            window.getSelection()?.removeAllRanges();
+            setTextSelection(null);
+          }}><BookOpen size={14} />Cite in draft</button> : null}
+          {onCapture ? <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={(event) => {
+            event.stopPropagation();
+            capture(textSelection.excerpt, textSelection.locator);
+            window.getSelection()?.removeAllRanges();
+            setTextSelection(null);
+          }}><PenLine size={14} />Scribble</button> : null}
+        </div> : null}
 
         <footer className="attachment-modal-footer">
           {attachments.length > 1 ? (

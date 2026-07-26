@@ -16,6 +16,7 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  BookOpen,
   Bold,
   Code2,
   ExternalLink,
@@ -34,7 +35,8 @@ import {
   Sigma,
   Trash2,
   Underline,
-  Undo2
+  Undo2,
+  X
 } from "lucide-react";
 import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, useEditorState, type NodeViewProps } from "@tiptap/react";
 import type { Editor, JSONContent } from "@tiptap/core";
@@ -67,9 +69,17 @@ import {
 } from "@/features/attachments/AttachmentViews";
 import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
 import { DocumentDrawingDialog, DocumentDrawingPreview } from "@/features/content/DocumentDrawing";
-import type { DocumentCitationLocatorContract, DocumentDrawingContract, DocumentSourceSnapshotContract } from "@/packages/contracts/src";
+import {
+  documentCitationMarkerText,
+  type DocumentCitationLocatorContract,
+  type DocumentCitationStyleContract,
+  type DocumentDrawingContract,
+  type DocumentNativeCitationContract,
+  type DocumentSourceSnapshotContract
+} from "@/packages/contracts/src";
 import { documentCitationLocatorLabel, documentSourceContextLabel } from "@/lib/documentCitations";
 import { postToneClassName } from "@/lib/postTone";
+import { useNativeCitation } from "@/features/citations/NativeCitationContext";
 
 type EditorContextValue = {
   attachments: InquiryAttachment[];
@@ -134,6 +144,12 @@ const runMarksToJSON = (run: SymposiumTextRun) => {
 };
 
 const runsToJSON = (runs: SymposiumTextRun[]): JSONContent[] => runs.flatMap((run) => {
+  if (run.citation) {
+    return [{
+      type: "symposiumInlineCitation",
+      attrs: { citation: run.citation }
+    } satisfies JSONContent];
+  }
   const parts = run.text.split("\n");
   return parts.flatMap((text, index) => [
     ...(text ? [{ type: "text", text, marks: runMarksToJSON(run) } satisfies JSONContent] : []),
@@ -176,6 +192,12 @@ const marksFromJSON = (marks: JSONContent["marks"], capability: EditorCapability
 
 const inlineJSONToRuns = (content: JSONContent[] = [], capability: EditorCapability = "paper") => normalizeRuns(content.reduce<SymposiumTextRun[]>((runs, child) => {
   if (child.type === "text" && child.text) runs.push({ text: child.text, ...marksFromJSON(child.marks, capability) });
+  if (child.type === "symposiumInlineCitation" && child.attrs?.citation) {
+    runs.push({
+      text: documentCitationMarkerText,
+      citation: child.attrs.citation as DocumentNativeCitationContract
+    });
+  }
   if (child.type === "hardBreak") {
     const previous = runs.at(-1);
     if (previous) previous.text += "\n";
@@ -583,6 +605,25 @@ function CitationNodeView({ node, selected, deleteNode }: NodeViewProps) {
   );
 }
 
+function InlineCitationNodeView({ node, selected, deleteNode }: NodeViewProps) {
+  const citation = node.attrs.citation as DocumentNativeCitationContract | null;
+  if (!citation) return null;
+  return (
+    <NodeViewWrapper
+      as="span"
+      className={`document-inline-citation-editor${selected ? " selected" : ""}`}
+      data-citation-id={citation.id}
+      title={`Citation to ${citation.source.title ?? citation.source.author ?? "Symposium source"}`}
+    >
+      <BookOpen size={12} aria-hidden="true" />
+      <span>Citation</span>
+      <button type="button" title="Remove citation marker" aria-label="Remove citation marker" onClick={deleteNode}>
+        <X size={11} />
+      </button>
+    </NodeViewWrapper>
+  );
+}
+
 const SymposiumEquation = Node.create({
   name: "symposiumEquation", group: "block", atom: true, selectable: true, draggable: true,
   addAttributes() { return { blockId: { default: null }, source: { default: "E = mc^2" }, display: { default: true }, label: { default: null } }; },
@@ -623,6 +664,33 @@ const SymposiumCitation = Node.create({
   addNodeView() { return ReactNodeViewRenderer(CitationNodeView); }
 });
 
+const SymposiumInlineCitation = Node.create({
+  name: "symposiumInlineCitation",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return { citation: { default: null } };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-symposium-inline-citation]" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return [
+      "span",
+      mergeAttributes(HTMLAttributes, {
+        "data-symposium-inline-citation": "true",
+        class: "document-inline-citation"
+      }),
+      "Citation"
+    ];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(InlineCitationNodeView);
+  }
+});
+
 const editorExtensions = (placeholder: string, capability: EditorCapability) => [
   StarterKit.configure({
     heading: capability === "paper" ? { levels: [1, 2, 3, 4] } : capability === "reduced" ? { levels: [2, 3] } : false,
@@ -651,7 +719,8 @@ const editorExtensions = (placeholder: string, capability: EditorCapability) => 
   SymposiumAttachment,
   SymposiumDrawing,
   SymposiumReference,
-  SymposiumCitation
+  SymposiumCitation,
+  SymposiumInlineCitation
 ];
 
 const selectedParagraphEntries = (editor: Editor) => {
@@ -879,6 +948,21 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
           {documentColors.map((color) => <ToolbarButton key={color} title={`${color} text`} active={preferredTextStyle.color === color} onClick={() => setTextStyle({ color })}><span style={{ "--swatch": `var(--document-color-${color})` } as CSSProperties} /></ToolbarButton>)}
         </div>
       </> : null}
+      {capability !== "scribble" ? (
+        <select
+          title="Bibliography style"
+          aria-label="Bibliography style"
+          value={settings.citationStyle ?? "apa"}
+          onChange={(event) => onSettingsChange({
+            ...settings,
+            citationStyle: event.target.value as DocumentCitationStyleContract
+          })}
+        >
+          <option value="apa">APA citations</option>
+          <option value="mla">MLA citations</option>
+          <option value="chicago">Chicago citations</option>
+        </select>
+      ) : null}
       <div>
         <ToolbarButton title="Insert equation" onClick={onInsertEquation}><Sigma size={17} /></ToolbarButton>
         {capability === "scribble" ? <ToolbarButton title="Insert drawing" onClick={onInsertDrawing}><PenLine size={17} /></ToolbarButton> : null}
@@ -921,6 +1005,7 @@ export const SymposiumDocumentEditor = forwardRef<SymposiumDocumentEditorHandle,
   onBusyChange,
   onUploadAttachment
 }, ref) {
+  const nativeCitation = useNativeCitation();
   const documentValue = useMemo(() => normalizeDocumentAttachments(value ?? (bodyFallback ? documentForContent(undefined, bodyFallback) : emptySymposiumDocument()), attachments), [value, bodyFallback, attachments]);
   const settingsRef = useRef<NonNullable<SymposiumDocument["settings"]>>(documentValue.settings ?? defaultDocumentSettings);
   const lastEmittedRef = useRef("");
@@ -1006,6 +1091,16 @@ export const SymposiumDocumentEditor = forwardRef<SymposiumDocumentEditorHandle,
     ]).run();
   };
 
+  const insertPendingCitation = () => {
+    const pending = nativeCitation.pendingCitation;
+    if (!editor || !pending || capability === "scribble") return;
+    const inserted = editor.chain().focus().insertContent([
+      { type: "symposiumInlineCitation", attrs: { citation: pending } },
+      { type: "text", text: " " }
+    ]).run();
+    if (inserted) nativeCitation.consumeCitation(pending.id);
+  };
+
   const saveDrawing = (drawing: DocumentDrawingContract) => {
     if (!editor || !editingDrawing) return;
     if (editingDrawing.blockId) {
@@ -1066,6 +1161,21 @@ export const SymposiumDocumentEditor = forwardRef<SymposiumDocumentEditorHandle,
 
   return (
     <section className={`symposium-document-editor capability-${capability}${disabled ? " disabled" : ""}`} aria-label="Document editor">
+      {capability !== "scribble" && nativeCitation.pendingCitation ? (
+        <div className="native-citation-editor-tray" role="status">
+          <BookOpen size={16} aria-hidden="true" />
+          <span>
+            <strong>{nativeCitation.pendingCitation.source.title ?? "Citation ready"}</strong>
+            <small>{nativeCitation.pendingCitation.excerpt}</small>
+          </span>
+          <button type="button" className="primary" disabled={disabled || !editor} onClick={insertPendingCitation}>
+            Insert citation
+          </button>
+          <button type="button" title="Dismiss citation" aria-label="Dismiss citation" onClick={nativeCitation.dismissCitation}>
+            <X size={15} />
+          </button>
+        </div>
+      ) : null}
       {editor ? <EditorToolbar
         editor={editor}
         capability={capability}

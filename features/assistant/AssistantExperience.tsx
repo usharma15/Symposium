@@ -11,6 +11,7 @@ import type {
   AssistantThreadSummaryContract,
   AssistantTranslationContract,
   AssistantTranslationLanguageContract,
+  DocumentSourceSnapshotContract,
   InquiryAttachmentContract
 } from "@/packages/contracts/src";
 import { assistantTranslationLanguageLabels } from "@/packages/contracts/src/translationLanguages";
@@ -23,6 +24,7 @@ import {
   postAttachmentAccept
 } from "@/lib/attachmentRules";
 import { isAssistantVisionContentType } from "@/lib/assistantVisionRules";
+import { useNativeCitation } from "@/features/citations/NativeCitationContext";
 
 const assistantAttachmentProcessingLabel = (attachment: InquiryAttachmentContract) => {
   if (isAssistantVisionContentType(attachment.contentType)) return "Image ready for AI";
@@ -46,6 +48,47 @@ const assistantClaimKindLabel = {
   inference: "Inference",
   insufficient: "Insufficient context"
 } as const;
+
+const nativeSourceForAssistantCitation = (citation: {
+  title: string;
+  excerpt: string;
+  route: string;
+  kind: string;
+  entityType?: string;
+  entityId?: string;
+}): DocumentSourceSnapshotContract | null => {
+  try {
+    const url = new URL(citation.route || "/", "https://symposium.invalid");
+    const segments = url.pathname.split("/").filter(Boolean);
+    const postId = segments[0] === "posts" ? decodeURIComponent(segments[1] ?? "") : "";
+    const commentId = citation.kind === "comment" ? url.searchParams.get("comment")?.trim() ?? "" : "";
+    if (commentId && postId) {
+      return {
+        kind: "comment",
+        sourceId: commentId,
+        sourcePostId: postId,
+        sourceCommentId: commentId,
+        title: citation.title,
+        body: citation.excerpt,
+        canonicalPath: `${url.pathname}${url.search}`
+      };
+    }
+    const resolvedPostId = citation.entityType === "post" || citation.entityType === "opportunity"
+      ? citation.entityId?.trim() || postId
+      : postId;
+    if (!resolvedPostId) return null;
+    return {
+      kind: "post",
+      sourceId: resolvedPostId,
+      sourcePostId: resolvedPostId,
+      title: citation.title,
+      body: citation.excerpt,
+      canonicalPath: `${url.pathname}${url.search}${url.hash}`
+    };
+  } catch {
+    return null;
+  }
+};
 
 const assistantInlineContent = (value: string, keyPrefix: string): ReactNode[] =>
   value.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).filter(Boolean).map((part, index) => {
@@ -777,6 +820,7 @@ export function AssistantExperience({
   onExpand: () => void;
   onCollapse: () => void;
 }) {
+  const nativeCitation = useNativeCitation();
   const {
     actorHandle,
     context,
@@ -1177,19 +1221,37 @@ export function AssistantExperience({
                             {claim.citations.length ? (
                               <div className="tablet-message-evidence-citations">
                                 {claim.citations.map((citation) => (
-                                  <a
-                                    href={citation.route || "/"}
-                                    key={`${claimIndex}:${citation.ref}`}
-                                    rel="noreferrer"
-                                    target="_blank"
-                                  >
-                                    <span>
-                                      <b>{citation.ref}</b>
-                                      {citation.label}
-                                      <ExternalLink size={10} aria-hidden="true" />
-                                    </span>
-                                    <q>{citation.excerpt}</q>
-                                  </a>
+                                  <div className="tablet-message-evidence-citation" key={`${claimIndex}:${citation.ref}`}>
+                                    <a
+                                      href={citation.route || "/"}
+                                      rel="noreferrer"
+                                      target="_blank"
+                                    >
+                                      <span>
+                                        <b>{citation.ref}</b>
+                                        {citation.label}
+                                        <ExternalLink size={10} aria-hidden="true" />
+                                      </span>
+                                      <q>{citation.excerpt}</q>
+                                    </a>
+                                    {nativeSourceForAssistantCitation(citation) ? (
+                                      <button
+                                        type="button"
+                                        title="Stage this evidence as a native citation"
+                                        onClick={() => {
+                                          const source = nativeSourceForAssistantCitation(citation);
+                                          if (!source) return;
+                                          nativeCitation.stageCitation(
+                                            source,
+                                            citation.excerpt,
+                                            { kind: "text" }
+                                          );
+                                        }}
+                                      >
+                                        <BookOpen size={12} />Cite
+                                      </button>
+                                    ) : null}
+                                  </div>
                                 ))}
                               </div>
                             ) : (

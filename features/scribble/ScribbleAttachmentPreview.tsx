@@ -10,6 +10,7 @@ import {
 } from "@/features/scribble/ScribbleContext";
 import type { InquiryComment, InquiryItem } from "@/lib/mockData";
 import { postToneForItem } from "@/lib/postTone";
+import { useNativeCitation } from "@/features/citations/NativeCitationContext";
 
 export function ScribbleAttachmentPreview({
   item,
@@ -25,6 +26,7 @@ export function ScribbleAttachmentPreview({
   onViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
 }) {
   const scribble = useScribble();
+  const nativeCitation = useNativeCitation();
   const parentSource = comment
     ? commentScribbleSource(comment, item.id, postToneForItem(item))
     : postScribbleSource(item);
@@ -41,6 +43,13 @@ export function ScribbleAttachmentPreview({
         const source = attachmentScribbleSource(attachment, parentSource);
         if (locator.kind === "whole") scribble.addReference(source);
         else scribble.addCitation(source, excerpt, locator);
+      }}
+      onNativeCapture={({ attachment, excerpt, locator }) => {
+        nativeCitation.stageCitation(
+          attachmentScribbleSource(attachment, parentSource),
+          excerpt,
+          locator
+        );
       }}
     />
   );

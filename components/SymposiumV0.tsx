@@ -149,6 +149,7 @@ import { inferAttachmentContentType } from "@/lib/attachmentRules";
 import { useDedicatedAttachmentViewer } from "@/features/attachments/useDedicatedAttachmentViewer";
 import { ScribbleLauncher, ScribbleProvider } from "@/features/scribble/ScribbleContext";
 import { ScribbleAttachmentPreview } from "@/features/scribble/ScribbleAttachmentPreview";
+import { NativeCitationProvider } from "@/features/citations/NativeCitationContext";
 import {
   EntrySequence,
   HallView,
@@ -4484,6 +4485,7 @@ function SymposiumExperience({
   }
 
   return (
+    <NativeCitationProvider>
     <ScribbleProvider actorHandle={currentProfile.handle} profiles={profiles} theme={theme}>
     <main
       className={`symposium-shell ${theme}`}
@@ -5021,5 +5023,6 @@ function SymposiumExperience({
       ) : null}
     </main>
     </ScribbleProvider>
+    </NativeCitationProvider>
   );
 }

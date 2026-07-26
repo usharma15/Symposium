@@ -9,6 +9,7 @@ import {
   updateWorkspaceDocumentInputSchema,
   updateWorkspaceNotebookInputSchema,
   workspaceSearchInputSchema,
+  type VersionedDocumentContract,
   type WorkspaceAccessRoleContract,
   type WorkspaceDocumentKindContract
 } from "../../../../packages/contracts/src";
@@ -22,6 +23,7 @@ import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from 
 import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 import { assertExpectedRevision } from "./workspace";
+import { resolveNativeDocumentCitations } from "../services/nativeCitations";
 
 type WorkspaceRow = { id: string; name: string; ownerHandle: string };
 type AccessRow = {
@@ -32,6 +34,7 @@ type AccessRow = {
   kind: WorkspaceDocumentKindContract;
   workspaceId: string;
   notebookId: string | null;
+  document: VersionedDocumentContract | null;
 };
 
 const roleRank: Record<WorkspaceAccessRoleContract, number> = {
@@ -83,6 +86,7 @@ const findDocumentAccess = async (client: PoolClient, noteId: string, handle: st
        note.revision,
        note.kind,
        note.notebook_id::text AS "notebookId",
+       note.content_document AS document,
        ${roleSql} AS role
      FROM notes note
      LEFT JOIN workspace_note_grants direct
@@ -376,6 +380,8 @@ export const createWorkspaceDocument = async (rawInput: unknown, actor: Actor, m
     if (claim.replayed) return { value: claim.response };
     const workspace = await ensureWorkspace(client, handle);
     await ensureNotebookForOwner(client, workspace.id, handle, input.notebookId);
+    const citationResolution = await resolveNativeDocumentCitations(client, input.document, handle);
+    const resolvedInput = { ...input, document: citationResolution.document };
     const created = await client.query<{ id: string; revision: number }>(
       `INSERT INTO notes (
          workspace_id, owner_handle, notebook_id, title, body, content_document, kind,
@@ -385,15 +391,15 @@ export const createWorkspaceDocument = async (rawInput: unknown, actor: Actor, m
       [
         workspace.id,
         handle,
-        input.notebookId,
-        input.title,
-        input.body,
-        JSON.stringify(input.document),
-        input.kind,
-        input.publicationTarget,
-        input.proposal ? JSON.stringify(input.proposal) : null,
-        input.opportunity ? JSON.stringify(input.opportunity) : null,
-        input.targetId
+        resolvedInput.notebookId,
+        resolvedInput.title,
+        resolvedInput.body,
+        JSON.stringify(resolvedInput.document),
+        resolvedInput.kind,
+        resolvedInput.publicationTarget,
+        resolvedInput.proposal ? JSON.stringify(resolvedInput.proposal) : null,
+        resolvedInput.opportunity ? JSON.stringify(resolvedInput.opportunity) : null,
+        resolvedInput.targetId
       ]
     );
     const note = created.rows[0]!;
@@ -407,7 +413,7 @@ export const createWorkspaceDocument = async (rawInput: unknown, actor: Actor, m
       noteId: note.id,
       revision: note.revision,
       editorHandle: handle,
-      ...input,
+      ...resolvedInput,
       reason: "created"
     });
     const value = { document: await selectDocument(client, note.id, handle), checkpointId, removedAttachmentIds: attachmentResult.removedAttachmentIds };
@@ -416,7 +422,12 @@ export const createWorkspaceDocument = async (rawInput: unknown, actor: Actor, m
       action: "workspace.document.create",
       subjectType: "note",
       subjectId: note.id,
-      metadata: mutationAuditMetadata(mutation, { kind: input.kind, notebookId: input.notebookId })
+      metadata: mutationAuditMetadata(mutation, {
+        kind: input.kind,
+        notebookId: input.notebookId,
+        citationCount: citationResolution.citationCount,
+        newCitationCount: citationResolution.newCitationCount
+      })
     });
     await completeMutation(client, handle, mutation, value);
     const audienceHandles = await documentAudienceHandles(client, note.id);
@@ -464,6 +475,13 @@ export const updateWorkspaceDocument = async (
     if (input.kind !== access.kind && access.role !== "owner") {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the owner can change a draft's type." });
     }
+    const citationResolution = await resolveNativeDocumentCitations(
+      client,
+      input.document,
+      handle,
+      access.document
+    );
+    const resolvedInput = { ...input, document: citationResolution.document };
     const updated = await client.query<{ revision: number }>(
       `UPDATE notes SET
          notebook_id = $2,
@@ -481,16 +499,16 @@ export const updateWorkspaceDocument = async (
        RETURNING revision`,
       [
         noteId,
-        input.notebookId,
-        input.title,
-        input.body,
-        JSON.stringify(input.document),
-        input.kind,
-        input.publicationTarget,
-        input.proposal ? JSON.stringify(input.proposal) : null,
-        input.opportunity ? JSON.stringify(input.opportunity) : null,
-        input.targetId,
-        input.expectedRevision
+        resolvedInput.notebookId,
+        resolvedInput.title,
+        resolvedInput.body,
+        JSON.stringify(resolvedInput.document),
+        resolvedInput.kind,
+        resolvedInput.publicationTarget,
+        resolvedInput.proposal ? JSON.stringify(resolvedInput.proposal) : null,
+        resolvedInput.opportunity ? JSON.stringify(resolvedInput.opportunity) : null,
+        resolvedInput.targetId,
+        resolvedInput.expectedRevision
       ]
     );
     if (!updated.rowCount) throw new TRPCError({ code: "CONFLICT", message: "This draft changed before the save committed." });
@@ -505,7 +523,7 @@ export const updateWorkspaceDocument = async (
       noteId,
       revision,
       editorHandle: handle,
-      ...input,
+      ...resolvedInput,
       reason: input.checkpoint ? "checkpoint" : "autosave"
     });
     const value = { document: await selectDocument(client, noteId, handle), checkpointId, removedAttachmentIds: attachmentResult.removedAttachmentIds };
@@ -514,7 +532,12 @@ export const updateWorkspaceDocument = async (
       action: input.checkpoint ? "workspace.document.checkpoint" : "workspace.document.autosave",
       subjectType: "note",
       subjectId: noteId,
-      metadata: mutationAuditMetadata(mutation, { revision, notebookId: input.notebookId })
+      metadata: mutationAuditMetadata(mutation, {
+        revision,
+        notebookId: input.notebookId,
+        citationCount: citationResolution.citationCount,
+        newCitationCount: citationResolution.newCitationCount
+      })
     });
     await completeMutation(client, handle, mutation, value);
     const audienceHandles = await documentAudienceHandles(client, noteId);

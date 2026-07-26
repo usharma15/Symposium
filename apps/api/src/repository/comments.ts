@@ -48,6 +48,7 @@ import { transitionCommentAction } from "./actions";
 import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
 import { assertCommunityCommentDeletion } from "./communityAuthorization";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
+import { resolveNativeDocumentCitations } from "../services/nativeCitations";
 import { actorHandle, commentTreesFromRows, ensureLiveData, getInitialState, getPostConversationAttachments, getProfileByHandle, newId, rowToAttachment, rowToItem, type CommentRow, type SnapshotRow } from "./foundation";
 type ActionMutationResult = {
   item: InquiryItemContract;
@@ -220,6 +221,10 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         message: "Private comment attachments require protected delivery before they can be published."
       });
     }
+    const citationResolution = input.document
+      ? await resolveNativeDocumentCitations(client, input.document, handle)
+      : null;
+    if (citationResolution) comment.document = citationResolution.document;
     const parentComment = comment.parentId
       ? findCommentInTree(existingComments, comment.parentId)
       : null;
@@ -268,7 +273,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         comment.createdAt
       ]
     );
-    if (input.document) await client.query("UPDATE comments SET content_document = $2 WHERE id = $1", [comment.id, JSON.stringify(input.document)]);
+    if (comment.document) await client.query("UPDATE comments SET content_document = $2 WHERE id = $1", [comment.id, JSON.stringify(comment.document)]);
     const revisionResult = await client.query<{ revision: number }>(
       `UPDATE posts
        SET metrics = $2,
@@ -298,6 +303,8 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
       subjectId: comment.id as string,
       metadata: mutationAuditMetadata(mutation, {
         attachmentCount: comment.attachments.length,
+        citationCount: citationResolution?.citationCount ?? 0,
+        newCitationCount: citationResolution?.newCitationCount ?? 0,
         quotedSourceType: comment.quote?.sourceType,
         parentId: comment.parentId,
         postId
@@ -528,6 +535,10 @@ export const updateComment = async (
         message: "Private comment attachments require protected delivery before they can be published."
       });
     }
+    const citationResolution = input.document
+      ? await resolveNativeDocumentCitations(client, input.document, handle, original.document ?? null)
+      : null;
+    const nextDocument = citationResolution?.document ?? original.document ?? undefined;
 
     const attachmentChange = await replaceOwnerAttachments(client, {
       attachmentIds: input.attachmentIds,
@@ -544,7 +555,7 @@ export const updateComment = async (
     const mapped = mapCommentTree(existingComments, commentId, (comment) => ({
       ...comment,
       body: input.body,
-      document: input.document ?? comment.document,
+      document: nextDocument,
       attachments: attachmentChange.attachments.map(rowToAttachment),
       quote,
       editedAt,
@@ -561,7 +572,7 @@ export const updateComment = async (
            revision = revision + 1,
            updated_at = now()
        WHERE post_id = $1 AND id = $2`,
-      [postId, commentId, input.body, editedAt, quote ? JSON.stringify(quote) : null, input.document ? JSON.stringify(input.document) : original.document ? JSON.stringify(original.document) : null]
+      [postId, commentId, input.body, editedAt, quote ? JSON.stringify(quote) : null, nextDocument ? JSON.stringify(nextDocument) : null]
     );
 
     const postRevisionResult = await client.query<{ revision: number }>(
@@ -581,6 +592,8 @@ export const updateComment = async (
       metadata: {
         attachmentCount: attachmentChange.attachments.length,
         removedAttachmentCount: removedAttachmentIds.length,
+        citationCount: citationResolution?.citationCount ?? 0,
+        newCitationCount: citationResolution?.newCitationCount ?? 0,
         quotedSourceType: quote?.sourceType,
         editedAt,
         postId

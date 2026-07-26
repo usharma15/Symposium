@@ -179,18 +179,8 @@ export const documentFontSchema = z.enum(["system", "serif", "humanist", "mono"]
 export const documentTextSizeSchema = z.enum(["small", "normal", "large", "lead"]);
 export const documentTextColorSchema = z.enum(["default", "muted", "blue", "crimson", "forest", "gold"]);
 const textMarksSchema = z.array(documentMarkSchema).max(5).default([]);
-export const documentTextSchema = z.object({
-  text: z.string().max(100000),
-  marks: textMarksSchema.optional(),
-  link: safeExternalUrlSchema.optional(),
-  mentionHandle: z.string().trim().min(2).max(80).optional(),
-  font: documentFontSchema.optional(),
-  size: documentTextSizeSchema.optional(),
-  color: documentTextColorSchema.optional()
-});
 
 const documentNodeIdSchema = z.string().trim().min(1).max(120);
-const documentTextContentSchema = z.array(documentTextSchema).max(5000).default([]);
 export const postToneSchema = z.enum(["thought", "paper", "patronage", "opportunity"]);
 export const documentSourceSnapshotSchema = z.object({
   kind: z.enum(["post", "comment", "attachment"]),
@@ -233,6 +223,48 @@ export const documentCitationLocatorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("spreadsheet-range"), sheet: z.string().max(200), range: z.string().max(100) }),
   z.object({ kind: z.literal("presentation-slide"), slide: z.number().int().positive().max(100000) })
 ]);
+export const documentCitationStyleSchema = z.enum(["apa", "mla", "chicago"]);
+export const documentCitationMarkerText = "[citation]";
+export const documentNativeCitationSchema = z.object({
+  id: z.string().uuid(),
+  source: documentSourceSnapshotSchema,
+  locator: documentCitationLocatorSchema,
+  excerpt: z.string().trim().min(1).max(4000),
+  capturedAt: z.string().datetime().optional()
+});
+export const documentTextSchema = z.object({
+  text: z.string().max(100000),
+  marks: textMarksSchema.optional(),
+  link: safeExternalUrlSchema.optional(),
+  mentionHandle: z.string().trim().min(2).max(80).optional(),
+  font: documentFontSchema.optional(),
+  size: documentTextSizeSchema.optional(),
+  color: documentTextColorSchema.optional(),
+  citation: documentNativeCitationSchema.optional()
+}).superRefine((run, context) => {
+  if (!run.citation) return;
+  if (run.text !== documentCitationMarkerText) {
+    context.addIssue({
+      code: "custom",
+      path: ["text"],
+      message: `Native citation markers must use ${documentCitationMarkerText}.`
+    });
+  }
+  if (
+    run.marks?.length ||
+    run.link ||
+    run.mentionHandle ||
+    run.font ||
+    run.size ||
+    run.color
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Native citation markers cannot carry unrelated text formatting."
+    });
+  }
+});
+const documentTextContentSchema = z.array(documentTextSchema).max(5000).default([]);
 const drawingPointSchema = z.object({
   x: z.number().min(0).max(1),
   y: z.number().min(0).max(1),
@@ -304,8 +336,40 @@ export const versionedDocumentSchema = z.object({
   nodes: z.array(documentNodeSchema).min(1).max(2000),
   settings: z.object({
     width: z.enum(["standard", "wide"]).default("standard"),
-    margin: z.enum(["compact", "normal", "generous"]).default("normal")
+    margin: z.enum(["compact", "normal", "generous"]).default("normal"),
+    citationStyle: documentCitationStyleSchema.optional()
   }).optional()
+}).superRefine((document, context) => {
+  const records = document.nodes.flatMap((node) => {
+    if (node.type === "paragraph" || node.type === "heading" || node.type === "quote") {
+      return node.content.flatMap((run) => run.citation ? [run.citation] : []);
+    }
+    if (node.type === "list") {
+      return node.items.flatMap((item) => item.flatMap((run) => run.citation ? [run.citation] : []));
+    }
+    return [];
+  });
+  if (records.length > 100) {
+    context.addIssue({
+      code: "custom",
+      path: ["nodes"],
+      message: "A document can contain at most 100 native citation markers."
+    });
+  }
+  const byId = new Map<string, string>();
+  for (const record of records) {
+    const fingerprint = JSON.stringify(record);
+    const current = byId.get(record.id);
+    if (current && current !== fingerprint) {
+      context.addIssue({
+        code: "custom",
+        path: ["nodes"],
+        message: "A native citation ID cannot refer to two different source snapshots."
+      });
+      break;
+    }
+    byId.set(record.id, fingerprint);
+  }
 });
 
 export const workspaceDocumentKindSchema = z.enum([
@@ -2323,6 +2387,8 @@ export type WorkspaceSearchInputContract = z.infer<typeof workspaceSearchInputSc
 export type PostToneContract = z.infer<typeof postToneSchema>;
 export type DocumentSourceSnapshotContract = z.infer<typeof documentSourceSnapshotSchema>;
 export type DocumentCitationLocatorContract = z.infer<typeof documentCitationLocatorSchema>;
+export type DocumentCitationStyleContract = z.infer<typeof documentCitationStyleSchema>;
+export type DocumentNativeCitationContract = z.infer<typeof documentNativeCitationSchema>;
 export type DocumentDrawingContract = z.infer<typeof documentDrawingSchema>;
 export type UpdateScribbleInputContract = z.infer<typeof updateScribbleInputSchema>;
 export type FileScribbleInputContract = z.infer<typeof fileScribbleInputSchema>;

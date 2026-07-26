@@ -3,7 +3,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import katex from "katex";
 import type { InquiryAttachment, ResearchProfile } from "@/lib/mockData";
-import type { VersionedDocumentContract } from "@/packages/contracts/src";
+import type {
+  DocumentNativeCitationContract,
+  VersionedDocumentContract
+} from "@/packages/contracts/src";
 import {
   documentForContent,
   type SymposiumTextRun
@@ -11,7 +14,14 @@ import {
 import { cleanHandle } from "@/lib/symposiumCore";
 import { AttachmentCarousel } from "@/features/attachments/AttachmentViews";
 import { DocumentDrawingPreview } from "@/features/content/DocumentDrawing";
-import { documentCitationLocatorLabel, documentSourceContextLabel } from "@/lib/documentCitations";
+import {
+  documentCitationBibliographyEntry,
+  documentCitationLocatorLabel,
+  documentCitationOrdinals,
+  documentCitationStyleLabel,
+  documentNativeCitations,
+  documentSourceContextLabel
+} from "@/lib/documentCitations";
 import { postToneClassName } from "@/lib/postTone";
 
 const runStyle = (run: SymposiumTextRun): CSSProperties => ({
@@ -51,8 +61,42 @@ function MentionAwareText({ run, profiles }: { run: SymposiumTextRun; profiles: 
   });
 }
 
-function TextRuns({ content, profiles }: { content: SymposiumTextRun[]; profiles: Record<string, ResearchProfile> }) {
-  return <>{content.map((run, index) => <MentionAwareText key={`${run.text}-${index}`} run={run} profiles={profiles} />)}</>;
+function InlineCitationMarker({
+  citation,
+  ordinal
+}: {
+  citation: DocumentNativeCitationContract;
+  ordinal: number;
+}) {
+  return (
+    <span className="document-inline-citation" tabIndex={0}>
+      <a
+        href={citation.source.canonicalPath}
+        aria-label={`Citation ${ordinal}: ${citation.source.title ?? citation.source.author ?? "Symposium source"}`}
+      >
+        [{ordinal}]
+      </a>
+      <span className="document-inline-citation-preview" role="tooltip">
+        <small>{documentCitationLocatorLabel(citation.locator)} · {documentSourceContextLabel(citation.source)}</small>
+        <strong>{citation.source.title ?? citation.source.author ?? "Symposium source"}</strong>
+        <q>{citation.excerpt}</q>
+      </span>
+    </span>
+  );
+}
+
+function TextRuns({
+  content,
+  profiles,
+  citationOrdinals
+}: {
+  content: SymposiumTextRun[];
+  profiles: Record<string, ResearchProfile>;
+  citationOrdinals: Map<string, number>;
+}) {
+  return <>{content.map((run, index) => run.citation
+    ? <InlineCitationMarker key={`${run.citation.id}-${index}`} citation={run.citation} ordinal={citationOrdinals.get(run.citation.id) ?? 1} />
+    : <MentionAwareText key={`${run.text}-${index}`} run={run} profiles={profiles} />)}</>;
 }
 
 function Equation({ source, display }: { source: string; display: boolean }) {
@@ -88,6 +132,9 @@ export function SymposiumDocumentRenderer({
   onExpand?: () => void;
 }) {
   const resolved = documentForContent(document, body);
+  const nativeCitations = documentNativeCitations(resolved);
+  const citationOrdinals = documentCitationOrdinals(resolved);
+  const citationStyle = resolved.settings?.citationStyle ?? "apa";
   const attachmentById = new Map((attachments ?? []).map((attachment) => [attachment.id, attachment]));
   const collapsibleSurface = mode === "feed" || mode === "comment";
   const contentFingerprint = JSON.stringify([body, document ?? null]);
@@ -130,7 +177,7 @@ export function SymposiumDocumentRenderer({
     if (node.type === "drawing") return <figure key={node.id} className="document-drawing" data-document-block-id={node.id}><DocumentDrawingPreview drawing={node.drawing} />{node.caption ? <figcaption>{node.caption}</figcaption> : null}</figure>;
     if (node.type === "list") {
       const Tag = node.style === "decimal" || node.style.includes("alpha") ? "ol" : "ul";
-      return <Tag key={node.id} data-document-block-id={node.id} className={`document-list document-list-${node.style}`} style={{ marginLeft: `${node.depth * 1.25}rem` }}>{node.items.map((item, index) => <li key={index}><TextRuns content={item} profiles={profiles} /></li>)}</Tag>;
+      return <Tag key={node.id} data-document-block-id={node.id} className={`document-list document-list-${node.style}`} style={{ marginLeft: `${node.depth * 1.25}rem` }}>{node.items.map((item, index) => <li key={index}><TextRuns content={item} profiles={profiles} citationOrdinals={citationOrdinals} /></li>)}</Tag>;
     }
     if (node.type === "reference") return <a key={node.id} data-document-block-id={node.id} className={`document-reference document-source-card ${postToneClassName(node.source?.postTone ?? null)}`} href={node.source?.canonicalPath ?? `/${node.resource.type}s/${encodeURIComponent(node.resource.id)}`}><small>{node.source ? documentSourceContextLabel(node.source) : node.resource.type}</small><strong>{node.source?.title ?? node.resource.label ?? node.resource.id}</strong>{node.source?.body ? <span>{node.source.body}</span> : null}</a>;
     if (node.type === "citation") {
@@ -144,10 +191,10 @@ export function SymposiumDocumentRenderer({
     if (node.type === "heading") {
       const hierarchyOffset = mode === "detail" ? 1 : mode === "feed" || mode === "comment" ? 2 : 0;
       const Heading = `h${Math.min(4, Math.max(1, node.level + hierarchyOffset))}` as "h1" | "h2" | "h3" | "h4";
-      return <Heading key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></Heading>;
+      return <Heading key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} citationOrdinals={citationOrdinals} /></Heading>;
     }
-    if (node.type === "quote") return <blockquote key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></blockquote>;
-    return <p key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></p>;
+    if (node.type === "quote") return <blockquote key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} citationOrdinals={citationOrdinals} /></blockquote>;
+    return <p key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} citationOrdinals={citationOrdinals} /></p>;
   });
   const collapseStateClass = expanded ? "expanded" : `collapsed${collapsible ? " is-collapsible" : ""}`;
 
@@ -161,6 +208,23 @@ export function SymposiumDocumentRenderer({
           {renderedNodes}
         </div>
       ) : renderedNodes}
+      {nativeCitations.length ? (
+        <section className="document-bibliography" aria-label={`${documentCitationStyleLabel(citationStyle)} bibliography`}>
+          <header>
+            <strong>References</strong>
+            <small>{documentCitationStyleLabel(citationStyle)}</small>
+          </header>
+          <ol>
+            {nativeCitations.map((citation) => (
+              <li key={citation.id} id={`citation-${citation.id}`}>
+                <a href={citation.source.canonicalPath}>
+                  {documentCitationBibliographyEntry(citation, citationStyle)}
+                </a>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
       {collapsibleSurface && (collapsible || expanded) ? (
         <button
           type="button"

@@ -79,11 +79,13 @@ Symposium remains the system of record. Conversation history, attached sources, 
 
 ### 5. Real in-app citations
 
-- Let a user highlight a passage and insert a linked citation marker into a post, comment, or Office document.
-- Store a durable source snapshot and precise locator rather than only formatted text.
-- Render hover previews containing the quoted passage and source metadata.
-- Generate and update APA, MLA, and Chicago bibliographies from the structured citation records.
-- Use AI for metadata recovery and formatting assistance, but keep deterministic citation records and rendering as the foundation.
+- Highlighted post/comment passages, attachment captures, and eligible AI Evidence Map records can be staged once and inserted at the active caret in a post, comment, or Office document. **Shipped.**
+- Inline markers are structured document atoms with a stable citation ID, exact excerpt and locator, server-canonical source metadata, source revision, and server capture time. New citations are re-authorized against the source on save; saved snapshots cannot be silently mutated. **Shipped.**
+- Linked numeric markers, keyboard-accessible hover/focus previews, stable first-occurrence ordering, and automatic References sections render anywhere the shared document renderer is used. **Shipped.**
+- APA, MLA, and Chicago presentation choices are stored in document settings and rendered deterministically from the structured records. The exact edition policy and a future CSL-compatible formatter remain intentionally open. **Shipped within that explicit boundary.**
+- Post, comment, and Office create/update paths persist the canonical records in their existing revisioned `content_document`; audit metadata records total and newly captured citation counts. Existing snapshots remain editable if source access later changes. **Shipped.**
+- Native citation contracts, TipTap round trips, authorization/canonicalization, excerpt validation, immutable snapshots, UI integration, responsive styling, full typechecks, and the complete repository production-build gate are covered by `npm run citation:check` and `npm run verify`. **Verified locally on 2026-07-26.**
+- AI metadata recovery and formatting assistance are deferred until incomplete legacy/external metadata actually requires them; AI-generated prose is not accepted as citation truth.
 
 ### 6. Permissioned site-wide actions
 

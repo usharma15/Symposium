@@ -12,7 +12,7 @@ import {
   type ReactNode
 } from "react";
 import Link from "next/link";
-import { AlertTriangle, Check, ChevronUp, FileInput, Folder, FolderPlus, PenLine, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, ChevronUp, FileInput, Folder, FolderPlus, PenLine, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import {
   SymposiumDocumentEditor,
   type SymposiumDocumentEditorHandle
@@ -30,6 +30,7 @@ import type {
 import type { FiledScribble, ScribbleNotebook, ScribbleSnapshot, WorkspaceScribble } from "@/lib/workspaceTypes";
 import { documentSourceContextLabel, documentSourceKey } from "@/lib/documentCitations";
 import { postToneClassName, postToneForItem, type PostTone } from "@/lib/postTone";
+import { useNativeCitation } from "@/features/citations/NativeCitationContext";
 import { decideScribbleSnapshot } from "@/features/scribble/scribbleReconciliation";
 
 type ScribbleSyncMessage = {
@@ -784,6 +785,7 @@ export function ScribbleCitable({
   className?: string;
 }) {
   const scribble = useScribble();
+  const nativeCitation = useNativeCitation();
   const rootRef = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<{
     excerpt: string;
@@ -831,19 +833,35 @@ export function ScribbleCitable({
     setSelection(null);
   };
 
+  const stageNativeCitation = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!selection) return;
+    nativeCitation.stageCitation(source, selection.excerpt, selection.locator);
+    window.getSelection()?.removeAllRanges();
+    setSelection(null);
+  };
+
   return (
     <div ref={rootRef} className={`scribble-citable ${className}`} onMouseUp={inspectSelection} onKeyUp={inspectSelection}>
       {children}
       {selection ? (
-        <button
-          type="button"
-          className="scribble-selection-action"
-          style={{ left: selection.left, top: selection.top }}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={cite}
-        >
-          <PenLine size={14} />Cite in Scribble
-        </button>
+        <div className="scribble-selection-action native-citation-selection-actions" style={{ left: selection.left, top: selection.top }}>
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={stageNativeCitation}
+          >
+            <BookOpen size={14} />Cite in draft
+          </button>
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={cite}
+          >
+            <PenLine size={14} />Scribble
+          </button>
+        </div>
       ) : null}
     </div>
   );

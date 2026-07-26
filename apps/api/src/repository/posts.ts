@@ -47,6 +47,7 @@ import {
   resolveNotifications
 } from "../services/notificationDelivery";
 import { assertCanonicalOpportunityUpdate, createOpportunityProjection, opportunityPostStatus, updateOpportunityProjection } from "../services/opportunityPosts";
+import { resolveNativeDocumentCitations } from "../services/nativeCitations";
 import { transitionPostAction } from "./actions";
 import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
 import { assertCommunityPostDeletion } from "./communityAuthorization";
@@ -160,6 +161,10 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       await client.query("COMMIT");
       return claim.response;
     }
+    const citationResolution = input.document
+      ? await resolveNativeDocumentCitations(client, input.document, handle)
+      : null;
+    if (citationResolution) item.document = citationResolution.document;
     item.quote = await resolveContentQuote(client, input.quoteSource, {
       ownerId: item.id, ownerType: "post", actorHandle: handle, targetCommunityId: item.communityId, targetPostType: item.postType
     });
@@ -210,8 +215,8 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       ]
     );
     await insertPatronageProposal(client, item.id, item.patronage);
-    if (input.document) {
-      await client.query("UPDATE posts SET content_document = $2 WHERE id = $1", [item.id, JSON.stringify(input.document)]);
+    if (item.document) {
+      await client.query("UPDATE posts SET content_document = $2 WHERE id = $1", [item.id, JSON.stringify(item.document)]);
     }
 
     if (item.authorHandle && item.savedBy?.includes(item.authorHandle)) {
@@ -240,6 +245,8 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       metadata: mutationAuditMetadata(mutation, {
         attachmentCount: item.attachments.length,
         quotedSourceType: item.quote?.sourceType,
+        citationCount: citationResolution?.citationCount ?? 0,
+        newCitationCount: citationResolution?.newCitationCount ?? 0,
         kind: item.kind,
         room: item.room
       })
@@ -668,6 +675,10 @@ export const updatePost = async (
         message: "Private post attachments require protected delivery before they can be published."
       });
     }
+    const citationResolution = input.document
+      ? await resolveNativeDocumentCitations(client, input.document, handle, row.document ?? null)
+      : null;
+    const nextDocument = citationResolution?.document ?? row.document ?? null;
 
     const attachmentChange = await replaceOwnerAttachments(client, {
       attachmentIds: input.attachmentIds,
@@ -713,7 +724,7 @@ export const updatePost = async (
         searchablePostText({ title: input.title, body: input.body, excerpt: input.body, authorName: row.authorName }),
         editedAt,
         quote ? JSON.stringify(quote) : null,
-        input.document ? JSON.stringify(input.document) : row.document ? JSON.stringify(row.document) : null,
+        nextDocument ? JSON.stringify(nextDocument) : null,
         patronage ? JSON.stringify(patronage) : null,
         status,
         opportunity ? JSON.stringify(opportunity) : null
@@ -742,7 +753,7 @@ export const updatePost = async (
         ...row,
         title: input.title,
         body: input.body,
-        document: input.document ?? row.document ?? undefined,
+        document: nextDocument ?? undefined,
         excerpt: input.body,
         claims: [input.body],
         quote,
@@ -765,6 +776,8 @@ export const updatePost = async (
         attachmentCount: attachmentChange.attachments.length,
         removedAttachmentCount: removedAttachmentIds.length,
         quotedSourceType: quote?.sourceType,
+        citationCount: citationResolution?.citationCount ?? 0,
+        newCitationCount: citationResolution?.newCitationCount ?? 0,
         editedAt
       }
     });
