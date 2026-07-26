@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
+import type { PoolClient } from "pg";
 import {
   assistantContextSchema,
   assistantContextUpdateInputSchema,
@@ -66,6 +67,13 @@ import {
   prepareAssistantVisionInputs,
   type AssistantVisionAttachment
 } from "../services/assistantVision";
+import {
+  buildAssistantEvidence,
+  resolveAssistantEvidenceClaims,
+  type AssistantEvidenceBlock,
+  type AssistantEvidencePacket,
+  type AssistantSourceValidation
+} from "../services/assistantEvidence";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
 type ParsedInput = ReturnType<typeof assistantMessageInputSchema.parse>;
@@ -100,6 +108,8 @@ type PreparedAssistant = {
   attachedContexts: AssistantContextContract[];
   visionAttachments: AssistantVisionAttachment[];
   evidence: AssistantMessageContract["evidence"];
+  evidenceBlocks: AssistantEvidenceBlock[];
+  evidencePackets: AssistantEvidencePacket[];
   userMessage: AssistantMessageContract;
   thread: AssistantThreadStateContract;
   input: ParsedInput;
@@ -247,17 +257,190 @@ const assistantAttachmentContext = (
   });
 };
 
-const evidenceForSources = (
+const unavailableEvidenceSource = (source: AssistantThreadSourceContract) => {
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: `“${source.context.title || "A saved source"}” is no longer available with your current access. Remove it from this answer or recapture the view.`
+  });
+};
+
+export const validateAssistantEvidenceSources = async (
+  client: PoolClient,
   sources: AssistantThreadSourceContract[],
-  activeSourceId: string | null
-): AssistantMessageContract["evidence"] => sources.map((source) => ({
-  sourceId: source.id,
-  key: source.key,
-  revision: source.revision,
-  title: source.context.title,
-  surface: source.context.surface,
-  route: source.context.route,
-  active: source.id === activeSourceId
+  owner: string,
+  conversationId: string,
+  pendingAttachmentIds: string[]
+): Promise<AssistantSourceValidation[]> => Promise.all(sources.map(async (source) => {
+  const { context } = source;
+  const entityType = context.entityType;
+  const entityId = context.entityId?.trim();
+  const allowUnresolvedRecovery = source.provenance === "recovered";
+  const validated = (currentEntityRevision: number | null): AssistantSourceValidation => ({
+    source,
+    accessStatus: "verified",
+    currentEntityRevision
+  });
+  const unresolved = (): AssistantSourceValidation => ({
+    source,
+    accessStatus: "not_applicable",
+    currentEntityRevision: null
+  });
+
+  if (!entityId || !entityType) return unresolved();
+  if (entityType === "post" || entityType === "opportunity") {
+    const result = await client.query<{ revision: number }>(
+      `SELECT post.revision
+       FROM posts post
+       LEFT JOIN communities community ON community.id = post.community_id
+       WHERE post.id = $1
+         AND post.deleted_at IS NULL
+         AND ((post.room <> 'office' AND post.kind <> 'draft') OR post.author_handle = $2)
+         AND (
+           post.community_id IS NULL
+           OR post.post_type = 'paper'
+           OR community.visibility = 'public'
+           OR post.author_handle = $2
+           OR EXISTS (
+             SELECT 1
+             FROM community_memberships viewer
+             WHERE viewer.community_id = post.community_id
+               AND viewer.profile_handle = $2
+               AND viewer.status = 'active'
+           )
+         )
+       LIMIT 1`,
+      [entityId, owner]
+    );
+    if (!result.rows[0]) return allowUnresolvedRecovery ? unresolved() : unavailableEvidenceSource(source);
+    return validated(result.rows[0].revision);
+  }
+  if (entityType === "comment") {
+    const result = await client.query<{ revision: number }>(
+      `SELECT comment.revision
+       FROM comments comment
+       JOIN posts post ON post.id = comment.post_id
+       LEFT JOIN communities community ON community.id = post.community_id
+       WHERE comment.id = $1
+         AND comment.deleted_at IS NULL
+         AND post.deleted_at IS NULL
+         AND ((post.room <> 'office' AND post.kind <> 'draft') OR post.author_handle = $2)
+         AND (
+           post.community_id IS NULL
+           OR post.post_type = 'paper'
+           OR community.visibility = 'public'
+           OR post.author_handle = $2
+           OR EXISTS (
+             SELECT 1
+             FROM community_memberships viewer
+             WHERE viewer.community_id = post.community_id
+               AND viewer.profile_handle = $2
+               AND viewer.status = 'active'
+           )
+         )
+       LIMIT 1`,
+      [entityId, owner]
+    );
+    if (!result.rows[0]) return allowUnresolvedRecovery ? unresolved() : unavailableEvidenceSource(source);
+    return validated(result.rows[0].revision);
+  }
+  if (entityType === "note") {
+    const result = await client.query<{ revision: number }>(
+      `SELECT note.revision
+       FROM notes note
+       LEFT JOIN workspace_note_grants direct
+         ON direct.note_id = note.id AND direct.grantee_handle = $2
+       LEFT JOIN workspace_notebook_grants inherited
+         ON inherited.notebook_id = note.notebook_id AND inherited.grantee_handle = $2
+       WHERE note.id::text = $1
+         AND note.deleted_at IS NULL
+         AND (note.owner_handle = $2 OR direct.id IS NOT NULL OR inherited.id IS NOT NULL)
+       LIMIT 1`,
+      [entityId, owner]
+    );
+    if (!result.rows[0]) return allowUnresolvedRecovery ? unresolved() : unavailableEvidenceSource(source);
+    return validated(result.rows[0].revision);
+  }
+  if (entityType === "conversation") {
+    const result = await client.query<{ revision: number }>(
+      `SELECT conversation.revision
+       FROM conversations conversation
+       JOIN conversation_participants participant
+         ON participant.conversation_id = conversation.id
+       WHERE conversation.id::text = $1
+         AND participant.profile_handle = $2
+         AND participant.status = 'active'
+         AND participant.hidden_at IS NULL
+       LIMIT 1`,
+      [entityId, owner]
+    );
+    if (!result.rows[0]) return allowUnresolvedRecovery ? unresolved() : unavailableEvidenceSource(source);
+    return validated(result.rows[0].revision);
+  }
+  if (entityType === "assistant_attachment") {
+    const result = await client.query(
+      `SELECT 1
+       FROM attachments attachment
+       WHERE attachment.id::text = $1
+         AND attachment.owner_type = 'assistant_message'
+         AND attachment.uploader_handle = $2
+         AND attachment.status IN ('uploaded', 'previewed')
+         AND (
+           (
+             attachment.owner_id IS NULL
+             AND attachment.id::text = ANY($4::text[])
+           )
+           OR EXISTS (
+             SELECT 1
+             FROM ai_messages message
+             WHERE message.id::text = attachment.owner_id
+               AND message.conversation_id = $3
+           )
+         )
+       LIMIT 1`,
+      [entityId, owner, conversationId, pendingAttachmentIds]
+    );
+    if (!result.rowCount) return allowUnresolvedRecovery ? unresolved() : unavailableEvidenceSource(source);
+    return validated(null);
+  }
+  if (entityType === "attachment") {
+    const result = await client.query<{ revision: number }>(
+      `SELECT post.revision
+       FROM attachments attachment
+       LEFT JOIN comments comment
+         ON attachment.owner_type = 'comment' AND comment.id = attachment.owner_id
+       JOIN posts post
+         ON post.id = CASE
+           WHEN attachment.owner_type = 'post' THEN attachment.owner_id
+           WHEN attachment.owner_type = 'comment' THEN comment.post_id
+           ELSE NULL
+         END
+       LEFT JOIN communities community ON community.id = post.community_id
+       WHERE attachment.id::text = $1
+         AND attachment.status IN ('uploaded', 'previewed')
+         AND post.deleted_at IS NULL
+         AND (comment.id IS NULL OR comment.deleted_at IS NULL)
+         AND ((post.room <> 'office' AND post.kind <> 'draft') OR post.author_handle = $2)
+         AND (
+           post.community_id IS NULL
+           OR post.post_type = 'paper'
+           OR community.visibility = 'public'
+           OR post.author_handle = $2
+           OR EXISTS (
+             SELECT 1
+             FROM community_memberships viewer
+             WHERE viewer.community_id = post.community_id
+               AND viewer.profile_handle = $2
+               AND viewer.status = 'active'
+           )
+         )
+       LIMIT 1`,
+      [entityId, owner]
+    );
+    if (!result.rows[0]) return allowUnresolvedRecovery ? unresolved() : unavailableEvidenceSource(source);
+    return validated(result.rows[0].revision);
+  }
+
+  return unresolved();
 }));
 
 const messageFromRow = (row: {
@@ -278,6 +461,7 @@ const messageFromRow = (row: {
     body: row.body,
     createdAt: isoString(row.createdAt),
     evidence: metadata.evidence ?? [],
+    claims: metadata.claims ?? [],
     attachments: assistantAttachmentsFromMetadata(metadata.attachments),
     ...(metadata.translation ? { translation: metadata.translation } : {}),
     ...(metadata.quickNote ? { quickNote: metadata.quickNote } : {}),
@@ -350,6 +534,7 @@ const unavailableResponse = (
       body,
       createdAt: new Date().toISOString(),
       evidence: [],
+      claims: [],
       attachments: []
     }
   };
@@ -1224,7 +1409,18 @@ const prepareAssistant = async (
     .filter((source) => source.id !== activeSource?.id)
     .slice(-4)
     .map((source) => source.context);
-  const evidence = evidenceForSources(evidenceSources, activeSource?.id ?? null);
+  const validatedSources = await validateAssistantEvidenceSources(
+    client,
+    evidenceSources,
+    owner,
+    conversationId,
+    attachmentIds
+  );
+  const {
+    evidence,
+    blocks: evidenceBlocks,
+    packets: evidencePackets
+  } = buildAssistantEvidence(validatedSources, activeSource?.id ?? null);
   const visionAttachmentIds = Array.from(new Set(
     evidenceSources.flatMap((source) => {
       const sourceContext = source.context;
@@ -1311,6 +1507,7 @@ const prepareAssistant = async (
     history,
     context,
     attachedContexts,
+    evidencePackets,
     message: input.message,
     intent: input.intent,
     targetLanguage: input.targetLanguage
@@ -1373,6 +1570,8 @@ const prepareAssistant = async (
       attachedContexts,
       visionAttachments,
       evidence,
+      evidenceBlocks,
+      evidencePackets,
       userMessage: messageFromRow(userMessage.rows[0]!),
       thread: assistantThreadState({ ...conversationRow, contextSources: sources }),
       input,
@@ -1390,6 +1589,9 @@ const finalizeAssistant = async (
 ): Promise<AssistantResponseContract> => runAtomic(async (client) => {
   const providerError = !result;
   const body = result?.body ?? failure?.body ?? "The AI service could not complete this answer. No daily answer was used; you can retry.";
+  const claims = result
+    ? resolveAssistantEvidenceClaims(result.claims, prepared.evidenceBlocks)
+    : [];
   const translation = result?.translation && prepared.input.targetLanguage && prepared.context
     ? {
         ...result.translation,
@@ -1459,6 +1661,7 @@ const finalizeAssistant = async (
         body: "This chat was deleted while the answer was being prepared, so the answer was discarded.",
         createdAt: new Date().toISOString(),
         evidence: [],
+        claims: [],
         attachments: []
       }
     };
@@ -1492,6 +1695,7 @@ const finalizeAssistant = async (
       providerError,
       providerErrorCode: failure?.code ?? null,
       evidence: prepared.evidence,
+      claims,
       translation: translation ?? null,
       quickNote: quickNote ?? null
     })]
@@ -1536,6 +1740,7 @@ const finalizeAssistant = async (
       ...row,
       createdAt: new Date(row.createdAt).toISOString(),
       evidence: prepared.evidence,
+      claims,
       ...(translation ? { translation } : {}),
       ...(quickNote ? { quickNote } : {})
     }),
@@ -1602,6 +1807,8 @@ export const askAssistant = async (
       history: prepared.history,
       context: prepared.context,
       attachedContexts: prepared.attachedContexts,
+      evidencePackets: prepared.evidencePackets,
+      evidenceBlocks: prepared.evidenceBlocks,
       message: input.message,
       intent: input.intent,
       targetLanguage: input.targetLanguage,

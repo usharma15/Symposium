@@ -41,6 +41,12 @@ const assistantAttachmentProcessingLabel = (attachment: InquiryAttachmentContrac
   return "Stored only";
 };
 
+const assistantClaimKindLabel = {
+  direct: "Direct evidence",
+  inference: "Inference",
+  insufficient: "Insufficient context"
+} as const;
+
 const assistantAttachmentUrl = (
   attachment: InquiryAttachmentContract,
   actorHandle: string
@@ -1051,13 +1057,76 @@ export function AssistantExperience({
               ) : null}
               {message.role === "assistant" && message.evidence?.length ? (
                 <details className="tablet-message-evidence">
-                  <summary><BookOpen size={12} />Used {message.evidence.length} source{message.evidence.length === 1 ? "" : "s"}</summary>
-                  <div>
-                    {message.evidence.map((source) => (
-                      <span className={source.active ? "active" : ""} key={source.sourceId}>
-                        {source.active ? "Active · " : ""}{source.title} · v{source.revision}
-                      </span>
-                    ))}
+                  <summary>
+                    <BookOpen size={12} />
+                    Evidence map
+                    <small>
+                      {message.claims?.length ?? 0} claim{message.claims?.length === 1 ? "" : "s"} · {message.evidence.length} source{message.evidence.length === 1 ? "" : "s"}
+                    </small>
+                  </summary>
+                  <div className="tablet-message-evidence-body">
+                    <div className="tablet-message-evidence-sources" aria-label="Sources used for this answer">
+                      {message.evidence.map((source) => (
+                        <a
+                          className={source.active ? "active" : ""}
+                          href={source.route || "/"}
+                          key={source.sourceId}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          <span>
+                            {source.active ? "Active · " : ""}{source.title} · saved v{source.revision}
+                          </span>
+                          <small>
+                            {source.revisionStatus === "changed"
+                              ? `Source changed since capture${source.currentEntityRevision ? ` · now r${source.currentEntityRevision}` : ""}`
+                              : source.accessStatus === "verified"
+                                ? "Access verified for this answer"
+                                : "Saved source snapshot"}
+                          </small>
+                          <ExternalLink size={11} aria-hidden="true" />
+                        </a>
+                      ))}
+                    </div>
+                    {message.claims?.length ? (
+                      <ol className="tablet-message-evidence-claims" aria-label="Claim-level evidence">
+                        {message.claims.map((claim, claimIndex) => (
+                          <li className={`claim-${claim.kind}`} key={`${message.id}:claim:${claimIndex}`}>
+                            <div className="tablet-message-evidence-claim-heading">
+                              <strong>{assistantClaimKindLabel[claim.kind]}</strong>
+                              <span>{claim.claim}</span>
+                            </div>
+                            {claim.citations.length ? (
+                              <div className="tablet-message-evidence-citations">
+                                {claim.citations.map((citation) => (
+                                  <a
+                                    href={citation.route || "/"}
+                                    key={`${claimIndex}:${citation.ref}`}
+                                    rel="noreferrer"
+                                    target="_blank"
+                                  >
+                                    <span>
+                                      <b>{citation.ref}</b>
+                                      {citation.label}
+                                      <ExternalLink size={10} aria-hidden="true" />
+                                    </span>
+                                    <q>{citation.excerpt}</q>
+                                  </a>
+                                ))}
+                              </div>
+                            ) : (
+                              <small className="tablet-message-evidence-missing">
+                                No supplied passage resolves this point.
+                              </small>
+                            )}
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="tablet-message-evidence-empty">
+                        This saved answer predates passage-level citations. Its source set is preserved above.
+                      </p>
+                    )}
                   </div>
                 </details>
               ) : null}

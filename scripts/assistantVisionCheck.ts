@@ -204,6 +204,7 @@ const main = async () => {
       status: "completed",
       output_text: JSON.stringify({
         body: "The image contains a blue scientific chart.",
+        claims: [],
         shouldOfferQuickNote: false,
         quickNoteTitle: "",
         quickNoteBody: ""

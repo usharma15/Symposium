@@ -73,6 +73,7 @@ const main = async () => {
 
   const assistantOutput = {
     body: "A strong scientific question is specific, answerable, and capable of changing what we believe.",
+    claims: [],
     shouldOfferQuickNote: false,
     quickNoteTitle: "",
     quickNoteBody: ""

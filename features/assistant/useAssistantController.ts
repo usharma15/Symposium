@@ -48,6 +48,7 @@ export type AssistantMessageView = {
   conversationId?: string;
   createdAt?: string;
   evidence?: AssistantMessageContract["evidence"];
+  claims?: AssistantMessageContract["claims"];
   translation?: AssistantTranslationContract;
   quickNote?: AssistantQuickNoteContract;
   quickNoteResult?: AssistantQuickNoteResultContract;

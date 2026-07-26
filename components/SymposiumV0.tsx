@@ -444,6 +444,7 @@ const tabletDiscussionText = (
       const selected = comment.id && comment.id === selectedCommentId ? " [SELECTED]" : "";
       const attachments = (comment.attachments ?? []).map((attachment) => buildTabletAttachmentContext(attachment));
       lines.push([
+        `[Comment ${comment.id} · revision ${comment.revision ?? 1}]`,
         `${"  ".repeat(Math.min(depth, 4))}${comment.author} · ${comment.stance}${selected}`,
         comment.body,
         attachments.length ? `Attachments:\n${attachments.join("\n\n")}` : ""
@@ -651,7 +652,12 @@ function SymposiumExperience({
   const [quickConversationId, setQuickConversationId] = useState<string | null>(null);
   const [messagingEvents, setMessagingEvents] = useState<SymposiumLiveEvent[]>([]);
   const [assistantEvents, setAssistantEvents] = useState<AssistantThreadLiveEvent[]>([]);
-  const [messageTabletContext, setMessageTabletContext] = useState<{ conversationId: string; title: string; content: string } | null>(null);
+  const [messageTabletContext, setMessageTabletContext] = useState<{
+    conversationId: string;
+    title: string;
+    content: string;
+    revision: number;
+  } | null>(null);
   const [workspaceTabletDocument, setWorkspaceTabletDocument] = useState<WorkspaceDocument | null>(null);
   const [notificationEvents, setNotificationEvents] = useState<SymposiumLiveEvent[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -4242,7 +4248,10 @@ function SymposiumExperience({
         content: trimContent(messageTabletContext?.content ?? "No conversation is selected."),
         entityType: messageTabletContext ? "conversation" : undefined,
         entityId: messageTabletContext?.conversationId,
-        metadata: { privateConversation: Boolean(messageTabletContext) }
+        metadata: {
+          privateConversation: Boolean(messageTabletContext),
+          ...(messageTabletContext ? { revision: messageTabletContext.revision } : {})
+        }
       };
     }
     if (applicationReviewItem) {
@@ -4311,6 +4320,7 @@ function SymposiumExperience({
           selectedCommentId: selectedCommentId ?? "",
           visibleCommentCount: discussion.length,
           attachmentCount: selectedItem.attachments?.length ?? 0,
+          revision: selectedItem.revision ?? 1,
           ...(activePdfView ? {
             visibleAttachmentId: activePdfView.attachmentId,
             pdfPage: activePdfView.page,
@@ -4338,7 +4348,9 @@ function SymposiumExperience({
     if (activeRoom === "office" && officeMode === "notes") {
       return {
         surface: "workspace",
-        route: workspaceTabletDocument ? `/workspace/notes/${workspaceTabletDocument.id}` : "/workspace/notes",
+        route: workspaceTabletDocument
+          ? `/workspace?view=notes&note=${encodeURIComponent(workspaceTabletDocument.id)}`
+          : "/workspace?view=notes",
         title: workspaceTabletDocument?.title ?? "Workspace Notes",
         summary: workspaceTabletDocument
           ? `${workspaceTabletDocument.kind} draft · revision ${workspaceTabletDocument.revision}`
@@ -4346,7 +4358,11 @@ function SymposiumExperience({
         content: trimContent(workspaceTabletDocument?.body ?? `Workspace section: ${workspaceView.section}. Search: ${workspaceView.query || "none"}.`),
         entityType: workspaceTabletDocument ? "note" : "workspace",
         entityId: workspaceTabletDocument?.id,
-        metadata: { section: workspaceView.section, editing: workspaceView.editSelected }
+        metadata: {
+          section: workspaceView.section,
+          editing: workspaceView.editSelected,
+          ...(workspaceTabletDocument ? { revision: workspaceTabletDocument.revision } : {})
+        }
       };
     }
     const visibleFeedContext = visibleItems.slice(0, 12).map(tabletItemLine);

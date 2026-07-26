@@ -32,13 +32,16 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Keep internal document/content translation jobs out of the user’s Research Thread history.
 - Preserve an immutable origin snapshot and explicit source revisions instead of overwriting an earlier snapshot.
 
-### 2. Inspectable evidence and scoped reading — Context Dock foundation shipped
+### 2. Inspectable evidence and scoped reading — shipped for current source surfaces
 
 - Show the exact source set used for each answer. **Shipped.**
 - Let users include or exclude attached sources before asking. **Shipped, bounded to five included snapshots.**
 - Capture and revisit saved source revisions through the Context Dock. **Shipped.**
-- Add source-specific reading tools for posts, comments, notes, workspace documents, attachments, messages, and the visible selection.
-- Make answer claims link back to the relevant Symposium passage or attachment location.
+- Split posts, comments, notes/workspace documents, attachments, messages, and the visible selection into bounded stable evidence passages before the provider request. **Shipped.**
+- Require the model to classify material source-dependent claims as direct evidence, inference, or insufficient context and cite only server-supplied passage references. Reject invented passage references instead of persisting them. **Shipped.**
+- Persist claim-level evidence maps with exact saved excerpts and canonical deep links to posts, comments, notes, messages, attachments, and available page numbers. **Shipped.**
+- Recheck current access to private posts/comments, notes, conversations, and attachments before spending an answer; fail closed after deletion or revocation and label a saved revision when the underlying entity has changed. **Shipped.**
+- Keep old answers reloadable: their saved source set remains visible even when they predate claim-level evidence maps. **Shipped.**
 - Accept private AI chat attachments up to 5 MB with durable ownership, transcript and Context Dock persistence, protected retrieval, bounded extracted-text grounding, and deletion with the parent chat. **Shipped.**
 - Inspect at most two included PNG, JPEG, or WebP sources per answer through a server-normalized 1600px vision input. Reserve the full image-token ceiling before the provider call, enforce assistant-specific upload and daily vision limits, and never silently resend excluded images. **Shipped.**
 - Keep videos, unsupported image formats, scans, and unselected PDF pages stored but outside model vision unless a later bounded workflow explicitly includes them.

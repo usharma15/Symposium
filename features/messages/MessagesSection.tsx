@@ -479,7 +479,12 @@ function MessageBubble({
   };
 
   return (
-    <article className={`message-bubble-row ${own ? "own" : "received"}`} data-message-id={message.id}>
+    <article
+      className={`message-bubble-row ${own ? "own" : "received"}`}
+      data-message-id={message.id}
+      id={`message-${message.id}`}
+      tabIndex={-1}
+    >
       {!own ? <Avatar person={sender} name={sender?.name ?? message.senderHandle ?? "System"} /> : null}
       <div className={`message-bubble ${message.deletedAt ? "deleted" : ""}`}>
         {message.deletedAt ? (
@@ -903,7 +908,12 @@ type MessagingExperienceProps = {
   onOpenFull?: (conversationId: string | null) => void;
   onClose?: () => void;
   liveEvents?: MessagingLiveEvent[];
-  onTabletContextChange?: (context: { conversationId: string; title: string; content: string } | null) => void;
+  onTabletContextChange?: (context: {
+    conversationId: string;
+    title: string;
+    content: string;
+    revision: number;
+  } | null) => void;
   quick?: boolean;
 };
 
@@ -1111,13 +1121,35 @@ export function MessagingExperience({
     onTabletContextChange({
       conversationId: conversation.id,
       title: conversationName(conversation, actor.handle),
+      revision: conversation.revision,
       content: messages.slice(-12).map((message) => {
         const sender = message.senderHandle ? cleanHandle(message.senderHandle) : "system";
         const body = message.deletedAt ? "[deleted message]" : message.body;
-        return `${sender}: ${body || (message.attachments.length ? "[shared attachments]" : "")}`;
-      }).join("\n")
+        return [
+          `[Message ${message.id} · revision ${message.revision}]`,
+          `${sender}: ${body || (message.attachments.length ? "[shared attachments]" : "")}`
+        ].join("\n");
+      }).join("\n\n")
     });
   }, [actor.handle, conversation, messages, onTabletContextChange]);
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith("#message-")) return;
+    let targetId = hash.slice("#message-".length);
+    try {
+      targetId = decodeURIComponent(targetId);
+    } catch {
+      return;
+    }
+    if (!messageIdPattern.test(targetId)) return;
+    const target = document.getElementById(`message-${targetId}`);
+    if (!target) return;
+    window.requestAnimationFrame(() => {
+      target.scrollIntoView({ behavior: "auto", block: "center" });
+      target.focus({ preventScroll: true });
+    });
+  }, [conversation?.id, messages]);
 
   const loadConversations = useCallback(async (append = false) => {
     const requestEpoch = append ? conversationListEpochRef.current : conversationListEpochRef.current + 1;

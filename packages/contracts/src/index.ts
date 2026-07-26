@@ -1293,8 +1293,38 @@ export const assistantQuickNoteSchema = assistantQuickNoteDraftSchema.extend({
   source: assistantActionSourceSchema
 });
 
+export const assistantEvidenceClaimKindSchema = z.enum([
+  "direct",
+  "inference",
+  "insufficient"
+]);
+
+export const assistantEvidenceClaimDraftSchema = z.object({
+  claim: z.string().trim().min(1).max(600),
+  kind: assistantEvidenceClaimKindSchema,
+  sourceRefs: z.array(
+    z.string().trim().regex(/^S[1-5]\.B(?:[1-9]|1[0-6])$/)
+  ).max(5)
+}).superRefine((claim, context) => {
+  if (claim.kind === "direct" && claim.sourceRefs.length === 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["sourceRefs"],
+      message: "A direct evidence claim requires at least one source passage."
+    });
+  }
+  if (claim.kind === "insufficient" && claim.sourceRefs.length > 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["sourceRefs"],
+      message: "An insufficient-context claim cannot cite a source passage."
+    });
+  }
+});
+
 export const assistantAnswerDraftSchema = z.object({
   body: z.string().trim().min(1).max(16000),
+  claims: z.array(assistantEvidenceClaimDraftSchema).max(8),
   shouldOfferQuickNote: z.boolean(),
   quickNoteTitle: z.string().trim().max(240),
   quickNoteBody: z.string().trim().max(8000)
@@ -1970,8 +2000,53 @@ export const assistantMessageSchema = z.object({
     title: z.string().trim().max(300),
     surface: assistantSurfaceSchema,
     route: z.string().trim().max(500),
-    active: z.boolean()
+    active: z.boolean(),
+    accessStatus: z.enum(["verified", "not_applicable"]).default("not_applicable"),
+    capturedEntityRevision: z.number().int().positive().nullable().default(null),
+    currentEntityRevision: z.number().int().positive().nullable().default(null),
+    revisionStatus: z.enum(["current", "changed", "unversioned"]).default("unversioned")
   })).max(5).default([]),
+  claims: z.array(z.object({
+    claim: z.string().trim().min(1).max(600),
+    kind: assistantEvidenceClaimKindSchema,
+    citations: z.array(z.object({
+      ref: z.string().trim().regex(/^S[1-5]\.B(?:[1-9]|1[0-6])$/),
+      sourceId: z.string().uuid(),
+      sourceRevision: z.number().int().positive(),
+      title: z.string().trim().max(300),
+      label: z.string().trim().min(1).max(180),
+      excerpt: z.string().trim().min(1).max(1000),
+      route: z.string().trim().max(500),
+      kind: z.enum([
+        "selection",
+        "paragraph",
+        "comment",
+        "message",
+        "page",
+        "image",
+        "attachment",
+        "source"
+      ]),
+      entityType: z.string().trim().max(80).optional(),
+      entityId: z.string().trim().max(240).optional(),
+      pageNumber: z.number().int().positive().nullable().default(null)
+    })).max(5)
+  }).superRefine((claim, context) => {
+    if (claim.kind === "direct" && claim.citations.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["citations"],
+        message: "A direct evidence claim requires at least one validated citation."
+      });
+    }
+    if (claim.kind === "insufficient" && claim.citations.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["citations"],
+        message: "An insufficient-context claim cannot cite a source."
+      });
+    }
+  })).max(8).default([]),
   translation: assistantTranslationSchema.optional(),
   quickNote: assistantQuickNoteSchema.optional(),
   quickNoteResult: assistantQuickNoteResultSchema.optional()
@@ -2264,6 +2339,8 @@ export type AssistantTranslationContract = z.infer<typeof assistantTranslationSc
 export type AssistantQuickNoteDraftContract = z.infer<typeof assistantQuickNoteDraftSchema>;
 export type AssistantQuickNoteContract = z.infer<typeof assistantQuickNoteSchema>;
 export type AssistantAnswerDraftContract = z.infer<typeof assistantAnswerDraftSchema>;
+export type AssistantEvidenceClaimDraftContract = z.infer<typeof assistantEvidenceClaimDraftSchema>;
+export type AssistantEvidenceClaimKindContract = z.infer<typeof assistantEvidenceClaimKindSchema>;
 export type AssistantContextContract = z.infer<typeof assistantContextSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
 export type AssistantConversationListQueryContract = z.infer<typeof assistantConversationListQuerySchema>;
