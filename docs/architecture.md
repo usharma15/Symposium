@@ -135,10 +135,13 @@ Profiles reuse the same collection coordinator and ordered browser transport as 
 - `features/attachments`: metadata generation, carousel, document/media previews, continuous virtualized PDF.js and DOCX reading surfaces, attachment-scoped reading/translation sessions shared across preview/modal/fullscreen, scroll-derived active-page context, parallel reconstructed translation pages for extracted and scanned documents, selectable PDF text, zoom and fullscreen
 - `features/profiles`: activity projection, privacy-aware tabs, social graph and settings
 - `features/communities`, `features/rooms`, `features/workspace`, `features/messages`, `features/search`: their respective surfaces
+- `features/assistant`: one mounted conversation controller plus bounded presentation modules for the shell, transcript messages, Evidence Map citation staging, Context Dock inspection, Quick Note persistence, and thread administration; those modules do not create competing assistant state owners
 - `features/entities`, `features/live-sync`, `features/navigation`, `features/actions`: shared client invariants and contracts
 - `features/api`: same-origin JSON requests, structured failures, and retry-safe mutation identities
 
 Feature modules cannot import the application shell or Next routes and must form an acyclic dependency graph. Architecture checks enforce dependency direction and ownership without imposing arbitrary file-length ceilings.
+
+Assistant context identity and context-type projection are canonicalized once in `lib/assistantContext.ts` and reused by the browser controller, Context Dock, and backend assistant repository. A source cannot acquire different keys or persistence types merely because it crossed one of those boundaries.
 
 `app/globals.css` is an ordered manifest. Styles are split into numbered foundation, established, immersive, overlay, and responsive layers under `styles/`. Numbering preserves the proven cascade while each layer declares ownership and has an enforced size ceiling.
 

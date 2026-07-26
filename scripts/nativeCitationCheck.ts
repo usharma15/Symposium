@@ -789,7 +789,10 @@ const main = async () => {
     capture: readFileSync("features/citations/NativeCitationContext.tsx", "utf8"),
     scribble: readFileSync("features/scribble/ScribbleContext.tsx", "utf8"),
     attachments: readFileSync("features/attachments/AttachmentPreviewModal.tsx", "utf8"),
-    assistant: readFileSync("features/assistant/AssistantExperience.tsx", "utf8"),
+    assistant: [
+      readFileSync("features/assistant/AssistantExperience.tsx", "utf8"),
+      readFileSync("features/assistant/AssistantEvidenceMap.tsx", "utf8")
+    ].join("\n"),
     assistantSource: readFileSync("features/assistant/nativeCitationSource.ts", "utf8"),
     posts: readFileSync("apps/api/src/repository/posts.ts", "utf8"),
     comments: readFileSync("apps/api/src/repository/comments.ts", "utf8"),

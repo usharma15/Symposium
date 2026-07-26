@@ -3051,6 +3051,16 @@ const migrations: Migration[] = [
         ON ai_usage (owner_handle, created_at DESC)
         WHERE vision_input_count > 0;
     `
+  },
+  {
+    id: "0060_owner_daily_ai_quota_reset_20260726",
+    sql: `
+      INSERT INTO ai_daily_quota_resets (owner_handle, usage_day, reset_at)
+      SELECT 'udayan', current_date, now()
+      WHERE EXISTS (SELECT 1 FROM profiles WHERE handle = 'udayan')
+      ON CONFLICT (owner_handle, usage_day)
+      DO UPDATE SET reset_at = EXCLUDED.reset_at;
+    `
   }
 ];
 

@@ -248,7 +248,11 @@ const main = async () => {
   const provider = readFileSync("apps/api/src/services/openaiResponses.ts", "utf8");
   const usage = readFileSync("apps/api/src/services/assistantUsage.ts", "utf8");
   const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
-  const tablet = readFileSync("features/assistant/AssistantExperience.tsx", "utf8");
+  const tablet = [
+    readFileSync("features/assistant/AssistantExperience.tsx", "utf8"),
+    readFileSync("features/assistant/AssistantMessageCard.tsx", "utf8"),
+    readFileSync("features/assistant/assistantPresentation.ts", "utf8")
+  ].join("\n");
   const controller = readFileSync("features/assistant/useAssistantController.ts", "utf8");
   const roadmap = readFileSync("docs/ai-tablet-roadmap.md", "utf8");
 

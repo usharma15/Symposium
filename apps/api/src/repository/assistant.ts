@@ -33,6 +33,10 @@ import {
   isAssistantVisionContentType,
   maxAssistantVisionAttachments
 } from "@/lib/assistantVisionRules";
+import {
+  assistantContextKey,
+  assistantContextTypeForSurface
+} from "@/lib/assistantContext";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { actualCostMicros } from "../services/aiBudget";
@@ -115,19 +119,6 @@ type PreparedAssistant = {
   input: ParsedInput;
   dailyLimit: number;
   remainingToday: number;
-};
-
-const assistantContextKey = (context: AssistantContextContract) =>
-  `${context.surface}:${context.entityId?.trim() || context.route.trim() || "/"}`.slice(0, 800);
-
-const assistantContextTypeFor = (
-  surface: AssistantContextContract["surface"]
-): ParsedInput["contextType"] => {
-  if (surface === "post" || surface === "opportunity" || surface === "attachment") return "post";
-  if (surface === "community") return "community";
-  if (surface === "workspace") return "note";
-  if (surface === "room") return "room";
-  return "general";
 };
 
 export const assistantThreadSources = (value: unknown): AssistantThreadSourceContract[] => {
@@ -1045,7 +1036,7 @@ export const updateAssistantConversationContext = async (
         JSON.stringify(sources),
         activeContextKey,
         activeSourceId,
-        assistantContextTypeFor(activeContext.surface),
+        assistantContextTypeForSurface(activeContext.surface),
         activeContext.entityId ?? null
       ]
     );
@@ -1165,7 +1156,7 @@ export const updateAssistantConversationSource = async (
         activeContextKey,
         input.action,
         source.context.entityId ?? null,
-        assistantContextTypeFor(source.context.surface)
+        assistantContextTypeForSurface(source.context.surface)
       ]
     );
     const systemBody = input.action === "use"
@@ -1383,7 +1374,7 @@ const prepareAssistant = async (
         JSON.stringify(sources),
         activeSource.key,
         activeSource.id,
-        assistantContextTypeFor(activeSource.context.surface),
+        assistantContextTypeForSurface(activeSource.context.surface),
         activeSource.context.entityId ?? null
       ]
     );

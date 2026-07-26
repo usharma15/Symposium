@@ -7,12 +7,17 @@ import {
   orderAssistantThreadsByLatestMessage,
   reconcileAssistantThreadSummary
 } from "@/features/assistant/assistantThreadOrdering";
+import {
+  assistantThreadSummary,
+  initialAssistantMessageFor,
+  type AssistantContext,
+  type AssistantMessageView,
+  type AssistantNewThreadContextMode,
+  type AssistantThreadLibraryStatus,
+  type AssistantThreadLiveEvent
+} from "@/features/assistant/assistantControllerModel";
 import type {
   AssistantContextUpdateResultContract,
-  AssistantMessageContract,
-  AssistantMessageInputContract,
-  AssistantQuickNoteContract,
-  AssistantQuickNoteResultContract,
   AssistantQuotaStatusContract,
   AssistantResponseContract,
   AssistantSourceUpdateResultContract,
@@ -23,7 +28,6 @@ import type {
   AssistantThreadStateContract,
   AssistantThreadSummaryContract,
   AssistantThreadUpdateResultContract,
-  AssistantTranslationContract,
   InquiryAttachmentContract
 } from "@/packages/contracts/src";
 import { uploadConfirmedAttachment } from "@/features/attachments/attachmentUploadClient";
@@ -37,23 +41,19 @@ import {
   isAssistantVisionContentType,
   maxAssistantVisionAttachments
 } from "@/lib/assistantVisionRules";
+import {
+  assistantContextKey,
+  assistantContextTypeForSurface
+} from "@/lib/assistantContext";
 
-export type AssistantContext = NonNullable<AssistantMessageInputContract["context"]>;
-export type AssistantNewThreadContextMode = "current" | "blank";
-
-export type AssistantMessageView = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  body: string;
-  conversationId?: string;
-  createdAt?: string;
-  evidence?: AssistantMessageContract["evidence"];
-  claims?: AssistantMessageContract["claims"];
-  translation?: AssistantTranslationContract;
-  quickNote?: AssistantQuickNoteContract;
-  quickNoteResult?: AssistantQuickNoteResultContract;
-  attachments?: InquiryAttachmentContract[];
-};
+export type {
+  AssistantContext,
+  AssistantMessageView,
+  AssistantNewThreadContextMode,
+  AssistantThreadLibraryStatus,
+  AssistantThreadLiveEvent
+} from "@/features/assistant/assistantControllerModel";
+export { initialAssistantMessageFor } from "@/features/assistant/assistantControllerModel";
 
 type AssistantBroadcast = {
   actorHandle: string;
@@ -67,46 +67,8 @@ type RetryMutation = {
   key: string;
 };
 
-export type AssistantThreadLibraryStatus = "active" | "archived";
-export type AssistantThreadLiveEvent = {
-  id?: string;
-  cursor?: string;
-  kind: string;
-  subjectId: string;
-};
-
 const assistantBroadcastChannel = "symposium:assistant-threads:v1";
 const emptyAssistantLiveEvents: AssistantThreadLiveEvent[] = [];
-
-const contextKeyFor = (context: AssistantContext) =>
-  `${context.surface}:${context.entityId ?? context.route}`;
-
-const contextTypeFor = (
-  surface: AssistantContext["surface"]
-): AssistantMessageInputContract["contextType"] => {
-  if (surface === "post" || surface === "opportunity" || surface === "attachment") return "post";
-  if (surface === "community") return "community";
-  if (surface === "workspace") return "note";
-  if (surface === "room") return "room";
-  return "general";
-};
-
-export const initialAssistantMessageFor = (
-  context: AssistantContext | null
-): AssistantMessageView => ({
-  id: context ? `intro:${contextKeyFor(context)}` : "intro:blank",
-  role: "assistant",
-  body: context
-    ? `You’re on ${context.title}. Ask about this view, or remove it to start without context.`
-    : "What’s on your mind?"
-});
-
-const threadSummary = (
-  thread: AssistantThreadStateContract
-): AssistantThreadSummaryContract => {
-  const { sources: _sources, ...summary } = thread;
-  return summary;
-};
 
 const errorMessage = (caught: unknown, fallback: string) =>
   caught instanceof SymposiumApiError ? caught.message : fallback;
@@ -134,7 +96,7 @@ export function useAssistantController({
 }) {
   const contextRef = useRef(context);
   const actorHandleRef = useRef(actorHandle);
-  const contextKey = contextKeyFor(context);
+  const contextKey = assistantContextKey(context);
   const conversationIdRef = useRef<string | undefined>(
     requestedConversationId ?? undefined
   );
@@ -199,7 +161,7 @@ export function useAssistantController({
     (id = conversationIdRef.current) =>
       id ?? (newThreadContextModeRef.current === "blank"
         ? "new:blank"
-        : `new:${contextKeyFor(contextRef.current)}`),
+        : `new:${assistantContextKey(contextRef.current)}`),
     []
   );
 
@@ -241,7 +203,7 @@ export function useAssistantController({
   const replaceThreadSummary = useCallback((next: AssistantThreadStateContract) => {
     setThreads((current) => reconcileAssistantThreadSummary(
       current,
-      threadSummary(next),
+      assistantThreadSummary(next),
       {
         status: threadLibraryStatusRef.current,
         hasSearch: Boolean(threadSearchRef.current)
@@ -680,7 +642,7 @@ export function useAssistantController({
         requestedConversationId ||
         conversationIdRef.current
       ) return;
-      const contextKey = contextKeyFor(contextRef.current);
+      const contextKey = assistantContextKey(contextRef.current);
       const loadedMatch = page.threads.find(
         (candidate) => candidate.activeContextKey === contextKey
       );
@@ -841,9 +803,23 @@ export function useAssistantController({
     };
   }, [enabled, refreshSelectedThread, refreshThreads]);
 
-  const changeThreadContext = useCallback(async (
-    mode: "use" | "attach" | "refresh" | "clear"
-  ) => {
+  const runContextMutation = useCallback(async <
+    Result extends
+      | AssistantContextUpdateResultContract
+      | AssistantSourceUpdateResultContract
+  >({
+    endpoint,
+    input,
+    retry,
+    mutationId,
+    failureMessage
+  }: {
+    endpoint: "context" | "sources";
+    input: Record<string, unknown>;
+    retry: { current: RetryMutation | null };
+    mutationId: string;
+    failureMessage: string;
+  }) => {
     const id = conversationIdRef.current;
     if (
       !id ||
@@ -854,44 +830,33 @@ export function useAssistantController({
       submissionLockRef.current ||
       contextLockRef.current
     ) {
-      return;
+      return null;
     }
-    const input = mode === "clear"
-      ? {
-          actorHandle,
-          mode,
-          expectedRevision: thread.contextRevision
-        }
-      : {
-          actorHandle,
-          mode,
-          context: contextRef.current,
-          expectedRevision: thread.contextRevision
-        };
     const fingerprint = JSON.stringify({ id, ...input });
-    if (contextRetryRef.current?.fingerprint !== fingerprint) {
-      contextRetryRef.current = {
+    if (retry.current?.fingerprint !== fingerprint) {
+      retry.current = {
         fingerprint,
-        key: createClientMutationId(`assistant-context-${mode}`)
+        key: createClientMutationId(mutationId)
       };
     }
     contextLockRef.current = true;
     setContextBusy(true);
     setError("");
     try {
-      const result = await symposiumApi.request<AssistantContextUpdateResultContract>(
-        `/api/assistant/conversations/${encodeURIComponent(id)}/context`,
+      const result = await symposiumApi.request<Result>(
+        `/api/assistant/conversations/${encodeURIComponent(id)}/${endpoint}`,
         {
           method: "POST",
-          idempotencyKey: contextRetryRef.current.key,
+          idempotencyKey: retry.current!.key,
           body: input
         }
       );
       setThread(result.thread);
       replaceThreadSummary(result.thread);
       setMessages((current) => [...current, result.message]);
-      contextRetryRef.current = null;
+      retry.current = null;
       broadcastThreadChange(id);
+      return result;
     } catch (caught) {
       if (caught instanceof SymposiumApiError && caught.status === 409) {
         await refreshSelectedThread().catch(() => null);
@@ -899,11 +864,9 @@ export function useAssistantController({
           "This thread changed in another session. The latest Context Dock state is loaded; review it and try again."
         );
       } else {
-        setError(errorMessage(
-          caught,
-          "The research thread context could not be changed."
-        ));
+        setError(errorMessage(caught, failureMessage));
       }
+      return null;
     } finally {
       contextLockRef.current = false;
       setContextBusy(false);
@@ -917,6 +880,30 @@ export function useAssistantController({
     replaceThreadSummary,
     thread
   ]);
+
+  const changeThreadContext = useCallback(async (
+    mode: "use" | "attach" | "refresh" | "clear"
+  ) => {
+    const input = mode === "clear"
+      ? {
+          actorHandle,
+          mode,
+          expectedRevision: thread?.contextRevision
+        }
+      : {
+          actorHandle,
+          mode,
+          context: contextRef.current,
+          expectedRevision: thread?.contextRevision
+        };
+    await runContextMutation<AssistantContextUpdateResultContract>({
+      endpoint: "context",
+      input,
+      retry: contextRetryRef,
+      mutationId: `assistant-context-${mode}`,
+      failureMessage: "The research thread context could not be changed."
+    });
+  }, [actorHandle, runContextMutation, thread?.contextRevision]);
 
   const useCurrentView = useCallback(() => {
     if (conversationIdRef.current) {
@@ -938,70 +925,20 @@ export function useAssistantController({
     source: AssistantThreadSourceContract,
     action: "use" | "include" | "exclude"
   ) => {
-    const id = conversationIdRef.current;
-    if (
-      !id ||
-      !thread ||
-      thread.archivedAt !== null ||
-      busy ||
-      contextBusy ||
-      submissionLockRef.current ||
-      contextLockRef.current
-    ) {
-      return;
-    }
     const input = {
       actorHandle,
       sourceId: source.id,
       action,
-      expectedRevision: thread.contextRevision
+      expectedRevision: thread?.contextRevision
     };
-    const fingerprint = JSON.stringify({ id, ...input });
-    if (sourceRetryRef.current?.fingerprint !== fingerprint) {
-      sourceRetryRef.current = {
-        fingerprint,
-        key: createClientMutationId(`assistant-source-${action}`)
-      };
-    }
-    contextLockRef.current = true;
-    setContextBusy(true);
-    setError("");
-    try {
-      const result = await symposiumApi.request<AssistantSourceUpdateResultContract>(
-        `/api/assistant/conversations/${encodeURIComponent(id)}/sources`,
-        {
-          method: "POST",
-          idempotencyKey: sourceRetryRef.current.key,
-          body: input
-        }
-      );
-      setThread(result.thread);
-      replaceThreadSummary(result.thread);
-      setMessages((current) => [...current, result.message]);
-      sourceRetryRef.current = null;
-      broadcastThreadChange(id);
-    } catch (caught) {
-      if (caught instanceof SymposiumApiError && caught.status === 409) {
-        await refreshSelectedThread().catch(() => null);
-        setError(
-          "This thread changed in another session. The latest Context Dock state is loaded; review it and try again."
-        );
-      } else {
-        setError(errorMessage(caught, "The saved source could not be changed."));
-      }
-    } finally {
-      contextLockRef.current = false;
-      setContextBusy(false);
-    }
-  }, [
-    actorHandle,
-    broadcastThreadChange,
-    busy,
-    contextBusy,
-    refreshSelectedThread,
-    replaceThreadSummary,
-    thread
-  ]);
+    await runContextMutation<AssistantSourceUpdateResultContract>({
+      endpoint: "sources",
+      input,
+      retry: sourceRetryRef,
+      mutationId: `assistant-source-${action}`,
+      failureMessage: "The saved source could not be changed."
+    });
+  }, [actorHandle, runContextMutation, thread?.contextRevision]);
 
   const includedSourceCount = conversationId
     ? thread?.sources.filter((source) => source.included).length ?? 0
@@ -1234,7 +1171,9 @@ export function useAssistantController({
             ...(requestIntent.targetLanguage
               ? { targetLanguage: requestIntent.targetLanguage }
               : {}),
-            contextType: selectedContext ? contextTypeFor(selectedContext.surface) : "general",
+            contextType: selectedContext
+              ? assistantContextTypeForSurface(selectedContext.surface)
+              : "general",
             contextId: selectedContext?.entityId,
             context: selectedContext
           }

@@ -66,6 +66,14 @@ import {
 } from "@/features/assistant/assistantThreadOrdering";
 import { initialAssistantMessageFor } from "@/features/assistant/useAssistantController";
 import {
+  assistantAttachmentProcessingLabel,
+  assistantAttachmentUrl
+} from "@/features/assistant/assistantPresentation";
+import {
+  assistantContextKey,
+  assistantContextTypeForSurface
+} from "@/lib/assistantContext";
+import {
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
 } from "@/features/attachments/pdfAttachmentClient";
@@ -350,6 +358,114 @@ assert.match(assistantGeneralPrompt("How do hypotheses differ from predictions?"
 assert.doesNotMatch(assistantGeneralPrompt("How do hypotheses differ from predictions?"), /ACTIVE VIEW|ATTACHED SOURCES/);
 assert.equal(initialAssistantMessageFor(null).body, "What’s on your mind?");
 assert.match(initialAssistantMessageFor(validInput.context).body, /You’re on A bounded claim/);
+assert.equal(assistantContextKey(validInput.context), "post:paper-1");
+assert.equal(
+  assistantContextKey({
+    surface: "workspace",
+    entityId: "  note-1  ",
+    route: "/workspace/documents/note-1"
+  }),
+  "workspace:note-1"
+);
+assert.equal(
+  assistantContextKey({
+    surface: "search",
+    route: "  /search?q=replication  "
+  }),
+  "search:/search?q=replication"
+);
+assert.equal(
+  assistantContextKey({
+    surface: "hall",
+    route: " "
+  }),
+  "hall:/"
+);
+assert.equal(
+  assistantContextKey({
+    surface: "profile",
+    route: `/${"x".repeat(900)}`
+  }).length,
+  800
+);
+assert.deepEqual(
+  [
+    "post",
+    "opportunity",
+    "attachment",
+    "community",
+    "workspace",
+    "room",
+    "hall",
+    "profile",
+    "messages",
+    "search"
+  ].map((surface) =>
+    assistantContextTypeForSurface(
+      surface as Parameters<typeof assistantContextTypeForSurface>[0]
+    )
+  ),
+  [
+    "post",
+    "post",
+    "post",
+    "community",
+    "note",
+    "room",
+    "general",
+    "general",
+    "general",
+    "general"
+  ]
+);
+assert.equal(
+  assistantAttachmentProcessingLabel({
+    id: "00000000-0000-4000-8000-000000000010",
+    fileName: "figure.png",
+    contentType: "image/png",
+    byteSize: 100,
+    status: "uploaded",
+    kind: "image",
+    metadata: {}
+  }),
+  "Image ready for AI"
+);
+assert.equal(
+  assistantAttachmentProcessingLabel({
+    id: "00000000-0000-4000-8000-000000000011",
+    fileName: "paper.pdf",
+    contentType: "application/pdf",
+    byteSize: 100,
+    status: "uploaded",
+    kind: "pdf",
+    metadata: { previewText: "Bounded extraction" }
+  }),
+  "Text extracted"
+);
+assert.equal(
+  assistantAttachmentProcessingLabel({
+    id: "00000000-0000-4000-8000-000000000012",
+    fileName: "archive.bin",
+    contentType: "application/octet-stream",
+    byteSize: 100,
+    status: "uploaded",
+    kind: "document",
+    metadata: {}
+  }),
+  "Stored only"
+);
+assert.equal(
+  assistantAttachmentUrl({
+    id: "00000000-0000-4000-8000-000000000013",
+    fileName: "paper.pdf",
+    contentType: "application/pdf",
+    byteSize: 100,
+    status: "uploaded",
+    kind: "pdf",
+    metadata: {}
+  }, "owner/name"),
+  "/api/assistant-attachments/00000000-0000-4000-8000-000000000013?actorHandle=owner%2Fname"
+);
 assert.match(assistantTranslationInstructions("french"), /Translate the source requested by the user into French/);
 assert.match(assistantTranslationInstructions("sanskrit"), /Sanskrit is experimental/);
 assert.equal(assistantTranslationLanguages.length, 17);
@@ -1678,8 +1794,31 @@ const attachmentOwnership = readFileSync("apps/api/src/services/attachmentOwners
 const attachmentUploadClient = readFileSync("features/attachments/attachmentUploadClient.ts", "utf8");
 const attachmentRules = readFileSync("lib/attachmentRules.ts", "utf8");
 const assistantConversationRoute = readFileSync("app/api/assistant/conversations/[...segments]/route.ts", "utf8");
-const tablet = readFileSync("features/assistant/AssistantExperience.tsx", "utf8");
-const assistantController = readFileSync("features/assistant/useAssistantController.ts", "utf8");
+const assistantShell = readFileSync("features/assistant/AssistantExperience.tsx", "utf8");
+const assistantContextDock = readFileSync("features/assistant/AssistantContextDock.tsx", "utf8");
+const assistantEvidenceMap = readFileSync("features/assistant/AssistantEvidenceMap.tsx", "utf8");
+const assistantMessageBody = readFileSync("features/assistant/AssistantMessageBody.tsx", "utf8");
+const assistantMessageCard = readFileSync("features/assistant/AssistantMessageCard.tsx", "utf8");
+const assistantQuickNoteCards = readFileSync("features/assistant/AssistantQuickNoteCards.tsx", "utf8");
+const assistantThreadHistoryItem = readFileSync("features/assistant/AssistantThreadHistoryItem.tsx", "utf8");
+const assistantPresentation = readFileSync("features/assistant/assistantPresentation.ts", "utf8");
+const assistantContextPolicy = readFileSync("lib/assistantContext.ts", "utf8");
+const tablet = [
+  assistantShell,
+  assistantContextDock,
+  assistantEvidenceMap,
+  assistantMessageBody,
+  assistantMessageCard,
+  assistantQuickNoteCards,
+  assistantThreadHistoryItem,
+  assistantPresentation
+].join("\n");
+const assistantControllerHook = readFileSync("features/assistant/useAssistantController.ts", "utf8");
+const assistantControllerModel = readFileSync("features/assistant/assistantControllerModel.ts", "utf8");
+const assistantController = [
+  assistantControllerHook,
+  assistantControllerModel
+].join("\n");
 const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
 const canonicalRoutes = readFileSync("features/navigation/canonicalRoute.ts", "utf8");
 const assistantPage = readFileSync("app/assistant/page.tsx", "utf8");
@@ -1703,6 +1842,34 @@ const packageManifest = readFileSync("package.json", "utf8");
 const nextConfig = readFileSync("next.config.mjs", "utf8");
 const renderBlueprint = readFileSync("render.yaml", "utf8");
 const env = readFileSync("apps/api/src/config/env.ts", "utf8");
+
+assert.match(assistantShell, /AssistantContextDock/);
+assert.match(assistantShell, /AssistantMessageCard/);
+assert.match(assistantShell, /AssistantThreadHistoryItem/);
+assert.doesNotMatch(assistantShell, /symposiumApi|useNativeCitation|nativeSourceForAssistantCitation/);
+assert.doesNotMatch(assistantShell, /function QuickNoteDraftCard|function ContextDock|function ThreadHistoryItem/);
+assert.match(assistantQuickNoteCards, /\/api\/assistant\/quick-notes/);
+assert.match(assistantQuickNoteCards, /Confirm & save Quick Note/);
+assert.match(assistantEvidenceMap, /nativeSourceForAssistantCitation/);
+assert.match(assistantEvidenceMap, /stageCitation/);
+assert.match(assistantContextDock, /assistantContextKey\(context\)/);
+assert.match(assistantContextPolicy, /assistantContextTypeForSurface/);
+assert.match(repository, /assistantContextTypeForSurface/);
+assert.match(repository, /assistantContextKey/);
+assert.doesNotMatch(repository, /const assistantContextKey|const assistantContextTypeFor/);
+assert.match(assistantController, /assistantContextTypeForSurface/);
+assert.match(assistantController, /assistantContextKey/);
+assert.doesNotMatch(assistantController, /const contextKeyFor|const contextTypeFor/);
+assert.match(assistantControllerHook, /const runContextMutation = useCallback/);
+assert.match(assistantControllerHook, /runContextMutation<AssistantContextUpdateResultContract>/);
+assert.match(assistantControllerHook, /runContextMutation<AssistantSourceUpdateResultContract>/);
+assert.equal(
+  assistantControllerHook.match(
+    /This thread changed in another session\. The latest Context Dock state is loaded/g
+  )?.length,
+  1,
+  "Context and source writes must share one revision-conflict recovery path"
+);
 const restoreViewStart = shell.indexOf("const restoreView");
 const navigateViewStart = shell.indexOf("const navigateView", restoreViewStart);
 const restoreViewBlock = shell.slice(restoreViewStart, navigateViewStart);

@@ -242,7 +242,13 @@ const main = async () => {
 
   const repository = readFileSync("apps/api/src/repository/assistant.ts", "utf8");
   const provider = readFileSync("apps/api/src/services/openaiResponses.ts", "utf8");
-  const tablet = readFileSync("features/assistant/AssistantExperience.tsx", "utf8");
+  const tablet = [
+    readFileSync("features/assistant/AssistantExperience.tsx", "utf8"),
+    readFileSync("features/assistant/AssistantEvidenceMap.tsx", "utf8"),
+    readFileSync("features/assistant/AssistantMessageBody.tsx", "utf8"),
+    readFileSync("features/assistant/AssistantMessageCard.tsx", "utf8"),
+    readFileSync("features/assistant/assistantPresentation.ts", "utf8")
+  ].join("\n");
   const messages = readFileSync("features/messages/MessagesSection.tsx", "utf8");
   assert.match(repository, /validateAssistantEvidenceSources/);
   assert.match(repository, /workspace_note_grants/);
