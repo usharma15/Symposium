@@ -31,6 +31,8 @@ export const reserveAssistantUsage = async (
     conversationId: string;
     renderedInput: string;
     maxOutputTokens: number;
+    additionalInputTokens?: number;
+    visionInputCount?: number;
   }
 ): Promise<AssistantUsageReservation> => {
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended('symposium:ai-budget', 0))");
@@ -39,6 +41,7 @@ export const reserveAssistantUsage = async (
     userDaily: number;
     globalDaily: number;
     inFlight: number;
+    visionDaily: number;
     dailyCostMicros: string;
     monthlyCostMicros: string;
     usageDay: string;
@@ -59,6 +62,11 @@ export const reserveAssistantUsage = async (
            AND created_at >= date_trunc('day', now())
        )::int AS "globalDaily",
        count(*) FILTER (WHERE owner_handle = $1 AND status = 'reserved' AND created_at >= now() - interval '2 minutes')::int AS "inFlight",
+       COALESCE(sum(vision_input_count) FILTER (
+         WHERE owner_handle = $1
+           AND status IN ('reserved', 'completed')
+           AND created_at >= now() - interval '24 hours'
+       ), 0)::int AS "visionDaily",
        COALESCE(sum(CASE WHEN status = 'reserved' THEN reserved_cost_micros ELSE actual_cost_micros END)
          FILTER (WHERE created_at >= date_trunc('day', now())), 0)::text AS "dailyCostMicros",
        COALESCE(sum(CASE WHEN status = 'reserved' THEN reserved_cost_micros ELSE actual_cost_micros END)
@@ -80,12 +88,26 @@ export const reserveAssistantUsage = async (
   if (current.globalDaily >= env.SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT) {
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The shared AI capacity for today is exhausted. It resets tomorrow." });
   }
+  const visionInputCount = Math.max(0, Math.floor(input.visionInputCount ?? 0));
+  if (Number(current.visionDaily ?? 0) + visionInputCount > env.SYMPOSIUM_AI_VISION_USER_DAILY_LIMIT) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: `The daily AI image-processing limit of ${env.SYMPOSIUM_AI_VISION_USER_DAILY_LIMIT} images has been reached. Text questions still work when image sources are excluded.`
+    });
+  }
 
   const reservedCostMicros = reserveCostMicros(
     env.SYMPOSIUM_AI_MODEL,
     input.renderedInput,
-    input.maxOutputTokens
+    input.maxOutputTokens,
+    input.additionalInputTokens
   );
+  if (reservedCostMicros > usdToMicros(env.SYMPOSIUM_AI_MAX_REQUEST_COST_USD)) {
+    throw new TRPCError({
+      code: "PAYLOAD_TOO_LARGE",
+      message: "This AI request exceeds the limited beta's per-answer processing ceiling. Exclude a source, remove an image, or start a shorter chat."
+    });
+  }
   if (Number(current.dailyCostMicros) + reservedCostMicros > usdToMicros(env.SYMPOSIUM_AI_DAILY_BUDGET_USD)) {
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The shared AI spending limit for today is exhausted. It resets tomorrow." });
   }
@@ -94,10 +116,16 @@ export const reserveAssistantUsage = async (
   }
 
   const reserved = await client.query<{ id: string }>(
-    `INSERT INTO ai_usage (conversation_id, owner_handle, model, reserved_cost_micros)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO ai_usage (conversation_id, owner_handle, model, reserved_cost_micros, vision_input_count)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING id`,
-    [input.conversationId, input.owner, env.SYMPOSIUM_AI_MODEL, reservedCostMicros]
+    [
+      input.conversationId,
+      input.owner,
+      env.SYMPOSIUM_AI_MODEL,
+      reservedCostMicros,
+      visionInputCount
+    ]
   );
   return {
     usageId: reserved.rows[0]!.id,

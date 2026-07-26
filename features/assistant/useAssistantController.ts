@@ -33,6 +33,10 @@ import {
   maxAssistantAttachments,
   validateAssistantAttachmentDetails
 } from "@/lib/attachmentRules";
+import {
+  isAssistantVisionContentType,
+  maxAssistantVisionAttachments
+} from "@/lib/assistantVisionRules";
 
 export type AssistantContext = NonNullable<AssistantMessageInputContract["context"]>;
 export type AssistantNewThreadContextMode = "current" | "blank";
@@ -1007,6 +1011,32 @@ export function useAssistantController({
     0,
     maxAssistantAttachments - includedSourceCount
   );
+  const includedVisionSourceCount = conversationId
+    ? thread?.sources.filter((source) =>
+        source.included &&
+        source.context.surface === "attachment" &&
+        isAssistantVisionContentType(
+          typeof source.context.metadata?.contentType === "string"
+            ? source.context.metadata.contentType
+            : ""
+        )
+      ).length ?? 0
+    : newThreadContextMode === "current" &&
+        context?.surface === "attachment" &&
+        isAssistantVisionContentType(
+          typeof context.metadata?.contentType === "string"
+            ? context.metadata.contentType
+            : ""
+        )
+      ? 1
+      : 0;
+  const pendingVisionCount = pendingAttachments.filter((attachment) =>
+    isAssistantVisionContentType(attachment.contentType)
+  ).length;
+  const visionAttachmentCapacity = Math.max(
+    0,
+    maxAssistantVisionAttachments - includedVisionSourceCount - pendingVisionCount
+  );
 
   const uploadAssistantFiles = useCallback(async (selectedFiles: File[]) => {
     if (
@@ -1024,12 +1054,27 @@ export function useAssistantController({
       setError("This chat already has five included sources. Exclude one in the Context Dock before attaching a file.");
       return;
     }
-    const files = selectedFiles.slice(0, available);
+    const withinSourceLimit = selectedFiles.slice(0, available);
+    let remainingVisionSlots = visionAttachmentCapacity;
+    let skippedVisionFiles = 0;
+    const files = withinSourceLimit.filter((file) => {
+      const contentType = inferAttachmentContentType(file.name, file.type);
+      if (!isAssistantVisionContentType(contentType)) return true;
+      if (remainingVisionSlots <= 0) {
+        skippedVisionFiles += 1;
+        return false;
+      }
+      remainingVisionSlots -= 1;
+      return true;
+    });
     if (selectedFiles.length > available) {
       setError(`Only ${available} more file${available === 1 ? "" : "s"} can be attached while this source set is active.`);
+    } else if (skippedVisionFiles) {
+      setError(`Only ${maxAssistantVisionAttachments} images can be inspected in one answer. Other supported files can still be attached.`);
     } else {
       setError("");
     }
+    if (!files.length) return;
     const uploadDraftKey = currentDraftKey();
     setAttachmentUploading(true);
     try {
@@ -1080,7 +1125,8 @@ export function useAssistantController({
     currentDraftKey,
     pendingAttachments.length,
     thread?.archivedAt,
-    threadLoading
+    threadLoading,
+    visionAttachmentCapacity
   ]);
 
   const removePendingAttachment = useCallback((
@@ -1335,6 +1381,7 @@ export function useAssistantController({
     pendingAttachments,
     attachmentUploading,
     attachmentCapacity,
+    visionAttachmentCapacity,
     busy,
     contextBusy,
     threadLoading,

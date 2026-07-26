@@ -77,6 +77,10 @@ services:
         value: "10"
       - key: SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT
         value: "40"
+      - key: SYMPOSIUM_AI_VISION_USER_DAILY_LIMIT
+        value: "10"
+      - key: SYMPOSIUM_AI_MAX_REQUEST_COST_USD
+        value: "0.35"
       - key: SYMPOSIUM_AI_DAILY_BUDGET_USD
         value: "1.25"
       - key: SYMPOSIUM_AI_MONTHLY_BUDGET_USD

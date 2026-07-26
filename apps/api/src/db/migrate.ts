@@ -3027,6 +3027,30 @@ const migrations: Migration[] = [
         WHERE owner_type = 'assistant_message'
           AND status IN ('uploaded', 'previewed');
     `
+  },
+  {
+    id: "0059_bounded_assistant_vision",
+    sql: `
+      ALTER TABLE ai_usage
+        ADD COLUMN IF NOT EXISTS vision_input_count INTEGER NOT NULL DEFAULT 0;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'ai_usage_vision_input_count_check'
+        ) THEN
+          ALTER TABLE ai_usage
+            ADD CONSTRAINT ai_usage_vision_input_count_check
+            CHECK (vision_input_count BETWEEN 0 AND 2);
+        END IF;
+      END $$;
+
+      CREATE INDEX IF NOT EXISTS ai_usage_owner_vision_created_idx
+        ON ai_usage (owner_handle, created_at DESC)
+        WHERE vision_input_count > 0;
+    `
   }
 ];
 

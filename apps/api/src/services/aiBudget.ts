@@ -13,9 +13,19 @@ export const microsToUsd = (micros: number) => Number((micros / 1_000_000).toFix
 
 export const conservativeInputTokenCeiling = (text: string) => Buffer.byteLength(text, "utf8");
 
-export const reserveCostMicros = (model: SupportedAssistantModel, renderedInput: string, maxOutputTokens: number) => {
+export const reserveCostMicros = (
+  model: SupportedAssistantModel,
+  renderedInput: string,
+  maxOutputTokens: number,
+  additionalInputTokens = 0
+) => {
   const price = microsPerToken[model];
-  return Math.ceil(conservativeInputTokenCeiling(renderedInput) * price.cacheWrite + maxOutputTokens * price.output);
+  return Math.ceil(
+    (conservativeInputTokenCeiling(renderedInput) + Math.max(0, Math.floor(additionalInputTokens))) *
+    price.cacheWrite +
+    maxOutputTokens *
+    price.output
+  );
 };
 
 export const actualCostMicros = (model: SupportedAssistantModel, inputTokens: number, outputTokens: number) => {
@@ -24,4 +34,3 @@ export const actualCostMicros = (model: SupportedAssistantModel, inputTokens: nu
   // overstates provider cost so the application budget can never be optimistic.
   return Math.ceil(Math.max(0, inputTokens) * price.cacheWrite + Math.max(0, outputTokens) * price.output);
 };
-

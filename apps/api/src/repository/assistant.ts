@@ -27,6 +27,11 @@ import {
 } from "../../../../packages/contracts/src";
 import { attachmentKindForFile } from "../../../../packages/contracts/src";
 import { maxAssistantAttachmentBytes } from "@/lib/attachmentRules";
+import {
+  assistantVisionTokenCeiling,
+  isAssistantVisionContentType,
+  maxAssistantVisionAttachments
+} from "@/lib/assistantVisionRules";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { actualCostMicros } from "../services/aiBudget";
@@ -57,6 +62,10 @@ import {
   queueAttachmentsForOwnerStorageDeletion,
   triggerStorageDeletion
 } from "../services/storageDeletion";
+import {
+  prepareAssistantVisionInputs,
+  type AssistantVisionAttachment
+} from "../services/assistantVision";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
 type ParsedInput = ReturnType<typeof assistantMessageInputSchema.parse>;
@@ -89,6 +98,7 @@ type PreparedAssistant = {
   history: HistoryMessage[];
   context: AssistantContextContract | null;
   attachedContexts: AssistantContextContract[];
+  visionAttachments: AssistantVisionAttachment[];
   evidence: AssistantMessageContract["evidence"];
   userMessage: AssistantMessageContract;
   thread: AssistantThreadStateContract;
@@ -201,6 +211,7 @@ const assistantAttachmentContext = (
     ? JSON.stringify(metadata.structuredPreview)
     : "";
   const extracted = (previewText || structuredPreview).slice(0, 12_000);
+  const visionReady = isAssistantVisionContentType(attachment.contentType);
   const kindLabel = attachment.kind === "pdf"
     ? "PDF"
     : attachment.kind.charAt(0).toUpperCase() + attachment.kind.slice(1);
@@ -209,12 +220,16 @@ const assistantAttachmentContext = (
     surface: "attachment",
     route: `/api/assistant-attachments/${encodeURIComponent(attachment.id)}?actorHandle=${encodeURIComponent(owner)}`,
     title: attachment.fileName,
-    summary: extracted
-      ? `${kindLabel} file · ${sizeLabel} · bounded text preview extracted for this limited beta.`
-      : `${kindLabel} file · ${sizeLabel} · no readable text was extracted; the AI can only use its file details.`,
+    summary: visionReady
+      ? `${kindLabel} file · ${sizeLabel} · ready for bounded AI image inspection.`
+      : extracted
+        ? `${kindLabel} file · ${sizeLabel} · bounded text preview extracted for this limited beta.`
+        : `${kindLabel} file · ${sizeLabel} · stored only; no model-readable content was extracted.`,
     content: extracted
       ? `Extracted file preview:\n${extracted}`
-      : "No readable text preview is available for this file in the limited beta.",
+      : visionReady
+        ? "This image is available to the model as a bounded visual source while it remains included."
+        : "No model-readable content is available for this file in the limited beta.",
     entityType: "assistant_attachment",
     entityId: attachment.id,
     metadata: {
@@ -222,7 +237,11 @@ const assistantAttachmentContext = (
       contentType: attachment.contentType,
       byteSize: attachment.byteSize,
       kind: attachment.kind,
-      processing: extracted ? "bounded_text_extracted" : "file_details_only",
+      processing: visionReady
+        ? "image_ready_for_ai"
+        : extracted
+          ? "bounded_text_extracted"
+          : "stored_only",
       extractedCharacters: extracted.length
     }
   });
@@ -1206,6 +1225,88 @@ const prepareAssistant = async (
     .slice(-4)
     .map((source) => source.context);
   const evidence = evidenceForSources(evidenceSources, activeSource?.id ?? null);
+  const visionAttachmentIds = Array.from(new Set(
+    evidenceSources.flatMap((source) => {
+      const sourceContext = source.context;
+      if (
+        sourceContext.surface !== "attachment" ||
+        !sourceContext.entityId ||
+        !isAssistantVisionContentType(
+          typeof sourceContext.metadata?.contentType === "string"
+            ? sourceContext.metadata.contentType
+            : ""
+        )
+      ) {
+        return [];
+      }
+      return [sourceContext.entityId];
+    })
+  ));
+  if (visionAttachmentIds.length > maxAssistantVisionAttachments) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: `Only ${maxAssistantVisionAttachments} images can be visually inspected in one answer. Exclude another image in the Context Dock and try again.`
+    });
+  }
+  if (input.intent === "translate" && visionAttachmentIds.length) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Whole-image translation is paused in this limited beta. Ask for an explanation or description instead."
+    });
+  }
+  const visionRows = visionAttachmentIds.length
+    ? await client.query<OwnedAttachmentRow>(
+        `SELECT
+           attachment.id::text,
+           attachment.id::text AS "attachmentId",
+           attachment.owner_type AS "ownerType",
+           attachment.owner_id AS "ownerId",
+           attachment.uploader_handle AS "uploaderHandle",
+           attachment.bucket,
+           attachment.file_name AS "fileName",
+           attachment.content_type AS "contentType",
+           attachment.byte_size AS "byteSize",
+           attachment.status,
+           attachment.metadata,
+           attachment.object_key AS "objectKey",
+           attachment.upload_object_key AS "uploadObjectKey",
+           attachment.created_at AS "createdAt"
+         FROM attachments attachment
+         WHERE attachment.id::text = ANY($1::text[])
+           AND attachment.owner_type = 'assistant_message'
+           AND attachment.uploader_handle = $2
+           AND attachment.status IN ('uploaded', 'previewed')
+           AND (
+             (
+               attachment.owner_id IS NULL
+               AND attachment.id::text = ANY($4::text[])
+             )
+             OR EXISTS (
+               SELECT 1
+               FROM ai_messages message
+               WHERE message.id::text = attachment.owner_id
+                 AND message.conversation_id = $3
+             )
+           )
+         FOR UPDATE OF attachment`,
+        [visionAttachmentIds, owner, conversationId, attachmentIds]
+      )
+    : { rows: [] as OwnedAttachmentRow[], rowCount: 0 };
+  const visionRowsById = new Map(visionRows.rows.map((row) => [row.id, row]));
+  const orderedVisionRows = visionAttachmentIds.map((id) => visionRowsById.get(id));
+  if (orderedVisionRows.some((row) => !row)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "One or more included images are no longer available for private AI inspection."
+    });
+  }
+  const visionAttachments = (orderedVisionRows as OwnedAttachmentRow[]).map((row) => ({
+    id: row.id,
+    fileName: row.fileName,
+    contentType: row.contentType,
+    byteSize: row.byteSize,
+    objectKey: row.objectKey
+  }));
   const renderedInput = assistantRenderedInput({
     history,
     context,
@@ -1218,7 +1319,9 @@ const prepareAssistant = async (
     owner,
     conversationId,
     renderedInput,
-    maxOutputTokens: assistantMaxOutputTokens(input.intent)
+    maxOutputTokens: assistantMaxOutputTokens(input.intent),
+    additionalInputTokens: assistantVisionTokenCeiling(visionAttachments.length),
+    visionInputCount: visionAttachments.length
   });
   const attachments = (orderedAttachmentRows as OwnedAttachmentRow[]).map(assistantAttachmentFromRow);
   const userMessage = await client.query<{
@@ -1238,6 +1341,7 @@ const prepareAssistant = async (
       evidence,
       activeSourceId: activeSource?.id ?? null,
       attachedSourceIds: evidenceSources.filter((source) => source.id !== activeSource?.id).map((source) => source.id),
+      visionAttachmentIds,
       grounding: context ? "sources" : "none",
       contextType: conversationRow.contextType,
       contextId: conversationRow.contextId,
@@ -1267,6 +1371,7 @@ const prepareAssistant = async (
       history,
       context,
       attachedContexts,
+      visionAttachments,
       evidence,
       userMessage: messageFromRow(userMessage.rows[0]!),
       thread: assistantThreadState({ ...conversationRow, contextSources: sources }),
@@ -1451,6 +1556,7 @@ const finalizeAssistant = async (
       targetLanguage: prepared.input.targetLanguage,
       model: response.model,
       status: response.status,
+      visionInputCount: prepared.visionAttachments.length,
       actualCostMicros: actualMicros
     })
   });
@@ -1490,6 +1596,7 @@ export const askAssistant = async (
   let result: AssistantModelResult | null = null;
   let failure: AssistantProviderFailure | null = null;
   try {
+    const visionInputs = await prepareAssistantVisionInputs(prepared.visionAttachments);
     result = await callAssistantModel({
       ownerHandle: owner,
       history: prepared.history,
@@ -1497,10 +1604,21 @@ export const askAssistant = async (
       attachedContexts: prepared.attachedContexts,
       message: input.message,
       intent: input.intent,
-      targetLanguage: input.targetLanguage
+      targetLanguage: input.targetLanguage,
+      visionInputs
     });
   } catch (error) {
-    failure = assistantProviderFailure(error);
+    failure = error instanceof TRPCError
+      ? {
+          code: "invalid_image_input",
+          body: `${error.message} No daily answer was used.`,
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 0,
+          mayHaveBeenBilled: false
+        }
+      : assistantProviderFailure(error);
     console.error("SYMPOSIUM AI provider request failed.", error);
   }
   return finalizeAssistant(prepared, result, failure, mutation);

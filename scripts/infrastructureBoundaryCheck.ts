@@ -38,7 +38,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0058_assistant_message_attachments");
+  assert.equal(latestMigrationId, "0059_bounded_assistant_vision");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -69,6 +69,7 @@ const main = async () => {
   assert.ok("revision" in notificationPreferences);
   assert.ok("reservedCostMicros" in aiUsage);
   assert.ok("actualCostMicros" in aiUsage);
+  assert.ok("visionInputCount" in aiUsage);
   assert.ok("lastMessageAt" in aiConversations);
   assert.ok("sourceFingerprint" in documentTranslations);
   assert.ok("sourceFingerprint" in contentTranslations);

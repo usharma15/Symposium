@@ -22,6 +22,24 @@ import {
   formatAttachmentBytes,
   postAttachmentAccept
 } from "@/lib/attachmentRules";
+import { isAssistantVisionContentType } from "@/lib/assistantVisionRules";
+
+const assistantAttachmentProcessingLabel = (attachment: InquiryAttachmentContract) => {
+  if (isAssistantVisionContentType(attachment.contentType)) return "Image ready for AI";
+  if (
+    typeof attachment.metadata?.previewText === "string" &&
+    attachment.metadata.previewText.trim()
+  ) {
+    return "Text extracted";
+  }
+  if (
+    attachment.metadata?.structuredPreview &&
+    typeof attachment.metadata.structuredPreview === "object"
+  ) {
+    return "Text extracted";
+  }
+  return "Stored only";
+};
 
 const assistantAttachmentUrl = (
   attachment: InquiryAttachmentContract,
@@ -693,6 +711,7 @@ export function AssistantExperience({
     pendingAttachments,
     attachmentUploading,
     attachmentCapacity,
+    visionAttachmentCapacity,
     busy,
     contextBusy,
     threadLoading,
@@ -1024,7 +1043,7 @@ export function AssistantExperience({
                       <File size={13} />
                       <span>
                         <strong>{attachment.fileName}</strong>
-                        <small>{formatAttachmentBytes(attachment.byteSize)}</small>
+                        <small>{formatAttachmentBytes(attachment.byteSize)} · {assistantAttachmentProcessingLabel(attachment)}</small>
                       </span>
                     </button>
                   ))}
@@ -1081,7 +1100,7 @@ export function AssistantExperience({
                     <File size={13} />
                     <span>
                       <strong>{attachment.fileName}</strong>
-                      <small>{formatAttachmentBytes(attachment.byteSize)}</small>
+                      <small>{formatAttachmentBytes(attachment.byteSize)} · {assistantAttachmentProcessingLabel(attachment)}</small>
                     </span>
                   </button>
                   <button
@@ -1117,7 +1136,9 @@ export function AssistantExperience({
               className="tablet-attach-button"
               aria-label="Attach files"
               title={attachmentCapacity > pendingAttachments.length
-                ? "Attach files up to 5 MB"
+                ? visionAttachmentCapacity > 0
+                  ? "Attach files up to 5 MB · images can be inspected by AI"
+                  : "Attach files up to 5 MB · two image sources are already active"
                 : "No more files fit in the five-source limit"}
               disabled={Boolean(thread?.archivedAt) || busy || contextBusy || attachmentUploading || threadLoading || quotaLoading || attachmentCapacity <= pendingAttachments.length || remainingToday <= 0 || !providerEnabled || !providerConfigured}
               onClick={() => attachmentInputRef.current?.click()}
@@ -1173,7 +1194,7 @@ export function AssistantExperience({
           </div>
           <small className="tablet-attachment-limit">
             <Paperclip size={11} />
-            Files up to 5 MB · uploads use no answer · beta reads bounded extracted text, so scans, complex layouts, images, and video may not be understood.
+            Files up to 5 MB · at most 2 images per answer · uploads use no answer · documents use bounded extracted text.
           </small>
         </form>
       </section>

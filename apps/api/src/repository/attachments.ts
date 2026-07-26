@@ -47,6 +47,9 @@ const maxProfileImageBytes = 5 * 1024 * 1024;
 const maxPendingUploadsPerActor = 20;
 const maxDailyUploadsPerActor = 100;
 const maxDailyUploadBytesPerActor = 250 * 1024 * 1024;
+const maxPendingAssistantUploadsPerActor = 5;
+const maxDailyAssistantUploadsPerActor = 20;
+const maxDailyAssistantUploadBytesPerActor = 50 * 1024 * 1024;
 const maxDailyUploadsGlobal = 500;
 const maxDailyUploadBytesGlobal = 1024 * 1024 * 1024;
 const maxActiveUploadBytesGlobal = 8 * 1024 * 1024 * 1024;
@@ -89,7 +92,12 @@ const requireAttachmentDatabase = (ownerType: string) => {
   }
 };
 
-const assertUploadAllowance = async (client: PoolClient, handle: string, incomingByteSize: number) => {
+const assertUploadAllowance = async (
+  client: PoolClient,
+  handle: string,
+  incomingByteSize: number,
+  ownerType: string
+) => {
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended('symposium:upload-capacity', 0))");
   const expired = await client.query<AttachmentStorageRow>(
     `UPDATE attachments
@@ -112,11 +120,26 @@ const assertUploadAllowance = async (client: PoolClient, handle: string, incomin
     dailyBytes: string;
     dailyCount: string;
     pendingCount: string;
+    assistantDailyBytes: string;
+    assistantDailyCount: string;
+    assistantPendingCount: string;
   }>(
     `SELECT
        count(*) FILTER (WHERE status IN ('pending', 'verifying'))::text AS "pendingCount",
        count(*) FILTER (WHERE created_at >= now() - interval '24 hours')::text AS "dailyCount",
-       COALESCE(sum(byte_size) FILTER (WHERE created_at >= now() - interval '24 hours'), 0)::text AS "dailyBytes"
+       COALESCE(sum(byte_size) FILTER (WHERE created_at >= now() - interval '24 hours'), 0)::text AS "dailyBytes",
+       count(*) FILTER (
+         WHERE owner_type = 'assistant_message'
+           AND status IN ('pending', 'verifying')
+       )::text AS "assistantPendingCount",
+       count(*) FILTER (
+         WHERE owner_type = 'assistant_message'
+           AND created_at >= now() - interval '24 hours'
+       )::text AS "assistantDailyCount",
+       COALESCE(sum(byte_size) FILTER (
+         WHERE owner_type = 'assistant_message'
+           AND created_at >= now() - interval '24 hours'
+       ), 0)::text AS "assistantDailyBytes"
      FROM attachments
      WHERE uploader_handle = $1`,
     [handle]
@@ -141,10 +164,32 @@ const assertUploadAllowance = async (client: PoolClient, handle: string, incomin
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Finish or discard an existing pending upload first." });
   }
   if (
+    ownerType === "assistant_message" &&
+    Number(usage?.assistantPendingCount ?? 0) >= maxPendingAssistantUploadsPerActor
+  ) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "Finish or remove an existing AI chat upload before attaching another file."
+    });
+  }
+  if (
     Number(usage?.dailyCount ?? 0) + 1 > maxDailyUploadsPerActor ||
     Number(usage?.dailyBytes ?? 0) + incomingByteSize > maxDailyUploadBytesPerActor
   ) {
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The 24-hour attachment upload allowance has been reached." });
+  }
+  if (
+    ownerType === "assistant_message" &&
+    (
+      Number(usage?.assistantDailyCount ?? 0) + 1 > maxDailyAssistantUploadsPerActor ||
+      Number(usage?.assistantDailyBytes ?? 0) + incomingByteSize >
+        maxDailyAssistantUploadBytesPerActor
+    )
+  ) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "The AI Tablet's 24-hour upload allowance has been reached. Existing chat files remain available."
+    });
   }
   if (
     Number(globalUsage?.dailyCount ?? 0) + 1 > maxDailyUploadsGlobal ||
@@ -228,7 +273,12 @@ export const createAttachmentUpload = async (
     }>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
 
-    expiredAttachmentIds = await assertUploadAllowance(client, handle, input.byteSize);
+    expiredAttachmentIds = await assertUploadAllowance(
+      client,
+      handle,
+      input.byteSize,
+      input.ownerType
+    );
     const attachmentId = randomUUID();
     const objectKey = createObjectKey(input.ownerType, input.fileName);
     const uploadObjectKey = createUploadObjectKey(attachmentId);

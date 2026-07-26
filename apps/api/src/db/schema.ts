@@ -847,6 +847,7 @@ export const aiUsage = pgTable(
     cachedInputTokens: integer("cached_input_tokens").default(0).notNull(),
     cacheWriteTokens: integer("cache_write_tokens").default(0).notNull(),
     outputTokens: integer("output_tokens").default(0).notNull(),
+    visionInputCount: integer("vision_input_count").default(0).notNull(),
     providerResponseId: text("provider_response_id"),
     errorCode: text("error_code"),
     createdAt: createdAtColumn(),
@@ -858,7 +859,8 @@ export const aiUsage = pgTable(
     index("ai_usage_status_created_idx").on(table.status, table.createdAt),
     check("ai_usage_status_check", sql`${table.status} IN ('reserved', 'completed', 'failed')`),
     check("ai_usage_cost_check", sql`${table.reservedCostMicros} >= 0 AND (${table.actualCostMicros} IS NULL OR ${table.actualCostMicros} >= 0)`),
-    check("ai_usage_token_check", sql`${table.inputTokens} >= 0 AND ${table.cachedInputTokens} >= 0 AND ${table.cacheWriteTokens} >= 0 AND ${table.outputTokens} >= 0`)
+    check("ai_usage_token_check", sql`${table.inputTokens} >= 0 AND ${table.cachedInputTokens} >= 0 AND ${table.cacheWriteTokens} >= 0 AND ${table.outputTokens} >= 0`),
+    check("ai_usage_vision_input_count_check", sql`${table.visionInputCount} BETWEEN 0 AND 2`)
   ]
 );
 

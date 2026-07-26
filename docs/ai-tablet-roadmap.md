@@ -14,6 +14,7 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Generated content and persisted content are separate. The assistant cannot claim an action succeeded until Symposium confirms it.
 - Any meaningful write is previewable, attributable, idempotent, and auditable.
 - Context and history are bounded so that a long thread cannot create unbounded model cost.
+- Image sources are resized, rate-limited, and included in the same pre-request cost reservation as text.
 - Translations preserve the original and are user-requested, not automatically substituted site-wide.
 
 ## Build order
@@ -38,6 +39,9 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Capture and revisit saved source revisions through the Context Dock. **Shipped.**
 - Add source-specific reading tools for posts, comments, notes, workspace documents, attachments, messages, and the visible selection.
 - Make answer claims link back to the relevant Symposium passage or attachment location.
+- Accept private AI chat attachments up to 5 MB with durable ownership, transcript and Context Dock persistence, protected retrieval, bounded extracted-text grounding, and deletion with the parent chat. **Shipped.**
+- Inspect at most two included PNG, JPEG, or WebP sources per answer through a server-normalized 1600px vision input. Reserve the full image-token ceiling before the provider call, enforce assistant-specific upload and daily vision limits, and never silently resend excluded images. **Shipped.**
+- Keep videos, unsupported image formats, scans, and unselected PDF pages stored but outside model vision unless a later bounded workflow explicitly includes them.
 
 ### 3. Full AI Workspace shell — shipped
 
@@ -55,7 +59,7 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Preserve the AI usage ledger when a chat is deleted while removing its transcript, context snapshots, and completed mutation receipts; discard rather than persist an answer that finishes after deletion. **Shipped.**
 - Do not invent Projects, folders, long-term memory, automatic actions, or unbounded history before those systems have real persistence and product rules.
 
-### 4. Whole-content translation — structured post/comment and page translation shipped; whole-document action remains
+### 4. Whole-content translation — agreed milestone shipped; whole-document action deferred
 
 - Translate an entire post or individual comment on request while keeping the original one click away. **Shipped.**
 - Cache post/comment translations by canonical source revision and target language. **Shipped.**
@@ -66,7 +70,7 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Preserve rich post/comment document structure and translate text in place without replacing equations, code, citations, drawings, or inline attachments. **Shipped.**
 - Render Translation as a parallel reconstructed page rather than a text box over the source: text PDFs use deterministic source geometry, scanned pages use bounded visual regions plus preserved equation/figure crops, DOCX uses a translated structural clone, and text/Markdown documents retain their original whitespace model. **Shipped.**
 - Keep Original completely untouched and make the reconstructed Translation page independently selectable while retaining diagrams, images, equations, rules, columns, headings, and other non-text page content. **Shipped.**
-- Add one action for a bounded whole discussion and a bounded whole-document translation job. **Remaining.**
+- A bounded whole-discussion or whole-document translation job is intentionally deferred until the product has a larger dedicated AI budget. It is not part of the current AI Tablet sequence.
 - Preserve headings, structure, citations, quantities, uncertainty, and scientific terminology. **Enforced through structured segments and provider-output identity checks.**
 - Cache translations by source revision, target language, and translation policy.
 
