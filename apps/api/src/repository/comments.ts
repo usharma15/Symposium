@@ -222,7 +222,13 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
       });
     }
     const citationResolution = input.document
-      ? await resolveNativeDocumentCitations(client, input.document, handle)
+      ? await resolveNativeDocumentCitations(
+          client,
+          input.document,
+          handle,
+          null,
+          { communityId: lockedItem.communityId ?? null, postType: lockedItem.postType ?? lockedItem.kind }
+        )
       : null;
     if (citationResolution) comment.document = citationResolution.document;
     const parentComment = comment.parentId
@@ -536,7 +542,13 @@ export const updateComment = async (
       });
     }
     const citationResolution = input.document
-      ? await resolveNativeDocumentCitations(client, input.document, handle, original.document ?? null)
+      ? await resolveNativeDocumentCitations(
+          client,
+          input.document,
+          handle,
+          original.document ?? null,
+          { communityId: row.communityId ?? null, postType: row.postType ?? row.kind }
+        )
       : null;
     const nextDocument = citationResolution?.document ?? original.document ?? undefined;
 

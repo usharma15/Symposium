@@ -157,12 +157,16 @@ export const contentTranslationSourceSegments = (document: VersionedDocumentCont
   document.nodes.forEach((node, nodeIndex) => {
     const prefix = `n${nodeIndex}`;
     if (node.type === "paragraph" || node.type === "heading" || node.type === "quote") {
-      node.content.forEach((run, runIndex) => addRunSegments(segments, `${prefix}:r${runIndex}`, run.text));
+      node.content.forEach((run, runIndex) => {
+        if (!run.citation) addRunSegments(segments, `${prefix}:r${runIndex}`, run.text);
+      });
       return;
     }
     if (node.type === "list") {
       node.items.forEach((item, itemIndex) => {
-        item.forEach((run, runIndex) => addRunSegments(segments, `${prefix}:i${itemIndex}:r${runIndex}`, run.text));
+        item.forEach((run, runIndex) => {
+          if (!run.citation) addRunSegments(segments, `${prefix}:i${itemIndex}:r${runIndex}`, run.text);
+        });
       });
       return;
     }
@@ -205,19 +209,23 @@ export const contentTranslatedDocument = (
       if (node.type === "paragraph" || node.type === "heading" || node.type === "quote") {
         return {
           ...node,
-          content: node.content.map((run, runIndex) => ({
-            ...run,
-            text: translatedRunText(`${prefix}:r${runIndex}`, run.text, translated)
-          }))
+          content: node.content.map((run, runIndex) => run.citation
+            ? run
+            : {
+                ...run,
+                text: translatedRunText(`${prefix}:r${runIndex}`, run.text, translated)
+              })
         };
       }
       if (node.type === "list") {
         return {
           ...node,
-          items: node.items.map((item, itemIndex) => item.map((run, runIndex) => ({
-            ...run,
-            text: translatedRunText(`${prefix}:i${itemIndex}:r${runIndex}`, run.text, translated)
-          })))
+          items: node.items.map((item, itemIndex) => item.map((run, runIndex) => run.citation
+            ? run
+            : {
+                ...run,
+                text: translatedRunText(`${prefix}:i${itemIndex}:r${runIndex}`, run.text, translated)
+              }))
         };
       }
       if (node.type === "code" || node.type === "equation") return node;

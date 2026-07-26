@@ -437,7 +437,7 @@ export const documentFitsScribbleEditor = (document: z.infer<typeof versionedDoc
     if (!["paragraph", "equation", "code", "drawing", "reference", "citation"].includes(node.type)) return false;
     if (node.type !== "paragraph") return true;
     return node.content.every((run) =>
-      !run.font && !run.size && !run.color && !run.link && !run.mentionHandle
+      !run.citation && !run.font && !run.size && !run.color && !run.link && !run.mentionHandle
       && (run.marks ?? []).every((mark) => mark === "bold")
     );
   });

@@ -5,6 +5,7 @@ import {
   createCommentInputSchema,
   createPostInputSchema,
   documentCitationMarkerText,
+  documentFitsScribbleEditor,
   versionedDocumentSchema,
   type DocumentNativeCitationContract,
   type VersionedDocumentContract
@@ -18,7 +19,13 @@ import {
   symposiumDocumentToTiptap,
   tiptapToSymposiumDocument
 } from "@/features/content/SymposiumTiptapEditor";
+import { translatedDocumentForSource } from "@/lib/documentModel";
+import { nativeSourceForAssistantCitation } from "@/features/assistant/nativeCitationSource";
 import { resolveNativeDocumentCitations } from "@/apps/api/src/services/nativeCitations";
+import {
+  contentTranslatedDocument,
+  contentTranslationSourceSegments
+} from "@/apps/api/src/repository/contentTranslations";
 
 const sourceDocument: VersionedDocumentContract = {
   version: 1,
@@ -48,7 +55,7 @@ const citation = (overrides: Partial<DocumentNativeCitationContract> = {}): Docu
     startBlockId: "result-block",
     endBlockId: "result-block",
     startOffset: 4,
-    endOffset: 61
+    endOffset: 60
   },
   excerpt: "intervention reduced the measured endpoint by 12 percent",
   ...overrides
@@ -85,6 +92,10 @@ const canonicalPostRow = {
   postId: "paper-1",
   commentId: null,
   postType: "paper",
+  room: "library",
+  contentKind: "paper",
+  communityId: null,
+  communityVisibility: null,
   createdAt: "2026-07-20T12:00:00.000Z"
 };
 
@@ -120,7 +131,7 @@ const attachmentCitation = (
       : kind === "pdf-text"
         ? { kind, page: 2, excerpt: "Confirmed attachment evidence" }
         : kind === "spreadsheet-range"
-          ? { kind, sheet: "Results", range: "B2:D6" }
+          ? { kind, sheet: "Results", range: "B2:B2" }
           : kind === "presentation-slide"
             ? { kind, slide: 3 }
             : { kind };
@@ -170,6 +181,23 @@ const clientReturning = (rows: unknown[]) => {
   return { client, calls: () => calls };
 };
 
+const clientForAudience = (
+  sourceRows: unknown[],
+  destinationVisibility: "public" | "private"
+) => {
+  let calls = 0;
+  const client = {
+    query: async (sql: string) => {
+      calls += 1;
+      const rows = sql.includes("SELECT visibility FROM communities")
+        ? [{ visibility: destinationVisibility }]
+        : sourceRows;
+      return { rows, rowCount: rows.length };
+    }
+  } as unknown as PoolClient;
+  return { client, calls: () => calls };
+};
+
 const markerDocument = nativeDocument(citation());
 assert.equal(versionedDocumentSchema.safeParse(markerDocument).success, true);
 assert.equal(versionedDocumentSchema.safeParse(nativeDocument(citation(), {
@@ -213,6 +241,55 @@ assert.deepEqual(
 );
 assert.equal(documentNativeCitations(markerDocument).length, 1);
 assert.equal(documentCitationOrdinals(markerDocument).get(citation().id), 1);
+assert.equal(
+  contentTranslationSourceSegments(markerDocument).some((segment) => segment.text === documentCitationMarkerText),
+  false,
+  "native markers must never be offered to the translation provider as prose"
+);
+const translatedMarkerDocument = contentTranslatedDocument(markerDocument, [
+  { id: "n0:r0", text: "Le résultat est important" },
+  { id: "n0:r1", text: "malicious marker replacement" }
+]);
+const translatedMarker = documentNativeCitations(translatedMarkerDocument)[0]!;
+assert.equal(translatedMarkerDocument.nodes[0]?.type === "paragraph"
+  ? translatedMarkerDocument.nodes[0].content[1]?.text
+  : null, documentCitationMarkerText);
+assert.deepEqual(translatedMarker, citation(), "translation reconstruction must preserve the complete native citation record");
+assert.equal(versionedDocumentSchema.safeParse(translatedMarkerDocument).success, true);
+const markerParagraph = markerDocument.nodes[0]!;
+assert.equal(markerParagraph.type, "paragraph");
+if (markerParagraph.type !== "paragraph") {
+  throw new Error("marker translation fixture must remain a paragraph");
+}
+const clientMergedTranslation = translatedDocumentForSource({
+  sourceDocument: markerDocument,
+  sourceBody: "",
+  translatedDocument: {
+    ...markerDocument,
+    nodes: [{
+      ...markerParagraph,
+      content: [
+        { text: "Translated result" },
+        { text: "provider tried to replace the citation" },
+        { text: "." }
+      ]
+    }]
+  },
+  translatedBody: ""
+});
+assert.deepEqual(
+  documentNativeCitations(clientMergedTranslation)[0],
+  citation(),
+  "client translation merging must preserve source-owned citation records"
+);
+assert.equal(clientMergedTranslation.nodes[0]?.type === "paragraph"
+  ? clientMergedTranslation.nodes[0].content[1]?.text
+  : null, documentCitationMarkerText);
+assert.equal(
+  documentFitsScribbleEditor(markerDocument),
+  false,
+  "the Scribble-only document API must reject injected native inline citation records"
+);
 assert.match(documentCitationBibliographyEntry(citation({
   source: {
     ...citation().source,
@@ -238,6 +315,93 @@ assert.equal(createCommentInputSchema.safeParse({
   document: markerDocument,
   stance: "Evidence"
 }).success, true);
+
+assert.deepEqual(nativeSourceForAssistantCitation({
+  title: "Post evidence",
+  excerpt: "A selected post passage",
+  route: "/posts/paper-1",
+  kind: "selection",
+  entityType: "post",
+  entityId: "paper-1"
+}), {
+  kind: "post",
+  sourceId: "paper-1",
+  sourcePostId: "paper-1",
+  title: "Post evidence",
+  body: "A selected post passage",
+  canonicalPath: "/posts/paper-1"
+});
+assert.deepEqual(nativeSourceForAssistantCitation({
+  title: "Embedded comment evidence",
+  excerpt: "A comment inside the post context",
+  route: "/posts/paper-1?comment=comment-1",
+  kind: "comment",
+  entityType: "post",
+  entityId: "paper-1"
+}), {
+  kind: "comment",
+  sourceId: "comment-1",
+  sourcePostId: "paper-1",
+  sourceCommentId: "comment-1",
+  title: "Embedded comment evidence",
+  body: "A comment inside the post context",
+  canonicalPath: "/posts/paper-1?comment=comment-1"
+});
+assert.equal(nativeSourceForAssistantCitation({
+  title: "Broken comment evidence",
+  excerpt: "Missing its parent route",
+  route: "/messages",
+  kind: "selection",
+  entityType: "comment",
+  entityId: "comment-1"
+}), null);
+assert.deepEqual(nativeSourceForAssistantCitation({
+  title: "Selected comment evidence",
+  excerpt: "A selected comment passage",
+  route: "/posts/paper-1?comment=comment-1",
+  kind: "selection",
+  entityType: "comment",
+  entityId: "comment-1"
+}), {
+  kind: "comment",
+  sourceId: "comment-1",
+  sourcePostId: "paper-1",
+  sourceCommentId: "comment-1",
+  title: "Selected comment evidence",
+  body: "A selected comment passage",
+  canonicalPath: "/posts/paper-1?comment=comment-1"
+});
+assert.deepEqual(nativeSourceForAssistantCitation({
+  title: "Attachment evidence",
+  excerpt: "A selected PDF passage",
+  route: "/posts/paper-1?attachment=attachment-1",
+  kind: "page",
+  entityType: "attachment",
+  entityId: "attachment-1"
+}), {
+  kind: "attachment",
+  sourceId: "attachment-1",
+  sourcePostId: "paper-1",
+  title: "Attachment evidence",
+  body: "A selected PDF passage",
+  canonicalPath: "/posts/paper-1?attachment=attachment-1"
+});
+assert.equal(nativeSourceForAssistantCitation({
+  title: "Private conversation",
+  excerpt: "Private message evidence",
+  route: "/messages",
+  kind: "message",
+  entityType: "conversation",
+  entityId: "conversation-1"
+}), null, "unsupported private Evidence Map sources must not expose native authoring");
+assert.equal(nativeSourceForAssistantCitation({
+  title: "AI upload",
+  excerpt: "Private upload evidence",
+  route: "/assistant",
+  kind: "attachment",
+  entityType: "assistant_attachment",
+  entityId: "attachment-1"
+}), null, "private AI uploads must not be misclassified as public post citations");
 
 const main = async () => {
   const verified = clientReturning([canonicalPostRow]);
@@ -272,7 +436,7 @@ const main = async () => {
       startBlockId: "review-block",
       endBlockId: "review-block",
       startOffset: 4,
-      endOffset: 55
+      endOffset: 54
     },
     excerpt: "independent review reproduced the primary endpoint"
   });
@@ -312,7 +476,7 @@ const main = async () => {
         id: "attachment-pdf-text",
         fileName: "paper.pdf",
         contentType: "application/pdf",
-        metadata: { previewText: "Page 2: Confirmed attachment evidence." }
+        metadata: { previewText: "[PDF page 1]\nOther evidence.\n\n[PDF page 2]\nConfirmed attachment evidence." }
       }),
       expectedKind: "pdf"
     },
@@ -324,7 +488,8 @@ const main = async () => {
         contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         metadata: {
           structuredPreview: {
-            sheets: [{ name: "Results", rows: [["spreadsheet-range evidence"]] }]
+            type: "spreadsheet",
+            sheets: [{ name: "Results", rows: [["Heading"], ["Label", "spreadsheet-range evidence"]] }]
           }
         }
       }),
@@ -338,7 +503,12 @@ const main = async () => {
         contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         metadata: {
           structuredPreview: {
-            slides: [{ slide: 3, text: "presentation-slide evidence" }]
+            type: "presentation",
+            slides: [
+              { title: "Slide one", lines: [] },
+              { title: "Slide two", lines: [] },
+              { title: "presentation-slide evidence", lines: [] }
+            ]
           }
         }
       }),
@@ -356,7 +526,26 @@ const main = async () => {
     assert.equal(canonicalAttachment.source.attachment?.kind, testCase.expectedKind);
     assert.equal(canonicalAttachment.source.title, testCase.row.fileName);
     assert.match(canonicalAttachment.source.canonicalPath, new RegExp(`attachment=${testCase.row.id}$`));
+    if (testCase.record.locator.kind === "whole") {
+      assert.equal(canonicalAttachment.excerpt, testCase.row.fileName);
+    }
+    if (testCase.record.locator.kind === "image-region") {
+      assert.equal(canonicalAttachment.excerpt, `Image region from ${testCase.row.fileName}`);
+    }
   }
+  const forgedWholeAttachment = attachmentCitation("whole", {
+    excerpt: "Invented finding attributed to the file"
+  });
+  const canonicalWholeAttachment = documentNativeCitations((await resolveNativeDocumentCitations(
+    clientReturning([attachmentCases[0].row]).client,
+    nativeDocument(forgedWholeAttachment),
+    "@author"
+  )).document)[0]!;
+  assert.equal(
+    canonicalWholeAttachment.excerpt,
+    attachmentCases[0].row.fileName,
+    "whole-file display text must be server-derived rather than client-authored"
+  );
   await assert.rejects(
     resolveNativeDocumentCitations(
       clientReturning([attachmentCases[2].row]).client,
@@ -364,6 +553,70 @@ const main = async () => {
       "@author"
     ),
     /unavailable/
+  );
+  await assert.rejects(
+    resolveNativeDocumentCitations(
+      clientReturning([{
+        ...attachmentCases[2].row,
+        metadata: {
+          previewText: "[PDF page 1]\nConfirmed attachment evidence.\n\n[PDF page 2]\nDifferent page evidence."
+        }
+      }]).client,
+      nativeDocument(attachmentCitation("pdf-text")),
+      "@author"
+    ),
+    /unavailable/,
+    "an excerpt on another PDF page cannot validate the requested locator"
+  );
+  await assert.rejects(
+    resolveNativeDocumentCitations(
+      clientReturning([{
+        ...attachmentCases[3].row,
+        metadata: {
+          structuredPreview: {
+            type: "spreadsheet",
+            sheets: [{ name: "Results", rows: [["spreadsheet-range evidence"], ["Label", "different cell"]] }]
+          }
+        }
+      }]).client,
+      nativeDocument(attachmentCitation("spreadsheet-range")),
+      "@author"
+    ),
+    /unavailable/,
+    "spreadsheet evidence outside the selected range cannot validate the locator"
+  );
+  await assert.rejects(
+    resolveNativeDocumentCitations(
+      clientReturning([attachmentCases[3].row]).client,
+      nativeDocument(attachmentCitation("spreadsheet-range", {
+        locator: { kind: "spreadsheet-range", sheet: "Results", range: "B2:B99" },
+        excerpt: "Results B2:B99"
+      })),
+      "@author"
+    ),
+    /unavailable/,
+    "spreadsheet ranges outside the bounded server preview cannot be represented as verified empty ranges"
+  );
+  await assert.rejects(
+    resolveNativeDocumentCitations(
+      clientReturning([{
+        ...attachmentCases[4].row,
+        metadata: {
+          structuredPreview: {
+            type: "presentation",
+            slides: [
+              { title: "presentation-slide evidence", lines: [] },
+              { title: "Slide two", lines: [] },
+              { title: "Different slide evidence", lines: [] }
+            ]
+          }
+        }
+      }]).client,
+      nativeDocument(attachmentCitation("presentation-slide")),
+      "@author"
+    ),
+    /unavailable/,
+    "presentation evidence on another slide cannot validate the locator"
   );
 
   const tampered = clientReturning([canonicalPostRow]);
@@ -374,6 +627,127 @@ const main = async () => {
       "@author"
     ),
     /no longer matches/
+  );
+  await assert.rejects(
+    resolveNativeDocumentCitations(
+      clientReturning([canonicalPostRow]).client,
+      nativeDocument(citation({
+        locator: {
+          kind: "text",
+          startBlockId: "result-block",
+          endBlockId: "result-block",
+          startOffset: 0,
+          endOffset: sourceDocument.nodes[0]?.type === "paragraph"
+            ? sourceDocument.nodes[0].content[0]?.text.length
+            : 0
+        },
+        excerpt: "intervention reduced"
+      })),
+      "@author"
+    ),
+    /no longer matches/,
+    "a precise structured locator cannot point at a broader passage than its excerpt"
+  );
+  await resolveNativeDocumentCitations(
+    clientReturning([canonicalPostRow]).client,
+    nativeDocument(citation({
+      locator: { kind: "text" }
+    })),
+    "@author"
+  );
+
+  const privateSourceRow = {
+    ...canonicalPostRow,
+    postType: "thought",
+    communityId: "private-community",
+    communityVisibility: "private" as const
+  };
+  await assert.rejects(
+    resolveNativeDocumentCitations(
+      clientReturning([privateSourceRow]).client,
+      markerDocument,
+      "@author",
+      null,
+      { communityId: null, postType: "paper" }
+    ),
+    /narrower audience/
+  );
+  const samePrivateCommunity = clientForAudience([privateSourceRow], "private");
+  await resolveNativeDocumentCitations(
+    samePrivateCommunity.client,
+    markerDocument,
+    "@author",
+    null,
+    { communityId: "private-community", postType: "thought" }
+  );
+  assert.equal(samePrivateCommunity.calls(), 2, "one destination audience lookup and one source lookup are sufficient");
+  await assert.rejects(
+    resolveNativeDocumentCitations(
+      clientForAudience([privateSourceRow], "private").client,
+      markerDocument,
+      "@author",
+      null,
+      { communityId: "different-private-community", postType: "thought" }
+    ),
+    /narrower audience/
+  );
+  await assert.rejects(
+    resolveNativeDocumentCitations(
+      clientForAudience([privateSourceRow], "public").client,
+      markerDocument,
+      "@author",
+      null,
+      { communityId: "private-community", postType: "thought" }
+    ),
+    /narrower audience/
+  );
+  await resolveNativeDocumentCitations(
+    clientForAudience([canonicalPostRow], "private").client,
+    markerDocument,
+    "@author",
+    null,
+    { communityId: "private-community", postType: "thought" }
+  );
+  await resolveNativeDocumentCitations(
+    clientReturning([{
+      ...privateSourceRow,
+      postType: "paper"
+    }]).client,
+    markerDocument,
+    "@author",
+    null,
+    { communityId: null, postType: "paper" }
+  );
+  const privateDraftSourceRow = {
+    ...canonicalPostRow,
+    postType: "thought",
+    room: "office",
+    contentKind: "draft"
+  };
+  await resolveNativeDocumentCitations(
+    clientReturning([privateDraftSourceRow]).client,
+    markerDocument,
+    "@author"
+  );
+  await assert.rejects(
+    resolveNativeDocumentCitations(
+      clientReturning([privateDraftSourceRow]).client,
+      markerDocument,
+      "@author",
+      null,
+      { communityId: null, postType: "thought" }
+    ),
+    /narrower audience/
+  );
+  await assert.rejects(
+    resolveNativeDocumentCitations(
+      clientForAudience([privateDraftSourceRow], "private").client,
+      markerDocument,
+      "@author",
+      null,
+      { communityId: "private-community", postType: "thought" }
+    ),
+    /narrower audience/
   );
 
   const inaccessible = clientReturning([]);
@@ -416,9 +790,12 @@ const main = async () => {
     scribble: readFileSync("features/scribble/ScribbleContext.tsx", "utf8"),
     attachments: readFileSync("features/attachments/AttachmentPreviewModal.tsx", "utf8"),
     assistant: readFileSync("features/assistant/AssistantExperience.tsx", "utf8"),
+    assistantSource: readFileSync("features/assistant/nativeCitationSource.ts", "utf8"),
     posts: readFileSync("apps/api/src/repository/posts.ts", "utf8"),
     comments: readFileSync("apps/api/src/repository/comments.ts", "utf8"),
     workspace: readFileSync("apps/api/src/repository/workspaceDocuments.ts", "utf8"),
+    workspaceComments: readFileSync("apps/api/src/repository/workspaceComments.ts", "utf8"),
+    workspacePublication: readFileSync("apps/api/src/services/workspacePublicationState.ts", "utf8"),
     server: readFileSync("apps/api/src/services/nativeCitations.ts", "utf8"),
     shell: readFileSync("components/SymposiumV0.tsx", "utf8"),
     styles: readFileSync("styles/94-native-citations.css", "utf8")
@@ -429,16 +806,27 @@ const main = async () => {
   assert.match(source.editor, /symposiumInlineCitation/);
   assert.match(source.editor, /Bibliography style/);
   assert.match(source.renderer, /document-inline-citation-preview/);
+  assert.match(source.renderer, /aria-describedby/);
   assert.match(source.renderer, /documentCitationBibliographyEntry/);
   assert.match(source.capture, /pendingCitation/);
+  assert.match(source.capture, /aria-live="polite"/);
   assert.match(source.scribble, /Cite in draft/);
   assert.match(source.attachments, /onNativeCapture/);
   assert.match(source.assistant, /Stage this evidence as a native citation/);
+  assert.match(source.assistantSource, /entityType === "attachment"/);
+  assert.match(source.assistantSource, /citation\.kind === "comment"/);
   assert.match(source.posts, /resolveNativeDocumentCitations/);
   assert.match(source.comments, /resolveNativeDocumentCitations/);
   assert.match(source.workspace, /resolveNativeDocumentCitations/);
+  assert.match(source.workspaceComments, /resolveNativeDocumentCitations/);
+  assert.match(source.workspaceComments, /newCitationCount/);
+  assert.match(source.workspacePublication, /publishedDiscussionCitationCount/);
+  assert.match(source.workspacePublication, /resolveNativeDocumentCitations/);
   assert.match(source.server, /saved citation snapshot cannot be silently changed/i);
   assert.match(source.server, /community_memberships/);
+  assert.match(source.server, /narrower audience than this destination/i);
+  assert.match(source.posts, /communityId: item\.communityId/);
+  assert.match(source.comments, /communityId: lockedItem\.communityId/);
   assert.match(source.shell, /NativeCitationProvider/);
   assert.match(source.styles, /\.document-bibliography/);
 
@@ -448,13 +836,16 @@ const main = async () => {
       "strict native marker and duplicate-ID contracts",
       "hard 100-marker document ceiling",
       "TipTap round-trip and deterministic ordinal ordering",
+      "translation-provider exclusion and byte-stable native marker reconstruction",
       "APA, MLA, and Chicago bibliography rendering",
       "server-authorized source canonicalization",
+      "public and same-community audience containment",
       "exact selected-passage validation and forged-snapshot replacement",
       "post, comment, whole-file, image, PDF, spreadsheet, and presentation source resolution",
       "immutable saved citations after source changes or revocation",
       "mutation rejection, source access failure, and deduplicated validation",
-      "post, comment, Office, attachment, Scribble, and Evidence Map integration",
+      "post, comment, Office document, Office discussion, attachment, Scribble, and Evidence Map integration",
+      "Evidence Map post, embedded-comment, selected-comment, attachment, and private-source classification",
       "hover previews, editor citation tray, bibliography style control, and responsive UI"
     ]
   }, null, 2));

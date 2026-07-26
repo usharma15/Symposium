@@ -11,7 +11,6 @@ import type {
   AssistantThreadSummaryContract,
   AssistantTranslationContract,
   AssistantTranslationLanguageContract,
-  DocumentSourceSnapshotContract,
   InquiryAttachmentContract
 } from "@/packages/contracts/src";
 import { assistantTranslationLanguageLabels } from "@/packages/contracts/src/translationLanguages";
@@ -25,6 +24,7 @@ import {
 } from "@/lib/attachmentRules";
 import { isAssistantVisionContentType } from "@/lib/assistantVisionRules";
 import { useNativeCitation } from "@/features/citations/NativeCitationContext";
+import { nativeSourceForAssistantCitation } from "@/features/assistant/nativeCitationSource";
 
 const assistantAttachmentProcessingLabel = (attachment: InquiryAttachmentContract) => {
   if (isAssistantVisionContentType(attachment.contentType)) return "Image ready for AI";
@@ -48,47 +48,6 @@ const assistantClaimKindLabel = {
   inference: "Inference",
   insufficient: "Insufficient context"
 } as const;
-
-const nativeSourceForAssistantCitation = (citation: {
-  title: string;
-  excerpt: string;
-  route: string;
-  kind: string;
-  entityType?: string;
-  entityId?: string;
-}): DocumentSourceSnapshotContract | null => {
-  try {
-    const url = new URL(citation.route || "/", "https://symposium.invalid");
-    const segments = url.pathname.split("/").filter(Boolean);
-    const postId = segments[0] === "posts" ? decodeURIComponent(segments[1] ?? "") : "";
-    const commentId = citation.kind === "comment" ? url.searchParams.get("comment")?.trim() ?? "" : "";
-    if (commentId && postId) {
-      return {
-        kind: "comment",
-        sourceId: commentId,
-        sourcePostId: postId,
-        sourceCommentId: commentId,
-        title: citation.title,
-        body: citation.excerpt,
-        canonicalPath: `${url.pathname}${url.search}`
-      };
-    }
-    const resolvedPostId = citation.entityType === "post" || citation.entityType === "opportunity"
-      ? citation.entityId?.trim() || postId
-      : postId;
-    if (!resolvedPostId) return null;
-    return {
-      kind: "post",
-      sourceId: resolvedPostId,
-      sourcePostId: resolvedPostId,
-      title: citation.title,
-      body: citation.excerpt,
-      canonicalPath: `${url.pathname}${url.search}${url.hash}`
-    };
-  } catch {
-    return null;
-  }
-};
 
 const assistantInlineContent = (value: string, keyPrefix: string): ReactNode[] =>
   value.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).filter(Boolean).map((part, index) => {

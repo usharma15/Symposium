@@ -1162,7 +1162,7 @@ export const SymposiumDocumentEditor = forwardRef<SymposiumDocumentEditorHandle,
   return (
     <section className={`symposium-document-editor capability-${capability}${disabled ? " disabled" : ""}`} aria-label="Document editor">
       {capability !== "scribble" && nativeCitation.pendingCitation ? (
-        <div className="native-citation-editor-tray" role="status">
+        <div className="native-citation-editor-tray" aria-label="Citation ready to insert">
           <BookOpen size={16} aria-hidden="true" />
           <span>
             <strong>{nativeCitation.pendingCitation.source.title ?? "Citation ready"}</strong>

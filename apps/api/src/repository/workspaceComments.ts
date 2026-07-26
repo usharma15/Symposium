@@ -16,6 +16,7 @@ import { claimMutation, completeMutation, type MutationContext } from "../servic
 import { replaceOwnerAttachments } from "../services/attachmentOwnership";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
 import { contentMentionNotificationInputs } from "../services/contentNotifications";
+import { resolveNativeDocumentCitations } from "../services/nativeCitations";
 import { runAtomic } from "../services/transactions";
 import {
   createNotifications,
@@ -266,12 +267,16 @@ export const createWorkspaceComment = async (
       parentAuthorHandle = parent.rows[0]?.authorHandle ?? null;
     }
     const profile = await client.query<{ name: string }>("SELECT name FROM profiles WHERE handle = $1", [handle]);
+    const citationResolution = input.document
+      ? await resolveNativeDocumentCitations(client, input.document, handle)
+      : null;
+    const resolvedDocument = citationResolution?.document ?? null;
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO workspace_note_comments (
          note_id, parent_id, author_handle, author_name, stance, body, content_document
        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id::text`,
-      [noteId, input.parentId ?? null, handle, profile.rows[0]?.name ?? handle, input.stance, input.body, input.document ? JSON.stringify(input.document) : null]
+      [noteId, input.parentId ?? null, handle, profile.rows[0]?.name ?? handle, input.stance, input.body, resolvedDocument ? JSON.stringify(resolvedDocument) : null]
     );
     const commentId = inserted.rows[0]!.id;
     const attachmentResult = await replaceOwnerAttachments(client, {
@@ -286,7 +291,12 @@ export const createWorkspaceComment = async (
       action: input.parentId ? "workspace.comment.reply" : "workspace.comment.create",
       subjectType: "note_comment",
       subjectId: commentId,
-      metadata: mutationAuditMetadata(mutation, { noteId, parentId: input.parentId ?? null })
+      metadata: mutationAuditMetadata(mutation, {
+        noteId,
+        parentId: input.parentId ?? null,
+        citationCount: citationResolution?.citationCount ?? 0,
+        newCitationCount: citationResolution?.newCitationCount ?? 0
+      })
     });
     await completeMutation(client, handle, mutation, value);
     const notificationInputs: CreateNotificationInput[] = [];
@@ -323,7 +333,7 @@ export const createWorkspaceComment = async (
       actorName,
       body: access!.title,
       href,
-      next: { body: input.body, document: input.document },
+      next: { body: input.body, document: resolvedDocument ?? undefined },
       audienceHandles
     });
     notificationInputs.push(...mentionNotifications.inputs);
@@ -377,6 +387,10 @@ export const updateWorkspaceComment = async (
     if (current.revision !== input.expectedRevision) {
       throw new TRPCError({ code: "CONFLICT", message: "This comment changed after it was opened. Refresh before overwriting it." });
     }
+    const citationResolution = input.document
+      ? await resolveNativeDocumentCitations(client, input.document, handle, current.document)
+      : null;
+    const resolvedDocument = citationResolution?.document ?? null;
     const attachmentResult = await replaceOwnerAttachments(client, {
       attachmentIds: input.attachmentIds,
       ownerId: commentId,
@@ -388,7 +402,7 @@ export const updateWorkspaceComment = async (
       `UPDATE workspace_note_comments
        SET body = $3, content_document = $4, revision = revision + 1, edited_at = now(), updated_at = now()
        WHERE id = $1 AND note_id = $2`,
-      [commentId, noteId, input.body, input.document ? JSON.stringify(input.document) : null]
+      [commentId, noteId, input.body, resolvedDocument ? JSON.stringify(resolvedDocument) : null]
     );
     const value = { ...(await responseFor(client, noteId, handle, commentId)), removedAttachmentIds };
     await stageAuditLog(client, {
@@ -396,7 +410,12 @@ export const updateWorkspaceComment = async (
       action: "workspace.comment.update",
       subjectType: "note_comment",
       subjectId: commentId,
-      metadata: mutationAuditMetadata(mutation, { noteId, revision: input.expectedRevision + 1 })
+      metadata: mutationAuditMetadata(mutation, {
+        noteId,
+        revision: input.expectedRevision + 1,
+        citationCount: citationResolution?.citationCount ?? 0,
+        newCitationCount: citationResolution?.newCitationCount ?? 0
+      })
     });
     await completeMutation(client, handle, mutation, value);
     const audienceHandles = await documentAudienceHandles(client, noteId);
@@ -409,7 +428,7 @@ export const updateWorkspaceComment = async (
       body: access.title,
       href: `/workspace?view=notes&note=${encodeURIComponent(noteId)}&comment=${encodeURIComponent(commentId)}`,
       current: { body: current.body, document: current.document ?? undefined },
-      next: { body: input.body, document: input.document },
+      next: { body: input.body, document: resolvedDocument ?? undefined },
       audienceHandles
     });
     const notificationEvents: StoredLiveEvent[] = [];

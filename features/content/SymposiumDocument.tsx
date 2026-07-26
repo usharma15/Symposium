@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import katex from "katex";
 import type { InquiryAttachment, ResearchProfile } from "@/lib/mockData";
 import type {
@@ -68,15 +68,17 @@ function InlineCitationMarker({
   citation: DocumentNativeCitationContract;
   ordinal: number;
 }) {
+  const previewId = useId();
   return (
-    <span className="document-inline-citation" tabIndex={0}>
+    <span className="document-inline-citation">
       <a
         href={citation.source.canonicalPath}
         aria-label={`Citation ${ordinal}: ${citation.source.title ?? citation.source.author ?? "Symposium source"}`}
+        aria-describedby={previewId}
       >
         [{ordinal}]
       </a>
-      <span className="document-inline-citation-preview" role="tooltip">
+      <span className="document-inline-citation-preview" id={previewId} role="tooltip">
         <small>{documentCitationLocatorLabel(citation.locator)} · {documentSourceContextLabel(citation.source)}</small>
         <strong>{citation.source.title ?? citation.source.author ?? "Symposium source"}</strong>
         <q>{citation.excerpt}</q>

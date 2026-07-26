@@ -162,7 +162,13 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       return claim.response;
     }
     const citationResolution = input.document
-      ? await resolveNativeDocumentCitations(client, input.document, handle)
+      ? await resolveNativeDocumentCitations(
+          client,
+          input.document,
+          handle,
+          null,
+          { communityId: item.communityId ?? null, postType: item.postType ?? item.kind }
+        )
       : null;
     if (citationResolution) item.document = citationResolution.document;
     item.quote = await resolveContentQuote(client, input.quoteSource, {
@@ -676,7 +682,13 @@ export const updatePost = async (
       });
     }
     const citationResolution = input.document
-      ? await resolveNativeDocumentCitations(client, input.document, handle, row.document ?? null)
+      ? await resolveNativeDocumentCitations(
+          client,
+          input.document,
+          handle,
+          row.document ?? null,
+          { communityId: row.communityId ?? null, postType: row.postType ?? row.kind }
+        )
       : null;
     const nextDocument = citationResolution?.document ?? row.document ?? null;
 

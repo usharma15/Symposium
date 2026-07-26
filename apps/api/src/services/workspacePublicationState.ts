@@ -20,6 +20,7 @@ import { stageEvent } from "./events";
 import { claimMutation, completeMutation, type MutationContext } from "./mutations";
 import { runAtomic } from "./transactions";
 import { queueAttachmentsForOwnerStorageDeletion } from "./storageDeletion";
+import { resolveNativeDocumentCitations } from "./nativeCitations";
 import {
   publishPreparedWorkspaceDiscussion,
   type PreparedWorkspaceDiscussion
@@ -194,8 +195,27 @@ export const persistWorkspacePublication = async <T extends { item: InquiryItemC
 ) => runAtomic(async (client) => {
   const claim = await claimMutation<Record<string, unknown>>(client, publisher, mutation);
   if (claim.replayed) return { value: claim.response };
+  let publishedDiscussionCitationCount = 0;
+  const discussionForPublication: PreparedWorkspaceDiscussion = {
+    ...discussion,
+    comments: await Promise.all(discussion.comments.map(async (comment) => {
+      if (!comment.publicDocument) return comment;
+      const resolution = await resolveNativeDocumentCitations(
+        client,
+        comment.publicDocument,
+        comment.authorHandle ?? revision.ownerHandle,
+        null,
+        {
+          communityId: result.item.communityId ?? null,
+          postType: result.item.postType ?? result.item.kind
+        }
+      );
+      publishedDiscussionCitationCount += resolution.citationCount;
+      return { ...comment, publicDocument: resolution.document };
+    }))
+  };
   const publishedDiscussion = await publishPreparedWorkspaceDiscussion(client, {
-    discussion,
+    discussion: discussionForPublication,
     postId: result.item.id,
     rootParentId: result.comment?.id ?? null
   });
@@ -297,7 +317,8 @@ export const persistWorkspacePublication = async <T extends { item: InquiryItemC
       noteRevision: revision.revision,
       checkpointId: revision.checkpointId,
       target,
-      sourceAttachmentCount: sourceAttachmentIds.length
+      sourceAttachmentCount: sourceAttachmentIds.length,
+      publishedDiscussionCitationCount
     })
   });
   await completeMutation(client, publisher, mutation, value);

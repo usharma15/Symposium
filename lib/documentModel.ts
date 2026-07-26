@@ -71,10 +71,12 @@ const translatedNodeForSource = (
     ) return sourceNode;
     return {
       ...sourceNode,
-      content: sourceNode.content.map((run, index) => ({
-        ...run,
-        text: translatedNode.content[index]?.text ?? run.text
-      }))
+      content: sourceNode.content.map((run, index) => run.citation
+        ? run
+        : {
+            ...run,
+            text: translatedNode.content[index]?.text ?? run.text
+          })
     };
   }
 
@@ -83,10 +85,12 @@ const translatedNodeForSource = (
     return {
       ...sourceNode,
       items: sourceNode.items.map((item, itemIndex) =>
-        item.map((run, runIndex) => ({
-          ...run,
-          text: translatedNode.items[itemIndex]?.[runIndex]?.text ?? run.text
-        }))
+        item.map((run, runIndex) => run.citation
+          ? run
+          : {
+              ...run,
+              text: translatedNode.items[itemIndex]?.[runIndex]?.text ?? run.text
+            })
       )
     };
   }

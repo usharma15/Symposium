@@ -20,6 +20,10 @@ type CitationSourceRow = {
   postId: string;
   commentId: string | null;
   postType: string;
+  room: string;
+  contentKind: string;
+  communityId: string | null;
+  communityVisibility: "public" | "private" | null;
   createdAt: Date | string;
   fileName?: string;
   contentType?: string;
@@ -32,6 +36,11 @@ export type NativeCitationResolution = {
   citationCount: number;
   newCitationCount: number;
   sourceIds: string[];
+};
+
+export type NativeCitationDestination = {
+  communityId: string | null;
+  postType: string;
 };
 
 const postAccessSql = `
@@ -124,16 +133,84 @@ const exactDocumentExcerpt = (
   ].join("\n");
 };
 
-const metadataText = (metadata: Record<string, unknown> | undefined) => {
-  if (!metadata) return "";
-  const previewText = typeof metadata.previewText === "string" ? metadata.previewText : "";
-  const structured = metadata.structuredPreview && typeof metadata.structuredPreview === "object"
-    ? JSON.stringify(metadata.structuredPreview)
-    : "";
-  return `${previewText}\n${structured}`;
+const spreadsheetColumnIndex = (label: string) =>
+  [...label.toUpperCase()].reduce((value, letter) => value * 26 + letter.charCodeAt(0) - 64, 0) - 1;
+
+const spreadsheetRangeExcerpt = (
+  metadata: Record<string, unknown> | undefined,
+  sheetName: string,
+  range: string
+) => {
+  const structured = metadata?.structuredPreview;
+  if (!structured || typeof structured !== "object") return null;
+  const preview = structured as { type?: unknown; sheets?: unknown };
+  if (preview.type !== "spreadsheet" || !Array.isArray(preview.sheets)) return null;
+  const sheet = preview.sheets.find((candidate) =>
+    candidate &&
+    typeof candidate === "object" &&
+    (candidate as { name?: unknown }).name === sheetName
+  ) as { rows?: unknown } | undefined;
+  if (!sheet || !Array.isArray(sheet.rows)) return null;
+  const match = range.match(/^([A-Z]+)([1-9]\d*):([A-Z]+)([1-9]\d*)$/i);
+  if (!match) return null;
+  const left = spreadsheetColumnIndex(match[1]!);
+  const top = Number(match[2]) - 1;
+  const right = spreadsheetColumnIndex(match[3]!);
+  const bottom = Number(match[4]) - 1;
+  if (right < left || bottom < top) return null;
+  if (bottom >= sheet.rows.length) return null;
+  const rows = sheet.rows.slice(top, bottom + 1);
+  const firstRow = rows[0];
+  const lastRow = rows[rows.length - 1];
+  if (
+    !Array.isArray(firstRow) ||
+    !Array.isArray(lastRow) ||
+    firstRow.length <= left ||
+    lastRow.length <= left ||
+    !rows.some((row) => Array.isArray(row) && row.length > right)
+  ) {
+    return null;
+  }
+  const excerpt = rows
+    .map((row) => Array.isArray(row) ? row.slice(left, right + 1).map((cell) => String(cell ?? "")).join("\t") : "")
+    .join("\n")
+    .slice(0, 4000);
+  return excerpt.trim() ? normalizedText(excerpt) : `${sheetName} ${range}`;
 };
 
-const unavailableCitation = () => {
+const presentationSlideExcerpt = (
+  metadata: Record<string, unknown> | undefined,
+  slideNumber: number
+) => {
+  const structured = metadata?.structuredPreview;
+  if (!structured || typeof structured !== "object") return null;
+  const preview = structured as { type?: unknown; slides?: unknown };
+  if (preview.type !== "presentation" || !Array.isArray(preview.slides)) return null;
+  const slide = preview.slides[slideNumber - 1];
+  if (!slide || typeof slide !== "object") return null;
+  const record = slide as { title?: unknown; lines?: unknown };
+  const title = typeof record.title === "string" ? record.title : "";
+  const lines = Array.isArray(record.lines)
+    ? record.lines.filter((line): line is string => typeof line === "string")
+    : [];
+  return normalizedText([title, ...lines].filter(Boolean).join("\n") || `Slide ${slideNumber}`);
+};
+
+const pdfPageExcerpt = (
+  metadata: Record<string, unknown> | undefined,
+  pageNumber: number
+) => {
+  const previewText = typeof metadata?.previewText === "string" ? metadata.previewText : "";
+  if (!previewText) return null;
+  const marker = `[PDF page ${pageNumber}]`;
+  const start = previewText.indexOf(marker);
+  if (start < 0) return null;
+  const bodyStart = start + marker.length;
+  const nextMarker = previewText.indexOf("[PDF page ", bodyStart);
+  return normalizedText(previewText.slice(bodyStart, nextMarker < 0 ? undefined : nextMarker));
+};
+
+const unavailableCitation = (): never => {
   throw new TRPCError({
     code: "PRECONDITION_FAILED",
     message: "A cited Symposium source is unavailable or no longer accessible. Recapture the passage before saving."
@@ -158,6 +235,10 @@ const resolveCitationSource = async (
          post.id AS "postId",
          NULL::text AS "commentId",
          post.post_type AS "postType",
+         post.room,
+         post.kind AS "contentKind",
+         post.community_id::text AS "communityId",
+         community.visibility AS "communityVisibility",
          post.created_at AS "createdAt"
        FROM posts post
        LEFT JOIN communities community ON community.id = post.community_id
@@ -199,6 +280,10 @@ const resolveCitationSource = async (
          post.id AS "postId",
          comment.id AS "commentId",
          post.post_type AS "postType",
+         post.room,
+         post.kind AS "contentKind",
+         post.community_id::text AS "communityId",
+         community.visibility AS "communityVisibility",
          comment.created_at AS "createdAt"
        FROM comments comment
        JOIN posts post ON post.id = comment.post_id
@@ -242,6 +327,10 @@ const resolveCitationSource = async (
        post.id AS "postId",
        comment.id AS "commentId",
        post.post_type AS "postType",
+       post.room,
+       post.kind AS "contentKind",
+       post.community_id::text AS "communityId",
+       community.visibility AS "communityVisibility",
        post.created_at AS "createdAt",
        attachment.file_name AS "fileName",
        attachment.content_type AS "contentType",
@@ -293,50 +382,98 @@ const resolveCitationSource = async (
   };
 };
 
+const citationSourceIsPublic = (row: CitationSourceRow) =>
+  row.room !== "office" &&
+  row.contentKind !== "draft" &&
+  (
+    !row.communityId ||
+    row.postType === "paper" ||
+    row.communityVisibility === "public"
+  );
+
+const assertCitationAudience = (
+  row: CitationSourceRow,
+  destination: NativeCitationDestination | undefined,
+  destinationCommunityVisibility: "public" | "private" | null
+) => {
+  if (!destination) return;
+  const destinationIsPublic =
+    !destination.communityId ||
+    destination.postType === "paper" ||
+    destinationCommunityVisibility === "public";
+  if (
+    citationSourceIsPublic(row) ||
+    (!destinationIsPublic && row.communityId === destination.communityId)
+  ) {
+    return;
+  }
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: "A cited source has a narrower audience than this destination. Remove it or cite a publicly readable source before saving."
+  });
+};
+
 const assertCitationLocator = (
   citation: DocumentNativeCitationContract,
   row: CitationSourceRow
-) => {
+): string => {
   const excerpt = normalizedText(citation.excerpt);
   const locator = citation.locator;
   const sourceDocument = parsedDocument(row.document);
   const sourceBody = sourceDocument ? documentPlainTextProjection(sourceDocument) : row.body;
-  const attachmentText = metadataText(row.metadata);
 
   if (locator.kind === "text") {
     const exact = sourceDocument ? exactDocumentExcerpt(sourceDocument, locator) : null;
-    const available = normalizedText(exact ?? sourceBody);
-    if (!available.includes(excerpt)) {
+    const hasStructuredLocator = Boolean(
+      locator.startBlockId ||
+      locator.endBlockId ||
+      locator.startOffset !== undefined ||
+      locator.endOffset !== undefined
+    );
+    const matches = exact !== null
+      ? normalizedText(exact) === excerpt
+      : !sourceDocument || !hasStructuredLocator
+        ? normalizedText(sourceBody).includes(excerpt)
+        : false;
+    if (!matches) {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
         message: "The cited passage no longer matches the selected Symposium text. Recapture it before saving."
       });
     }
-    return;
+    return excerpt;
   }
 
   const attachmentKind = row.contentType && row.fileName
     ? attachmentKindForFile(row.contentType, row.fileName)
     : null;
   if (!attachmentKind) unavailableCitation();
-  if (locator.kind === "whole") return;
+  if (locator.kind === "whole") return row.fileName!;
   if (locator.kind === "image-region") {
     if (attachmentKind !== "image") unavailableCitation();
-    return;
+    return `Image region from ${row.fileName!}`;
   }
   if (locator.kind === "pdf-text") {
+    const pageExcerpt = pdfPageExcerpt(row.metadata, locator.page);
     if (
       attachmentKind !== "pdf" ||
       normalizedText(locator.excerpt) !== excerpt ||
-      !normalizedText(attachmentText).includes(excerpt)
+      !pageExcerpt?.includes(excerpt)
     ) {
       unavailableCitation();
     }
-    return;
+    return excerpt;
   }
-  if (locator.kind === "spreadsheet-range" && attachmentKind !== "spreadsheet") unavailableCitation();
-  if (locator.kind === "presentation-slide" && attachmentKind !== "presentation") unavailableCitation();
-  if (!normalizedText(attachmentText).includes(excerpt)) unavailableCitation();
+  if (locator.kind === "spreadsheet-range") {
+    const canonicalExcerpt = spreadsheetRangeExcerpt(row.metadata, locator.sheet, locator.range);
+    if (attachmentKind !== "spreadsheet") return unavailableCitation();
+    if (canonicalExcerpt === null || canonicalExcerpt !== excerpt) return unavailableCitation();
+    return canonicalExcerpt;
+  }
+  const canonicalExcerpt = presentationSlideExcerpt(row.metadata, locator.slide);
+  if (attachmentKind !== "presentation") return unavailableCitation();
+  if (canonicalExcerpt === null || canonicalExcerpt !== excerpt) return unavailableCitation();
+  return canonicalExcerpt;
 };
 
 const replaceCitationRecords = (
@@ -369,7 +506,8 @@ export const resolveNativeDocumentCitations = async (
   client: PoolClient,
   document: VersionedDocumentContract,
   actorHandle: string,
-  existingDocument?: VersionedDocumentContract | null
+  existingDocument?: VersionedDocumentContract | null,
+  destination?: NativeCitationDestination
 ): Promise<NativeCitationResolution> => {
   const records = citationRecords(document);
   const existing = new Map(citationRecords(existingDocument).map((citation) => [citation.id, citation]));
@@ -386,6 +524,13 @@ export const resolveNativeDocumentCitations = async (
   }
 
   const replacements = new Map<string, DocumentNativeCitationContract>();
+  const hasNewCitations = Array.from(unique.keys()).some((citationId) => !existing.has(citationId));
+  const destinationCommunityVisibility = hasNewCitations && destination?.communityId && destination.postType !== "paper"
+    ? (await client.query<{ visibility: "public" | "private" }>(
+        "SELECT visibility FROM communities WHERE id = $1 LIMIT 1",
+        [destination.communityId]
+      )).rows[0]?.visibility ?? null
+    : null;
   let newCitationCount = 0;
   for (const citation of unique.values()) {
     const persisted = existing.get(citation.id);
@@ -400,10 +545,11 @@ export const resolveNativeDocumentCitations = async (
       continue;
     }
     const resolved = await resolveCitationSource(client, citation, actorHandle);
-    assertCitationLocator(citation, resolved.row);
+    assertCitationAudience(resolved.row, destination, destinationCommunityVisibility);
+    const excerpt = assertCitationLocator(citation, resolved.row);
     replacements.set(citation.id, {
       ...citation,
-      excerpt: normalizedText(citation.excerpt),
+      excerpt,
       source: resolved.source,
       capturedAt: new Date().toISOString()
     });
