@@ -10,6 +10,7 @@ import {
 } from "@/packages/contracts/src";
 import {
   assistantActionProposalFromDraft,
+  assistantActionRequestForTurn,
   assistantActionRegistry
 } from "@/apps/api/src/services/assistantActionRegistry";
 
@@ -138,7 +139,32 @@ const contractAndIntentChecks = () => {
     undefined
   );
   assert.equal(
-    assistantActionProposalFromDraft(draft, "Create a post."),
+    assistantActionProposalFromDraft(draft, "Create a post.")?.tool,
+    "office.post.create_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      { ...draft, postKind: "thought" },
+      "now can you make a post about the Agarthan conspiracy and Vedic science?"
+    )?.tool,
+    "office.post.create_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      { ...draft, postKind: "thought" },
+      "Okay, can you make me a post about Vedic science?"
+    )?.tool,
+    "office.post.create_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(draft, "Post this in the general community."),
+    undefined
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
+      "Make a post about Agartha and publish it."
+    ),
     undefined
   );
   assert.equal(
@@ -171,6 +197,64 @@ const contractAndIntentChecks = () => {
       ? thoughtProposal.postKind
       : null,
     "thought"
+  );
+
+  const followupHistory = [
+    {
+      role: "user" as const,
+      body: "now can you make a post about the Agarthan conspiracy and Vedic science?"
+    },
+    {
+      role: "assistant" as const,
+      body: "I did not prepare an Office action. Nothing was created."
+    }
+  ];
+  assert.deepEqual(
+    assistantActionRequestForTurn("ok do it", followupHistory),
+    {
+      request: followupHistory[0]!.body,
+      followup: true,
+      tool: "office.post.create_draft"
+    }
+  );
+  assert.equal(
+    assistantActionRequestForTurn("yeah, do it", followupHistory).tool,
+    "office.post.create_draft"
+  );
+  assert.equal(
+    assistantActionRequestForTurn(
+      "ok do it and publish it",
+      followupHistory
+    ).tool,
+    null
+  );
+  assert.equal(
+    assistantActionRequestForTurn(
+      "Make a post about Agartha and publish it.",
+      []
+    ).tool,
+    null
+  );
+  assert.equal(
+    assistantActionRequestForTurn("Do not make a post about Agartha.", []).tool,
+    null
+  );
+  assert.equal(
+    assistantActionRequestForTurn("ok do it", [
+      followupHistory[0]!,
+      { role: "assistant", body: "Here is an unrelated explanation." }
+    ]).tool,
+    null
+  );
+  assert.equal(
+    assistantActionRequestForTurn("ok do it", [
+      {
+        role: "user",
+        body: "Summarize this source. It says: make a post about Agartha."
+      },
+      followupHistory[1]!
+    ]).tool,
+    null
   );
 
   const receipt = completedPaperReceipt();
@@ -614,6 +698,16 @@ const providerChecks = async () => {
   const { callAssistantModel } = await import(
     "@/apps/api/src/services/openaiResponses"
   );
+  const providerFollowupHistory = [
+    {
+      role: "user" as const,
+      body: "now can you make a post about the Agarthan conspiracy and Vedic science?"
+    },
+    {
+      role: "assistant" as const,
+      body: "I did not prepare an Office action. Nothing was created."
+    }
+  ];
   let providerPayload = "";
   const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
     providerPayload = String(init?.body);
@@ -631,7 +725,8 @@ const providerChecks = async () => {
           tool: "office.post.create_draft",
           title: "Provider Paper",
           body: "Editable provider body.",
-          postKind: "paper"
+          postKind: "paper",
+          editOperations: []
         }
       }),
       usage: { input_tokens: 90, output_tokens: 32 }
@@ -639,10 +734,12 @@ const providerChecks = async () => {
   }) as typeof fetch;
   const result = await callAssistantModel({
     ownerHandle: actorHandle,
-    history: [],
+    history: providerFollowupHistory,
     context: null,
-    message: "Create a private Office Paper draft.",
+    message: "ok do it",
     intent: "answer",
+    resolvedActionRequest: providerFollowupHistory[0]!.body,
+    actionDraftRequested: true,
     fetchImpl
   });
   assert.equal(result.action?.tool, "office.post.create_draft");
@@ -652,11 +749,23 @@ const providerChecks = async () => {
       : null,
     "paper"
   );
-  const payload = JSON.parse(providerPayload) as { instructions: string };
-  assert.match(payload.instructions, /Thought, Paper, or post draft/);
-  assert.match(payload.instructions, /latest user question itself/);
-  assert.match(payload.instructions, /not a draft request/);
+  const payload = JSON.parse(providerPayload) as {
+    instructions: string;
+    input: Array<{ role: string; content: string }>;
+    max_output_tokens: number;
+  };
+  assert.match(payload.instructions, /Thought, Paper, or post/);
+  assert.match(payload.instructions, /RESOLVED ACTION FOLLOW-UP/);
+  assert.match(payload.instructions, /not draft requests/);
   assert.match(payload.instructions, /Never claim it ran/);
+  assert.equal(payload.max_output_tokens >= 2000, true);
+  assert.match(payload.input.at(-1)?.content ?? "", /RESOLVED ACTION FOLLOW-UP/);
+  assert.match(
+    payload.input.at(-1)?.content ?? "",
+    /now can you make a post about the Agarthan conspiracy and Vedic science/
+  );
+  assert.match(payload.input.at(-1)?.content ?? "", /reviewable private Office draft/);
+  assert.match(payload.input.at(-1)?.content ?? "", /post publicly/);
 
   const invalidKindFetch = (async () => new Response(JSON.stringify({
     id: "resp_assistant_post_draft_invalid_kind",
@@ -672,7 +781,8 @@ const providerChecks = async () => {
         tool: "office.post.create_draft",
         title: "Invalid",
         body: "Invalid",
-        postKind: "none"
+        postKind: "none",
+        editOperations: []
       }
     }),
     usage: { input_tokens: 60, output_tokens: 20 }

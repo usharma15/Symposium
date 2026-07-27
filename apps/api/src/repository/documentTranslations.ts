@@ -388,7 +388,7 @@ export const translateDocument = async (
   try {
     result = await callDocumentTranslationModel({ ownerHandle: owner, request: input });
   } catch (error) {
-    failure = assistantProviderFailure(error);
+    failure = assistantProviderFailure(error, "translation");
     console.error("SYMPOSIUM document translation request failed.", error);
   }
   return finalizeTranslation(prepared, result, failure, mutation);

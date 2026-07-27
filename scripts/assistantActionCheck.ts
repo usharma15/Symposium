@@ -557,6 +557,8 @@ const providerChecks = async () => {
   );
   assert.ok(payload.text.format.schema.required.includes("action"));
   assert.match(payload.instructions, /latest question explicitly asks/i);
+  assert.match(payload.instructions, /make a post about this/i);
+  assert.match(payload.instructions, /reviewable private Thought draft/i);
   assert.match(payload.instructions, /proposal only/i);
   assert.match(payload.instructions, /Never claim it ran/i);
   assert.match(payload.instructions, /never propose sending, publishing, sharing/i);

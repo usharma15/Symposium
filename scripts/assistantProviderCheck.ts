@@ -77,7 +77,13 @@ const main = async () => {
     shouldOfferQuickNote: false,
     quickNoteTitle: "",
     quickNoteBody: "",
-    action: { tool: "none", title: "", body: "", postKind: "none" }
+    action: {
+      tool: "none",
+      title: "",
+      body: "",
+      postKind: "none",
+      editOperations: []
+    }
   };
   let generalAssistantPayloadJson = "";
   const generalAssistantFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
@@ -361,7 +367,7 @@ const main = async () => {
       fetchImpl: rejectedFetch
     });
   } catch (error) {
-    rejectedFailure = assistantProviderFailure(error);
+    rejectedFailure = assistantProviderFailure(error, "translation");
   }
   assert.ok(rejectedFailure);
   assert.equal(rejectedFailure.code, "invalid_json_schema");
@@ -388,7 +394,7 @@ const main = async () => {
       fetchImpl: incompleteFetch
     });
   } catch (error) {
-    incompleteFailure = assistantProviderFailure(error);
+    incompleteFailure = assistantProviderFailure(error, "translation");
   }
   assert.ok(incompleteFailure);
   assert.equal(incompleteFailure.code, "incomplete_max_output_tokens");
@@ -396,6 +402,26 @@ const main = async () => {
   assert.equal(incompleteFailure.inputTokens, 1800);
   assert.equal(incompleteFailure.outputTokens, 1177);
   assert.match(incompleteFailure.body, /response limit/);
+  assert.match(incompleteFailure.body, /translation/i);
+
+  let incompleteAssistantFailure: ReturnType<typeof assistantProviderFailure> | null = null;
+  try {
+    await callAssistantModel({
+      ownerHandle: "provider-check",
+      history: [],
+      context: null,
+      message: "Make a private post draft.",
+      intent: "answer",
+      actionDraftRequested: true,
+      fetchImpl: incompleteFetch
+    });
+  } catch (error) {
+    incompleteAssistantFailure = assistantProviderFailure(error, "assistant");
+  }
+  assert.ok(incompleteAssistantFailure);
+  assert.equal(incompleteAssistantFailure.code, "incomplete_max_output_tokens");
+  assert.match(incompleteAssistantFailure.body, /AI answer/i);
+  assert.doesNotMatch(incompleteAssistantFailure.body, /translation/i);
 
   console.log("AI provider request, schema, usage, and failure checks passed.");
 };

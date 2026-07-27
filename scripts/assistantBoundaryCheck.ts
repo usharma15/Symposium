@@ -533,6 +533,7 @@ assert.equal(translationLanguageSelectionRegex.test("Italian"), false);
 assert.equal(translationLanguageSelectionRegex.test("san"), false);
 assert.equal(assistantMaxOutputTokens("translate"), 1200);
 assert.equal(assistantMaxOutputTokens("answer", { draftEdit: true }), 1200);
+assert.equal(assistantMaxOutputTokens("answer", { actionDraft: true }), 2000);
 assert.doesNotMatch(assistantRenderedInput({
   history: [{ role: "assistant", body: "Earlier answer must not inflate translation input." }],
   context: validInput.context,
@@ -549,6 +550,25 @@ const generalRenderedInput = assistantRenderedInput({
 assert.match(generalRenderedInput, /Earlier general answer/);
 assert.match(generalRenderedInput, /no Symposium view or source attached/i);
 assert.doesNotMatch(generalRenderedInput, /ACTIVE VIEW|ATTACHED SOURCES|A bounded claim/);
+const resolvedActionFollowupInput = assistantRenderedInput({
+  history: [
+    {
+      role: "user",
+      body: "Now can you make a post about the Agarthan conspiracy?"
+    },
+    {
+      role: "assistant",
+      body: "I did not prepare an Office action. Nothing was created."
+    }
+  ],
+  context: null,
+  message: "ok do it",
+  intent: "answer",
+  resolvedActionRequest: "Now can you make a post about the Agarthan conspiracy?"
+});
+assert.match(resolvedActionFollowupInput, /RESOLVED ACTION FOLLOW-UP/);
+assert.match(resolvedActionFollowupInput, /reviewable private Office draft proposal only/);
+assert.match(resolvedActionFollowupInput, /post publicly/);
 assert.equal(conservativeInputTokenCeiling("abc"), 3);
 assert.equal(reserveCostMicros("gpt-5.6-terra", "a", 700), 10_504);
 assert.equal(actualCostMicros("gpt-5.6-terra", 1000, 100), 4_625);
@@ -1932,7 +1952,7 @@ const assistantWorkspaceBaseBlock = tabletStyles.slice(
 
 assert.match(provider, /store: false/);
 assert.match(provider, /service_tier: "default"/);
-assert.match(provider, /max_output_tokens: assistantMaxOutputTokens\(input\.intent, \{\s+draftEdit: Boolean\(input\.draftSession\)\s+\}\)/);
+assert.match(provider, /max_output_tokens: assistantMaxOutputTokens\(input\.intent, \{\s+actionDraft: Boolean\(input\.actionDraftRequested\),\s+draftEdit: Boolean\(input\.draftSession\)\s+\}\)/);
 assert.match(provider, /type: "json_schema"/);
 assert.match(provider, /strict: true/);
 assert.match(provider, /symposium-translation-v2/);

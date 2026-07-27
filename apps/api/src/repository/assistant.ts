@@ -80,7 +80,11 @@ import {
   type AssistantEvidencePacket,
   type AssistantSourceValidation
 } from "../services/assistantEvidence";
-import { assistantActionProposalFromDraft } from "../services/assistantActionRegistry";
+import {
+  assistantActionProposalFromDraft,
+  assistantActionRequestForTurn,
+  type AssistantActionRequestResolution
+} from "../services/assistantActionRegistry";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 import {
   applyAssistantOfficeDraftEditForMessageInTransaction,
@@ -124,6 +128,7 @@ type PreparedAssistant = {
   evidenceBlocks: AssistantEvidenceBlock[];
   evidencePackets: AssistantEvidencePacket[];
   draftSession: AssistantDraftModelContext | null;
+  actionRequest: AssistantActionRequestResolution;
   userMessage: AssistantMessageContract;
   thread: AssistantThreadStateContract;
   input: ParsedInput;
@@ -1600,6 +1605,13 @@ const prepareAssistant = async (
         owner
       )
     : null;
+  const actionRequest = input.intent === "answer"
+    ? assistantActionRequestForTurn(input.message, history)
+    : {
+        request: input.message,
+        followup: false,
+        tool: null
+      } satisfies AssistantActionRequestResolution;
   const renderedInput = assistantRenderedInput({
     history,
     context,
@@ -1608,13 +1620,17 @@ const prepareAssistant = async (
     message: input.message,
     intent: input.intent,
     targetLanguage: input.targetLanguage,
-    draftSession: draftSession ?? undefined
+    draftSession: draftSession ?? undefined,
+    resolvedActionRequest: actionRequest.followup
+      ? actionRequest.request
+      : undefined
   });
   const reservation = await reserveAssistantUsage(client, {
     owner,
     conversationId,
     renderedInput,
     maxOutputTokens: assistantMaxOutputTokens(input.intent, {
+      actionDraft: Boolean(actionRequest.tool),
       draftEdit: Boolean(draftSession)
     }),
     additionalInputTokens: assistantVisionTokenCeiling(visionAttachments.length),
@@ -1641,6 +1657,8 @@ const prepareAssistant = async (
       visionAttachmentIds,
       grounding: context ? "sources" : "none",
       contextType: conversationRow.contextType,
+      actionFollowup: actionRequest.followup,
+      actionRequestTool: actionRequest.tool,
       contextId: conversationRow.contextId,
       attachments
     })]
@@ -1673,6 +1691,7 @@ const prepareAssistant = async (
       evidenceBlocks,
       evidencePackets,
       draftSession,
+      actionRequest,
       userMessage: messageFromRow(userMessage.rows[0]!),
       thread: assistantThreadState({ ...conversationRow, contextSources: sources }),
       input,
@@ -1731,7 +1750,7 @@ const finalizeAssistant = async (
   let actionProposal = result?.action
     ? assistantActionProposalFromDraft(
         result.action,
-        prepared.input.message,
+        prepared.actionRequest.request,
         actionSource,
         prepared.draftSession
           ? {
@@ -1929,6 +1948,8 @@ const finalizeAssistant = async (
       intent: prepared.input.intent,
       targetLanguage: prepared.input.targetLanguage,
       proposedAction: actionProposal?.tool ?? null,
+      actionFollowup: prepared.actionRequest.followup,
+      actionRequestTool: prepared.actionRequest.tool,
       model: response.model,
       status: response.status,
       visionInputCount: prepared.visionAttachments.length,
@@ -1983,7 +2004,11 @@ export const askAssistant = async (
       intent: input.intent,
       targetLanguage: input.targetLanguage,
       visionInputs,
-      draftSession: prepared.draftSession ?? undefined
+      draftSession: prepared.draftSession ?? undefined,
+      resolvedActionRequest: prepared.actionRequest.followup
+        ? prepared.actionRequest.request
+        : undefined,
+      actionDraftRequested: Boolean(prepared.actionRequest.tool)
     });
   } catch (error) {
     failure = error instanceof TRPCError
@@ -1996,7 +2021,7 @@ export const askAssistant = async (
           outputTokens: 0,
           mayHaveBeenBilled: false
         }
-      : assistantProviderFailure(error);
+      : assistantProviderFailure(error, "assistant");
     console.error("SYMPOSIUM AI provider request failed.", error);
   }
   return finalizeAssistant(prepared, result, failure, mutation);

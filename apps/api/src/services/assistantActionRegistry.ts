@@ -47,6 +47,16 @@ export const registeredAssistantAction = (tool: unknown) => {
   return assistantActionRegistry[parsedTool];
 };
 
+type AssistantCreationTool =
+  | "office.note.create_draft"
+  | "office.post.create_draft";
+
+export type AssistantActionRequestResolution = {
+  request: string;
+  followup: boolean;
+  tool: AssistantCreationTool | null;
+};
+
 const explicitlyRequestsOfficeDraft = (
   latestRequest: string,
   tool: AssistantActionToolContract
@@ -71,8 +81,17 @@ const explicitlyRequestsOfficeDraft = (
   ) {
     return false;
   }
+  if (
+    tool === "office.post.create_draft" &&
+    (
+      /\b(?:publish|share|send)\b/i.test(request) ||
+      /\bpost\s+(?:it|this|that|the\s+(?:draft|post))\b/i.test(request)
+    )
+  ) {
+    return false;
+  }
   const directRequest = new RegExp(
-    `(?:^|[.!?:;,]\\s*)(?:please\\s+)?(?:(?:(?:can|could|will|would)\\s+you|i\\s+(?:need|want)\\s+you\\s+to|i(?:'d|\\s+would)\\s+like\\s+you\\s+to)\\s+)?(?:please\\s+)?${draftVerbWords}\\b`,
+    `(?:^|[.!?:;,]\\s*)(?:please\\s+)?(?:(?:now|okay|ok|alright|so)(?:,\\s*|\\s+))?(?:(?:(?:can|could|will|would)\\s+you|i\\s+(?:need|want)\\s+you\\s+to|i(?:'d|\\s+would)\\s+like\\s+you\\s+to)\\s+)?(?:please\\s+)?${draftVerbWords}\\b`,
     "i"
   );
   if (!directRequest.test(request)) return false;
@@ -90,8 +109,53 @@ const explicitlyRequestsOfficeDraft = (
     /\b(?:as|into|to)\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
     /\b(?:make|turn)\s+this\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
     /\b(?:create|make|prepare|write)\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
+    /\b(?:create|make|prepare|write)\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
+    /\b(?:make|turn)\s+this\s+(?:into\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
+    /\b(?:as|into|to)\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
     /\b(?:post\s+draft|draft\s+(?:a\s+)?(?:private\s+)?post)\b/i.test(request)
   );
+};
+
+const requestedCreationTool = (request: string): AssistantCreationTool | null => {
+  const tools = ([
+    "office.note.create_draft",
+    "office.post.create_draft"
+  ] as const).filter((tool) => explicitlyRequestsOfficeDraft(request, tool));
+  return tools.length === 1 ? tools[0]! : null;
+};
+
+const briefActionConfirmation = (request: string) =>
+  /^(?:ok(?:ay)?(?:,?\s+please)?(?:\s+(?:do|make|create)\s+(?:it|that))?|yes(?:,?\s+please)?|(?:yeah|yep|yup)(?:,?\s+(?:please|go\s+ahead|do\s+(?:it|that)))?|go\s+(?:ahead|for\s+it)|(?:do|make|create)\s+(?:it|that)|please\s+do|sure(?:,?\s+(?:please|go\s+ahead|do\s+(?:it|that)))?|sounds\s+good)[.!]*$/i
+    .test(request.normalize("NFKC").trim());
+
+const assistantInvitedDraftFollowup = (response: string) =>
+  /\b(?:office action|nothing was created|private (?:office )?(?:note|thought|paper|post)?\s*draft|draft proposal|prepare (?:a |the |that |this )?(?:note|thought|paper|post|draft))\b/i
+    .test(response.normalize("NFKC"));
+
+export const assistantActionRequestForTurn = (
+  latestRequest: string,
+  history: Array<{ role: "user" | "assistant"; body: string }>
+): AssistantActionRequestResolution => {
+  const directTool = requestedCreationTool(latestRequest);
+  if (directTool) {
+    return { request: latestRequest, followup: false, tool: directTool };
+  }
+  if (!briefActionConfirmation(latestRequest)) {
+    return { request: latestRequest, followup: false, tool: null };
+  }
+  const priorAssistant = history.at(-1);
+  const priorUser = history.at(-2);
+  if (
+    priorAssistant?.role !== "assistant" ||
+    priorUser?.role !== "user" ||
+    !assistantInvitedDraftFollowup(priorAssistant.body)
+  ) {
+    return { request: latestRequest, followup: false, tool: null };
+  }
+  const priorTool = requestedCreationTool(priorUser.body);
+  return priorTool
+    ? { request: priorUser.body, followup: true, tool: priorTool }
+    : { request: latestRequest, followup: false, tool: null };
 };
 
 const explicitlyRequestsActiveDraftEdit = (latestRequest: string) => {

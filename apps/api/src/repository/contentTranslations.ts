@@ -673,7 +673,7 @@ export const translateContent = async (
   try {
     result = await callContentTranslationModel({ ownerHandle: owner, request: source });
   } catch (error) {
-    failure = assistantProviderFailure(error);
+    failure = assistantProviderFailure(error, "translation");
     console.error("SYMPOSIUM content translation request failed.", error);
   }
   return finalizeTranslation(prepared, result, failure, mutation);
