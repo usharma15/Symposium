@@ -629,8 +629,8 @@
 .assistant-workspace .tablet-composer .tablet-send-button {
   align-self: stretch;
   grid-column: auto;
-  min-width: 7.8rem;
-  width: auto;
+  min-width: 2.65rem;
+  width: 2.65rem;
 }
 
 .assistant-mobile-nav { display: none; }
@@ -833,9 +833,9 @@
   border-bottom: 1px solid color-mix(in srgb, #d49a2b 24%, var(--line));
   display: grid;
   flex: 0 0 auto;
-  gap: 0.3rem;
+  gap: 0.22rem;
   grid-template-columns: auto auto minmax(0, 1fr);
-  padding: 0.34rem 0.7rem;
+  padding: 0.24rem 0.58rem;
 }
 .tablet-limit-notice > svg { color: #9a6b16; }
 .tablet-limit-notice strong { font-size: 0.62rem; letter-spacing: 0.025em; text-transform: uppercase; }
@@ -847,20 +847,18 @@
   border-bottom: 1px solid var(--line);
   display: flex;
   flex: 0 0 auto;
-  gap: 0.6rem;
+  gap: 0.45rem;
   justify-content: space-between;
-  padding: 0.5rem 0.7rem;
+  padding: 0.34rem 0.58rem;
 }
 .tablet-active-context.attached { background: color-mix(in srgb, var(--aqua) 8%, var(--document-surface-solid)); }
 .tablet-active-context > span {
   align-items: center;
-  display: grid;
-  gap: 0.04rem 0.35rem;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex;
+  gap: 0.32rem;
   min-width: 0;
 }
-.tablet-active-context > span svg { color: var(--bronze); grid-row: 1 / 3; }
-.tablet-active-context small { color: var(--muted); font-size: 0.58rem; font-weight: 750; }
+.tablet-active-context > span svg { color: var(--bronze); flex: 0 0 auto; }
 .tablet-active-context strong { font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tablet-active-context > button {
   align-items: center;
@@ -879,10 +877,10 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 0.82rem;
+  gap: 0.58rem;
   min-height: 0;
   overflow-y: auto;
-  padding: 0.9rem 0.72rem;
+  padding: 0.66rem 0.62rem;
 }
 .tablet-message { display: grid; gap: 0.18rem; max-width: 92%; }
 .tablet-message.has-translation { max-width: 100%; width: 100%; }
@@ -896,7 +894,7 @@
   font-size: 0.82rem;
   line-height: 1.52;
   margin: 0;
-  padding: 0.66rem 0.75rem;
+  padding: 0.55rem 0.66rem;
   white-space: pre-wrap;
 }
 .tablet-message-body > :first-child { margin-top: 0; }
@@ -1044,7 +1042,7 @@
   align-items: end;
   display: grid;
   gap: 0.4rem;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 .tablet-composer textarea { border-radius: 0.72rem; font: inherit; font-size: 0.82rem; line-height: 1.42; max-height: 14rem; min-height: 3.35rem; overflow-y: auto; padding: 0.65rem 0.72rem; resize: vertical; width: 100%; }
 .tablet-composer button { align-items: center; border-radius: 0.68rem; display: flex; font-size: 0.74rem; gap: 0.32rem; justify-content: center; min-height: 2.25rem; width: 100%; }
@@ -1056,7 +1054,13 @@
   padding: 0;
   width: 2.65rem;
 }
-.tablet-composer .tablet-send-button { grid-column: 1 / -1; }
+.tablet-composer .tablet-send-button {
+  align-self: stretch;
+  grid-column: auto;
+  min-width: 2.65rem;
+  padding: 0;
+  width: 2.65rem;
+}
 .tablet-pending-attachments { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .tablet-pending-attachments > div {
   align-items: stretch;
@@ -1106,16 +1110,16 @@
   padding: 0.5rem 0.58rem;
 }
 .assistant-compact .tablet-composer .tablet-send-button {
-  justify-self: stretch;
-  min-height: 2.05rem;
-  padding: 0.3rem 0.48rem;
-  width: 100%;
+  justify-self: auto;
+  min-height: 2.25rem;
+  padding: 0;
+  width: 2.65rem;
 }
 .assistant-compact .tablet-limit-notice {
-  padding-block: 0.28rem;
+  padding-block: 0.22rem;
 }
 .assistant-compact .tablet-active-context {
-  padding: 0.38rem 0.58rem;
+  padding: 0.3rem 0.58rem;
 }
 .tablet-launcher { z-index: 52 !important; }
 .tablet-launcher.active { background: rgba(196, 240, 238, 0.92); box-shadow: 0 0 0 2px rgba(196, 240, 238, 0.25), 0 18px 48px rgba(10, 16, 15, 0.22); }
@@ -1369,13 +1373,14 @@
   }
 
   .assistant-workspace .tablet-composer-main {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
   .assistant-workspace .tablet-composer .tablet-send-button {
-    grid-column: 1 / -1;
+    grid-column: auto;
     min-height: 2.2rem;
-    width: 100%;
+    min-width: 2.65rem;
+    width: 2.65rem;
   }
 
   .assistant-workspace .tablet-composer .tablet-attach-button {

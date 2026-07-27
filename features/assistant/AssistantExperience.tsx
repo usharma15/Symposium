@@ -425,10 +425,23 @@ export function AssistantExperience({
       </aside>
 
       <section className="assistant-center" aria-label="Chat">
-        <section className="tablet-limit-notice" aria-label="AI usage limits">
+        <section
+          className="tablet-limit-notice"
+          aria-label={
+            quotaLoading
+              ? "AI usage limits. Loading allowance."
+              : `AI usage limits. Limited beta with less processing capacity. ${remainingToday} of ${dailyLimit} answers left today. Shared $${monthlyBudgetUsd} monthly cap.`
+          }
+        >
           <AlertTriangle size={13} />
-          <strong>Limited beta</strong>
-          <span>{quotaLoading ? "Loading allowance…" : `Less processing capacity · ${remainingToday} of ${dailyLimit} answers left today · shared $${monthlyBudgetUsd} monthly cap`}</span>
+          <strong title="Limited beta uses less processing capacity">
+            Limited beta
+          </strong>
+          <span>
+            {quotaLoading
+              ? "Loading allowance…"
+              : `${remainingToday}/${dailyLimit} answers · $${monthlyBudgetUsd} shared cap`}
+          </span>
         </section>
 
         {thread?.archivedAt ? (
@@ -449,8 +462,11 @@ export function AssistantExperience({
           <div className={`tablet-active-context${activeContext ? " attached" : ""}`} aria-label="Chat context">
             <span>
               <BookOpen size={13} />
-              <small>{activeContext ? "Using context" : "Plain chat"}</small>
-              <strong>{activeContext?.title ?? "No Symposium context"}</strong>
+              <strong>
+                {activeContext
+                  ? `Context · ${activeContext.title}`
+                  : "Plain chat · No context"}
+              </strong>
             </span>
             {activeContext ? (
               <button
@@ -585,15 +601,19 @@ export function AssistantExperience({
               type="submit"
               className="primary tablet-send-button"
               disabled={Boolean(thread?.archivedAt) || busy || contextBusy || attachmentUploading || threadLoading || quotaLoading || (!draft.trim() && !pendingAttachments.length) || remainingToday <= 0 || !providerEnabled || !providerConfigured}
-              title="Send one limited AI request"
+              aria-label="Send message · uses 1 AI answer"
+              title="Send message · uses 1 AI answer"
             >
-              <Send size={15} /><span>Send · uses 1</span>
+              <Send size={15} />
             </button>
           </div>
-          <small className="tablet-attachment-limit">
-            <Paperclip size={11} />
-            Files up to 5 MB · at most 2 images per answer · uploads use no answer · documents use bounded extracted text.
-          </small>
+          {pendingAttachments.length ? (
+            <small className="tablet-attachment-limit">
+              <Paperclip size={11} />
+              Files up to 5 MB · at most 2 images per answer · uploads use no
+              answer · documents use bounded extracted text.
+            </small>
+          ) : null}
         </form>
       </section>
 
