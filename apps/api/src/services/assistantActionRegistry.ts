@@ -55,6 +55,7 @@ export type AssistantActionRequestResolution = {
   request: string;
   followup: boolean;
   tool: AssistantCreationTool | null;
+  postKind?: "thought" | "paper";
 };
 
 const consequentialActionLanguage = (request: string) =>
@@ -81,7 +82,7 @@ const explicitlyRequestsOfficeDraft = (
     ? normalized.slice(0, quotedSourceBoundary)
     : normalized;
   const draftVerbWords =
-    "(?:capture|convert|create|draft|make|prepare|save|take|turn|write)";
+    "(?:capture|convert|create|draft|file|make|prepare|put|save|take|turn|use|write)";
   if (
     new RegExp(
       `\\b(?:do\\s+not|don't|dont|never)\\s+(?:please\\s+)?${draftVerbWords}\\b`,
@@ -103,7 +104,8 @@ const explicitlyRequestsOfficeDraft = (
       /\bnote\s+draft\b/i.test(request) ||
       /\bdraft\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}note\b/i.test(request) ||
       /\b(?:as|into|to)\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}note\b/i.test(request) ||
-      /\b(?:capture|create|make|prepare|save|take|write)\s+(?:me\s+)?(?:(?:this|it|that|the|a)\s+)?(?:(?:private|office)\s+){0,2}note\b/i.test(request)
+      /\b(?:capture|create|file|make|prepare|save|take|use|write)\s+(?:me\s+)?(?:(?:this|it|that|the|a)\s+)?(?:(?:private|office)\s+){0,2}note\b/i.test(request) ||
+      /\b(?:file|put|use)\s+(?:this|it|that)\s+(?:as|for|in|into)\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}note\b/i.test(request)
     );
   }
   return (
@@ -111,9 +113,10 @@ const explicitlyRequestsOfficeDraft = (
     /\bdraft\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
     /\b(?:as|into|to)\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
     /\b(?:make|turn)\s+(?:this|it|that)\s+(?:into\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
-    /\b(?:create|make|prepare|write)\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
-    /\b(?:create|make|prepare|write)\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
+    /\b(?:create|file|make|prepare|write)\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
+    /\b(?:create|file|make|prepare|write)\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
     /\b(?:make|turn)\s+(?:this|it|that)\s+(?:into\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
+    /\b(?:file|put|use)\s+(?:this|it|that)\s+(?:as|for|in|into)\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper|post)\b/i.test(request) ||
     /\b(?:as|into|to)\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
     /\b(?:post\s+draft|draft\s+(?:a\s+)?(?:private\s+)?post)\b/i.test(request)
   );
@@ -125,6 +128,97 @@ const requestedCreationTool = (request: string): AssistantCreationTool | null =>
     "office.post.create_draft"
   ] as const).filter((tool) => explicitlyRequestsOfficeDraft(request, tool));
   return tools.length === 1 ? tools[0]! : null;
+};
+
+const clarifiedCreationSelection = (
+  request: string
+): Pick<AssistantActionRequestResolution, "request" | "tool" | "postKind"> | null => {
+  const match = request.normalize("NFKC").trim().match(
+    /^(?:(?:ok(?:ay)?|yes|yeah|yep|yup|sure|alright|right|great|perfect)[,.\s-]*)?(?:(?:i\s+think|just)\s+)?(?:(?:go\s+with|let'?s\s+go\s+with|let'?s\s+(?:do|make|use)|make\s+it|use|choose|pick)\s+)?(?:(?:a|the)\s+)?(?:private\s+)?(?:office\s+)?(note|thought|paper|post)(?:\s+draft)?(?:\s+(?:please|pls))?(?:\s+(?:works|is\s+(?:good|fine)|would\s+(?:be|work|do)\s+(?:good|better|fine)))?[.!]*$/i
+  );
+  const selection = match?.[1]?.toLowerCase();
+  if (selection === "note") {
+    return {
+      request: "Create a private Office note draft from the recent conversation.",
+      tool: "office.note.create_draft"
+    };
+  }
+  if (selection === "thought" || selection === "post") {
+    return {
+      request: "Create a private Office Thought draft from the recent conversation.",
+      tool: "office.post.create_draft",
+      postKind: "thought"
+    };
+  }
+  if (selection === "paper") {
+    return {
+      request: "Create a private Office Paper draft from the recent conversation.",
+      tool: "office.post.create_draft",
+      postKind: "paper"
+    };
+  }
+  return null;
+};
+
+const ambiguousSupportedActionRequest = (request: string) => {
+  const normalized = request
+    .normalize("NFKC")
+    .replace(/["“][\s\S]*?["”]/g, " ")
+    .replace(/`[\s\S]*?`/g, " ")
+    .trim();
+  const quotedSourceBoundary = normalized.search(
+    /\b(?:attachment|document|message|source|text)\s+(?:contains|reads|says|states)\b\s*:?\s*/i
+  );
+  const actionText = quotedSourceBoundary >= 0
+    ? normalized.slice(0, quotedSourceBoundary).trim()
+    : normalized;
+  if (
+    !actionText ||
+    actionText.length > 600 ||
+    /\b(?:do\s+not|don't|dont|never)\b/i.test(actionText) ||
+    /\b(?:share|send|email|message|delete)\b/i.test(actionText) ||
+    /\b(?:change|grant|remove)\s+(?:its?\s+|the\s+)?access\b/i.test(actionText)
+  ) {
+    return false;
+  }
+  return /^(?:please\s+)?(?:(?:(?:can|could|will|would)\s+you|let'?s)\s+)?(?:please\s+)?(?:capture|convert|create|draft|file|make|post|prepare|publish|put|save|take|turn|write)\b/i
+    .test(actionText);
+};
+
+const assistantRequestedPrivateDraftClarification = (response: string) => {
+  const normalized = response.normalize("NFKC");
+  const kinds = ["note", "thought", "paper", "post"]
+    .filter((kind) => new RegExp(`\\b${kind}\\b`, "i").test(normalized));
+  return (
+    /\bprivate\b/i.test(normalized) &&
+    /\bdraft\b/i.test(normalized) &&
+    kinds.length >= 2 &&
+    /\b(?:or|which|what|want|prefer|choose|pick|tell me)\b/i.test(normalized)
+  );
+};
+
+const clarifiedActionRequestForTurn = (
+  latestRequest: string,
+  history: Array<{ role: "user" | "assistant"; body: string }>
+): AssistantActionRequestResolution | null => {
+  const selection = clarifiedCreationSelection(latestRequest);
+  if (!selection) return null;
+  const priorAssistant = history.at(-1);
+  const priorUser = history.at(-2);
+  if (
+    priorAssistant?.role !== "assistant" ||
+    priorUser?.role !== "user" ||
+    !assistantRequestedPrivateDraftClarification(priorAssistant.body) ||
+    !ambiguousSupportedActionRequest(priorUser.body)
+  ) {
+    return null;
+  }
+  return {
+    request: selection.request,
+    followup: true,
+    tool: selection.tool,
+    ...(selection.postKind ? { postKind: selection.postKind } : {})
+  };
 };
 
 const briefActionConfirmation = (request: string) =>
@@ -161,6 +255,8 @@ export const assistantActionRequestForTurn = (
   if (directTool) {
     return { request: latestRequest, followup: false, tool: directTool };
   }
+  const clarifiedRequest = clarifiedActionRequestForTurn(latestRequest, history);
+  if (clarifiedRequest) return clarifiedRequest;
   if (!conversationalActionFollowup(latestRequest)) {
     return { request: latestRequest, followup: false, tool: null };
   }

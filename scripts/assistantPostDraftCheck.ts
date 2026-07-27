@@ -178,6 +178,32 @@ const contractAndIntentChecks = () => {
     "office.post.create_draft"
   );
   assert.equal(
+    assistantActionProposalFromDraft(
+      { ...draft, postKind: "thought" },
+      "Put that in a Thought."
+    )?.tool,
+    "office.post.create_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      { ...draft, postKind: "thought" },
+      "Use this for a post."
+    )?.tool,
+    "office.post.create_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      {
+        tool: "office.note.create_draft",
+        postKind: "none",
+        title: "Private note",
+        body: "Reviewable note."
+      },
+      "File that as a note."
+    )?.tool,
+    "office.note.create_draft"
+  );
+  assert.equal(
     assistantActionProposalFromDraft(draft, "Post this in the general community."),
     undefined
   );
@@ -305,6 +331,80 @@ const contractAndIntentChecks = () => {
       followup: true,
       tool: "office.post.create_draft"
     }
+  );
+  const postClarificationHistory = [
+    {
+      role: "user" as const,
+      body: "post that in Main Hall"
+    },
+    {
+      role: "assistant" as const,
+      body: "Quick one: do you want a private Thought or Paper draft?"
+    }
+  ];
+  assert.deepEqual(
+    assistantActionRequestForTurn("Thought", postClarificationHistory),
+    {
+      request: "Create a private Office Thought draft from the recent conversation.",
+      followup: true,
+      tool: "office.post.create_draft",
+      postKind: "thought"
+    }
+  );
+  assert.deepEqual(
+    assistantActionRequestForTurn("go with the Paper pls", postClarificationHistory),
+    {
+      request: "Create a private Office Paper draft from the recent conversation.",
+      followup: true,
+      tool: "office.post.create_draft",
+      postKind: "paper"
+    }
+  );
+  const noteClarificationHistory = [
+    {
+      role: "user" as const,
+      body: "save that"
+    },
+    {
+      role: "assistant" as const,
+      body: "Save it as a private note, Thought, or Paper draft?"
+    }
+  ];
+  assert.deepEqual(
+    assistantActionRequestForTurn("just a note", noteClarificationHistory),
+    {
+      request: "Create a private Office note draft from the recent conversation.",
+      followup: true,
+      tool: "office.note.create_draft"
+    }
+  );
+  assert.equal(
+    assistantActionRequestForTurn("Main Hall", postClarificationHistory).tool,
+    null
+  );
+  assert.equal(
+    assistantActionRequestForTurn("Thought", [
+      postClarificationHistory[0]!,
+      { role: "assistant", body: "Thought and Paper are different formats." }
+    ]).tool,
+    null
+  );
+  assert.equal(
+    assistantActionRequestForTurn("Thought", [
+      { role: "user", body: "email that to the group" },
+      postClarificationHistory[1]!
+    ]).tool,
+    null
+  );
+  assert.equal(
+    assistantActionRequestForTurn("Thought", [
+      {
+        role: "user",
+        body: "Summarize the source. The source says post that."
+      },
+      postClarificationHistory[1]!
+    ]).tool,
+    null
   );
   assert.equal(
     assistantActionRequestForTurn(
@@ -867,6 +967,9 @@ const providerChecks = async () => {
   assert.match(payload.instructions, /RESOLVED ACTION CONTEXT/);
   assert.match(payload.instructions, /relaxed and conversational/i);
   assert.match(payload.instructions, /recent exchange naturally/i);
+  assert.match(payload.instructions, /ask at most one short practical clarification/i);
+  assert.match(payload.instructions, /Thought or Paper/i);
+  assert.match(payload.instructions, /Do not lecture/i);
   assert.match(payload.instructions, /not draft requests/);
   assert.match(payload.instructions, /Never claim it ran/);
   assert.equal(payload.max_output_tokens >= 2000, true);
@@ -932,6 +1035,10 @@ const staticBoundaryChecks = () => {
     "features/assistant/AssistantActionCards.tsx",
     "utf8"
   );
+  const assistantRepository = readFileSync(
+    "apps/api/src/repository/assistant.ts",
+    "utf8"
+  );
   assert.match(repository, /proposal\.data\.tool !== expectedTool/);
   assert.match(repository, /receiptForExpectedTool/);
   assert.match(repository, /FOR UPDATE OF message, conversation/);
@@ -955,6 +1062,11 @@ const staticBoundaryChecks = () => {
   assert.match(card, /symposium-workspace-change/);
   assert.match(card, /type="button"/);
   assert.match(card, /role="alert"/);
+  assert.match(assistantRepository, /actionRequestPostKind/);
+  assert.match(
+    assistantRepository,
+    /actionProposal\.postKind !== prepared\.actionRequest\.postKind/
+  );
 };
 
 const main = async () => {

@@ -1659,6 +1659,7 @@ const prepareAssistant = async (
       contextType: conversationRow.contextType,
       actionFollowup: actionRequest.followup,
       actionRequestTool: actionRequest.tool,
+      actionRequestPostKind: actionRequest.postKind ?? null,
       contextId: conversationRow.contextId,
       attachments
     })]
@@ -1761,6 +1762,13 @@ const finalizeAssistant = async (
           : undefined
       )
     : undefined;
+  if (
+    prepared.actionRequest.postKind &&
+    actionProposal?.tool === "office.post.create_draft" &&
+    actionProposal.postKind !== prepared.actionRequest.postKind
+  ) {
+    actionProposal = undefined;
+  }
   let body = result?.action && !actionProposal
     ? "I couldn't safely tell which private Office draft you wanted, so I didn't create anything. Tell me note, Thought, Paper, or post—or refer back to the one we were discussing—and I'll prepare it for review."
     : providerBody;
@@ -1950,6 +1958,7 @@ const finalizeAssistant = async (
       proposedAction: actionProposal?.tool ?? null,
       actionFollowup: prepared.actionRequest.followup,
       actionRequestTool: prepared.actionRequest.tool,
+      actionRequestPostKind: prepared.actionRequest.postKind ?? null,
       model: response.model,
       status: response.status,
       visionInputCount: prepared.visionAttachments.length,
