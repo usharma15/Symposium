@@ -276,11 +276,11 @@ const projectsPanelStyles = assistantStyles.slice(
 );
 assert.match(
   projectsPanelStyles,
-  /\.assistant-projects-panel \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;/
+  /\.assistant-projects-panel \{[\s\S]*display: flex;[\s\S]*flex: 1 1 auto;[\s\S]*flex-direction: column;[\s\S]*overflow: hidden;/
 );
 assert.match(
   projectsPanelStyles,
-  /\.assistant-project-list \{[\s\S]*overflow-y: auto;/
+  /\.assistant-project-list \{[\s\S]*flex: 1 1 auto;[\s\S]*align-content: start;[\s\S]*overflow-y: auto;/
 );
 assert.match(
   projectsPanelStyles,
