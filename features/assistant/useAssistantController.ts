@@ -387,20 +387,6 @@ export function useAssistantController({
     }
   }, [nextCursor, refreshThreads, threadListLoadingMore]);
 
-  const findActiveThreadForContext = useCallback(async (contextKey: string) => {
-    const params = new URLSearchParams({
-      actorHandle,
-      contextKey,
-      limit: "1",
-      status: "active"
-    });
-    const page = await symposiumApi.request<AssistantThreadPageContract>(
-      `/api/assistant/conversations?${params.toString()}`,
-      { cache: "no-store" }
-    );
-    return page.threads[0] ?? null;
-  }, [actorHandle]);
-
   const refreshSelectedThread = useCallback(async () => {
     const id = conversationIdRef.current;
     if (!id) return null;
@@ -942,32 +928,7 @@ export function useAssistantController({
       loadedConversationIdRef.current === conversationIdRef.current
     );
     if (!selectedAlreadyLoaded) setThreadLoading(true);
-    void refreshThreads().then((page) => {
-      if (
-        cancelled ||
-        explicitNewThreadRef.current ||
-        requestedConversationId ||
-        conversationIdRef.current
-      ) return;
-      const contextKey = assistantContextKey(contextRef.current);
-      const loadedMatch = page.threads.find(
-        (candidate) => candidate.activeContextKey === contextKey
-      );
-      return loadedMatch ?? findActiveThreadForContext(contextKey);
-    }).then((matching) => {
-      if (
-        cancelled ||
-        explicitNewThreadRef.current ||
-        requestedConversationId ||
-        conversationIdRef.current
-      ) return;
-      if (matching) void openThread(matching.id);
-      else {
-        newThreadContextModeRef.current = "current";
-        setNewThreadContextModeState("current");
-        setMessages([initialAssistantMessageFor(contextRef.current)]);
-      }
-    }).catch((caught) => {
+    void refreshThreads().catch((caught) => {
       if (!cancelled) {
         setError(errorMessage(
           caught,
@@ -982,7 +943,7 @@ export function useAssistantController({
     return () => {
       cancelled = true;
     };
-  }, [actorHandle, enabled, findActiveThreadForContext, openThread, refreshThreads, requestedConversationId]);
+  }, [enabled, refreshThreads]);
 
   useEffect(() => {
     if (!enabled) return;

@@ -1984,7 +1984,15 @@ assert.match(databaseSchema, /deletedAt: timestamp\("deleted_at"/);
 assert.match(databaseSchema, /metadataRevision: integer\("metadata_revision"\)\.default\(1\)\.notNull\(\)/);
 assert.match(databaseSchema, /ai_conversations_metadata_revision_check/);
 assert.match(assistantController, /orderAssistantThreadsByLatestMessage/);
-assert.match(assistantController, /findActiveThreadForContext/);
+assert.doesNotMatch(assistantController, /findActiveThreadForContext/);
+assert.doesNotMatch(
+  assistantController,
+  /activeContextKey === contextKey[\s\S]*?openThread\(matching\.id\)/
+);
+assert.match(
+  assistantController,
+  /void refreshThreads\(\)\.catch\([\s\S]*?Research-thread history could not be loaded\.[\s\S]*?setThreadLoading\(false\)/
+);
 assert.match(assistantController, /threadListRequestRef\.current \+= 1/);
 assert.match(assistantController, /explicitNewThreadRef\.current = true/);
 assert.match(assistantController, /suppressedRequestedConversationIdRef\.current = conversationIdRef\.current \?\? null/);
