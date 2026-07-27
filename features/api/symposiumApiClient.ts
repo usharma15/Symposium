@@ -1,6 +1,7 @@
 export type SymposiumApiRequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
+  actorHandle?: string;
   cache?: RequestCache;
   idempotencyKey?: string;
   headers?: HeadersInit;
@@ -159,25 +160,36 @@ export const createSymposiumApiClient = (
     if (resolved.direct) {
       const token = await runtime.getAccessToken?.().catch(() => null);
       if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
-      const actorHandle = actorHandleFromRequest(path, resolved.body);
+      const actorHandle =
+        options.actorHandle ?? actorHandleFromRequest(path, resolved.body);
       if (!token && actorHandle && !headers.has("x-symposium-handle")) {
         headers.set("x-symposium-handle", actorHandle);
       }
     }
 
-    const fetchRequest = (input: string, direct: boolean) => fetchImpl(input, {
-      method: direct ? resolved.method : options.method ?? "GET",
-      headers: direct ? headers : (() => {
-        const fallbackHeaders = new Headers(headers);
-        fallbackHeaders.delete("Authorization");
-        fallbackHeaders.delete("x-symposium-handle");
-        return fallbackHeaders;
-      })(),
-      body: hasBody ? JSON.stringify(direct ? resolved.body : options.body) : undefined,
-      cache: options.cache,
-      keepalive: options.keepalive,
-      signal: options.signal
-    });
+    const fetchRequest = (input: string, direct: boolean) => {
+      const transportBody = direct
+        ? resolved.body
+        : options.actorHandle &&
+            options.body &&
+            typeof options.body === "object" &&
+            !Array.isArray(options.body)
+          ? { ...options.body, actorHandle: options.actorHandle }
+          : options.body;
+      return fetchImpl(input, {
+        method: direct ? resolved.method : options.method ?? "GET",
+        headers: direct ? headers : (() => {
+          const fallbackHeaders = new Headers(headers);
+          fallbackHeaders.delete("Authorization");
+          fallbackHeaders.delete("x-symposium-handle");
+          return fallbackHeaders;
+        })(),
+        body: hasBody ? JSON.stringify(transportBody) : undefined,
+        cache: options.cache,
+        keepalive: options.keepalive,
+        signal: options.signal
+      });
+    };
 
     let response: Response;
     try {

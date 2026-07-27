@@ -166,9 +166,9 @@ export function AssistantOfficeDraftCard({
           : "/api/assistant/actions/office-note-drafts",
         {
           method: "POST",
+          actorHandle,
           idempotencyKey: retryRef.current.key,
           body: {
-            actorHandle,
             assistantMessageId: messageId,
             conversationId,
             title: normalizedTitle,

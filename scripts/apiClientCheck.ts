@@ -87,6 +87,34 @@ const main = async () => {
   await directClient.request("/api/posts?limit=24", { cache: "no-store" });
   assert.equal(directRequests[0]?.input, "https://api.example/v1/posts?limit=24");
   assert.equal(new Headers(directRequests[0]?.init?.headers).get("Authorization"), "Bearer token-1");
+  await directClient.request("/api/assistant/actions/office-post-drafts", {
+    method: "POST",
+    actorHandle: "@ada",
+    idempotencyKey: "assistant-action-1",
+    body: {
+      assistantMessageId: "00000000-0000-4000-8000-000000000001",
+      postKind: "thought"
+    }
+  });
+  assert.equal(
+    directRequests[1]?.input,
+    "https://api.example/v1/assistant/actions/office-post-drafts"
+  );
+  assert.equal(
+    directRequests[1]?.init?.body,
+    JSON.stringify({
+      assistantMessageId: "00000000-0000-4000-8000-000000000001",
+      postKind: "thought"
+    })
+  );
+  assert.equal(
+    new Headers(directRequests[1]?.init?.headers).get("Authorization"),
+    "Bearer token-1"
+  );
+  assert.equal(
+    new Headers(directRequests[1]?.init?.headers).get("Idempotency-Key"),
+    "assistant-action-1"
+  );
   const attachmentBody = new Blob(["bounded attachment"]);
   await directClient.uploadBinary(
     "/api/attachments/00000000-0000-4000-8000-000000000001/content",
@@ -94,13 +122,13 @@ const main = async () => {
     { actorHandle: "@ada" }
   );
   assert.equal(
-    directRequests[1]?.input,
+    directRequests[2]?.input,
     "https://api.example/v1/attachments/00000000-0000-4000-8000-000000000001/content"
   );
-  assert.equal(directRequests[1]?.init?.method, "PUT");
-  assert.equal(new Headers(directRequests[1]?.init?.headers).get("Authorization"), "Bearer token-1");
-  assert.equal(new Headers(directRequests[1]?.init?.headers).get("Content-Type"), "application/octet-stream");
-  assert.equal(directRequests[1]?.init?.body, attachmentBody);
+  assert.equal(directRequests[2]?.init?.method, "PUT");
+  assert.equal(new Headers(directRequests[2]?.init?.headers).get("Authorization"), "Bearer token-1");
+  assert.equal(new Headers(directRequests[2]?.init?.headers).get("Content-Type"), "application/octet-stream");
+  assert.equal(directRequests[2]?.init?.body, attachmentBody);
 
   const preparedUploads: Array<{ path: string; body: Blob; actorHandle?: string }> = [];
   await uploadPreparedAttachmentContent({
@@ -131,6 +159,47 @@ const main = async () => {
   }, { backendUrl: "https://api.example", getAccessToken: async () => "token-1" });
   await fallbackClient.request("/api/posts?limit=24");
   assert.deepEqual(fallbackRequests, ["https://api.example/v1/posts?limit=24", "/api/posts?limit=24"]);
+
+  const scopedFallbackRequests: Array<{
+    input: string;
+    body: BodyInit | null | undefined;
+  }> = [];
+  const scopedFallbackClient = createSymposiumApiClient(async (input, init) => {
+    scopedFallbackRequests.push({
+      input: String(input),
+      body: init?.body
+    });
+    if (String(input).startsWith("https://api.example")) {
+      throw new TypeError("cors");
+    }
+    return jsonResponse({ ok: true });
+  }, { backendUrl: "https://api.example", getAccessToken: async () => "token-1" });
+  await scopedFallbackClient.request("/api/assistant/actions/office-post-drafts", {
+    method: "POST",
+    actorHandle: "@ada",
+    idempotencyKey: "assistant-action-fallback-1",
+    body: {
+      assistantMessageId: "00000000-0000-4000-8000-000000000002",
+      postKind: "paper"
+    }
+  });
+  assert.deepEqual(scopedFallbackRequests, [
+    {
+      input: "https://api.example/v1/assistant/actions/office-post-drafts",
+      body: JSON.stringify({
+        assistantMessageId: "00000000-0000-4000-8000-000000000002",
+        postKind: "paper"
+      })
+    },
+    {
+      input: "/api/assistant/actions/office-post-drafts",
+      body: JSON.stringify({
+        assistantMessageId: "00000000-0000-4000-8000-000000000002",
+        postKind: "paper",
+        actorHandle: "@ada"
+      })
+    }
+  ]);
 
   const conflictClient = createSymposiumApiClient(async () => jsonResponse({ error: "Still processing" }, 409));
   const conflict = await conflictClient.request("/api/posts", { method: "POST", body: {} }).catch((error) => error);
@@ -167,6 +236,8 @@ const main = async () => {
   console.log(JSON.stringify({ ok: true, checked: [
     "JSON request normalization",
     "idempotency header propagation",
+    "strict action payload authentication separation",
+    "actor-aware Next-route mutation failover",
     "lifecycle keepalive propagation",
     "authenticated binary upload routing",
     "shared prepared-upload transport for profile photos",
