@@ -15,6 +15,12 @@ import {
   updateAssistantConversationSource
 } from "../repository/assistant";
 import { confirmAssistantOfficeNoteDraft } from "../repository/assistantActions";
+import {
+  createAssistantProject,
+  deleteAssistantProject,
+  listAssistantProjects,
+  updateAssistantProject
+} from "../repository/assistantProjects";
 import { translateContent } from "../repository/contentTranslations";
 import { translateDocument } from "../repository/documentTranslations";
 import { createOpportunity, listOpportunities } from "../repository/opportunities";
@@ -499,6 +505,84 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
       return sendError(app, reply, error);
     }
   });
+
+  app.get("/v1/assistant/projects", async (request, reply) => {
+    try {
+      return reply.send(await listAssistantProjects(await withReadActor(request)));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/assistant/projects", async (request, reply) => {
+    try {
+      return reply.send(await createAssistantProject(
+        request.body,
+        await withWriteActor(request, {
+          shared: true,
+          scope: "assistant-action",
+          limit: 30
+        }),
+        mutationContextFromRequest(
+          request,
+          "assistant.project.create",
+          request.body
+        )
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: { projectId: string } }>(
+    "/v1/assistant/projects/:projectId",
+    async (request, reply) => {
+      try {
+        const projectId = z.string().uuid().parse(request.params.projectId);
+        return reply.send(await updateAssistantProject(
+          projectId,
+          request.body,
+          await withWriteActor(request, {
+            shared: true,
+            scope: "assistant-action",
+            limit: 30
+          }),
+          mutationContextFromRequest(
+            request,
+            "assistant.project.update",
+            { projectId, body: request.body }
+          )
+        ));
+      } catch (error) {
+        return sendError(app, reply, error);
+      }
+    }
+  );
+
+  app.delete<{ Params: { projectId: string } }>(
+    "/v1/assistant/projects/:projectId",
+    async (request, reply) => {
+      try {
+        const projectId = z.string().uuid().parse(request.params.projectId);
+        return reply.send(await deleteAssistantProject(
+          projectId,
+          request.body,
+          await withWriteActor(request, {
+            shared: true,
+            scope: "assistant-action",
+            limit: 30
+          }),
+          mutationContextFromRequest(
+            request,
+            "assistant.project.delete",
+            { projectId, body: request.body }
+          )
+        ));
+      } catch (error) {
+        return sendError(app, reply, error);
+      }
+    }
+  );
 
   app.get<{ Params: RouteParams }>("/v1/assistant/conversations/:id", async (request, reply) => {
     try {

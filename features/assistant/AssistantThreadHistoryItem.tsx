@@ -5,6 +5,7 @@ import {
   Archive,
   Check,
   Ellipsis,
+  Folder,
   LoaderCircle,
   Pencil,
   Pin,
@@ -13,16 +14,26 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import type { AssistantThreadSummaryContract } from "@/packages/contracts/src";
+import type {
+  AssistantProjectContract,
+  AssistantThreadSummaryContract
+} from "@/packages/contracts/src";
 import { assistantThreadActivityLabel } from "@/features/assistant/assistantThreadOrdering";
 
-type ThreadHistoryItemMode = "closed" | "menu" | "rename" | "delete";
+type ThreadHistoryItemMode =
+  | "closed"
+  | "menu"
+  | "rename"
+  | "project"
+  | "delete";
 
 export function AssistantThreadHistoryItem({
   candidate,
   selected,
   disabled,
   busy,
+  projects,
+  projectName,
   onSelect,
   onUpdate,
   onDelete
@@ -31,11 +42,14 @@ export function AssistantThreadHistoryItem({
   selected: boolean;
   disabled: boolean;
   busy: boolean;
+  projects: AssistantProjectContract[];
+  projectName: string | null;
   onSelect: () => void;
   onUpdate: (changes: {
     title?: string;
     pinned?: boolean;
     archived?: boolean;
+    projectId?: string | null;
   }) => Promise<boolean>;
   onDelete: () => Promise<boolean>;
 }) {
@@ -92,6 +106,7 @@ export function AssistantThreadHistoryItem({
     title?: string;
     pinned?: boolean;
     archived?: boolean;
+    projectId?: string | null;
   }) => {
     const updated = await onUpdate(changes);
     if (updated) closeActions();
@@ -119,8 +134,8 @@ export function AssistantThreadHistoryItem({
           {candidate.title}
         </strong>
         <span>
-          {candidate.sourceCount} source
-          {candidate.sourceCount === 1 ? "" : "s"}
+          {projectName ? `${projectName} · ` : ""}
+          {candidate.sourceCount} source{candidate.sourceCount === 1 ? "" : "s"}
         </span>
         <time dateTime={candidate.lastMessageAt}>
           {assistantThreadActivityLabel(candidate.lastMessageAt)}
@@ -160,7 +175,11 @@ export function AssistantThreadHistoryItem({
           aria-label={
             itemMode === "menu"
               ? `Chat actions for ${candidate.title}`
-              : undefined
+              : itemMode === "delete"
+                ? `Delete chat ${candidate.title}`
+                : itemMode === "project"
+                  ? `Choose a Project for ${candidate.title}`
+                  : `Rename chat ${candidate.title}`
           }
         >
           {itemMode === "menu" ? (
@@ -189,6 +208,14 @@ export function AssistantThreadHistoryItem({
                   {candidate.pinned ? "Unpin" : "Pin"}
                 </button>
               ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => setItemMode("project")}
+              >
+                <Folder size={13} />
+                {candidate.projectId ? "Move Project" : "Add to Project"}
+              </button>
               <button
                 type="button"
                 role="menuitem"
@@ -252,6 +279,47 @@ export function AssistantThreadHistoryItem({
                 </button>
               </span>
             </form>
+          ) : itemMode === "project" ? (
+            <>
+              <strong>Choose a Project</strong>
+              <p>
+                This only organizes the chat. It does not change AI context.
+              </p>
+              <button
+                type="button"
+                className={!candidate.projectId ? "active" : undefined}
+                disabled={!candidate.projectId}
+                onClick={() => void runUpdate({ projectId: null })}
+              >
+                No Project
+              </button>
+              {projects.map((project) => (
+                <button
+                  type="button"
+                  className={
+                    candidate.projectId === project.id
+                      ? "active"
+                      : undefined
+                  }
+                  disabled={candidate.projectId === project.id}
+                  key={project.id}
+                  onClick={() => void runUpdate({
+                    projectId: project.id
+                  })}
+                >
+                  <Folder size={12} />
+                  {project.name}
+                </button>
+              ))}
+              {!projects.length ? (
+                <p>Create a Project from the Projects view first.</p>
+              ) : null}
+              <span>
+                <button type="button" onClick={closeActions}>
+                  <X size={13} />Cancel
+                </button>
+              </span>
+            </>
           ) : (
             <>
               <strong>Delete this chat permanently?</strong>

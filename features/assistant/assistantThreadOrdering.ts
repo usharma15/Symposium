@@ -11,14 +11,21 @@ export const orderAssistantThreadsByLatestMessage = (
 export const reconcileAssistantThreadSummary = (
   threads: AssistantThreadSummaryContract[],
   next: AssistantThreadSummaryContract,
-  options: { status: "active" | "archived"; hasSearch: boolean }
+  options: {
+    view: "all" | "projects" | "archived";
+    projectId: string | null;
+    hasSearch: boolean;
+  }
 ) => {
   const existing = threads.some((candidate) => candidate.id === next.id);
-  const statusMatches = options.status === "archived"
+  const statusMatches = options.view === "archived"
     ? next.archivedAt !== null
     : next.archivedAt === null;
+  const projectMatches =
+    options.view !== "projects" ||
+    Boolean(options.projectId && next.projectId === options.projectId);
   const withoutNext = threads.filter((candidate) => candidate.id !== next.id);
-  if (!statusMatches) return withoutNext;
+  if (!statusMatches || !projectMatches) return withoutNext;
   if (options.hasSearch && !existing) return threads;
   return orderAssistantThreadsByLatestMessage([next, ...withoutNext]);
 };

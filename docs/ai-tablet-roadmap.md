@@ -60,7 +60,19 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Search titles and user/assistant message bodies on the server, paginate with stable cursors, and keep pinned chats ahead of otherwise last-chatted ordering. **Shipped.**
 - Synchronize conversation-library mutations through live events and same-browser broadcasts, with revision conflicts reloaded before retry. **Shipped.**
 - Preserve the AI usage ledger when a chat is deleted while removing its transcript, context snapshots, and completed mutation receipts; discard rather than persist an answer that finishes after deletion. **Shipped.**
-- Do not invent Projects, folders, long-term memory, automatic actions, or unbounded history before those systems have real persistence and product rules.
+- Keep Projects strictly as private chat organization: each active chat can be
+  in at most one Project, All still shows every active chat, and Archive remains
+  a separate compact view. **Shipped.**
+- Creating, renaming, selecting, filing, unfiling, and deleting Projects does
+  not call the model or consume an AI answer. Project names and membership are
+  never added to prompts, sources, memory, summaries, embeddings, or
+  instructions. **Shipped.**
+- Deleting a Project returns its chats to All and never deletes chats, source
+  snapshots, attachments, or Office documents. Project mutations are
+  owner-authorized, revision-checked, replay-safe, audited, and synchronized
+  across open sessions. **Shipped.**
+- Long-term memory, project-wide context intelligence, automatic actions, and
+  unbounded history remain intentionally out of scope.
 
 ### 4. Whole-content translation — agreed milestone shipped; whole-document action deferred
 

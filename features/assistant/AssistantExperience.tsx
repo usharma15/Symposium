@@ -25,6 +25,7 @@ import type { AssistantController } from "@/features/assistant/useAssistantContr
 import { assistantThreadActivityLabel } from "@/features/assistant/assistantThreadOrdering";
 import { AssistantContextDock } from "@/features/assistant/AssistantContextDock";
 import { AssistantMessageCard } from "@/features/assistant/AssistantMessageCard";
+import { AssistantProjectsPanel } from "@/features/assistant/AssistantProjectsPanel";
 import { AssistantThreadHistoryItem } from "@/features/assistant/AssistantThreadHistoryItem";
 import {
   assistantAttachmentProcessingLabel,
@@ -58,12 +59,15 @@ export function AssistantExperience({
     conversationId,
     thread,
     threads,
+    projects,
     nextCursor,
     threadSearch,
-    threadLibraryStatus,
+    threadLibraryView,
+    selectedProjectId,
     threadListLoading,
     threadListLoadingMore,
     threadActionBusyId,
+    projectActionBusyId,
     messages,
     draft,
     pendingAttachments,
@@ -89,6 +93,9 @@ export function AssistantExperience({
     loadMoreThreads,
     updateThreadDetails,
     deleteThread,
+    createProject,
+    updateProject,
+    deleteProject,
     useCurrentView,
     clearContext,
     changeThreadContext,
@@ -133,19 +140,29 @@ export function AssistantExperience({
     if (previousModeRef.current === mode) return;
     previousModeRef.current = mode;
     setContextDockOpen(mode === "workspace");
-    if (mode === "compact" && (threadLibraryStatus !== "active" || threadSearch)) {
+    if (mode === "compact" && (threadLibraryView !== "all" || threadSearch)) {
       setThreadQuery("");
-      setThreadLibraryFilters("", "active");
+      setThreadLibraryFilters("", "all");
     }
-  }, [mode, setThreadLibraryFilters, threadLibraryStatus, threadSearch]);
+  }, [mode, setThreadLibraryFilters, threadLibraryView, threadSearch]);
 
   useEffect(() => {
     if (threadQuery === threadSearch) return;
     const timeout = window.setTimeout(() => {
-      setThreadLibraryFilters(threadQuery, threadLibraryStatus);
+      setThreadLibraryFilters(
+        threadQuery,
+        threadLibraryView,
+        selectedProjectId
+      );
     }, 280);
     return () => window.clearTimeout(timeout);
-  }, [setThreadLibraryFilters, threadLibraryStatus, threadQuery, threadSearch]);
+  }, [
+    selectedProjectId,
+    setThreadLibraryFilters,
+    threadLibraryView,
+    threadQuery,
+    threadSearch
+  ]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -275,29 +292,84 @@ export function AssistantExperience({
             value={threadQuery}
             onChange={(event) => setThreadQuery(event.target.value)}
             maxLength={160}
-            placeholder="Search titles and messages"
+            placeholder={
+              threadLibraryView === "projects"
+                ? "Search this Project"
+                : threadLibraryView === "archived"
+                  ? "Search archived chats"
+                  : "Search titles and messages"
+            }
             aria-label="Search chats"
           />
         </div>
         <nav className="assistant-thread-filters" aria-label="Chat history view">
           <button
             type="button"
-            className={threadLibraryStatus === "active" ? "active" : undefined}
-            aria-pressed={threadLibraryStatus === "active"}
-            onClick={() => setThreadLibraryFilters(threadQuery, "active")}
+            className={threadLibraryView === "all" ? "active" : undefined}
+            aria-pressed={threadLibraryView === "all"}
+            onClick={() => setThreadLibraryFilters(threadQuery, "all")}
           >
-            Active
+            All
           </button>
           <button
             type="button"
-            className={threadLibraryStatus === "archived" ? "active" : undefined}
-            aria-pressed={threadLibraryStatus === "archived"}
+            className={threadLibraryView === "projects" ? "active" : undefined}
+            aria-pressed={threadLibraryView === "projects"}
+            onClick={() => setThreadLibraryFilters(
+              threadQuery,
+              "projects",
+              selectedProjectId ?? thread?.projectId ?? projects[0]?.id ?? null
+            )}
+          >
+            Projects
+          </button>
+          <button
+            type="button"
+            className={`assistant-archive-filter${
+              threadLibraryView === "archived" ? " active" : ""
+            }`}
+            aria-label="Archived chats"
+            title="Archived chats"
+            aria-pressed={threadLibraryView === "archived"}
             onClick={() => setThreadLibraryFilters(threadQuery, "archived")}
           >
-            Archived
+            <Archive size={14} />
           </button>
         </nav>
+        {threadLibraryView === "projects" ? (
+          <AssistantProjectsPanel
+            projects={projects}
+            selectedProjectId={selectedProjectId}
+            disabled={
+              projectActionBusyId !== null ||
+              threadActionBusyId !== null
+            }
+            busyId={projectActionBusyId}
+            onSelect={(projectId) =>
+              setThreadLibraryFilters(
+                threadQuery,
+                "projects",
+                projectId
+              )
+            }
+            onCreate={async (name) => Boolean(await createProject(name))}
+            onRename={async (project, name) =>
+              Boolean(await updateProject(project, name))
+            }
+            onDelete={deleteProject}
+          />
+        ) : null}
         <div className="assistant-thread-list">
+          {threadLibraryView === "projects" && selectedProjectId ? (
+            <header className="assistant-project-thread-heading">
+              <strong>
+                {projects.find(
+                  (project) => project.id === selectedProjectId
+                )?.name ?? "Project"}
+              </strong>
+              <small>Active chats</small>
+            </header>
+          ) : null}
           {threads.length ? threads.map((candidate) => (
             <AssistantThreadHistoryItem
               key={candidate.id}
@@ -305,6 +377,12 @@ export function AssistantExperience({
               selected={candidate.id === conversationId}
               disabled={threadActionBusyId !== null}
               busy={threadActionBusyId === candidate.id}
+              projects={projects}
+              projectName={
+                projects.find(
+                  (project) => project.id === candidate.projectId
+                )?.name ?? null
+              }
               onSelect={() => selectThread(candidate.id)}
               onUpdate={async (changes) => Boolean(await updateThreadDetails(candidate, changes))}
               onDelete={() => deleteThread(candidate)}
@@ -314,10 +392,14 @@ export function AssistantExperience({
               {threadListLoading
                 ? "Loading chats…"
                 : threadQuery.trim()
-                  ? `No ${threadLibraryStatus} chats match this search.`
-                  : threadLibraryStatus === "archived"
+                  ? `No chats match this search.`
+                  : threadLibraryView === "archived"
                     ? "No archived chats."
-                    : "No saved chats yet."}
+                    : threadLibraryView === "projects"
+                      ? selectedProjectId
+                        ? "No active chats in this Project."
+                        : "Choose or create a Project."
+                      : "No saved chats yet."}
             </p>
           )}
           {nextCursor ? (

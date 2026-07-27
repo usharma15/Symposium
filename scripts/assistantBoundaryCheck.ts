@@ -37,6 +37,7 @@ import {
 import {
   assistantContextUpdateInputSchema,
   assistantConversationListQuerySchema,
+  assistantProjectDeleteResultSchema,
   assistantMessageInputSchema,
   assistantSourceUpdateInputSchema,
   assistantThreadDeleteInputSchema,
@@ -161,6 +162,16 @@ assert.equal(assistantMessageInputSchema.safeParse({
     "00000000-0000-4000-8000-000000000001"
   ]
 }).success, false);
+const projectIdFixture = "41b805db-3ed3-4a2a-a20d-6b75b52166db";
+assert.equal(assistantMessageInputSchema.safeParse({
+  ...validInput,
+  projectId: projectIdFixture
+}).success, true);
+assert.equal(assistantMessageInputSchema.safeParse({
+  ...validInput,
+  conversationId: "bec08981-7b08-41c8-a045-0b671d8b1320",
+  projectId: projectIdFixture
+}).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, content: "x".repeat(12001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, selection: "x".repeat(4001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, surface: "unknown" } }).success, false);
@@ -224,6 +235,7 @@ assert.deepEqual(
 assert.equal(assistantConversationListQuerySchema.safeParse({
   search: "methodological break",
   status: "archived",
+  projectId: projectIdFixture,
   limit: 50
 }).success, true);
 assert.equal(assistantConversationListQuerySchema.safeParse({ search: "x".repeat(161) }).success, false);
@@ -241,6 +253,14 @@ assert.equal(assistantThreadUpdateInputSchema.safeParse({
   expectedRevision: 2
 }).success, true);
 assert.equal(assistantThreadUpdateInputSchema.safeParse({
+  projectId: projectIdFixture,
+  expectedRevision: 2
+}).success, true);
+assert.equal(assistantThreadUpdateInputSchema.safeParse({
+  projectId: null,
+  expectedRevision: 2
+}).success, true);
+assert.equal(assistantThreadUpdateInputSchema.safeParse({
   pinned: true,
   archived: true,
   expectedRevision: 2
@@ -249,6 +269,11 @@ assert.equal(assistantThreadUpdateInputSchema.safeParse({ expectedRevision: 2 })
 assert.equal(assistantThreadUpdateInputSchema.safeParse({ title: " ", expectedRevision: 2 }).success, false);
 assert.equal(assistantThreadDeleteInputSchema.safeParse({ expectedRevision: 2 }).success, true);
 assert.equal(assistantThreadDeleteInputSchema.safeParse({ expectedRevision: 0 }).success, false);
+assert.equal(assistantProjectDeleteResultSchema.safeParse({
+  projectId: projectIdFixture,
+  deleted: true,
+  unfiledConversationCount: 10001
+}).success, true);
 assert.equal(assistantContextUpdateInputSchema.safeParse({
   mode: "silent",
   context: validInput.context,
@@ -285,6 +310,7 @@ const threadSummaryFixture = {
   title: "Thread",
   pinned: false,
   archivedAt: null,
+  projectId: null,
   metadataRevision: 1,
   contextType: "post",
   contextId: "paper-1",
@@ -322,31 +348,55 @@ const archivedThreadFixture = {
 };
 assert.deepEqual(
   reconcileAssistantThreadSummary([archivedThreadFixture], activeThreadFixture, {
-    status: "archived",
+    view: "archived",
+    projectId: null,
     hasSearch: false
   }),
   []
 );
 assert.deepEqual(
   reconcileAssistantThreadSummary([activeThreadFixture], archivedThreadFixture, {
-    status: "active",
+    view: "all",
+    projectId: null,
     hasSearch: false
   }),
   []
 );
 assert.deepEqual(
   reconcileAssistantThreadSummary([], activeThreadFixture, {
-    status: "active",
+    view: "all",
+    projectId: null,
     hasSearch: true
   }),
   []
 );
 assert.deepEqual(
   reconcileAssistantThreadSummary([], activeThreadFixture, {
-    status: "active",
+    view: "all",
+    projectId: null,
     hasSearch: false
   }),
   [activeThreadFixture]
+);
+const projectThreadFixture = {
+  ...activeThreadFixture,
+  projectId: projectIdFixture
+};
+assert.deepEqual(
+  reconcileAssistantThreadSummary([], projectThreadFixture, {
+    view: "projects",
+    projectId: projectIdFixture,
+    hasSearch: false
+  }),
+  [projectThreadFixture]
+);
+assert.deepEqual(
+  reconcileAssistantThreadSummary([projectThreadFixture], projectThreadFixture, {
+    view: "projects",
+    projectId: "169b5a8d-cdea-43b9-b871-3afce65eca46",
+    hasSearch: false
+  }),
+  []
 );
 assert.match(assistantPrompt(validInput.context, validInput.message), /ACTIVE VIEW/);
 assert.match(assistantPrompt(validInput.context, validInput.message, [{ ...validInput.context, title: "Attached paper" }]), /ATTACHED SOURCES[\s\S]*Attached paper/);

@@ -34,7 +34,10 @@ export type AssistantMessageView = {
   attachments?: InquiryAttachmentContract[];
 };
 
-export type AssistantThreadLibraryStatus = "active" | "archived";
+export type AssistantThreadLibraryView =
+  | "all"
+  | "projects"
+  | "archived";
 
 export type AssistantThreadLiveEvent = {
   id?: string;

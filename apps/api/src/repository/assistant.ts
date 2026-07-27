@@ -88,6 +88,7 @@ type ConversationRow = {
   id: string;
   kind: "research_thread";
   title: string;
+  projectId: string | null;
   pinnedAt: Date | string | null;
   archivedAt: Date | string | null;
   deletedAt: Date | string | null;
@@ -145,6 +146,7 @@ const assistantThreadState = (row: ConversationRow): AssistantThreadStateContrac
     id: row.id,
     kind: row.kind,
     title: row.title,
+    projectId: row.projectId,
     pinned: row.pinnedAt !== null,
     archivedAt: row.archivedAt === null ? null : isoString(row.archivedAt),
     metadataRevision: row.metadataRevision,
@@ -468,6 +470,7 @@ const conversationSelect = `
   id,
   kind,
   title,
+  project_id AS "projectId",
   pinned_at AS "pinnedAt",
   archived_at AS "archivedAt",
   deleted_at AS "deletedAt",
@@ -608,6 +611,17 @@ export const listAssistantConversations = async (
     values.push(JSON.stringify([{ key: query.contextKey }]));
     clauses.push(`conversation.context_sources @> $${values.length}::jsonb`);
   }
+  if (query.projectId) {
+    values.push(query.projectId);
+    clauses.push(`conversation.project_id = $${values.length}
+      AND EXISTS (
+        SELECT 1
+        FROM ai_projects project
+        WHERE project.id = conversation.project_id
+          AND project.owner_handle = $1
+          AND project.deleted_at IS NULL
+      )`);
+  }
   if (query.search) {
     const escaped = query.search.replace(/[\\%_]/g, "\\$&");
     values.push(`%${escaped}%`);
@@ -729,6 +743,23 @@ export const updateAssistantConversation = async (
         message: "Restore this chat before pinning it."
       });
     }
+    if (input.projectId) {
+      const project = await client.query(
+        `SELECT 1
+         FROM ai_projects
+         WHERE id = $1
+           AND owner_handle = $2
+           AND deleted_at IS NULL
+         FOR SHARE`,
+        [input.projectId, owner]
+      );
+      if (!project.rowCount) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "That Project is not available."
+        });
+      }
+    }
 
     const updated = await client.query<ConversationRow>(
       `UPDATE ai_conversations
@@ -746,6 +777,10 @@ export const updateAssistantConversation = async (
              WHEN $5::boolean = true THEN archived_at
              ELSE NULL
            END,
+           project_id = CASE
+             WHEN $6::boolean THEN $7::uuid
+             ELSE project_id
+           END,
            metadata_revision = metadata_revision + 1,
            updated_at = now()
        WHERE id = $1 AND owner_handle = $2
@@ -755,7 +790,9 @@ export const updateAssistantConversation = async (
         owner,
         input.title ?? null,
         input.pinned ?? null,
-        input.archived ?? null
+        input.archived ?? null,
+        input.projectId !== undefined,
+        input.projectId ?? null
       ]
     );
     const response: AssistantThreadUpdateResultContract = {
@@ -770,6 +807,8 @@ export const updateAssistantConversation = async (
         renamed: input.title !== undefined,
         pinned: input.pinned ?? null,
         archived: input.archived ?? null,
+        projectChanged: input.projectId !== undefined,
+        projectId: response.thread.projectId,
         metadataRevision: response.thread.metadataRevision
       })
     });
@@ -784,9 +823,27 @@ export const updateAssistantConversation = async (
         renamed: input.title !== undefined,
         pinned: response.thread.pinned,
         archived: response.thread.archivedAt !== null,
+        projectId: response.thread.projectId,
         metadataRevision: response.thread.metadataRevision
       }
     });
+    if (input.projectId !== undefined) {
+      const projectIds = Array.from(new Set(
+        [row.projectId, response.thread.projectId].filter(
+          (projectId): projectId is string => Boolean(projectId)
+        )
+      ));
+      if (projectIds.length) {
+        await client.query(
+          `UPDATE ai_projects
+           SET updated_at = now()
+           WHERE id = ANY($1::uuid[])
+             AND owner_handle = $2
+             AND deleted_at IS NULL`,
+          [projectIds, owner]
+        );
+      }
+    }
     return { value: response, events: [event] };
   });
 };
@@ -855,6 +912,7 @@ export const deleteAssistantConversation = async (
            active_context_key = NULL,
            active_source_id = NULL,
            origin_source_id = NULL,
+           project_id = NULL,
            pinned_at = NULL,
            archived_at = NULL,
            deleted_at = now(),
@@ -1232,9 +1290,27 @@ const prepareAssistant = async (
   let conversationRow: ConversationRow;
   if (!conversationId) {
     const source = input.context ? sourceForContext(input.context) : null;
+    if (input.projectId) {
+      const project = await client.query(
+        `SELECT 1
+         FROM ai_projects
+         WHERE id = $1
+           AND owner_handle = $2
+           AND deleted_at IS NULL
+         FOR SHARE`,
+        [input.projectId, owner]
+      );
+      if (!project.rowCount) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "That Project is not available."
+        });
+      }
+    }
     const conversation = await client.query<ConversationRow>(
       `INSERT INTO ai_conversations (
          owner_handle,
+         project_id,
          kind,
          title,
          context_type,
@@ -1244,10 +1320,11 @@ const prepareAssistant = async (
          active_source_id,
          origin_source_id
        )
-       VALUES ($1, 'research_thread', $2, $3, $4, $5::jsonb, $6, $7, $7)
+       VALUES ($1, $2, 'research_thread', $3, $4, $5, $6::jsonb, $7, $8, $8)
        RETURNING ${conversationSelect}`,
       [
         owner,
+        input.projectId ?? null,
         input.message.slice(0, 80),
         input.context ? input.contextType : "general",
         input.context ? input.contextId ?? input.context.entityId ?? null : null,
@@ -1258,6 +1335,16 @@ const prepareAssistant = async (
     );
     conversationRow = conversation.rows[0]!;
     conversationId = conversationRow.id;
+    if (conversationRow.projectId) {
+      await client.query(
+        `UPDATE ai_projects
+         SET updated_at = now()
+         WHERE id = $1
+           AND owner_handle = $2
+           AND deleted_at IS NULL`,
+        [conversationRow.projectId, owner]
+      );
+    }
   } else {
     const ownedConversation = await client.query<ConversationRow>(
       `SELECT ${conversationSelect}

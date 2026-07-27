@@ -45,6 +45,7 @@
 .assistant-compact .assistant-mobile-nav,
 .assistant-compact .assistant-thread-search,
 .assistant-compact .assistant-thread-filters,
+.assistant-compact .assistant-projects-panel,
 .assistant-compact .assistant-thread-list {
   display: none;
 }
@@ -154,7 +155,7 @@
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 0.28rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   padding: 0.42rem 0.72rem;
 }
 
@@ -170,6 +171,211 @@
   background: color-mix(in srgb, var(--aqua) 18%, var(--document-control-solid));
   border-color: color-mix(in srgb, var(--aqua) 38%, var(--line));
   font-weight: 850;
+}
+
+.assistant-thread-filters .assistant-archive-filter {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  min-width: 1.85rem;
+  padding-inline: 0.3rem;
+}
+
+.assistant-projects-panel {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  flex: 0 1 auto;
+  gap: 0.38rem;
+  max-height: min(19rem, 46%);
+  min-height: 0;
+  padding: 0.55rem 0.72rem 0.62rem;
+}
+
+.assistant-projects-panel > header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.assistant-projects-panel > header > span {
+  align-items: center;
+  display: inline-flex;
+  font-size: 0.7rem;
+  gap: 0.3rem;
+}
+
+.assistant-projects-panel > header > button,
+.assistant-project-more {
+  align-items: center;
+  background: transparent;
+  border-color: transparent;
+  display: inline-flex;
+  justify-content: center;
+  min-height: 1.8rem;
+  min-width: 1.8rem;
+  padding: 0.2rem;
+}
+
+.assistant-projects-panel > header > button:hover,
+.assistant-project-more:hover,
+.assistant-project-more[aria-expanded="true"] {
+  background: var(--document-control-solid);
+  border-color: var(--line);
+}
+
+.assistant-projects-panel > small,
+.assistant-project-list > p,
+.assistant-project-popover > p {
+  color: var(--muted);
+  font-size: 0.6rem;
+  line-height: 1.4;
+}
+
+.assistant-project-list {
+  display: grid;
+  gap: 0.28rem;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.assistant-project-list > p {
+  margin: 0;
+  padding: 0.35rem 0.25rem;
+}
+
+.assistant-project-item {
+  border: 1px solid transparent;
+  border-radius: 0.62rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+}
+
+.assistant-project-item.active {
+  background: color-mix(in srgb, var(--aqua) 15%, var(--document-control-solid));
+  border-color: color-mix(in srgb, var(--aqua) 38%, var(--line));
+}
+
+.assistant-project-select {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  display: grid;
+  gap: 0.42rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  padding: 0.48rem 0.52rem;
+  text-align: left;
+}
+
+.assistant-project-select > span {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.assistant-project-select strong {
+  font-size: 0.68rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-project-select small {
+  color: var(--muted);
+  font-size: 0.58rem;
+}
+
+.assistant-project-more {
+  align-self: start;
+  margin: 0.3rem 0.28rem 0 0;
+}
+
+.assistant-project-popover {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.28rem;
+  grid-column: 1 / -1;
+  padding: 0.42rem;
+}
+
+.assistant-project-popover > button,
+.assistant-project-popover > span > button,
+.assistant-project-editor button {
+  align-items: center;
+  display: inline-flex;
+  font-size: 0.63rem;
+  gap: 0.28rem;
+  min-height: 1.9rem;
+  padding: 0.3rem 0.42rem;
+}
+
+.assistant-project-popover > button {
+  background: transparent;
+  border-color: transparent;
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.assistant-project-popover > strong,
+.assistant-project-editor label {
+  font-size: 0.64rem;
+}
+
+.assistant-project-popover > p { margin: 0; }
+
+.assistant-project-popover > span,
+.assistant-project-editor > span {
+  display: flex;
+  gap: 0.3rem;
+  justify-content: flex-end;
+}
+
+.assistant-project-popover .danger {
+  color: #a83d47;
+}
+
+[data-theme="night"] .assistant-project-popover .danger {
+  color: #ff9ea7;
+}
+
+.assistant-project-editor {
+  display: grid;
+  gap: 0.34rem;
+}
+
+.assistant-project-editor input {
+  background: var(--document-control-solid);
+  border: 1px solid var(--line);
+  border-radius: 0.48rem;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.68rem;
+  min-height: 2rem;
+  min-width: 0;
+  padding: 0.34rem 0.42rem;
+  width: 100%;
+}
+
+.assistant-project-thread-heading {
+  align-items: baseline;
+  display: flex;
+  gap: 0.4rem;
+  justify-content: space-between;
+  padding: 0.18rem 0.35rem 0.32rem;
+}
+
+.assistant-project-thread-heading strong {
+  font-size: 0.7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-project-thread-heading small {
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 0.58rem;
 }
 
 .assistant-thread-list {
@@ -272,6 +478,12 @@
   background: transparent;
   border-color: transparent;
   width: 100%;
+}
+
+.assistant-thread-popover.project > button.active {
+  background: color-mix(in srgb, var(--aqua) 18%, var(--document-control-solid));
+  border-color: color-mix(in srgb, var(--aqua) 38%, var(--line));
+  font-weight: 850;
 }
 
 .assistant-thread-popover .danger {

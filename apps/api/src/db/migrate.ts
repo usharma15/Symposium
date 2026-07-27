@@ -3083,6 +3083,66 @@ const migrations: Migration[] = [
       ON CONFLICT (owner_handle, usage_day)
       DO UPDATE SET reset_at = EXCLUDED.reset_at;
     `
+  },
+  {
+    id: "0063_assistant_chat_projects",
+    sql: `
+      CREATE TABLE IF NOT EXISTS ai_projects (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        deleted_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT ai_projects_name_check
+          CHECK (char_length(btrim(name)) BETWEEN 1 AND 120),
+        CONSTRAINT ai_projects_revision_check
+          CHECK (revision >= 1)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ai_projects_owner_name_unique_idx
+        ON ai_projects (owner_handle, lower(btrim(name)))
+        WHERE deleted_at IS NULL;
+      CREATE INDEX IF NOT EXISTS ai_projects_owner_updated_idx
+        ON ai_projects (owner_handle, updated_at DESC, id DESC)
+        WHERE deleted_at IS NULL;
+
+      ALTER TABLE ai_conversations
+        ADD COLUMN IF NOT EXISTS project_id UUID
+          REFERENCES ai_projects(id) ON DELETE SET NULL;
+
+      CREATE OR REPLACE FUNCTION enforce_ai_conversation_project_owner()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $$
+      BEGIN
+        IF NEW.project_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1
+          FROM ai_projects project
+          WHERE project.id = NEW.project_id
+            AND project.owner_handle = NEW.owner_handle
+            AND project.deleted_at IS NULL
+        ) THEN
+          RAISE EXCEPTION 'Assistant Project must belong to the chat owner and remain active.'
+            USING ERRCODE = '23503';
+        END IF;
+        RETURN NEW;
+      END
+      $$;
+
+      DROP TRIGGER IF EXISTS ai_conversations_project_owner_guard
+        ON ai_conversations;
+      CREATE TRIGGER ai_conversations_project_owner_guard
+        BEFORE INSERT OR UPDATE OF project_id, owner_handle
+        ON ai_conversations
+        FOR EACH ROW
+        EXECUTE FUNCTION enforce_ai_conversation_project_owner();
+
+      CREATE INDEX IF NOT EXISTS ai_conversations_project_last_message_idx
+        ON ai_conversations (project_id, last_message_at DESC, id DESC)
+        WHERE deleted_at IS NULL;
+    `
   }
 ];
 

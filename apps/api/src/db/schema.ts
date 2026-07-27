@@ -781,11 +781,33 @@ export const messageReads = pgTable(
   (table) => [primaryKey({ columns: [table.messageId, table.profileHandle] })]
 );
 
+export const aiProjects = pgTable(
+  "ai_projects",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerHandle: text("owner_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    revision: integer("revision").default(1).notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("ai_projects_owner_name_unique_idx")
+      .on(table.ownerHandle, sql`lower(btrim(${table.name}))`)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("ai_projects_owner_updated_idx").on(table.ownerHandle, table.updatedAt.desc(), table.id.desc()),
+    check("ai_projects_name_check", sql`char_length(btrim(${table.name})) BETWEEN 1 AND 120`),
+    check("ai_projects_revision_check", sql`${table.revision} >= 1`)
+  ]
+);
+
 export const aiConversations = pgTable(
   "ai_conversations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     ownerHandle: text("owner_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    projectId: uuid("project_id").references(() => aiProjects.id, { onDelete: "set null" }),
     kind: text("kind").default("research_thread").notNull(),
     title: text("title").notNull(),
     pinnedAt: timestamp("pinned_at", { withTimezone: true }),
@@ -809,6 +831,9 @@ export const aiConversations = pgTable(
     index("ai_conversations_owner_updated_idx").on(table.ownerHandle, table.updatedAt.desc(), table.id.desc()),
     index("ai_conversations_owner_kind_updated_idx").on(table.ownerHandle, table.kind, table.updatedAt.desc(), table.id.desc()),
     index("ai_conversations_owner_kind_last_message_idx").on(table.ownerHandle, table.kind, table.lastMessageAt.desc(), table.id.desc()),
+    index("ai_conversations_project_last_message_idx")
+      .on(table.projectId, table.lastMessageAt.desc(), table.id.desc())
+      .where(sql`${table.deletedAt} IS NULL`),
     check("ai_conversations_kind_check", sql`${table.kind} IN ('research_thread', 'document_translation', 'content_translation')`),
     check("ai_conversations_context_revision_check", sql`${table.contextRevision} >= 1`),
     check("ai_conversations_metadata_revision_check", sql`${table.metadataRevision} >= 1`)

@@ -1476,6 +1476,7 @@ export const assistantContextSchema = z.object({
 
 export const assistantMessageInputSchema = z.object({
   conversationId: z.string().uuid().optional(),
+  projectId: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(2000),
   attachmentIds: z.array(z.string().uuid()).max(5).refine(
     (attachmentIds) => new Set(attachmentIds).size === attachmentIds.length,
@@ -1487,6 +1488,13 @@ export const assistantMessageInputSchema = z.object({
   contextId: z.string().trim().min(1).max(240).optional(),
   context: assistantContextSchema.nullable().default(null)
 }).superRefine((input, context) => {
+  if (input.conversationId && input.projectId) {
+    context.addIssue({
+      code: "custom",
+      path: ["projectId"],
+      message: "Move an existing chat through its project controls."
+    });
+  }
   if (input.intent === "translate" && !input.targetLanguage) {
     context.addIssue({ code: "custom", path: ["targetLanguage"], message: "Choose a translation language." });
   }
@@ -1499,8 +1507,22 @@ export const assistantConversationListQuerySchema = z.object({
   cursor: z.string().trim().max(500).optional(),
   limit: z.coerce.number().int().positive().max(50).default(20),
   contextKey: z.string().trim().max(800).optional(),
+  projectId: z.string().uuid().optional(),
   search: z.string().trim().max(160).optional(),
   status: z.enum(["active", "archived"]).default("active")
+});
+
+export const createAssistantProjectInputSchema = z.object({
+  name: z.string().trim().min(1).max(120)
+});
+
+export const updateAssistantProjectInputSchema =
+  createAssistantProjectInputSchema.extend({
+    expectedRevision: z.number().int().positive()
+  });
+
+export const deleteAssistantProjectInputSchema = z.object({
+  expectedRevision: z.number().int().positive()
 });
 
 export const assistantContextUpdateInputSchema = z.discriminatedUnion("mode", [
@@ -1525,9 +1547,15 @@ export const assistantThreadUpdateInputSchema = z.object({
   title: z.string().trim().min(1).max(300).optional(),
   pinned: z.boolean().optional(),
   archived: z.boolean().optional(),
+  projectId: z.string().uuid().nullable().optional(),
   expectedRevision: z.number().int().positive()
 }).superRefine((input, context) => {
-  if (input.title === undefined && input.pinned === undefined && input.archived === undefined) {
+  if (
+    input.title === undefined &&
+    input.pinned === undefined &&
+    input.archived === undefined &&
+    input.projectId === undefined
+  ) {
     context.addIssue({ code: "custom", message: "Choose a chat detail to update." });
   }
   if (input.pinned === true && input.archived === true) {
@@ -2208,6 +2236,7 @@ export const assistantThreadSummarySchema = z.object({
   id: z.string().uuid(),
   kind: z.literal("research_thread"),
   title: z.string().trim().min(1).max(300),
+  projectId: z.string().uuid().nullable(),
   pinned: z.boolean(),
   archivedAt: z.string().datetime().nullable(),
   metadataRevision: z.number().int().positive(),
@@ -2235,6 +2264,29 @@ export const assistantThreadDetailSchema = assistantThreadStateSchema.extend({
 export const assistantThreadPageSchema = z.object({
   threads: z.array(assistantThreadSummarySchema),
   nextCursor: z.string().nullable()
+});
+
+export const assistantProjectSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(120),
+  revision: z.number().int().positive(),
+  activeThreadCount: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const assistantProjectListResultSchema = z.object({
+  projects: z.array(assistantProjectSchema).max(100)
+});
+
+export const assistantProjectMutationResultSchema = z.object({
+  project: assistantProjectSchema
+});
+
+export const assistantProjectDeleteResultSchema = z.object({
+  projectId: z.string().uuid(),
+  deleted: z.literal(true),
+  unfiledConversationCount: z.number().int().nonnegative()
 });
 
 export const assistantContextUpdateResultSchema = z.object({
@@ -2493,6 +2545,9 @@ export type AssistantEvidenceClaimKindContract = z.infer<typeof assistantEvidenc
 export type AssistantContextContract = z.infer<typeof assistantContextSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
 export type AssistantConversationListQueryContract = z.infer<typeof assistantConversationListQuerySchema>;
+export type CreateAssistantProjectInputContract = z.infer<typeof createAssistantProjectInputSchema>;
+export type UpdateAssistantProjectInputContract = z.infer<typeof updateAssistantProjectInputSchema>;
+export type DeleteAssistantProjectInputContract = z.infer<typeof deleteAssistantProjectInputSchema>;
 export type AssistantContextUpdateInputContract = z.infer<typeof assistantContextUpdateInputSchema>;
 export type AssistantSourceUpdateInputContract = z.infer<typeof assistantSourceUpdateInputSchema>;
 export type AssistantThreadUpdateInputContract = z.infer<typeof assistantThreadUpdateInputSchema>;
@@ -2503,6 +2558,10 @@ export type AssistantThreadSummaryContract = z.infer<typeof assistantThreadSumma
 export type AssistantThreadStateContract = z.infer<typeof assistantThreadStateSchema>;
 export type AssistantThreadDetailContract = z.infer<typeof assistantThreadDetailSchema>;
 export type AssistantThreadPageContract = z.infer<typeof assistantThreadPageSchema>;
+export type AssistantProjectContract = z.infer<typeof assistantProjectSchema>;
+export type AssistantProjectListResultContract = z.infer<typeof assistantProjectListResultSchema>;
+export type AssistantProjectMutationResultContract = z.infer<typeof assistantProjectMutationResultSchema>;
+export type AssistantProjectDeleteResultContract = z.infer<typeof assistantProjectDeleteResultSchema>;
 export type AssistantContextUpdateResultContract = z.infer<typeof assistantContextUpdateResultSchema>;
 export type AssistantSourceUpdateResultContract = z.infer<typeof assistantSourceUpdateResultSchema>;
 export type AssistantThreadUpdateResultContract = z.infer<typeof assistantThreadUpdateResultSchema>;

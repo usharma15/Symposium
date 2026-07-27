@@ -13,11 +13,15 @@ import {
   type AssistantContext,
   type AssistantMessageView,
   type AssistantNewThreadContextMode,
-  type AssistantThreadLibraryStatus,
+  type AssistantThreadLibraryView,
   type AssistantThreadLiveEvent
 } from "@/features/assistant/assistantControllerModel";
 import type {
   AssistantContextUpdateResultContract,
+  AssistantProjectContract,
+  AssistantProjectDeleteResultContract,
+  AssistantProjectListResultContract,
+  AssistantProjectMutationResultContract,
   AssistantQuotaStatusContract,
   AssistantResponseContract,
   AssistantSourceUpdateResultContract,
@@ -50,14 +54,15 @@ export type {
   AssistantContext,
   AssistantMessageView,
   AssistantNewThreadContextMode,
-  AssistantThreadLibraryStatus,
+  AssistantThreadLibraryView,
   AssistantThreadLiveEvent
 } from "@/features/assistant/assistantControllerModel";
 export { initialAssistantMessageFor } from "@/features/assistant/assistantControllerModel";
 
 type AssistantBroadcast = {
   actorHandle: string;
-  conversationId: string;
+  subjectType: "thread" | "project";
+  subjectId: string;
   operation: "changed" | "deleted";
   updatedAt: number;
 };
@@ -67,7 +72,7 @@ type RetryMutation = {
   key: string;
 };
 
-const assistantBroadcastChannel = "symposium:assistant-threads:v1";
+const assistantBroadcastChannel = "symposium:assistant-library:v2";
 const emptyAssistantLiveEvents: AssistantThreadLiveEvent[] = [];
 
 const errorMessage = (caught: unknown, fallback: string) =>
@@ -111,29 +116,37 @@ export function useAssistantController({
   const submissionLockRef = useRef(false);
   const contextLockRef = useRef(false);
   const threadActionLockRef = useRef(false);
+  const projectActionLockRef = useRef(false);
   const explicitNewThreadRef = useRef(false);
   const suppressedRequestedConversationIdRef = useRef<string | null>(null);
   const messageRetryRef = useRef<RetryMutation | null>(null);
   const contextRetryRef = useRef<RetryMutation | null>(null);
   const sourceRetryRef = useRef<RetryMutation | null>(null);
   const threadMutationRetryRef = useRef(new Map<string, RetryMutation>());
+  const projectMutationRetryRef = useRef(new Map<string, RetryMutation>());
   const processedLiveEventKeysRef = useRef<string[]>([]);
   const newThreadContextModeRef = useRef<AssistantNewThreadContextMode>("current");
   const threadSearchRef = useRef("");
-  const threadLibraryStatusRef = useRef<AssistantThreadLibraryStatus>("active");
+  const threadLibraryViewRef = useRef<AssistantThreadLibraryView>("all");
+  const selectedProjectIdRef = useRef<string | null>(null);
 
   const [conversationId, setConversationIdState] = useState<string | undefined>(
     requestedConversationId ?? undefined
   );
   const [thread, setThread] = useState<AssistantThreadStateContract | null>(null);
   const [threads, setThreads] = useState<AssistantThreadSummaryContract[]>([]);
+  const [projects, setProjects] = useState<AssistantProjectContract[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [threadSearch, setThreadSearchState] = useState("");
-  const [threadLibraryStatus, setThreadLibraryStatusState] =
-    useState<AssistantThreadLibraryStatus>("active");
+  const [threadLibraryView, setThreadLibraryViewState] =
+    useState<AssistantThreadLibraryView>("all");
+  const [selectedProjectId, setSelectedProjectIdState] =
+    useState<string | null>(null);
   const [threadListLoading, setThreadListLoading] = useState(false);
   const [threadListLoadingMore, setThreadListLoadingMore] = useState(false);
   const [threadActionBusyId, setThreadActionBusyId] = useState<string | null>(null);
+  const [projectActionBusyId, setProjectActionBusyId] =
+    useState<string | null>(null);
   const [messages, setMessages] = useState<AssistantMessageView[]>(() => [
     initialAssistantMessageFor(context)
   ]);
@@ -205,7 +218,8 @@ export function useAssistantController({
       current,
       assistantThreadSummary(next),
       {
-        status: threadLibraryStatusRef.current,
+        view: threadLibraryViewRef.current,
+        projectId: selectedProjectIdRef.current,
         hasSearch: Boolean(threadSearchRef.current)
       }
     ));
@@ -217,7 +231,21 @@ export function useAssistantController({
   ) => {
     broadcastRef.current?.postMessage({
       actorHandle,
-      conversationId: id,
+      subjectType: "thread",
+      subjectId: id,
+      operation,
+      updatedAt: Date.now()
+    } satisfies AssistantBroadcast);
+  }, [actorHandle]);
+
+  const broadcastProjectChange = useCallback((
+    id: string,
+    operation: AssistantBroadcast["operation"] = "changed"
+  ) => {
+    broadcastRef.current?.postMessage({
+      actorHandle,
+      subjectType: "project",
+      subjectId: id,
       operation,
       updatedAt: Date.now()
     } satisfies AssistantBroadcast);
@@ -227,13 +255,15 @@ export function useAssistantController({
     append = false,
     cursor = null,
     search = threadSearchRef.current,
-    status = threadLibraryStatusRef.current,
+    view = threadLibraryViewRef.current,
+    projectId = selectedProjectIdRef.current,
     silent = false
   }: {
     append?: boolean;
     cursor?: string | null;
     search?: string;
-    status?: AssistantThreadLibraryStatus;
+    view?: AssistantThreadLibraryView;
+    projectId?: string | null;
     silent?: boolean;
   } = {}) => {
     const request = ++threadListRequestRef.current;
@@ -241,11 +271,23 @@ export function useAssistantController({
       if (append) setThreadListLoadingMore(true);
       else setThreadListLoading(true);
     }
+    if (view === "projects" && !projectId) {
+      if (request === threadListRequestRef.current) {
+        setThreads([]);
+        setNextCursor(null);
+        setThreadListLoading(false);
+        setThreadListLoadingMore(false);
+      }
+      return { threads: [], nextCursor: null } satisfies AssistantThreadPageContract;
+    }
     const params = new URLSearchParams({
       actorHandle,
       limit: "20",
-      status
+      status: view === "archived" ? "archived" : "active"
     });
+    if (view === "projects" && projectId) {
+      params.set("projectId", projectId);
+    }
     if (search.trim()) params.set("search", search.trim());
     if (cursor) params.set("cursor", cursor);
     try {
@@ -277,19 +319,62 @@ export function useAssistantController({
 
   const setThreadLibraryFilters = useCallback((
     search: string,
-    status: AssistantThreadLibraryStatus
+    view: AssistantThreadLibraryView,
+    projectId: string | null = selectedProjectIdRef.current
   ) => {
     const normalizedSearch = search.trim().slice(0, 160);
+    const normalizedProjectId = view === "projects" ? projectId : null;
     threadSearchRef.current = normalizedSearch;
-    threadLibraryStatusRef.current = status;
+    threadLibraryViewRef.current = view;
+    selectedProjectIdRef.current = normalizedProjectId;
     setThreadSearchState(normalizedSearch);
-    setThreadLibraryStatusState(status);
+    setThreadLibraryViewState(view);
+    setSelectedProjectIdState(normalizedProjectId);
     setNextCursor(null);
-    void refreshThreads({ search: normalizedSearch, status }).catch((caught) => {
+    void refreshThreads({
+      search: normalizedSearch,
+      view,
+      projectId: normalizedProjectId
+    }).catch((caught) => {
       setThreadListLoading(false);
       setError(errorMessage(caught, "Chat history could not be searched."));
     });
   }, [refreshThreads]);
+
+  const refreshProjects = useCallback(async () => {
+    const result =
+      await symposiumApi.request<AssistantProjectListResultContract>(
+        `/api/assistant/projects?actorHandle=${encodeURIComponent(actorHandle)}`,
+        { cache: "no-store" }
+      );
+    setProjects(result.projects);
+    const currentProjectIsAvailable = Boolean(
+      selectedProjectIdRef.current &&
+      result.projects.some(
+        (project) => project.id === selectedProjectIdRef.current
+      )
+    );
+    if (
+      threadLibraryViewRef.current === "projects" &&
+      !currentProjectIsAvailable
+    ) {
+      const fallbackProjectId = result.projects[0]?.id ?? null;
+      selectedProjectIdRef.current = fallbackProjectId;
+      setSelectedProjectIdState(fallbackProjectId);
+      await refreshThreads({
+        view: "projects",
+        projectId: fallbackProjectId,
+        silent: true
+      });
+    } else if (
+      selectedProjectIdRef.current &&
+      !currentProjectIsAvailable
+    ) {
+      selectedProjectIdRef.current = null;
+      setSelectedProjectIdState(null);
+    }
+    return result.projects;
+  }, [actorHandle, refreshThreads]);
 
   const loadMoreThreads = useCallback(async () => {
     const cursor = nextCursor;
@@ -415,6 +500,7 @@ export function useAssistantController({
       title?: string;
       pinned?: boolean;
       archived?: boolean;
+      projectId?: string | null;
     }
   ) => {
     if (threadActionLockRef.current) return null;
@@ -456,6 +542,9 @@ export function useAssistantController({
         }
       }
       await refreshThreads().catch(() => null);
+      if (changes.projectId !== undefined || changes.archived !== undefined) {
+        await refreshProjects().catch(() => null);
+      }
       broadcastThreadChange(result.thread.id);
       return result.thread;
     } catch (caught) {
@@ -476,6 +565,7 @@ export function useAssistantController({
   }, [
     actorHandle,
     broadcastThreadChange,
+    refreshProjects,
     refreshSelectedThread,
     refreshThreads,
     startNewThread,
@@ -520,6 +610,7 @@ export function useAssistantController({
       setThreads((current) => current.filter((entry) => entry.id !== result.conversationId));
       if (conversationIdRef.current === result.conversationId) startNewThread("blank");
       await refreshThreads().catch(() => null);
+      await refreshProjects().catch(() => null);
       broadcastThreadChange(result.conversationId, "deleted");
       return true;
     } catch (caught) {
@@ -540,10 +631,205 @@ export function useAssistantController({
   }, [
     actorHandle,
     broadcastThreadChange,
+    refreshProjects,
     refreshSelectedThread,
     refreshThreads,
     startNewThread,
     thread
+  ]);
+
+  const createProject = useCallback(async (name: string) => {
+    const normalizedName = name.trim().slice(0, 120);
+    if (!normalizedName || projectActionLockRef.current) return null;
+    const input = { actorHandle, name: normalizedName };
+    const fingerprint = JSON.stringify(input);
+    const retryKey = "create";
+    const existingRetry = projectMutationRetryRef.current.get(retryKey);
+    if (existingRetry?.fingerprint !== fingerprint) {
+      projectMutationRetryRef.current.set(retryKey, {
+        fingerprint,
+        key: createClientMutationId("assistant-project-create")
+      });
+    }
+    projectActionLockRef.current = true;
+    setProjectActionBusyId("create");
+    setError("");
+    try {
+      const result =
+        await symposiumApi.request<AssistantProjectMutationResultContract>(
+          "/api/assistant/projects",
+          {
+            method: "POST",
+            idempotencyKey:
+              projectMutationRetryRef.current.get(retryKey)!.key,
+            body: input
+          }
+        );
+      projectMutationRetryRef.current.delete(retryKey);
+      setProjects((current) => [
+        result.project,
+        ...current.filter(
+          (project) => project.id !== result.project.id
+        )
+      ]);
+      setThreadLibraryFilters(
+        threadSearchRef.current,
+        "projects",
+        result.project.id
+      );
+      broadcastProjectChange(result.project.id);
+      return result.project;
+    } catch (caught) {
+      if (caught instanceof SymposiumApiError && caught.status === 409) {
+        await refreshProjects().catch(() => null);
+      }
+      setError(errorMessage(caught, "The Project could not be created."));
+      return null;
+    } finally {
+      projectActionLockRef.current = false;
+      setProjectActionBusyId(null);
+    }
+  }, [
+    actorHandle,
+    broadcastProjectChange,
+    refreshProjects,
+    setThreadLibraryFilters
+  ]);
+
+  const updateProject = useCallback(async (
+    project: AssistantProjectContract,
+    name: string
+  ) => {
+    const normalizedName = name.trim().slice(0, 120);
+    if (!normalizedName || projectActionLockRef.current) return null;
+    const input = {
+      actorHandle,
+      name: normalizedName,
+      expectedRevision: project.revision
+    };
+    const fingerprint = JSON.stringify(input);
+    const retryKey = `update:${project.id}`;
+    const existingRetry = projectMutationRetryRef.current.get(retryKey);
+    if (existingRetry?.fingerprint !== fingerprint) {
+      projectMutationRetryRef.current.set(retryKey, {
+        fingerprint,
+        key: createClientMutationId("assistant-project-update")
+      });
+    }
+    projectActionLockRef.current = true;
+    setProjectActionBusyId(project.id);
+    setError("");
+    try {
+      const result =
+        await symposiumApi.request<AssistantProjectMutationResultContract>(
+          `/api/assistant/projects/${encodeURIComponent(project.id)}`,
+          {
+            method: "PATCH",
+            idempotencyKey:
+              projectMutationRetryRef.current.get(retryKey)!.key,
+            body: input
+          }
+        );
+      projectMutationRetryRef.current.delete(retryKey);
+      setProjects((current) => current.map((candidate) =>
+        candidate.id === result.project.id
+          ? result.project
+          : candidate
+      ));
+      broadcastProjectChange(result.project.id);
+      return result.project;
+    } catch (caught) {
+      if (caught instanceof SymposiumApiError && caught.status === 409) {
+        await refreshProjects().catch(() => null);
+        setError(
+          "This Project changed in another session. Its latest details are loaded; review them and try again."
+        );
+      } else {
+        setError(errorMessage(caught, "The Project could not be renamed."));
+      }
+      return null;
+    } finally {
+      projectActionLockRef.current = false;
+      setProjectActionBusyId(null);
+    }
+  }, [
+    actorHandle,
+    broadcastProjectChange,
+    refreshProjects
+  ]);
+
+  const deleteProject = useCallback(async (
+    project: AssistantProjectContract
+  ) => {
+    if (projectActionLockRef.current) return false;
+    const input = {
+      actorHandle,
+      expectedRevision: project.revision
+    };
+    const fingerprint = JSON.stringify(input);
+    const retryKey = `delete:${project.id}`;
+    const existingRetry = projectMutationRetryRef.current.get(retryKey);
+    if (existingRetry?.fingerprint !== fingerprint) {
+      projectMutationRetryRef.current.set(retryKey, {
+        fingerprint,
+        key: createClientMutationId("assistant-project-delete")
+      });
+    }
+    projectActionLockRef.current = true;
+    setProjectActionBusyId(project.id);
+    setError("");
+    try {
+      const result =
+        await symposiumApi.request<AssistantProjectDeleteResultContract>(
+          `/api/assistant/projects/${encodeURIComponent(project.id)}`,
+          {
+            method: "DELETE",
+            idempotencyKey:
+              projectMutationRetryRef.current.get(retryKey)!.key,
+            body: input
+          }
+      );
+      projectMutationRetryRef.current.delete(retryKey);
+      const remainingProjects = projects.filter(
+        (candidate) => candidate.id !== result.projectId
+      );
+      setProjects(remainingProjects);
+      if (conversationIdRef.current) {
+        await refreshSelectedThread().catch(() => null);
+      }
+      if (selectedProjectIdRef.current === result.projectId) {
+        setThreadLibraryFilters(
+          threadSearchRef.current,
+          "projects",
+          remainingProjects[0]?.id ?? null
+        );
+      } else {
+        await refreshThreads({ silent: true }).catch(() => null);
+      }
+      broadcastProjectChange(result.projectId, "deleted");
+      return true;
+    } catch (caught) {
+      if (caught instanceof SymposiumApiError && caught.status === 409) {
+        await refreshProjects().catch(() => null);
+        setError(
+          "This Project changed in another session. Its latest details are loaded; review them and try again."
+        );
+      } else {
+        setError(errorMessage(caught, "The Project could not be deleted."));
+      }
+      return false;
+    } finally {
+      projectActionLockRef.current = false;
+      setProjectActionBusyId(null);
+    }
+  }, [
+    actorHandle,
+    broadcastProjectChange,
+    projects,
+    refreshProjects,
+    refreshSelectedThread,
+    refreshThreads,
+    setThreadLibraryFilters
   ]);
 
   useEffect(() => {
@@ -565,14 +851,18 @@ export function useAssistantController({
     setNewThreadContextModeState("current");
     setThread(null);
     setThreads([]);
+    setProjects([]);
     setNextCursor(null);
     threadSearchRef.current = "";
-    threadLibraryStatusRef.current = "active";
+    threadLibraryViewRef.current = "all";
+    selectedProjectIdRef.current = null;
     setThreadSearchState("");
-    setThreadLibraryStatusState("active");
+    setThreadLibraryViewState("all");
+    setSelectedProjectIdState(null);
     setThreadListLoading(false);
     setThreadListLoadingMore(false);
     setThreadActionBusyId(null);
+    setProjectActionBusyId(null);
     setMessages([initialAssistantMessageFor(contextRef.current)]);
     rememberDraft("");
     setPendingAttachments([]);
@@ -583,12 +873,14 @@ export function useAssistantController({
     submissionLockRef.current = false;
     contextLockRef.current = false;
     threadActionLockRef.current = false;
+    projectActionLockRef.current = false;
     explicitNewThreadRef.current = false;
     suppressedRequestedConversationIdRef.current = null;
     messageRetryRef.current = null;
     contextRetryRef.current = null;
     sourceRetryRef.current = null;
     threadMutationRetryRef.current.clear();
+    projectMutationRetryRef.current.clear();
     processedLiveEventKeysRef.current = [];
   }, [actorHandle, enabled, rememberDraft, setConversationId]);
 
@@ -626,6 +918,22 @@ export function useAssistantController({
       cancelled = true;
     };
   }, [actorHandle, enabled]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void refreshProjects().catch((caught) => {
+      if (!cancelled) {
+        setError(errorMessage(
+          caught,
+          "Assistant Projects could not be loaded."
+        ));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, refreshProjects]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -723,31 +1031,47 @@ export function useAssistantController({
       const change = event.data;
       if (!change || change.actorHandle !== actorHandle) return;
       if (
+        change.subjectType === "thread" &&
         change.operation === "deleted" &&
-        change.conversationId === conversationIdRef.current
+        change.subjectId === conversationIdRef.current
       ) {
-        draftsRef.current.delete(change.conversationId);
+        draftsRef.current.delete(change.subjectId);
         startNewThread("blank");
       }
       const selectedRefresh =
-        change.operation !== "deleted" &&
-        change.conversationId === conversationIdRef.current
+        (
+          change.subjectType === "project" &&
+          Boolean(conversationIdRef.current)
+        ) || (
+          change.subjectType === "thread" &&
+          change.operation !== "deleted" &&
+          change.subjectId === conversationIdRef.current
+        )
           ? refreshSelectedThread().catch(() => null)
           : Promise.resolve(null);
       void Promise.all([
         selectedRefresh,
-        refreshThreads({ silent: true }).catch(() => null)
+        refreshThreads({ silent: true }).catch(() => null),
+        refreshProjects().catch(() => null)
       ]);
     };
     return () => {
       if (broadcastRef.current === channel) broadcastRef.current = null;
       channel.close();
     };
-  }, [actorHandle, enabled, refreshSelectedThread, refreshThreads, startNewThread]);
+  }, [
+    actorHandle,
+    enabled,
+    refreshProjects,
+    refreshSelectedThread,
+    refreshThreads,
+    startNewThread
+  ]);
 
   useEffect(() => {
     if (!enabled || !liveEvents.length) return;
     let refreshLibrary = false;
+    let refreshProjectLibrary = false;
     let refreshSelected = false;
     let selectedDeleted = false;
     const processed = new Set(processedLiveEventKeysRef.current);
@@ -757,6 +1081,10 @@ export function useAssistantController({
       if (processed.has(key)) continue;
       processed.add(key);
       refreshLibrary = true;
+      if (event.kind.startsWith("assistant.project.")) {
+        refreshProjectLibrary = true;
+        refreshSelected = true;
+      }
       if (event.subjectId === conversationIdRef.current) {
         if (event.kind === "assistant.thread.deleted") selectedDeleted = true;
         else refreshSelected = true;
@@ -773,11 +1101,15 @@ export function useAssistantController({
       : Promise.resolve(null);
     void Promise.all([
       selectedRefresh,
-      refreshThreads({ silent: true }).catch(() => null)
+      refreshThreads({ silent: true }).catch(() => null),
+      refreshProjectLibrary
+        ? refreshProjects().catch(() => null)
+        : Promise.resolve(null)
     ]);
   }, [
     enabled,
     liveEvents,
+    refreshProjects,
     refreshSelectedThread,
     refreshThreads,
     startNewThread
@@ -792,7 +1124,8 @@ export function useAssistantController({
         : Promise.resolve(null);
       void Promise.all([
         selectedRefresh,
-        refreshThreads({ silent: true }).catch(() => null)
+        refreshThreads({ silent: true }).catch(() => null),
+        refreshProjects().catch(() => null)
       ]);
     };
     window.addEventListener("focus", refresh);
@@ -801,7 +1134,7 @@ export function useAssistantController({
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [enabled, refreshSelectedThread, refreshThreads]);
+  }, [enabled, refreshProjects, refreshSelectedThread, refreshThreads]);
 
   const runContextMutation = useCallback(async <
     Result extends
@@ -1134,6 +1467,10 @@ export function useAssistantController({
     const submittedAttachments = pendingAttachments;
     const submittedAttachmentIds = submittedAttachments.map((attachment) => attachment.id);
     const draftKey = currentDraftKey();
+    const submissionProjectId =
+      !id && threadLibraryViewRef.current === "projects"
+        ? selectedProjectIdRef.current ?? undefined
+        : undefined;
     const submissionThreadRequest = threadRequestRef.current;
     const ownsSubmissionSurface = () =>
       threadRequestRef.current === submissionThreadRequest;
@@ -1141,6 +1478,7 @@ export function useAssistantController({
       id,
       message,
       selectedContext,
+      projectId: submissionProjectId,
       attachmentIds: submittedAttachmentIds
     });
     if (messageRetryRef.current?.fingerprint !== fingerprint) {
@@ -1165,6 +1503,7 @@ export function useAssistantController({
           body: {
             actorHandle,
             conversationId: id,
+            projectId: submissionProjectId,
             message,
             attachmentIds: submittedAttachmentIds,
             intent: requestIntent.intent,
@@ -1228,7 +1567,10 @@ export function useAssistantController({
       if (!ownsSubmissionSurface()) {
         messageRetryRef.current = null;
         broadcastThreadChange(response.conversationId);
-        await refreshThreads({ silent: true }).catch(() => null);
+        await Promise.all([
+          refreshThreads({ silent: true }).catch(() => null),
+          refreshProjects().catch(() => null)
+        ]);
         return;
       }
       explicitNewThreadRef.current = false;
@@ -1254,6 +1596,7 @@ export function useAssistantController({
       ]);
       messageRetryRef.current = null;
       broadcastThreadChange(response.conversationId);
+      await refreshProjects().catch(() => null);
     } catch (caught) {
       draftsRef.current.set(draftKey, message);
       attachmentDraftsRef.current.set(draftKey, submittedAttachments);
@@ -1285,6 +1628,7 @@ export function useAssistantController({
     remainingToday,
     rememberDraft,
     refreshThreads,
+    refreshProjects,
     replaceThreadSummary,
     setConversationId,
     thread,
@@ -1312,12 +1656,15 @@ export function useAssistantController({
     conversationId,
     thread,
     threads,
+    projects,
     nextCursor,
     threadSearch,
-    threadLibraryStatus,
+    threadLibraryView,
+    selectedProjectId,
     threadListLoading,
     threadListLoadingMore,
     threadActionBusyId,
+    projectActionBusyId,
     messages,
     draft,
     pendingAttachments,
@@ -1344,9 +1691,13 @@ export function useAssistantController({
     loadMoreThreads,
     updateThreadDetails,
     deleteThread,
+    createProject,
+    updateProject,
+    deleteProject,
     useCurrentView,
     clearContext,
     refreshThreads,
+    refreshProjects,
     refreshSelectedThread,
     changeThreadContext,
     changeSavedSource,
