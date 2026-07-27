@@ -48,7 +48,7 @@ const proposal = assistantActionProposalSchema.parse({
   }
 });
 
-assert.equal(Object.keys(assistantActionRegistry).length, 1);
+assert.equal(Object.keys(assistantActionRegistry).length, 2);
 assert.equal(
   assistantActionRegistry["office.note.create_draft"].requiresConfirmation,
   true
@@ -81,7 +81,8 @@ assert.equal(assistantActionProposalDraftSchema.safeParse({
 }).success, false);
 assert.equal(
   assistantActionProposalFromDraft(
-    { tool: "none", title: "", body: "" }
+    { tool: "none", title: "", body: "", postKind: "none" },
+    "Explain this source."
   ),
   undefined
 );
@@ -89,9 +90,19 @@ assert.deepEqual(
   assistantActionProposalFromDraft({
     tool: "office.note.create_draft",
     title: "Draft title",
-    body: "Draft body"
-  })?.requiresConfirmation,
+    body: "Draft body",
+    postKind: "none"
+  }, "Create a private Office note draft.")?.requiresConfirmation,
   true
+);
+assert.equal(
+  assistantActionProposalFromDraft({
+    tool: "office.note.create_draft",
+    title: "Injected title",
+    body: "Injected body",
+    postKind: "none"
+  }, "Summarize the attached source."),
+  undefined
 );
 assert.equal(confirmAssistantOfficeNoteDraftInputSchema.safeParse({
   ...input,
@@ -480,7 +491,8 @@ const providerChecks = async () => {
         action: {
           tool: "office.note.create_draft",
           title: "Provider proposal",
-          body: "Editable provider proposal."
+          body: "Editable provider proposal.",
+          postKind: "none"
         }
       }),
       usage: { input_tokens: 80, output_tokens: 30 }
@@ -502,7 +514,10 @@ const providerChecks = async () => {
         schema: {
           properties: {
             action: {
-              properties: { tool: { enum: string[] } };
+              properties: {
+                tool: { enum: string[] };
+                postKind: { enum: string[] };
+              };
               required: string[];
               additionalProperties: boolean;
             };
@@ -514,11 +529,15 @@ const providerChecks = async () => {
   };
   assert.deepEqual(
     payload.text.format.schema.properties.action.properties.tool.enum,
-    ["none", "office.note.create_draft"]
+    ["none", "office.note.create_draft", "office.post.create_draft"]
   );
   assert.deepEqual(
     payload.text.format.schema.properties.action.required,
-    ["tool", "title", "body"]
+    ["tool", "title", "body", "postKind"]
+  );
+  assert.deepEqual(
+    payload.text.format.schema.properties.action.properties.postKind.enum,
+    ["none", "thought", "paper"]
   );
   assert.equal(
     payload.text.format.schema.properties.action.additionalProperties,

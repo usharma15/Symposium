@@ -5,9 +5,12 @@ import {
   assistantActionProposalSchema,
   assistantActionReceiptSchema,
   confirmAssistantOfficeNoteDraftInputSchema,
+  confirmAssistantOfficePostDraftInputSchema,
   type AssistantActionReceiptContract,
   type AssistantActionSourceContract,
-  type ConfirmAssistantOfficeNoteDraftInputContract
+  type AssistantActionToolContract,
+  type ConfirmAssistantOfficeNoteDraftInputContract,
+  type ConfirmAssistantOfficePostDraftInputContract
 } from "../../../../packages/contracts/src";
 import { plainTextDocument } from "@/lib/documentModel";
 import { hasDatabase } from "../db/client";
@@ -35,7 +38,7 @@ const assistantActionResourceTypes = {
   attachment: "attachment"
 } as const;
 
-const assistantOfficeNoteDocument = (
+const assistantOfficeDraftDocument = (
   body: string,
   source?: AssistantActionSourceContract
 ) => {
@@ -61,14 +64,40 @@ const assistantOfficeNoteDocument = (
   };
 };
 
-export const confirmAssistantOfficeNoteDraftInTransaction = async (
+type ConfirmAssistantOfficeDraftInput =
+  | ConfirmAssistantOfficeNoteDraftInputContract
+  | ConfirmAssistantOfficePostDraftInputContract;
+
+const mismatchedAssistantAction = () => new TRPCError({
+  code: "PRECONDITION_FAILED",
+  message: "That Assistant action does not match this confirmation endpoint."
+});
+
+const receiptForExpectedTool = (
+  value: unknown,
+  expectedTool: AssistantActionToolContract
+) => {
+  const receipt = assistantActionReceiptSchema.safeParse(value);
+  if (!receipt.success || receipt.data.tool !== expectedTool) {
+    throw mismatchedAssistantAction();
+  }
+  return receipt.data;
+};
+
+const confirmAssistantOfficeDraftInTransaction = async (
   client: PoolClient,
-  input: ConfirmAssistantOfficeNoteDraftInputContract,
+  input: ConfirmAssistantOfficeDraftInput,
   handle: string,
+  expectedTool: AssistantActionToolContract,
   mutation?: MutationContext
-  ) => {
+): Promise<{
+  value: AssistantActionReceiptContract;
+  events?: Awaited<ReturnType<typeof stageEvent>>[];
+}> => {
     const claim = await claimMutation<AssistantActionReceiptContract>(client, handle, mutation);
-    if (claim.replayed) return { value: claim.response };
+    if (claim.replayed) {
+      return { value: receiptForExpectedTool(claim.response, expectedTool) };
+    }
 
     const assistantMessage = await client.query<ActionMessageRow>(
       `SELECT message.id::text, message.metadata
@@ -94,14 +123,6 @@ export const confirmAssistantOfficeNoteDraftInTransaction = async (
       });
     }
 
-    const existingReceipt = assistantActionReceiptSchema.safeParse(
-      actionMessage.metadata.actionReceipt
-    );
-    if (existingReceipt.success) {
-      await completeMutation(client, handle, mutation, existingReceipt.data);
-      return { value: existingReceipt.data };
-    }
-
     const proposal = assistantActionProposalSchema.safeParse(
       actionMessage.metadata.actionProposal
     );
@@ -111,18 +132,52 @@ export const confirmAssistantOfficeNoteDraftInTransaction = async (
         message: "That Assistant action proposal is invalid or unsupported."
       });
     }
+    if (proposal.data.tool !== expectedTool) {
+      throw mismatchedAssistantAction();
+    }
+    if (
+      actionMessage.metadata.actionReceipt !== undefined &&
+      actionMessage.metadata.actionReceipt !== null
+    ) {
+      const existingReceipt = receiptForExpectedTool(
+        actionMessage.metadata.actionReceipt,
+        expectedTool
+      );
+      if (
+        existingReceipt.tool === "office.post.create_draft" &&
+        proposal.data.tool === "office.post.create_draft" &&
+        existingReceipt.documentKind !== proposal.data.postKind
+      ) {
+        throw mismatchedAssistantAction();
+      }
+      await completeMutation(client, handle, mutation, existingReceipt);
+      return { value: existingReceipt };
+    }
+
     const action = registeredAssistantAction(proposal.data.tool);
-    action.inputSchema.parse(input);
+    const postInput = expectedTool === "office.post.create_draft"
+      ? confirmAssistantOfficePostDraftInputSchema.parse(input)
+      : null;
+    const confirmedInput = postInput ??
+      confirmAssistantOfficeNoteDraftInputSchema.parse(input);
+    action.inputSchema.parse(confirmedInput);
+    const documentKind = postInput?.postKind ?? "note";
+    const publicationTarget = documentKind === "note"
+      ? "undecided"
+      : documentKind;
 
     const created = await createWorkspaceDocumentInTransaction(
       client,
       {
-        title: input.title,
-        body: input.body,
-        document: assistantOfficeNoteDocument(input.body, proposal.data.source),
-        kind: "note",
-        publicationTarget: "undecided",
-        notebookId: input.notebookId,
+        title: confirmedInput.title,
+        body: confirmedInput.body,
+        document: assistantOfficeDraftDocument(
+          confirmedInput.body,
+          proposal.data.source
+        ),
+        kind: documentKind,
+        publicationTarget,
+        notebookId: confirmedInput.notebookId,
         targetId: null,
         proposal: null,
         opportunity: null,
@@ -132,8 +187,8 @@ export const confirmAssistantOfficeNoteDraftInTransaction = async (
       mutation,
       {
         source: "assistant_action",
-        assistantMessageId: input.assistantMessageId,
-        conversationId: input.conversationId,
+        assistantMessageId: confirmedInput.assistantMessageId,
+        conversationId: confirmedInput.conversationId,
         assistantTool: proposal.data.tool
       }
     );
@@ -142,7 +197,7 @@ export const confirmAssistantOfficeNoteDraftInTransaction = async (
       title: unknown;
       revision: unknown;
     };
-    const receipt = assistantActionReceiptSchema.parse({
+    const receiptBase = {
       tool: proposal.data.tool,
       status: "completed",
       documentId: document.id,
@@ -152,20 +207,33 @@ export const confirmAssistantOfficeNoteDraftInTransaction = async (
       notebookName: document.notebookName ?? null,
       href: `/workspace?view=notes&note=${encodeURIComponent(String(document.id))}`,
       confirmedAt: new Date().toISOString()
-    });
+    } as const;
+    const receipt = assistantActionReceiptSchema.parse(
+      proposal.data.tool === "office.post.create_draft"
+        ? { ...receiptBase, documentKind }
+        : receiptBase
+    );
+    const confirmedProposal = proposal.data.tool === "office.post.create_draft"
+      ? {
+          ...proposal.data,
+          title: confirmedInput.title,
+          body: confirmedInput.body,
+          postKind: documentKind
+        }
+      : {
+          ...proposal.data,
+          title: confirmedInput.title,
+          body: confirmedInput.body
+        };
 
     await client.query(
       `UPDATE ai_messages
        SET metadata = metadata || $2::jsonb
        WHERE id = $1`,
       [
-        input.assistantMessageId,
+        confirmedInput.assistantMessageId,
         JSON.stringify({
-          actionProposal: {
-            ...proposal.data,
-            title: input.title,
-            body: input.body
-          },
+          actionProposal: confirmedProposal,
           actionReceipt: receipt
         })
       ]
@@ -174,17 +242,21 @@ export const confirmAssistantOfficeNoteDraftInTransaction = async (
       `UPDATE ai_conversations
        SET updated_at = now(), last_message_at = GREATEST(last_message_at, now())
        WHERE id = $1 AND owner_handle = $2`,
-      [input.conversationId, handle]
+      [confirmedInput.conversationId, handle]
     );
     await stageAuditLog(client, {
       actorHandle: handle,
-      action: "assistant.action.office_note.create_draft",
+      action: proposal.data.tool === "office.post.create_draft"
+        ? "assistant.action.office_post.create_draft"
+        : "assistant.action.office_note.create_draft",
       subjectType: "note",
       subjectId: receipt.documentId,
       metadata: mutationAuditMetadata(mutation, {
-        assistantMessageId: input.assistantMessageId,
-        conversationId: input.conversationId,
+        assistantMessageId: confirmedInput.assistantMessageId,
+        conversationId: confirmedInput.conversationId,
         tool: proposal.data.tool,
+        documentKind,
+        publicationTarget,
         permission: action.permission,
         requiresConfirmation: action.requiresConfirmation,
         notebookId: receipt.notebookId,
@@ -198,12 +270,13 @@ export const confirmAssistantOfficeNoteDraftInTransaction = async (
       actorHandle: handle,
       audienceHandles: [handle],
       subjectType: "ai_conversation",
-      subjectId: input.conversationId,
+      subjectId: confirmedInput.conversationId,
       visibility: "private",
       payload: {
-        messageId: input.assistantMessageId,
+        messageId: confirmedInput.assistantMessageId,
         tool: proposal.data.tool,
-        documentId: receipt.documentId
+        documentId: receipt.documentId,
+        documentKind
       }
     });
     return {
@@ -211,6 +284,32 @@ export const confirmAssistantOfficeNoteDraftInTransaction = async (
       events: [created.event, assistantEvent]
     };
 };
+
+export const confirmAssistantOfficeNoteDraftInTransaction = async (
+  client: PoolClient,
+  input: ConfirmAssistantOfficeNoteDraftInputContract,
+  handle: string,
+  mutation?: MutationContext
+) => confirmAssistantOfficeDraftInTransaction(
+  client,
+  input,
+  handle,
+  "office.note.create_draft",
+  mutation
+);
+
+export const confirmAssistantOfficePostDraftInTransaction = async (
+  client: PoolClient,
+  input: ConfirmAssistantOfficePostDraftInputContract,
+  handle: string,
+  mutation?: MutationContext
+) => confirmAssistantOfficeDraftInTransaction(
+  client,
+  input,
+  handle,
+  "office.post.create_draft",
+  mutation
+);
 
 export const confirmAssistantOfficeNoteDraft = async (
   rawInput: unknown,
@@ -228,5 +327,24 @@ export const confirmAssistantOfficeNoteDraft = async (
   await ensureLiveData();
   return runAtomic((client) =>
     confirmAssistantOfficeNoteDraftInTransaction(client, input, handle, mutation)
+  );
+};
+
+export const confirmAssistantOfficePostDraft = async (
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+): Promise<AssistantActionReceiptContract> => {
+  const input = confirmAssistantOfficePostDraftInputSchema.parse(rawInput);
+  const handle = await ensureProfileHandle(actorHandle(actor));
+  if (!hasDatabase()) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "AI Assistant actions require the live workspace."
+    });
+  }
+  await ensureLiveData();
+  return runAtomic((client) =>
+    confirmAssistantOfficePostDraftInTransaction(client, input, handle, mutation)
   );
 };

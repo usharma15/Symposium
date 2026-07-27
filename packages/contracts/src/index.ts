@@ -1368,17 +1368,26 @@ export const assistantQuickNoteSchema = assistantQuickNoteDraftSchema.extend({
   source: assistantActionSourceSchema
 });
 
-export const assistantActionToolSchema = z.literal("office.note.create_draft");
+export const assistantActionToolSchema = z.enum([
+  "office.note.create_draft",
+  "office.post.create_draft"
+]);
+
+export const assistantPostDraftKindSchema = z.enum(["thought", "paper"]);
 
 export const assistantActionProposalDraftSchema = z.object({
   tool: z.union([z.literal("none"), assistantActionToolSchema]),
   title: z.string().trim().max(240),
-  body: z.string().trim().max(8000)
+  body: z.string().trim().max(8000),
+  postKind: z.union([
+    z.literal("none"),
+    assistantPostDraftKindSchema
+  ]).optional().default("none")
 }).superRefine((proposal, context) => {
-  if (proposal.tool === "office.note.create_draft" && (!proposal.title || !proposal.body)) {
+  if (proposal.tool !== "none" && (!proposal.title || !proposal.body)) {
     context.addIssue({
       code: "custom",
-      message: "A proposed Office note draft requires a title and body."
+      message: "A proposed Office draft requires a title and body."
     });
   }
   if (proposal.tool === "none" && (proposal.title || proposal.body)) {
@@ -1387,18 +1396,52 @@ export const assistantActionProposalDraftSchema = z.object({
       message: "An ordinary answer cannot contain a hidden action draft."
     });
   }
+  if (
+    proposal.tool === "office.post.create_draft" &&
+    proposal.postKind === "none"
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["postKind"],
+      message: "A proposed Office post draft requires a Thought or Paper type."
+    });
+  }
+  if (
+    proposal.tool !== "office.post.create_draft" &&
+    proposal.postKind !== "none"
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["postKind"],
+      message: "Only an Office post draft can specify a post type."
+    });
+  }
 });
 
-export const assistantActionProposalSchema = z.object({
-  tool: assistantActionToolSchema,
+const assistantActionProposalBaseShape = {
   title: z.string().trim().min(1).max(240),
   body: z.string().trim().min(1).max(8000),
   requiresConfirmation: z.literal(true),
   source: assistantActionSourceSchema.optional()
-});
+};
 
-export const assistantActionReceiptSchema = z.object({
-  tool: assistantActionToolSchema,
+export const assistantOfficeNoteActionProposalSchema = z.object({
+  tool: z.literal("office.note.create_draft"),
+  ...assistantActionProposalBaseShape
+}).strict();
+
+export const assistantOfficePostActionProposalSchema = z.object({
+  tool: z.literal("office.post.create_draft"),
+  postKind: assistantPostDraftKindSchema,
+  ...assistantActionProposalBaseShape
+}).strict();
+
+export const assistantActionProposalSchema = z.discriminatedUnion("tool", [
+  assistantOfficeNoteActionProposalSchema,
+  assistantOfficePostActionProposalSchema
+]);
+
+const assistantActionReceiptBaseShape = {
   status: z.literal("completed"),
   documentId: z.string().uuid(),
   title: z.string().trim().min(1).max(240),
@@ -1407,7 +1450,23 @@ export const assistantActionReceiptSchema = z.object({
   notebookName: z.string().nullable(),
   href: z.string().startsWith("/workspace?"),
   confirmedAt: z.string().datetime()
-});
+};
+
+export const assistantOfficeNoteActionReceiptSchema = z.object({
+  tool: z.literal("office.note.create_draft"),
+  ...assistantActionReceiptBaseShape
+}).strict();
+
+export const assistantOfficePostActionReceiptSchema = z.object({
+  tool: z.literal("office.post.create_draft"),
+  documentKind: assistantPostDraftKindSchema,
+  ...assistantActionReceiptBaseShape
+}).strict();
+
+export const assistantActionReceiptSchema = z.discriminatedUnion("tool", [
+  assistantOfficeNoteActionReceiptSchema,
+  assistantOfficePostActionReceiptSchema
+]);
 
 export const confirmAssistantOfficeNoteDraftInputSchema = z.object({
   assistantMessageId: z.string().uuid(),
@@ -1415,7 +1474,12 @@ export const confirmAssistantOfficeNoteDraftInputSchema = z.object({
   title: z.string().trim().min(1).max(240),
   body: z.string().trim().min(1).max(8000),
   notebookId: z.string().uuid().nullable().default(null)
-});
+}).strict();
+
+export const confirmAssistantOfficePostDraftInputSchema =
+  confirmAssistantOfficeNoteDraftInputSchema.extend({
+    postKind: assistantPostDraftKindSchema
+  }).strict();
 
 export const assistantEvidenceClaimKindSchema = z.enum([
   "direct",
@@ -2213,6 +2277,28 @@ export const assistantMessageSchema = z.object({
       message: "An action receipt requires its original proposal."
     });
   }
+  if (
+    message.actionReceipt &&
+    message.actionProposal &&
+    message.actionReceipt.tool !== message.actionProposal.tool
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["actionReceipt"],
+      message: "An action receipt must match its original proposal."
+    });
+  }
+  if (
+    message.actionReceipt?.tool === "office.post.create_draft" &&
+    message.actionProposal?.tool === "office.post.create_draft" &&
+    message.actionReceipt.documentKind !== message.actionProposal.postKind
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["actionReceipt", "documentKind"],
+      message: "A post draft receipt must match the confirmed post type."
+    });
+  }
   if (message.role !== "assistant" && (message.actionProposal || message.actionReceipt)) {
     context.addIssue({
       code: "custom",
@@ -2536,10 +2622,12 @@ export type AssistantQuickNoteDraftContract = z.infer<typeof assistantQuickNoteD
 export type AssistantQuickNoteContract = z.infer<typeof assistantQuickNoteSchema>;
 export type AssistantAnswerDraftContract = z.infer<typeof assistantAnswerDraftSchema>;
 export type AssistantActionToolContract = z.infer<typeof assistantActionToolSchema>;
+export type AssistantPostDraftKindContract = z.infer<typeof assistantPostDraftKindSchema>;
 export type AssistantActionProposalDraftContract = z.infer<typeof assistantActionProposalDraftSchema>;
 export type AssistantActionProposalContract = z.infer<typeof assistantActionProposalSchema>;
 export type AssistantActionReceiptContract = z.infer<typeof assistantActionReceiptSchema>;
 export type ConfirmAssistantOfficeNoteDraftInputContract = z.infer<typeof confirmAssistantOfficeNoteDraftInputSchema>;
+export type ConfirmAssistantOfficePostDraftInputContract = z.infer<typeof confirmAssistantOfficePostDraftInputSchema>;
 export type AssistantEvidenceClaimDraftContract = z.infer<typeof assistantEvidenceClaimDraftSchema>;
 export type AssistantEvidenceClaimKindContract = z.infer<typeof assistantEvidenceClaimKindSchema>;
 export type AssistantContextContract = z.infer<typeof assistantContextSchema>;

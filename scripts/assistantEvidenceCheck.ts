@@ -123,7 +123,7 @@ assert.equal(assistantAnswerDraftSchema.safeParse({
   shouldOfferQuickNote: false,
   quickNoteTitle: "",
   quickNoteBody: "",
-  action: { tool: "none", title: "", body: "" }
+  action: { tool: "none", title: "", body: "", postKind: "none" }
 }).success, true);
 assert.equal(assistantAnswerDraftSchema.safeParse({
   body: "Unsupported direct claim.",
@@ -131,7 +131,7 @@ assert.equal(assistantAnswerDraftSchema.safeParse({
   shouldOfferQuickNote: false,
   quickNoteTitle: "",
   quickNoteBody: "",
-  action: { tool: "none", title: "", body: "" }
+  action: { tool: "none", title: "", body: "", postKind: "none" }
 }).success, false);
 assert.equal(assistantAnswerDraftSchema.safeParse({
   body: "False uncertainty citation.",
@@ -139,7 +139,7 @@ assert.equal(assistantAnswerDraftSchema.safeParse({
   shouldOfferQuickNote: false,
   quickNoteTitle: "",
   quickNoteBody: "",
-  action: { tool: "none", title: "", body: "" }
+  action: { tool: "none", title: "", body: "", postKind: "none" }
 }).success, false);
 
 const legacyMessage = assistantMessageSchema.parse({
@@ -220,7 +220,7 @@ const main = async () => {
         shouldOfferQuickNote: false,
         quickNoteTitle: "",
         quickNoteBody: "",
-        action: { tool: "none", title: "", body: "" }
+        action: { tool: "none", title: "", body: "", postKind: "none" }
       }),
       usage: { input_tokens: 120, output_tokens: 30 }
     }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -257,7 +257,7 @@ const main = async () => {
       shouldOfferQuickNote: false,
       quickNoteTitle: "",
       quickNoteBody: "",
-      action: { tool: "none", title: "", body: "" }
+      action: { tool: "none", title: "", body: "", postKind: "none" }
     }),
     usage: { input_tokens: 120, output_tokens: 30 }
   }), { status: 200, headers: { "Content-Type": "application/json" } })) as typeof fetch;

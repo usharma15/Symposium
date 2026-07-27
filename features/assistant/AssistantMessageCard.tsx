@@ -10,7 +10,7 @@ import {
   AssistantQuickNoteDraftCard,
   AssistantTranslationCard
 } from "@/features/assistant/AssistantQuickNoteCards";
-import { AssistantOfficeNoteDraftCard } from "@/features/assistant/AssistantActionCards";
+import { AssistantOfficeDraftCard } from "@/features/assistant/AssistantActionCards";
 import { assistantAttachmentProcessingLabel } from "@/features/assistant/assistantPresentation";
 import { formatAttachmentBytes } from "@/lib/attachmentRules";
 import type { InquiryAttachmentContract } from "@/packages/contracts/src";
@@ -99,7 +99,7 @@ export function AssistantMessageCard({
       {message.role === "assistant" &&
       message.actionProposal &&
       message.conversationId ? (
-        <AssistantOfficeNoteDraftCard
+        <AssistantOfficeDraftCard
           actorHandle={actorHandle}
           conversationId={message.conversationId}
           messageId={message.id}

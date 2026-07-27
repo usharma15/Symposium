@@ -1670,7 +1670,8 @@ const finalizeAssistant = async (
   mutation?: MutationContext
 ): Promise<AssistantResponseContract> => runAtomic(async (client) => {
   const providerError = !result;
-  const body = result?.body ?? failure?.body ?? "The AI service could not complete this answer. No daily answer was used; you can retry.";
+  const providerBody = result?.body ?? failure?.body ??
+    "The AI service could not complete this answer. No daily answer was used; you can retry.";
   const claims = result
     ? resolveAssistantEvidenceClaims(result.claims, prepared.evidenceBlocks)
     : [];
@@ -1709,8 +1710,15 @@ const finalizeAssistant = async (
       }
     : undefined;
   const actionProposal = result?.action
-    ? assistantActionProposalFromDraft(result.action, actionSource)
+    ? assistantActionProposalFromDraft(
+        result.action,
+        prepared.input.message,
+        actionSource
+      )
     : undefined;
+  const body = result?.action && !actionProposal
+    ? "I did not prepare an Office action because your latest request did not explicitly ask for a private note, Thought, Paper, or post draft. Nothing was created."
+    : providerBody;
   const actualMicros = result
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, result.inputTokens, result.outputTokens)
     : failure?.mayHaveBeenBilled

@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ExternalLink,
   FilePlus2,
+  FileText,
   Folder,
   FolderPlus,
   LoaderCircle,
@@ -21,7 +22,7 @@ import type {
 } from "@/packages/contracts/src";
 import type { ScribbleSnapshot } from "@/lib/workspaceTypes";
 
-export function AssistantOfficeNoteDraftCard({
+export function AssistantOfficeDraftCard({
   actorHandle,
   conversationId,
   messageId,
@@ -36,8 +37,16 @@ export function AssistantOfficeNoteDraftCard({
   receipt?: AssistantActionReceiptContract;
   onSaved: () => void;
 }) {
+  const isPostDraft = proposal.tool === "office.post.create_draft";
+  const proposalPostKind = isPostDraft ? proposal.postKind : "thought";
+  const receiptPostKind = receipt?.tool === "office.post.create_draft"
+    ? receipt.documentKind
+    : undefined;
   const [title, setTitle] = useState(proposal.title);
   const [body, setBody] = useState(proposal.body);
+  const [postKind, setPostKind] = useState<"thought" | "paper">(
+    receiptPostKind ?? proposalPostKind
+  );
   const [notebooks, setNotebooks] =
     useState<ScribbleSnapshot["notebooks"]>([]);
   const [notebookId, setNotebookId] = useState(receipt?.notebookId ?? "");
@@ -54,11 +63,24 @@ export function AssistantOfficeNoteDraftCard({
   useEffect(() => {
     setTitle(proposal.title);
     setBody(proposal.body);
+    if (proposal.tool === "office.post.create_draft") {
+      setPostKind(
+        receipt?.tool === "office.post.create_draft"
+          ? receipt.documentKind
+          : proposal.postKind
+      );
+    }
     if (receipt) {
       setNotebookId(receipt.notebookId ?? "");
       setSaved(receipt);
     }
-  }, [proposal.body, proposal.title, receipt]);
+  }, [
+    proposal.body,
+    proposal.title,
+    proposal.tool,
+    proposalPostKind,
+    receipt
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,18 +145,25 @@ export function AssistantOfficeNoteDraftCard({
     const normalizedTitle = title.trim();
     const normalizedBody = body.trim();
     if (!normalizedTitle || !normalizedBody || confirming || saved) return;
-    const fingerprint = `${notebookId}\n${normalizedTitle}\n${normalizedBody}`;
+    const fingerprint =
+      `${proposal.tool}\n${postKind}\n${notebookId}\n${normalizedTitle}\n${normalizedBody}`;
     if (retryRef.current?.fingerprint !== fingerprint) {
       retryRef.current = {
         fingerprint,
-        key: createClientMutationId("assistant-office-note-draft")
+        key: createClientMutationId(
+          isPostDraft
+            ? "assistant-office-post-draft"
+            : "assistant-office-note-draft"
+        )
       };
     }
     setConfirming(true);
     setError("");
     try {
       const result = await symposiumApi.request<AssistantActionReceiptContract>(
-        "/api/assistant/actions/office-note-drafts",
+        isPostDraft
+          ? "/api/assistant/actions/office-post-drafts"
+          : "/api/assistant/actions/office-note-drafts",
         {
           method: "POST",
           idempotencyKey: retryRef.current.key,
@@ -144,7 +173,8 @@ export function AssistantOfficeNoteDraftCard({
             conversationId,
             title: normalizedTitle,
             body: normalizedBody,
-            notebookId: notebookId || null
+            notebookId: notebookId || null,
+            ...(isPostDraft ? { postKind } : {})
           }
         }
       );
@@ -155,7 +185,9 @@ export function AssistantOfficeNoteDraftCard({
       setError(
         caught instanceof SymposiumApiError
           ? caught.message
-          : "The private Office note draft could not be created."
+          : isPostDraft
+            ? "The private Office post draft could not be created."
+            : "The private Office note draft could not be created."
       );
     } finally {
       setConfirming(false);
@@ -165,23 +197,34 @@ export function AssistantOfficeNoteDraftCard({
   return (
     <section
       className="tablet-action-draft"
-      aria-label="Proposed private Office note"
+      aria-label={
+        isPostDraft
+          ? "Proposed private Office post draft"
+          : "Proposed private Office note"
+      }
       aria-busy={confirming}
       aria-live="polite"
     >
       <header>
         <span>
-          <FilePlus2 size={14} />
-          Proposed private Office note
+          {isPostDraft ? <FileText size={14} /> : <FilePlus2 size={14} />}
+          {isPostDraft
+            ? "Proposed private Office post draft"
+            : "Proposed private Office note"}
         </span>
         <small>
           <LockKeyhole size={11} />
-          {saved ? "Created as a private draft" : "Not saved yet"}
+          {saved
+            ? "Created as a private draft"
+            : isPostDraft
+              ? "Private draft only · not published"
+              : "Not saved yet"}
         </small>
       </header>
       <p>
-        Review the exact content and destination. Nothing is created until
-        you confirm below.
+        {isPostDraft
+          ? "Review the exact content, type, and destination. Nothing is created until you confirm, and nothing is published."
+          : "Review the exact content and destination. Nothing is created until you confirm below."}
       </p>
       <label>
         <small>Title</small>
@@ -192,8 +235,23 @@ export function AssistantOfficeNoteDraftCard({
           onChange={(event) => setTitle(event.target.value)}
         />
       </label>
+      {isPostDraft ? (
+        <label>
+          <small>Private post draft type</small>
+          <select
+            value={postKind}
+            disabled={Boolean(saved)}
+            onChange={(event) =>
+              setPostKind(event.target.value as "thought" | "paper")
+            }
+          >
+            <option value="thought">Thought</option>
+            <option value="paper">Paper</option>
+          </select>
+        </label>
+      ) : null}
       <label>
-        <small>Note</small>
+        <small>{isPostDraft ? "Draft body" : "Note"}</small>
         <textarea
           value={body}
           maxLength={8000}
@@ -260,7 +318,11 @@ export function AssistantOfficeNoteDraftCard({
       {saved ? (
         <a className="tablet-note-saved" href={saved.href}>
           <CheckCircle2 size={14} />
-          Created in {saved.notebookName ?? "All Notes"}
+          {saved.tool === "office.post.create_draft"
+            ? `Created private ${
+                saved.documentKind === "paper" ? "Paper" : "Thought"
+              } draft in ${saved.notebookName ?? "All Notes"}`
+            : `Created in ${saved.notebookName ?? "All Notes"}`}
           <ExternalLink size={13} />
         </a>
       ) : (
