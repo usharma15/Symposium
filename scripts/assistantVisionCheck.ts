@@ -207,7 +207,8 @@ const main = async () => {
         claims: [],
         shouldOfferQuickNote: false,
         quickNoteTitle: "",
-        quickNoteBody: ""
+        quickNoteBody: "",
+        action: { tool: "none", title: "", body: "" }
       }),
       usage: { input_tokens: 800, output_tokens: 30 }
     }), { status: 200, headers: { "Content-Type": "application/json" } });

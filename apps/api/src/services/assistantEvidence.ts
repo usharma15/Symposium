@@ -1,8 +1,9 @@
-import type {
-  AssistantContextContract,
-  AssistantEvidenceClaimDraftContract,
-  AssistantMessageContract,
-  AssistantThreadSourceContract
+import {
+  isSafeInternalRoute,
+  type AssistantContextContract,
+  type AssistantEvidenceClaimDraftContract,
+  type AssistantMessageContract,
+  type AssistantThreadSourceContract
 } from "../../../../packages/contracts/src";
 
 export type AssistantSourceValidation = {
@@ -56,7 +57,8 @@ const sourceRevisionStatus = (
   return capturedEntityRevision === currentEntityRevision ? "current" as const : "changed" as const;
 };
 
-const safeRoute = (value: string) => value.startsWith("/") ? value.slice(0, 500) : "/";
+const safeRoute = (value: string) =>
+  isSafeInternalRoute(value) ? value.slice(0, 500) : "/";
 
 const routeWithComment = (route: string, commentId: string) => {
   const url = new URL(safeRoute(route), "https://symposium.invalid");
@@ -153,6 +155,9 @@ const evidenceBlocksForSource = (
       pageNumber
     });
   };
+
+  const canonicalRoute = safeRoute(context.route);
+  add(`Canonical route: ${canonicalRoute}`, "Canonical route", "source", canonicalRoute);
 
   if (context.selection?.trim()) {
     splitLongText(context.selection).forEach((excerpt, index) => {

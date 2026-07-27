@@ -161,6 +161,17 @@ export const isSafeExternalUrl = (value: string) => {
   }
 };
 
+export const isSafeInternalRoute = (value: string) =>
+  value.startsWith("/") &&
+  !value.startsWith("//") &&
+  !/[\\\u0000-\u001f]/.test(value);
+
+export const safeInternalRouteSchema = z
+  .string()
+  .trim()
+  .max(500)
+  .refine(isSafeInternalRoute, "Use a Symposium-internal route.");
+
 export const safeExternalUrlSchema = z
   .string()
   .trim()
@@ -1330,7 +1341,7 @@ export const assistantConversationKindSchema = z.enum([
 
 export const assistantActionSourceSchema = z.object({
   surface: assistantSurfaceSchema,
-  route: z.string().trim().startsWith("/").max(500),
+  route: safeInternalRouteSchema,
   title: z.string().trim().min(1).max(300),
   entityType: z.string().trim().max(80).optional(),
   entityId: z.string().trim().max(240).optional()
@@ -1355,6 +1366,55 @@ export const assistantQuickNoteDraftSchema = z.object({
 
 export const assistantQuickNoteSchema = assistantQuickNoteDraftSchema.extend({
   source: assistantActionSourceSchema
+});
+
+export const assistantActionToolSchema = z.literal("office.note.create_draft");
+
+export const assistantActionProposalDraftSchema = z.object({
+  tool: z.union([z.literal("none"), assistantActionToolSchema]),
+  title: z.string().trim().max(240),
+  body: z.string().trim().max(8000)
+}).superRefine((proposal, context) => {
+  if (proposal.tool === "office.note.create_draft" && (!proposal.title || !proposal.body)) {
+    context.addIssue({
+      code: "custom",
+      message: "A proposed Office note draft requires a title and body."
+    });
+  }
+  if (proposal.tool === "none" && (proposal.title || proposal.body)) {
+    context.addIssue({
+      code: "custom",
+      message: "An ordinary answer cannot contain a hidden action draft."
+    });
+  }
+});
+
+export const assistantActionProposalSchema = z.object({
+  tool: assistantActionToolSchema,
+  title: z.string().trim().min(1).max(240),
+  body: z.string().trim().min(1).max(8000),
+  requiresConfirmation: z.literal(true),
+  source: assistantActionSourceSchema.optional()
+});
+
+export const assistantActionReceiptSchema = z.object({
+  tool: assistantActionToolSchema,
+  status: z.literal("completed"),
+  documentId: z.string().uuid(),
+  title: z.string().trim().min(1).max(240),
+  revision: z.number().int().positive(),
+  notebookId: z.string().uuid().nullable(),
+  notebookName: z.string().nullable(),
+  href: z.string().startsWith("/workspace?"),
+  confirmedAt: z.string().datetime()
+});
+
+export const confirmAssistantOfficeNoteDraftInputSchema = z.object({
+  assistantMessageId: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  title: z.string().trim().min(1).max(240),
+  body: z.string().trim().min(1).max(8000),
+  notebookId: z.string().uuid().nullable().default(null)
 });
 
 export const assistantEvidenceClaimKindSchema = z.enum([
@@ -1391,7 +1451,8 @@ export const assistantAnswerDraftSchema = z.object({
   claims: z.array(assistantEvidenceClaimDraftSchema).max(8),
   shouldOfferQuickNote: z.boolean(),
   quickNoteTitle: z.string().trim().max(240),
-  quickNoteBody: z.string().trim().max(8000)
+  quickNoteBody: z.string().trim().max(8000),
+  action: assistantActionProposalDraftSchema
 }).superRefine((answer, context) => {
   if (answer.shouldOfferQuickNote && (!answer.quickNoteTitle || !answer.quickNoteBody)) {
     context.addIssue({ code: "custom", message: "A proposed Quick Note requires a title and body." });
@@ -2113,7 +2174,23 @@ export const assistantMessageSchema = z.object({
   })).max(8).default([]),
   translation: assistantTranslationSchema.optional(),
   quickNote: assistantQuickNoteSchema.optional(),
-  quickNoteResult: assistantQuickNoteResultSchema.optional()
+  quickNoteResult: assistantQuickNoteResultSchema.optional(),
+  actionProposal: assistantActionProposalSchema.optional(),
+  actionReceipt: assistantActionReceiptSchema.optional()
+}).superRefine((message, context) => {
+  if (message.actionReceipt && !message.actionProposal) {
+    context.addIssue({
+      code: "custom",
+      path: ["actionReceipt"],
+      message: "An action receipt requires its original proposal."
+    });
+  }
+  if (message.role !== "assistant" && (message.actionProposal || message.actionReceipt)) {
+    context.addIssue({
+      code: "custom",
+      message: "Only an Assistant message can contain an action proposal or receipt."
+    });
+  }
 });
 
 export const assistantThreadSourceSchema = z.object({
@@ -2200,7 +2277,8 @@ export const assistantResponseSchema = z.object({
   quota: assistantQuotaSchema.optional(),
   thread: assistantThreadStateSchema.optional(),
   translation: assistantTranslationSchema.optional(),
-  quickNote: assistantQuickNoteSchema.optional()
+  quickNote: assistantQuickNoteSchema.optional(),
+  actionProposal: assistantActionProposalSchema.optional()
 });
 
 export const documentTranslationResultSchema = z.object({
@@ -2405,6 +2483,11 @@ export type AssistantTranslationContract = z.infer<typeof assistantTranslationSc
 export type AssistantQuickNoteDraftContract = z.infer<typeof assistantQuickNoteDraftSchema>;
 export type AssistantQuickNoteContract = z.infer<typeof assistantQuickNoteSchema>;
 export type AssistantAnswerDraftContract = z.infer<typeof assistantAnswerDraftSchema>;
+export type AssistantActionToolContract = z.infer<typeof assistantActionToolSchema>;
+export type AssistantActionProposalDraftContract = z.infer<typeof assistantActionProposalDraftSchema>;
+export type AssistantActionProposalContract = z.infer<typeof assistantActionProposalSchema>;
+export type AssistantActionReceiptContract = z.infer<typeof assistantActionReceiptSchema>;
+export type ConfirmAssistantOfficeNoteDraftInputContract = z.infer<typeof confirmAssistantOfficeNoteDraftInputSchema>;
 export type AssistantEvidenceClaimDraftContract = z.infer<typeof assistantEvidenceClaimDraftSchema>;
 export type AssistantEvidenceClaimKindContract = z.infer<typeof assistantEvidenceClaimKindSchema>;
 export type AssistantContextContract = z.infer<typeof assistantContextSchema>;

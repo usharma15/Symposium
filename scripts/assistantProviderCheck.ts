@@ -76,7 +76,8 @@ const main = async () => {
     claims: [],
     shouldOfferQuickNote: false,
     quickNoteTitle: "",
-    quickNoteBody: ""
+    quickNoteBody: "",
+    action: { tool: "none", title: "", body: "" }
   };
   let generalAssistantPayloadJson = "";
   const generalAssistantFetch = (async (_url: string | URL | Request, init?: RequestInit) => {

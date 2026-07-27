@@ -50,7 +50,10 @@ assert.equal(evidence.evidence[0]?.revisionStatus, "changed");
 assert.equal(evidence.evidence[0]?.capturedEntityRevision, 5);
 assert.equal(evidence.evidence[0]?.currentEntityRevision, 6);
 assert.equal(evidence.blocks[0]?.ref, "S1.B1");
-assert.equal(evidence.blocks[0]?.kind, "selection");
+assert.equal(evidence.blocks[0]?.kind, "source");
+assert.equal(evidence.blocks[0]?.label, "Canonical route");
+assert.equal(evidence.blocks[0]?.excerpt, "Canonical route: /posts/evidence-check");
+assert.equal(evidence.blocks[0]?.route, "/posts/evidence-check");
 assert.ok(evidence.blocks.some((block) =>
   block.kind === "comment" &&
   block.route === "/posts/evidence-check?comment=comment-evidence-1"
@@ -61,6 +64,30 @@ assert.ok(evidence.blocks.some((block) =>
 ));
 assert.ok(evidence.blocks.every((block) => block.excerpt.length <= 1000));
 assert.ok(evidence.packets[0]?.blocks.every((block) => /^S1\.B\d+$/.test(block.ref)));
+assert.equal(evidence.packets[0]?.blocks[0]?.excerpt, "Canonical route: /posts/evidence-check");
+
+const unsafeRouteEvidence = buildAssistantEvidence([{
+  source: {
+    ...source,
+    id: "00000000-0000-4000-8000-000000000204",
+    context: { ...source.context, route: "javascript:alert(1)" }
+  },
+  accessStatus: "not_applicable",
+  currentEntityRevision: null
+}], null);
+assert.equal(unsafeRouteEvidence.blocks[0]?.excerpt, "Canonical route: /");
+assert.equal(unsafeRouteEvidence.blocks[0]?.route, "/");
+const protocolRelativeEvidence = buildAssistantEvidence([{
+  source: {
+    ...source,
+    id: "00000000-0000-4000-8000-000000000205",
+    context: { ...source.context, route: "//attacker.invalid/escape" }
+  },
+  accessStatus: "not_applicable",
+  currentEntityRevision: null
+}], null);
+assert.equal(protocolRelativeEvidence.blocks[0]?.excerpt, "Canonical route: /");
+assert.equal(protocolRelativeEvidence.blocks[0]?.route, "/");
 
 const directRef = evidence.blocks.find((block) => block.kind === "selection")!.ref;
 const claims = [{
@@ -95,21 +122,24 @@ assert.equal(assistantAnswerDraftSchema.safeParse({
   claims,
   shouldOfferQuickNote: false,
   quickNoteTitle: "",
-  quickNoteBody: ""
+  quickNoteBody: "",
+  action: { tool: "none", title: "", body: "" }
 }).success, true);
 assert.equal(assistantAnswerDraftSchema.safeParse({
   body: "Unsupported direct claim.",
   claims: [{ claim: "Unsupported.", kind: "direct", sourceRefs: [] }],
   shouldOfferQuickNote: false,
   quickNoteTitle: "",
-  quickNoteBody: ""
+  quickNoteBody: "",
+  action: { tool: "none", title: "", body: "" }
 }).success, false);
 assert.equal(assistantAnswerDraftSchema.safeParse({
   body: "False uncertainty citation.",
   claims: [{ claim: "Unknown.", kind: "insufficient", sourceRefs: ["S1.B1"] }],
   shouldOfferQuickNote: false,
   quickNoteTitle: "",
-  quickNoteBody: ""
+  quickNoteBody: "",
+  action: { tool: "none", title: "", body: "" }
 }).success, false);
 
 const legacyMessage = assistantMessageSchema.parse({
@@ -189,7 +219,8 @@ const main = async () => {
         claims: [claims[0]],
         shouldOfferQuickNote: false,
         quickNoteTitle: "",
-        quickNoteBody: ""
+        quickNoteBody: "",
+        action: { tool: "none", title: "", body: "" }
       }),
       usage: { input_tokens: 120, output_tokens: 30 }
     }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -225,7 +256,8 @@ const main = async () => {
       claims: [{ claim: "Invented.", kind: "direct", sourceRefs: ["S1.B16"] }],
       shouldOfferQuickNote: false,
       quickNoteTitle: "",
-      quickNoteBody: ""
+      quickNoteBody: "",
+      action: { tool: "none", title: "", body: "" }
     }),
     usage: { input_tokens: 120, output_tokens: 30 }
   }), { status: 200, headers: { "Content-Type": "application/json" } })) as typeof fetch;

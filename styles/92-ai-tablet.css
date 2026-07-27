@@ -795,6 +795,20 @@
 .tablet-quick-note-draft select { background: var(--document-control-solid); border: 1px solid var(--line); color: var(--ink); font: inherit; font-size: 0.67rem; line-height: 1.4; padding: 0.38rem 0.42rem; width: 100%; }
 .tablet-quick-note-draft textarea { max-height: 10rem; min-height: 5.2rem; resize: vertical; }
 .tablet-quick-note-draft button { align-items: center; display: flex; font-size: 0.64rem; gap: 0.3rem; justify-content: center; min-height: 2rem; width: 100%; }
+.tablet-action-draft { background: color-mix(in srgb, var(--aqua) 6%, var(--document-surface-solid)); border: 1px solid color-mix(in srgb, var(--aqua) 30%, var(--line)); border-radius: 0.64rem; display: grid; gap: 0.42rem; margin-top: 0.28rem; overflow: hidden; padding: 0.55rem; }
+.tablet-action-draft > header { align-items: start; display: flex; gap: 0.4rem; justify-content: space-between; }
+.tablet-action-draft > header span,
+.tablet-action-draft > header small { align-items: center; display: flex; gap: 0.25rem; }
+.tablet-action-draft > header span { font-size: 0.68rem; font-weight: 900; }
+.tablet-action-draft > header small { color: var(--muted); font-size: 0.56rem; text-align: right; }
+.tablet-action-draft > p { color: var(--muted); font-size: 0.59rem; line-height: 1.38; margin: 0; }
+.tablet-action-draft label { display: grid; gap: 0.15rem; }
+.tablet-action-draft label small { align-items: center; color: var(--muted); display: flex; font-size: 0.57rem; font-weight: 700; gap: 0.22rem; }
+.tablet-action-draft input,
+.tablet-action-draft textarea,
+.tablet-action-draft select { background: var(--document-control-solid); border: 1px solid var(--line); color: var(--ink); font: inherit; font-size: 0.67rem; line-height: 1.4; padding: 0.38rem 0.42rem; width: 100%; }
+.tablet-action-draft textarea { max-height: 12rem; min-height: 6rem; resize: vertical; }
+.tablet-action-draft button { align-items: center; display: flex; font-size: 0.64rem; gap: 0.3rem; justify-content: center; min-height: 2rem; width: 100%; }
 .tablet-new-notebook { display: grid; gap: 0.3rem; grid-template-columns: minmax(0, 1fr) auto; }
 .tablet-new-notebook button { min-width: 7.1rem; width: auto; }
 .tablet-action-error { color: #a83d47; font-size: 0.61rem; line-height: 1.35; margin: 0; }

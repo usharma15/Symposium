@@ -1,6 +1,8 @@
 import type {
   AssistantMessageContract,
   AssistantMessageInputContract,
+  AssistantActionProposalContract,
+  AssistantActionReceiptContract,
   AssistantQuickNoteContract,
   AssistantQuickNoteResultContract,
   AssistantThreadStateContract,
@@ -27,6 +29,8 @@ export type AssistantMessageView = {
   translation?: AssistantTranslationContract;
   quickNote?: AssistantQuickNoteContract;
   quickNoteResult?: AssistantQuickNoteResultContract;
+  actionProposal?: AssistantActionProposalContract;
+  actionReceipt?: AssistantActionReceiptContract;
   attachments?: InquiryAttachmentContract[];
 };
 

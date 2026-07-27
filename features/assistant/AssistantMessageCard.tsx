@@ -10,6 +10,7 @@ import {
   AssistantQuickNoteDraftCard,
   AssistantTranslationCard
 } from "@/features/assistant/AssistantQuickNoteCards";
+import { AssistantOfficeNoteDraftCard } from "@/features/assistant/AssistantActionCards";
 import { assistantAttachmentProcessingLabel } from "@/features/assistant/assistantPresentation";
 import { formatAttachmentBytes } from "@/lib/attachmentRules";
 import type { InquiryAttachmentContract } from "@/packages/contracts/src";
@@ -92,6 +93,18 @@ export function AssistantMessageCard({
           messageId={message.id}
           quickNote={message.quickNote}
           savedQuickNote={message.quickNoteResult}
+          onSaved={() => onSaved(message.conversationId!)}
+        />
+      ) : null}
+      {message.role === "assistant" &&
+      message.actionProposal &&
+      message.conversationId ? (
+        <AssistantOfficeNoteDraftCard
+          actorHandle={actorHandle}
+          conversationId={message.conversationId}
+          messageId={message.id}
+          proposal={message.actionProposal}
+          receipt={message.actionReceipt}
           onSaved={() => onSaved(message.conversationId!)}
         />
       ) : null}

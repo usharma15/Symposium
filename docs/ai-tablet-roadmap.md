@@ -93,15 +93,19 @@ Symposium remains the system of record. Conversation history, attached sources, 
 
 ### 6. Permissioned site-wide actions
 
-- Introduce a server-owned tool registry with strict input schemas and per-tool authorization.
+- Introduce a server-owned tool registry with strict input schemas and per-tool authorization. **Foundation shipped:** the registry currently exposes only `office.note.create_draft`; unsupported model tools fail closed, and model output can propose but cannot execute an action.
 - Start with reversible drafts and organization:
-  - create or edit a private note draft;
+  - create or edit a private note draft; **private note creation shipped as the first complete vertical slice**;
   - create a message draft;
   - create a post draft;
   - file or organize Office material;
   - save or attach research sources.
-- Require an editable preview and explicit confirmation for messages, publications, permission changes, deletion, and other consequential actions.
-- Return structured action receipts and place them in the thread timeline only after the server confirms success.
+- The private-note slice provides an editable title and body, an owner-authorized notebook destination, explicit confirmation, live-database-only execution, mutation-ledger and persistent-receipt replay safety, source/action audit metadata, source-reference preservation, and private note plus Assistant live events. **Shipped.**
+- Require an editable preview and explicit confirmation for messages, publications, permission changes, deletion, and other consequential actions. The first private-note slice also requires confirmation so the product can validate the complete permission flow before introducing any standing draft permission. **Shipped for private note creation.**
+- Return structured action receipts and place them in the thread timeline only after the server confirms success. **Shipped for private note creation.**
+- Sending, publishing, sharing, access changes, deletion, autonomous/background execution, and every unregistered action remain unavailable by design.
+- Canonical internal routes are now supplied as explicit bounded evidence passages, so route questions no longer force the model to infer a URL from descriptive page copy. Protocol-relative or malformed routes fail closed. **Shipped.**
+- Contracts, provider output restrictions, ownership/thread/notebook authorization, private lifecycle, replay behavior, audit/events, source preservation, persistent timeline receipts, accessibility copy, cross-tab refresh, complete typechecks, and the production build are covered by `npm run assistant-action:check`, `npm run assistant-evidence:check`, and `npm run verify`. **Verified locally on 2026-07-26.**
 
 ## Permission model
 

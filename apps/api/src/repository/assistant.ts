@@ -11,6 +11,7 @@ import {
   assistantThreadDeleteInputSchema,
   assistantThreadSourceSchema,
   assistantThreadUpdateInputSchema,
+  isSafeInternalRoute,
   inquiryAttachmentSchema,
   type AssistantContextContract,
   type AssistantContextUpdateResultContract,
@@ -78,6 +79,7 @@ import {
   type AssistantEvidencePacket,
   type AssistantSourceValidation
 } from "../services/assistantEvidence";
+import { assistantActionProposalFromDraft } from "../services/assistantActionRegistry";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 
 type ParsedInput = ReturnType<typeof assistantMessageInputSchema.parse>;
@@ -456,7 +458,9 @@ const messageFromRow = (row: {
     attachments: assistantAttachmentsFromMetadata(metadata.attachments),
     ...(metadata.translation ? { translation: metadata.translation } : {}),
     ...(metadata.quickNote ? { quickNote: metadata.quickNote } : {}),
-    ...(metadata.quickNoteResult ? { quickNoteResult: metadata.quickNoteResult } : {})
+    ...(metadata.quickNoteResult ? { quickNoteResult: metadata.quickNoteResult } : {}),
+    ...(metadata.actionProposal ? { actionProposal: metadata.actionProposal } : {}),
+    ...(metadata.actionReceipt ? { actionReceipt: metadata.actionReceipt } : {})
   });
 };
 
@@ -1589,7 +1593,7 @@ const finalizeAssistant = async (
         targetLanguage: prepared.input.targetLanguage,
         source: {
           surface: prepared.context.surface,
-          route: prepared.context.route.startsWith("/") ? prepared.context.route : "/",
+          route: isSafeInternalRoute(prepared.context.route) ? prepared.context.route : "/",
           title: prepared.context.title.trim() || "Current view",
           ...(prepared.context.entityType ? { entityType: prepared.context.entityType } : {}),
           ...(prepared.context.entityId ? { entityId: prepared.context.entityId } : {})
@@ -1601,12 +1605,24 @@ const finalizeAssistant = async (
         ...result.quickNote,
         source: {
           surface: prepared.context.surface,
-          route: prepared.context.route.startsWith("/") ? prepared.context.route : "/",
+          route: isSafeInternalRoute(prepared.context.route) ? prepared.context.route : "/",
           title: prepared.context.title.trim() || "Current view",
           ...(prepared.context.entityType ? { entityType: prepared.context.entityType } : {}),
           ...(prepared.context.entityId ? { entityId: prepared.context.entityId } : {})
         }
       }
+    : undefined;
+  const actionSource = prepared.context
+    ? {
+        surface: prepared.context.surface,
+        route: isSafeInternalRoute(prepared.context.route) ? prepared.context.route : "/",
+        title: prepared.context.title.trim() || "Current view",
+        ...(prepared.context.entityType ? { entityType: prepared.context.entityType } : {}),
+        ...(prepared.context.entityId ? { entityId: prepared.context.entityId } : {})
+      }
+    : undefined;
+  const actionProposal = result?.action
+    ? assistantActionProposalFromDraft(result.action, actionSource)
     : undefined;
   const actualMicros = result
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, result.inputTokens, result.outputTokens)
@@ -1688,7 +1704,8 @@ const finalizeAssistant = async (
       evidence: prepared.evidence,
       claims,
       translation: translation ?? null,
-      quickNote: quickNote ?? null
+      quickNote: quickNote ?? null,
+      actionProposal: actionProposal ?? null
     })]
   );
   await completeAssistantUsage(client, {
@@ -1733,11 +1750,13 @@ const finalizeAssistant = async (
       evidence: prepared.evidence,
       claims,
       ...(translation ? { translation } : {}),
-      ...(quickNote ? { quickNote } : {})
+      ...(quickNote ? { quickNote } : {}),
+      ...(actionProposal ? { actionProposal } : {})
     }),
     userMessage: prepared.userMessage,
     ...(translation ? { translation } : {}),
-    ...(quickNote ? { quickNote } : {})
+    ...(quickNote ? { quickNote } : {}),
+    ...(actionProposal ? { actionProposal } : {})
   };
   await stageAuditLog(client, {
     actorHandle: prepared.owner,
@@ -1750,6 +1769,7 @@ const finalizeAssistant = async (
       surface: prepared.context?.surface ?? null,
       intent: prepared.input.intent,
       targetLanguage: prepared.input.targetLanguage,
+      proposedAction: actionProposal?.tool ?? null,
       model: response.model,
       status: response.status,
       visionInputCount: prepared.visionAttachments.length,

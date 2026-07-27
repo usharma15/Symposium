@@ -1247,7 +1247,9 @@ export function useAssistantController({
           conversationId: response.conversationId,
           evidence: response.message.evidence,
           translation: response.message.translation ?? response.translation,
-          quickNote: response.message.quickNote ?? response.quickNote
+          quickNote: response.message.quickNote ?? response.quickNote,
+          actionProposal:
+            response.message.actionProposal ?? response.actionProposal
         }
       ]);
       messageRetryRef.current = null;

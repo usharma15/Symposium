@@ -14,6 +14,7 @@ import {
   updateAssistantConversationContext,
   updateAssistantConversationSource
 } from "../repository/assistant";
+import { confirmAssistantOfficeNoteDraft } from "../repository/assistantActions";
 import { translateContent } from "../repository/contentTranslations";
 import { translateDocument } from "../repository/documentTranslations";
 import { createOpportunity, listOpportunities } from "../repository/opportunities";
@@ -615,6 +616,27 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
         request.body,
         actor,
         mutationContextFromRequest(request, "assistant.quick-note.create", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/assistant/actions/office-note-drafts", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request, {
+        shared: true,
+        scope: "assistant-action",
+        limit: 30
+      });
+      return reply.send(await confirmAssistantOfficeNoteDraft(
+        request.body,
+        actor,
+        mutationContextFromRequest(
+          request,
+          "assistant.action.office-note.create-draft",
+          request.body
+        )
       ));
     } catch (error) {
       return sendError(app, reply, error);

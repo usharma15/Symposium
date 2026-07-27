@@ -9,6 +9,7 @@ import {
   updateWorkspaceDocumentInputSchema,
   updateWorkspaceNotebookInputSchema,
   workspaceSearchInputSchema,
+  type CreateWorkspaceDocumentInputContract,
   type VersionedDocumentContract,
   type WorkspaceAccessRoleContract,
   type WorkspaceDocumentKindContract
@@ -370,6 +371,88 @@ export const getWorkspaceDocuments = async (actor: Actor) => {
   });
 };
 
+export const createWorkspaceDocumentInTransaction = async (
+  client: PoolClient,
+  rawInput: CreateWorkspaceDocumentInputContract,
+  handle: string,
+  mutation?: MutationContext,
+  auditMetadata: Record<string, unknown> = {}
+) => {
+  const input = createWorkspaceDocumentInputSchema.parse(rawInput);
+  const workspace = await ensureWorkspace(client, handle);
+  await ensureNotebookForOwner(client, workspace.id, handle, input.notebookId);
+  const citationResolution = await resolveNativeDocumentCitations(client, input.document, handle);
+  const resolvedInput = { ...input, document: citationResolution.document };
+  const created = await client.query<{ id: string; revision: number }>(
+    `INSERT INTO notes (
+       workspace_id, owner_handle, notebook_id, title, body, content_document, kind,
+       publication_target, proposal, opportunity, target_id, lifecycle, visibility
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', 'private')
+     RETURNING id::text, revision`,
+    [
+      workspace.id,
+      handle,
+      resolvedInput.notebookId,
+      resolvedInput.title,
+      resolvedInput.body,
+      JSON.stringify(resolvedInput.document),
+      resolvedInput.kind,
+      resolvedInput.publicationTarget,
+      resolvedInput.proposal ? JSON.stringify(resolvedInput.proposal) : null,
+      resolvedInput.opportunity ? JSON.stringify(resolvedInput.opportunity) : null,
+      resolvedInput.targetId
+    ]
+  );
+  const note = created.rows[0]!;
+  const attachmentResult = await replaceOwnerAttachments(client, {
+    attachmentIds: input.attachmentIds,
+    ownerId: note.id,
+    ownerType: "note",
+    uploaderHandle: handle
+  });
+  const checkpointId = await insertRevision(client, {
+    noteId: note.id,
+    revision: note.revision,
+    editorHandle: handle,
+    ...resolvedInput,
+    reason: "created"
+  });
+  const value = {
+    document: await selectDocument(client, note.id, handle),
+    checkpointId,
+    removedAttachmentIds: attachmentResult.removedAttachmentIds
+  };
+  await stageAuditLog(client, {
+    actorHandle: handle,
+    action: "workspace.document.create",
+    subjectType: "note",
+    subjectId: note.id,
+    metadata: mutationAuditMetadata(mutation, {
+      kind: input.kind,
+      notebookId: input.notebookId,
+      citationCount: citationResolution.citationCount,
+      newCitationCount: citationResolution.newCitationCount,
+      ...auditMetadata
+    })
+  });
+  const audienceHandles = await documentAudienceHandles(client, note.id);
+  const event = await stageEvent(client, {
+    kind: "note.document.created",
+    actorHandle: handle,
+    audienceHandles,
+    subjectType: "note",
+    subjectId: note.id,
+    visibility: "private",
+    payload: {
+      noteId: note.id,
+      revision: note.revision,
+      notebookId: input.notebookId,
+      ...auditMetadata
+    }
+  });
+  return { value, event };
+};
+
 export const createWorkspaceDocument = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = createWorkspaceDocumentInputSchema.parse(rawInput);
   const handle = await ensureProfileHandle(actorHandle(actor));
@@ -378,69 +461,9 @@ export const createWorkspaceDocument = async (rawInput: unknown, actor: Actor, m
   return runAtomic(async (client) => {
     const claim = await claimMutation<Record<string, unknown>>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
-    const workspace = await ensureWorkspace(client, handle);
-    await ensureNotebookForOwner(client, workspace.id, handle, input.notebookId);
-    const citationResolution = await resolveNativeDocumentCitations(client, input.document, handle);
-    const resolvedInput = { ...input, document: citationResolution.document };
-    const created = await client.query<{ id: string; revision: number }>(
-      `INSERT INTO notes (
-         workspace_id, owner_handle, notebook_id, title, body, content_document, kind,
-         publication_target, proposal, opportunity, target_id, lifecycle, visibility
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', 'private')
-       RETURNING id::text, revision`,
-      [
-        workspace.id,
-        handle,
-        resolvedInput.notebookId,
-        resolvedInput.title,
-        resolvedInput.body,
-        JSON.stringify(resolvedInput.document),
-        resolvedInput.kind,
-        resolvedInput.publicationTarget,
-        resolvedInput.proposal ? JSON.stringify(resolvedInput.proposal) : null,
-        resolvedInput.opportunity ? JSON.stringify(resolvedInput.opportunity) : null,
-        resolvedInput.targetId
-      ]
-    );
-    const note = created.rows[0]!;
-    const attachmentResult = await replaceOwnerAttachments(client, {
-      attachmentIds: input.attachmentIds,
-      ownerId: note.id,
-      ownerType: "note",
-      uploaderHandle: handle
-    });
-    const checkpointId = await insertRevision(client, {
-      noteId: note.id,
-      revision: note.revision,
-      editorHandle: handle,
-      ...resolvedInput,
-      reason: "created"
-    });
-    const value = { document: await selectDocument(client, note.id, handle), checkpointId, removedAttachmentIds: attachmentResult.removedAttachmentIds };
-    await stageAuditLog(client, {
-      actorHandle: handle,
-      action: "workspace.document.create",
-      subjectType: "note",
-      subjectId: note.id,
-      metadata: mutationAuditMetadata(mutation, {
-        kind: input.kind,
-        notebookId: input.notebookId,
-        citationCount: citationResolution.citationCount,
-        newCitationCount: citationResolution.newCitationCount
-      })
-    });
-    await completeMutation(client, handle, mutation, value);
-    const audienceHandles = await documentAudienceHandles(client, note.id);
-    const event = await stageEvent(client, {
-      kind: "note.document.created",
-      actorHandle: handle,
-      audienceHandles,
-      subjectType: "note",
-      subjectId: note.id,
-      visibility: "private",
-      payload: { noteId: note.id, revision: note.revision, notebookId: input.notebookId }
-    });
-    return { value, events: [event] };
+    const created = await createWorkspaceDocumentInTransaction(client, input, handle, mutation);
+    await completeMutation(client, handle, mutation, created.value);
+    return { value: created.value, events: [created.event] };
   });
 };
 
