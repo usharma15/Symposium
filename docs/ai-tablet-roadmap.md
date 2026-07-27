@@ -63,6 +63,9 @@ Symposium remains the system of record. Conversation history, attached sources, 
 - Keep Projects strictly as private chat organization: each active chat can be
   in at most one Project, All still shows every active chat, and Archive remains
   a separate compact view. **Shipped.**
+- Match the Office notebook navigator: Project rows expand and collapse inline
+  to reveal their active chats, with one shared scrolling rail instead of
+  separate Project and chat scroll regions. **Shipped.**
 - Creating, renaming, selecting, filing, unfiling, and deleting Projects does
   not call the model or consume an AI answer. Project names and membership are
   never added to prompts, sources, memory, summaries, embeddings, or

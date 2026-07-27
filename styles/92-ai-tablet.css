@@ -182,12 +182,11 @@
 }
 
 .assistant-projects-panel {
-  border-bottom: 1px solid var(--line);
   display: grid;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   gap: 0.38rem;
-  max-height: min(19rem, 46%);
   min-height: 0;
+  overflow: hidden;
   padding: 0.55rem 0.72rem 0.62rem;
 }
 
@@ -243,17 +242,22 @@
   padding: 0.35rem 0.25rem;
 }
 
-.assistant-project-item {
+.assistant-project-group {
   border: 1px solid transparent;
   border-radius: 0.62rem;
+  min-width: 0;
+  overflow: visible;
+}
+
+.assistant-project-group.active {
+  background: color-mix(in srgb, var(--aqua) 15%, var(--document-control-solid));
+  border-color: color-mix(in srgb, var(--aqua) 38%, var(--line));
+}
+
+.assistant-project-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
-}
-
-.assistant-project-item.active {
-  background: color-mix(in srgb, var(--aqua) 15%, var(--document-control-solid));
-  border-color: color-mix(in srgb, var(--aqua) 38%, var(--line));
 }
 
 .assistant-project-select {
@@ -261,11 +265,19 @@
   background: transparent;
   border: 0;
   display: grid;
-  gap: 0.42rem;
-  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.32rem;
+  grid-template-columns: auto auto minmax(0, 1fr);
   min-width: 0;
   padding: 0.48rem 0.52rem;
   text-align: left;
+}
+
+.assistant-project-select > svg:first-child {
+  transition: transform 160ms ease;
+}
+
+.assistant-project-select > svg:first-child.expanded {
+  transform: rotate(90deg);
 }
 
 .assistant-project-select > span {
@@ -295,7 +307,6 @@
   border-top: 1px solid var(--line);
   display: grid;
   gap: 0.28rem;
-  grid-column: 1 / -1;
   padding: 0.42rem;
 }
 
@@ -357,25 +368,15 @@
   width: 100%;
 }
 
-.assistant-project-thread-heading {
-  align-items: baseline;
-  display: flex;
-  gap: 0.4rem;
-  justify-content: space-between;
-  padding: 0.18rem 0.35rem 0.32rem;
+.assistant-project-chats {
+  border-top: 1px solid var(--line);
+  min-width: 0;
 }
 
-.assistant-project-thread-heading strong {
-  font-size: 0.7rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.assistant-project-thread-heading small {
-  color: var(--muted);
-  flex: 0 0 auto;
-  font-size: 0.58rem;
+.assistant-thread-list.assistant-project-thread-list {
+  flex: none;
+  overflow: visible;
+  padding: 0.42rem;
 }
 
 .assistant-thread-list {

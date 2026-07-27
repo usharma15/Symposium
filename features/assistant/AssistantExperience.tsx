@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import type { InquiryAttachmentContract } from "@/packages/contracts/src";
 import type { AssistantController } from "@/features/assistant/useAssistantController";
+import { nextAssistantProjectSelection } from "@/features/assistant/assistantControllerModel";
 import { assistantThreadActivityLabel } from "@/features/assistant/assistantThreadOrdering";
 import { AssistantContextDock } from "@/features/assistant/AssistantContextDock";
 import { AssistantMessageCard } from "@/features/assistant/AssistantMessageCard";
@@ -194,6 +195,64 @@ export function AssistantExperience({
     void submit();
   };
 
+  const renderThreadList = (inlineProject = false) => (
+    <div
+      className={`assistant-thread-list${
+        inlineProject ? " assistant-project-thread-list" : ""
+      }`}
+    >
+      {threads.length ? threads.map((candidate) => (
+        <AssistantThreadHistoryItem
+          key={candidate.id}
+          candidate={candidate}
+          selected={candidate.id === conversationId}
+          disabled={threadActionBusyId !== null}
+          busy={threadActionBusyId === candidate.id}
+          projects={projects}
+          projectName={inlineProject
+            ? null
+            : projects.find(
+                (project) => project.id === candidate.projectId
+              )?.name ?? null}
+          onSelect={() => selectThread(candidate.id)}
+          onUpdate={async (changes) =>
+            Boolean(await updateThreadDetails(candidate, changes))
+          }
+          onDelete={() => deleteThread(candidate)}
+        />
+      )) : (
+        <p>
+          {threadListLoading
+            ? "Loading chats…"
+            : threadQuery.trim()
+              ? "No chats match this search."
+              : threadLibraryView === "archived"
+                ? "No archived chats."
+                : inlineProject
+                  ? "No active chats in this Project."
+                  : "No saved chats yet."}
+        </p>
+      )}
+      {nextCursor ? (
+        <button
+          type="button"
+          className="assistant-thread-load-more"
+          disabled={threadListLoadingMore}
+          onClick={() => void loadMoreThreads()}
+        >
+          {threadListLoadingMore ? (
+            <LoaderCircle className="spin" size={13} />
+          ) : (
+            <ChevronDown size={13} />
+          )}
+          {threadListLoadingMore ? "Loading…" : "Load more chats"}
+        </button>
+      ) : threads.length ? (
+        <small>All matching chats are shown.</small>
+      ) : null}
+    </div>
+  );
+
   return (
     <section
       className={`assistant-experience ${
@@ -294,7 +353,9 @@ export function AssistantExperience({
             maxLength={160}
             placeholder={
               threadLibraryView === "projects"
-                ? "Search this Project"
+                ? selectedProjectId
+                  ? "Search this Project"
+                  : "Select a Project to search chats"
                 : threadLibraryView === "archived"
                   ? "Search archived chats"
                   : "Search titles and messages"
@@ -318,7 +379,7 @@ export function AssistantExperience({
             onClick={() => setThreadLibraryFilters(
               threadQuery,
               "projects",
-              selectedProjectId ?? thread?.projectId ?? projects[0]?.id ?? null
+              threadLibraryView === "projects" ? selectedProjectId : null
             )}
           >
             Projects
@@ -349,7 +410,7 @@ export function AssistantExperience({
               setThreadLibraryFilters(
                 threadQuery,
                 "projects",
-                projectId
+                nextAssistantProjectSelection(selectedProjectId, projectId)
               )
             }
             onCreate={async (name) => Boolean(await createProject(name))}
@@ -357,63 +418,10 @@ export function AssistantExperience({
               Boolean(await updateProject(project, name))
             }
             onDelete={deleteProject}
+            expandedContent={renderThreadList(true)}
           />
         ) : null}
-        <div className="assistant-thread-list">
-          {threadLibraryView === "projects" && selectedProjectId ? (
-            <header className="assistant-project-thread-heading">
-              <strong>
-                {projects.find(
-                  (project) => project.id === selectedProjectId
-                )?.name ?? "Project"}
-              </strong>
-              <small>Active chats</small>
-            </header>
-          ) : null}
-          {threads.length ? threads.map((candidate) => (
-            <AssistantThreadHistoryItem
-              key={candidate.id}
-              candidate={candidate}
-              selected={candidate.id === conversationId}
-              disabled={threadActionBusyId !== null}
-              busy={threadActionBusyId === candidate.id}
-              projects={projects}
-              projectName={
-                projects.find(
-                  (project) => project.id === candidate.projectId
-                )?.name ?? null
-              }
-              onSelect={() => selectThread(candidate.id)}
-              onUpdate={async (changes) => Boolean(await updateThreadDetails(candidate, changes))}
-              onDelete={() => deleteThread(candidate)}
-            />
-          )) : (
-            <p>
-              {threadListLoading
-                ? "Loading chats…"
-                : threadQuery.trim()
-                  ? `No chats match this search.`
-                  : threadLibraryView === "archived"
-                    ? "No archived chats."
-                    : threadLibraryView === "projects"
-                      ? selectedProjectId
-                        ? "No active chats in this Project."
-                        : "Choose or create a Project."
-                      : "No saved chats yet."}
-            </p>
-          )}
-          {nextCursor ? (
-            <button
-              type="button"
-              className="assistant-thread-load-more"
-              disabled={threadListLoadingMore}
-              onClick={() => void loadMoreThreads()}
-            >
-              {threadListLoadingMore ? <LoaderCircle className="spin" size={13} /> : <ChevronDown size={13} />}
-              {threadListLoadingMore ? "Loading…" : "Load more chats"}
-            </button>
-          ) : threads.length ? <small>All matching chats are shown.</small> : null}
-        </div>
+        {threadLibraryView === "projects" ? null : renderThreadList()}
       </aside>
 
       <section className="assistant-center" aria-label="Chat">

@@ -358,12 +358,11 @@ export function useAssistantController({
       threadLibraryViewRef.current === "projects" &&
       !currentProjectIsAvailable
     ) {
-      const fallbackProjectId = result.projects[0]?.id ?? null;
-      selectedProjectIdRef.current = fallbackProjectId;
-      setSelectedProjectIdState(fallbackProjectId);
+      selectedProjectIdRef.current = null;
+      setSelectedProjectIdState(null);
       await refreshThreads({
         view: "projects",
-        projectId: fallbackProjectId,
+        projectId: null,
         silent: true
       });
     } else if (
@@ -801,7 +800,7 @@ export function useAssistantController({
         setThreadLibraryFilters(
           threadSearchRef.current,
           "projects",
-          remainingProjects[0]?.id ?? null
+          null
         );
       } else {
         await refreshThreads({ silent: true }).catch(() => null);

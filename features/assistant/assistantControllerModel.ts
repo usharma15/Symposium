@@ -39,6 +39,11 @@ export type AssistantThreadLibraryView =
   | "projects"
   | "archived";
 
+export const nextAssistantProjectSelection = (
+  selectedProjectId: string | null,
+  toggledProjectId: string
+) => selectedProjectId === toggledProjectId ? null : toggledProjectId;
+
 export type AssistantThreadLiveEvent = {
   id?: string;
   cursor?: string;

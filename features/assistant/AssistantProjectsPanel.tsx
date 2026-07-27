@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode
+} from "react";
 import {
   Check,
+  ChevronRight,
   Ellipsis,
   Folder,
   FolderOpen,
@@ -28,7 +34,8 @@ export function AssistantProjectsPanel({
   onSelect,
   onCreate,
   onRename,
-  onDelete
+  onDelete,
+  expandedContent
 }: {
   projects: AssistantProjectContract[];
   selectedProjectId: string | null;
@@ -41,6 +48,7 @@ export function AssistantProjectsPanel({
     name: string
   ) => Promise<boolean>;
   onDelete: (project: AssistantProjectContract) => Promise<boolean>;
+  expandedContent: ReactNode;
 }) {
   const [creating, setCreating] = useState(false);
   const [mode, setMode] = useState<ProjectMode>(null);
@@ -161,54 +169,65 @@ export function AssistantProjectsPanel({
       <div className="assistant-project-list">
         {projects.length ? projects.map((project) => (
           <div
-            className={`assistant-project-item${
+            className={`assistant-project-group${
               project.id === selectedProjectId ? " active" : ""
             }`}
             key={project.id}
           >
-            <button
-              type="button"
-              className="assistant-project-select"
-              aria-current={
-                project.id === selectedProjectId ? "true" : undefined
-              }
-              onClick={() => {
-                setMode(null);
-                onSelect(project.id);
-              }}
-            >
-              <Folder size={13} />
-              <span>
-                <strong>{project.name}</strong>
-                <small>
-                  {project.activeThreadCount} active chat
-                  {project.activeThreadCount === 1 ? "" : "s"}
-                </small>
-              </span>
-            </button>
-            <button
-              type="button"
-              className="assistant-project-more"
-              aria-label={`Manage Project ${project.name}`}
-              aria-haspopup="menu"
-              aria-expanded={mode?.projectId === project.id}
-              disabled={disabled}
-              onClick={() => {
-                setCreating(false);
-                setName("");
-                setMode((current) =>
-                  current?.projectId === project.id
-                    ? null
-                    : { kind: "menu", projectId: project.id }
-                );
-              }}
-            >
-              {busyId === project.id ? (
-                <LoaderCircle className="spin" size={13} />
-              ) : (
-                <Ellipsis size={14} />
-              )}
-            </button>
+            <div className="assistant-project-item">
+              <button
+                type="button"
+                className="assistant-project-select"
+                aria-expanded={project.id === selectedProjectId}
+                aria-controls={
+                  project.id === selectedProjectId
+                    ? `assistant-project-chats-${project.id}`
+                    : undefined
+                }
+                onClick={() => {
+                  setMode(null);
+                  onSelect(project.id);
+                }}
+              >
+                <ChevronRight
+                  className={
+                    project.id === selectedProjectId ? "expanded" : undefined
+                  }
+                  size={13}
+                />
+                <Folder size={13} />
+                <span>
+                  <strong>{project.name}</strong>
+                  <small>
+                    {project.activeThreadCount} active chat
+                    {project.activeThreadCount === 1 ? "" : "s"}
+                  </small>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="assistant-project-more"
+                aria-label={`Manage Project ${project.name}`}
+                aria-haspopup="menu"
+                aria-expanded={mode?.projectId === project.id}
+                disabled={disabled}
+                onClick={() => {
+                  setCreating(false);
+                  setName("");
+                  setMode((current) =>
+                    current?.projectId === project.id
+                      ? null
+                      : { kind: "menu", projectId: project.id }
+                  );
+                }}
+              >
+                {busyId === project.id ? (
+                  <LoaderCircle className="spin" size={13} />
+                ) : (
+                  <Ellipsis size={14} />
+                )}
+              </button>
+            </div>
             {mode?.projectId === project.id ? (
               <div
                 className={`assistant-project-popover ${mode.kind}`}
@@ -319,6 +338,15 @@ export function AssistantProjectsPanel({
                     </span>
                   </>
                 )}
+              </div>
+            ) : null}
+            {project.id === selectedProjectId ? (
+              <div
+                className="assistant-project-chats"
+                id={`assistant-project-chats-${project.id}`}
+                aria-label={`${project.name} active chats`}
+              >
+                {expandedContent}
               </div>
             ) : null}
           </div>

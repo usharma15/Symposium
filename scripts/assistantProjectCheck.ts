@@ -11,10 +11,21 @@ import {
   deleteAssistantProjectInputSchema,
   updateAssistantProjectInputSchema
 } from "@/packages/contracts/src";
+import { nextAssistantProjectSelection } from "@/features/assistant/assistantControllerModel";
 
 const projectId = "41b805db-3ed3-4a2a-a20d-6b75b52166db";
 const conversationId = "bec08981-7b08-41c8-a045-0b671d8b1320";
 const now = "2026-07-26T20:00:00.000Z";
+
+assert.equal(nextAssistantProjectSelection(null, projectId), projectId);
+assert.equal(nextAssistantProjectSelection(projectId, projectId), null);
+assert.equal(
+  nextAssistantProjectSelection(
+    projectId,
+    "7a5bb3b8-d1dd-4d22-a9c5-d1908e346950"
+  ),
+  "7a5bb3b8-d1dd-4d22-a9c5-d1908e346950"
+);
 
 assert.deepEqual(
   createAssistantProjectInputSchema.parse({ name: "  Quantum methods  " }),
@@ -214,6 +225,19 @@ assert.match(experience, />\s*All\s*</);
 assert.match(experience, />\s*Projects\s*</);
 assert.match(experience, /aria-label="Archived chats"/);
 assert.match(experience, /<Archive size=\{14\} \/>/);
+assert.match(
+  experience,
+  /nextAssistantProjectSelection\(selectedProjectId, projectId\)/
+);
+assert.match(
+  experience,
+  /expandedContent=\{renderThreadList\(true\)\}/
+);
+assert.match(
+  experience,
+  /threadLibraryView === "projects" \? null : renderThreadList\(\)/
+);
+assert.doesNotMatch(experience, /assistant-project-thread-heading/);
 
 const projectPanel = readFileSync(
   "features/assistant/AssistantProjectsPanel.tsx",
@@ -232,6 +256,37 @@ assert.match(
   /mode\.kind === "delete"[\s\S]*\? "alertdialog"/
 );
 assert.match(projectPanel, /aria-label="Create a Project"/);
+assert.match(projectPanel, /<ChevronRight/);
+assert.match(
+  projectPanel,
+  /aria-expanded=\{project\.id === selectedProjectId\}/
+);
+assert.match(
+  projectPanel,
+  /project\.id === selectedProjectId[\s\S]*assistant-project-chats[\s\S]*expandedContent/
+);
+
+const assistantStyles = readFileSync("styles/92-ai-tablet.css", "utf8");
+const projectsPanelStyleStart = assistantStyles.indexOf(
+  ".assistant-projects-panel {"
+);
+const projectsPanelStyles = assistantStyles.slice(
+  projectsPanelStyleStart,
+  assistantStyles.indexOf(".assistant-thread-list {", projectsPanelStyleStart)
+);
+assert.match(
+  projectsPanelStyles,
+  /\.assistant-projects-panel \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;/
+);
+assert.match(
+  projectsPanelStyles,
+  /\.assistant-project-list \{[\s\S]*overflow-y: auto;/
+);
+assert.match(
+  projectsPanelStyles,
+  /\.assistant-thread-list\.assistant-project-thread-list \{[\s\S]*overflow: visible;/
+);
+assert.doesNotMatch(projectsPanelStyles, /max-height:/);
 
 const controller = readFileSync(
   "features/assistant/useAssistantController.ts",
@@ -240,6 +295,10 @@ const controller = readFileSync(
 assert.match(controller, /subjectType: "thread" \| "project"/);
 assert.match(controller, /refreshProjects/);
 assert.match(controller, /projectId: submissionProjectId/);
+assert.match(
+  controller,
+  /threadLibraryViewRef\.current === "projects"[\s\S]*selectedProjectIdRef\.current = null;[\s\S]*projectId: null/
+);
 assert.doesNotMatch(
   controller,
   /(?:prompt|context|source|instruction|memory)[A-Za-z]*\s*[:=][^\n]*project/i
