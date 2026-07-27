@@ -122,6 +122,13 @@ const contractAndIntentChecks = () => {
   assert.equal(
     assistantActionProposalFromDraft(
       draft,
+      "QA acceptance for release b10596d: Create a private Office Paper draft."
+    )?.tool,
+    "office.post.create_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
       "Summarize this source. It says: create a private Paper draft."
     ),
     undefined

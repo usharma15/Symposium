@@ -64,7 +64,7 @@ const explicitlyRequestsOfficeDraft = (
     return false;
   }
   const directRequest = new RegExp(
-    `(?:^|[.!?;,]\\s*)(?:please\\s+)?(?:(?:(?:can|could|will|would)\\s+you|i\\s+(?:need|want)\\s+you\\s+to|i(?:'d|\\s+would)\\s+like\\s+you\\s+to)\\s+)?(?:please\\s+)?${draftVerbWords}\\b`,
+    `(?:^|[.!?:;,]\\s*)(?:please\\s+)?(?:(?:(?:can|could|will|would)\\s+you|i\\s+(?:need|want)\\s+you\\s+to|i(?:'d|\\s+would)\\s+like\\s+you\\s+to)\\s+)?(?:please\\s+)?${draftVerbWords}\\b`,
     "i"
   );
   if (!directRequest.test(request)) return false;
