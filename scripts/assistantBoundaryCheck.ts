@@ -566,9 +566,10 @@ const resolvedActionFollowupInput = assistantRenderedInput({
   intent: "answer",
   resolvedActionRequest: "Now can you make a post about the Agarthan conspiracy?"
 });
-assert.match(resolvedActionFollowupInput, /RESOLVED ACTION FOLLOW-UP/);
+assert.match(resolvedActionFollowupInput, /RESOLVED ACTION CONTEXT/);
 assert.match(resolvedActionFollowupInput, /reviewable private Office draft proposal only/);
 assert.match(resolvedActionFollowupInput, /post publicly/);
+assert.match(resolvedActionFollowupInput, /latest conversational follow-up/);
 assert.equal(conservativeInputTokenCeiling("abc"), 3);
 assert.equal(reserveCostMicros("gpt-5.6-terra", "a", 700), 10_504);
 assert.equal(actualCostMicros("gpt-5.6-terra", 1000, 100), 4_625);

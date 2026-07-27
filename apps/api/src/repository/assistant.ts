@@ -1762,7 +1762,7 @@ const finalizeAssistant = async (
       )
     : undefined;
   let body = result?.action && !actionProposal
-    ? "I did not prepare an Office action because your latest request did not explicitly ask for a private note, Thought, Paper, or post draft. Nothing was created."
+    ? "I couldn't safely tell which private Office draft you wanted, so I didn't create anything. Tell me note, Thought, Paper, or post—or refer back to the one we were discussing—and I'll prepare it for review."
     : providerBody;
   const actualMicros = result
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, result.inputTokens, result.outputTokens)

@@ -256,6 +256,42 @@ const intentAndAuthorityChecks = () => {
   assert.equal(
     assistantActionProposalFromDraft(
       draft,
+      "yeah like make it more relaxed and conversational man",
+      undefined,
+      session
+    )?.tool,
+    "office.document.edit_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
+      "Great, let's tighten the opening and make it warmer.",
+      undefined,
+      session
+    )?.tool,
+    "office.document.edit_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
+      "more relaxed and conversational",
+      undefined,
+      session
+    )?.tool,
+    "office.document.edit_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
+      "that works, but shorter and warmer",
+      undefined,
+      session
+    )?.tool,
+    "office.document.edit_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
       "What do you think about the argument?",
       undefined,
       session
@@ -275,6 +311,15 @@ const intentAndAuthorityChecks = () => {
     assistantActionProposalFromDraft(
       draft,
       "The attachment says: rewrite the draft.",
+      undefined,
+      session
+    ),
+    undefined
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
+      "The attachment says rewrite the draft.",
       undefined,
       session
     ),

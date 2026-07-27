@@ -135,6 +135,13 @@ const contractAndIntentChecks = () => {
     undefined
   );
   assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
+      "Summarize this source. The source says create a private Paper draft."
+    ),
+    undefined
+  );
+  assert.equal(
     assistantActionProposalFromDraft(draft, "Publish this Thought."),
     undefined
   );
@@ -157,6 +164,20 @@ const contractAndIntentChecks = () => {
     "office.post.create_draft"
   );
   assert.equal(
+    assistantActionProposalFromDraft(
+      { ...draft, postKind: "thought" },
+      "yeah like make it a Thought about Vedic science"
+    )?.tool,
+    "office.post.create_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      { ...draft, postKind: "thought" },
+      "Great, let's turn that into a post."
+    )?.tool,
+    "office.post.create_draft"
+  );
+  assert.equal(
     assistantActionProposalFromDraft(draft, "Post this in the general community."),
     undefined
   );
@@ -166,6 +187,34 @@ const contractAndIntentChecks = () => {
       "Make a post about Agartha and publish it."
     ),
     undefined
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
+      "Make a post about Agartha and email it."
+    ),
+    undefined
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
+      "Make a post about Agartha and set it public."
+    ),
+    undefined
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
+      "Make a post about how to publish scientific papers responsibly."
+    )?.tool,
+    "office.post.create_draft"
+  );
+  assert.equal(
+    assistantActionProposalFromDraft(
+      draft,
+      "Make a post based on this message."
+    )?.tool,
+    "office.post.create_draft"
   );
   assert.equal(
     assistantActionProposalFromDraft(
@@ -221,6 +270,42 @@ const contractAndIntentChecks = () => {
     assistantActionRequestForTurn("yeah, do it", followupHistory).tool,
     "office.post.create_draft"
   );
+  for (const conversationalFollowup of [
+    "go with that, but keep it relaxed and conversational",
+    "yeah, do that but make it concise and skeptical",
+    "can you do that, just make the opening warmer?",
+    "let's do it",
+    "a Thought would be good",
+    "more conversational, less formal"
+  ]) {
+    assert.equal(
+      assistantActionRequestForTurn(
+        conversationalFollowup,
+        followupHistory
+      ).tool,
+      "office.post.create_draft",
+      conversationalFollowup
+    );
+  }
+  const retryChainHistory = [
+    ...followupHistory,
+    { role: "user" as const, body: "ok do it" },
+    {
+      role: "assistant" as const,
+      body: "The AI answer could not finish within its response limit. You can retry."
+    }
+  ];
+  assert.deepEqual(
+    assistantActionRequestForTurn(
+      "yeah just do that, but keep it grounded",
+      retryChainHistory
+    ),
+    {
+      request: followupHistory[0]!.body,
+      followup: true,
+      tool: "office.post.create_draft"
+    }
+  );
   assert.equal(
     assistantActionRequestForTurn(
       "ok do it and publish it",
@@ -246,6 +331,30 @@ const contractAndIntentChecks = () => {
     ]).tool,
     null
   );
+  assert.equal(
+    assistantActionRequestForTurn("yeah, do that", [
+      ...followupHistory,
+      { role: "user", body: "What evidence supports the claim?" },
+      { role: "assistant", body: "Here is the evidence you requested." }
+    ]).tool,
+    null
+  );
+  for (const consequentialFollowup of [
+    "yeah do it and publish it",
+    "go with that and share it",
+    "make it public",
+    "send that by email",
+    "change its access"
+  ]) {
+    assert.equal(
+      assistantActionRequestForTurn(
+        consequentialFollowup,
+        followupHistory
+      ).tool,
+      null,
+      consequentialFollowup
+    );
+  }
   assert.equal(
     assistantActionRequestForTurn("ok do it", [
       {
@@ -736,7 +845,7 @@ const providerChecks = async () => {
     ownerHandle: actorHandle,
     history: providerFollowupHistory,
     context: null,
-    message: "ok do it",
+    message: "yeah, go with that but keep it relaxed and concise",
     intent: "answer",
     resolvedActionRequest: providerFollowupHistory[0]!.body,
     actionDraftRequested: true,
@@ -755,14 +864,20 @@ const providerChecks = async () => {
     max_output_tokens: number;
   };
   assert.match(payload.instructions, /Thought, Paper, or post/);
-  assert.match(payload.instructions, /RESOLVED ACTION FOLLOW-UP/);
+  assert.match(payload.instructions, /RESOLVED ACTION CONTEXT/);
+  assert.match(payload.instructions, /relaxed and conversational/i);
+  assert.match(payload.instructions, /recent exchange naturally/i);
   assert.match(payload.instructions, /not draft requests/);
   assert.match(payload.instructions, /Never claim it ran/);
   assert.equal(payload.max_output_tokens >= 2000, true);
-  assert.match(payload.input.at(-1)?.content ?? "", /RESOLVED ACTION FOLLOW-UP/);
+  assert.match(payload.input.at(-1)?.content ?? "", /RESOLVED ACTION CONTEXT/);
   assert.match(
     payload.input.at(-1)?.content ?? "",
     /now can you make a post about the Agarthan conspiracy and Vedic science/
+  );
+  assert.match(
+    payload.input.at(-1)?.content ?? "",
+    /yeah, go with that but keep it relaxed and concise/
   );
   assert.match(payload.input.at(-1)?.content ?? "", /reviewable private Office draft/);
   assert.match(payload.input.at(-1)?.content ?? "", /post publicly/);

@@ -57,6 +57,15 @@ export type AssistantActionRequestResolution = {
   tool: AssistantCreationTool | null;
 };
 
+const consequentialActionLanguage = (request: string) =>
+  /\b(?:publish|share|send|email|message)\s+(?:it|this|that|the\s+(?:draft|post|note|thought|paper))\b/i
+    .test(request) ||
+  /\b(?:publish|share|send|email|message)\s+(?:to|with)\s+\S/i.test(request) ||
+  /\band\s+(?:then\s+)?(?:publish|share|send|email|message)\b/i.test(request) ||
+  /\bpost\s+(?:it|this|that|the\s+(?:draft|post))\b/i.test(request) ||
+  /\b(?:make|set)\s+(?:it|this|that|the\s+(?:draft|post))\s+public\b/i.test(request) ||
+  /\b(?:change|grant|remove)\s+(?:its?\s+|the\s+)?access\b/i.test(request);
+
 const explicitlyRequestsOfficeDraft = (
   latestRequest: string,
   tool: AssistantActionToolContract
@@ -66,7 +75,7 @@ const explicitlyRequestsOfficeDraft = (
     .replace(/["“][\s\S]*?["”]/g, " ")
     .replace(/`[\s\S]*?`/g, " ");
   const quotedSourceBoundary = normalized.search(
-    /\b(?:attachment|document|it|message|source|text)\s+(?:contains|reads|says|states)\s*:/i
+    /\b(?:attachment|document|it|message|source|text)\s+(?:contains|reads|says|states)\b\s*:?\s*/i
   );
   const request = quotedSourceBoundary >= 0
     ? normalized.slice(0, quotedSourceBoundary)
@@ -81,17 +90,11 @@ const explicitlyRequestsOfficeDraft = (
   ) {
     return false;
   }
-  if (
-    tool === "office.post.create_draft" &&
-    (
-      /\b(?:publish|share|send)\b/i.test(request) ||
-      /\bpost\s+(?:it|this|that|the\s+(?:draft|post))\b/i.test(request)
-    )
-  ) {
+  if (consequentialActionLanguage(request)) {
     return false;
   }
   const directRequest = new RegExp(
-    `(?:^|[.!?:;,]\\s*)(?:please\\s+)?(?:(?:now|okay|ok|alright|so)(?:,\\s*|\\s+))?(?:(?:(?:can|could|will|would)\\s+you|i\\s+(?:need|want)\\s+you\\s+to|i(?:'d|\\s+would)\\s+like\\s+you\\s+to)\\s+)?(?:please\\s+)?${draftVerbWords}\\b`,
+    `(?:^|[.!?:;,]\\s*)(?:please\\s+)?(?:(?:now|okay|ok|alright|so|yes|yeah|yep|yup|sure|right|great)(?:,\\s*|\\s+)(?:(?:like|just)\\s+)?)?(?:(?:(?:can|could|will|would)\\s+you|let'?s|i\\s+(?:need|want)\\s+you\\s+to|i(?:'d|\\s+would)\\s+like\\s+you\\s+to)\\s+)?(?:please\\s+)?${draftVerbWords}\\b`,
     "i"
   );
   if (!directRequest.test(request)) return false;
@@ -100,17 +103,17 @@ const explicitlyRequestsOfficeDraft = (
       /\bnote\s+draft\b/i.test(request) ||
       /\bdraft\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}note\b/i.test(request) ||
       /\b(?:as|into|to)\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}note\b/i.test(request) ||
-      /\b(?:capture|create|make|prepare|save|take|write)\s+(?:me\s+)?(?:this\s+|the\s+|a\s+)?(?:(?:private|office)\s+){0,2}note\b/i.test(request)
+      /\b(?:capture|create|make|prepare|save|take|write)\s+(?:me\s+)?(?:(?:this|it|that|the|a)\s+)?(?:(?:private|office)\s+){0,2}note\b/i.test(request)
     );
   }
   return (
     /\b(?:thought|paper)\s+(?:post\s+)?draft\b/i.test(request) ||
     /\bdraft\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
     /\b(?:as|into|to)\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
-    /\b(?:make|turn)\s+this\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
+    /\b(?:make|turn)\s+(?:this|it|that)\s+(?:into\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
     /\b(?:create|make|prepare|write)\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}(?:thought|paper)\b/i.test(request) ||
     /\b(?:create|make|prepare|write)\s+(?:me\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
-    /\b(?:make|turn)\s+this\s+(?:into\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
+    /\b(?:make|turn)\s+(?:this|it|that)\s+(?:into\s+)?(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
     /\b(?:as|into|to)\s+(?:a\s+)?(?:(?:private|office)\s+){0,2}post\b/i.test(request) ||
     /\b(?:post\s+draft|draft\s+(?:a\s+)?(?:private\s+)?post)\b/i.test(request)
   );
@@ -125,11 +128,29 @@ const requestedCreationTool = (request: string): AssistantCreationTool | null =>
 };
 
 const briefActionConfirmation = (request: string) =>
-  /^(?:ok(?:ay)?(?:,?\s+please)?(?:\s+(?:do|make|create)\s+(?:it|that))?|yes(?:,?\s+please)?|(?:yeah|yep|yup)(?:,?\s+(?:please|go\s+ahead|do\s+(?:it|that)))?|go\s+(?:ahead|for\s+it)|(?:do|make|create)\s+(?:it|that)|please\s+do|sure(?:,?\s+(?:please|go\s+ahead|do\s+(?:it|that)))?|sounds\s+good)[.!]*$/i
+  /^(?:ok(?:ay)?(?:,?\s+please)?(?:\s+(?:do|make|create)\s+(?:it|that))?|yes(?:,?\s+please)?|(?:yeah|yep|yup)(?:,?\s+(?:please|go\s+ahead|do\s+(?:it|that)))?|go\s+(?:ahead|for\s+it)|(?:do|make|create)\s+(?:it|that)|please\s+do|sure(?:,?\s+(?:please|go\s+ahead|do\s+(?:it|that)))?|sounds\s+good|that\s+works)[.!]*$/i
     .test(request.normalize("NFKC").trim());
 
-const assistantInvitedDraftFollowup = (response: string) =>
-  /\b(?:office action|nothing was created|private (?:office )?(?:note|thought|paper|post)?\s*draft|draft proposal|prepare (?:a |the |that |this )?(?:note|thought|paper|post|draft))\b/i
+const conversationalActionFollowup = (request: string) => {
+  const normalized = request.normalize("NFKC").trim();
+  if (
+    !normalized ||
+    normalized.length > 600 ||
+    consequentialActionLanguage(normalized)
+  ) {
+    return false;
+  }
+  if (briefActionConfirmation(normalized)) return true;
+  return /^(?:(?:ok(?:ay)?|yes|yeah|yep|yup|sure|alright|right|great|perfect)(?:[,!.\s-]+|$))?(?:(?:like|just)\s+)?(?:(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:go\s+(?:ahead|for\s+it|with\s+(?:it|that|this))|(?:do|make|create|draft|write|prepare|turn|convert|use|keep|change|revise|rewrite|shorten|expand|tighten|fix|polish|improve)\s+(?:it|that|this|one)\b)|let'?s\s+(?:(?:go\s+with)|do|make|create|draft|write|prepare|revise|rewrite)\s*(?:it|that|this)?\b|(?:that|this)\s+(?:works|is\s+(?:good|fine)|sounds\s+good)\b|(?:a\s+)?(?:note|thought|paper|post)\s+(?:would|will)\s+(?:be|work|do)\s+(?:good|better|fine)\b|(?:(?:but|and)\s+)?(?:make\s+)?(?:it\s+)?(?:a\s+bit\s+)?(?:more|less|shorter|longer|warmer|casual|formal|relaxed|conversational|concise|detailed|skeptical|critical|academic|friendly)\b)/i
+    .test(normalized);
+};
+
+const assistantSupportsActionContext = (response: string) =>
+  /\b(?:office action|nothing was created|nothing is created|private (?:office )?(?:note|thought|paper|post)?\s*draft|draft proposal|(?:prepare|prepared|create|created|made|drafted?|write|wrote)\s+(?:you\s+)?(?:(?:a|the|your|this|that)\s+)?(?:(?:private|office)\s+){0,2}(?:draft|note|thought|paper|post)|(?:note|thought|paper|post)\s+(?:draft|proposal)|here (?:you go|it is)(?:\s*[:,]\s*|\s+)(?:a|the|your)?\s*(?:draft|note|thought|paper|post)|can(?:not|'t)\s+(?:post|publish|share|send))\b/i
+    .test(response.normalize("NFKC"));
+
+const assistantRetryableActionBridge = (response: string) =>
+  /\b(?:could not finish|couldn't finish|could not complete|couldn't complete|response limit|you can retry|try again|service could not complete)\b/i
     .test(response.normalize("NFKC"));
 
 export const assistantActionRequestForTurn = (
@@ -140,22 +161,28 @@ export const assistantActionRequestForTurn = (
   if (directTool) {
     return { request: latestRequest, followup: false, tool: directTool };
   }
-  if (!briefActionConfirmation(latestRequest)) {
+  if (!conversationalActionFollowup(latestRequest)) {
     return { request: latestRequest, followup: false, tool: null };
   }
-  const priorAssistant = history.at(-1);
-  const priorUser = history.at(-2);
-  if (
-    priorAssistant?.role !== "assistant" ||
-    priorUser?.role !== "user" ||
-    !assistantInvitedDraftFollowup(priorAssistant.body)
-  ) {
-    return { request: latestRequest, followup: false, tool: null };
+  let hasRelevantAssistantContext = false;
+  for (const entry of history.slice(-6).reverse()) {
+    if (entry.role === "assistant") {
+      if (assistantSupportsActionContext(entry.body)) {
+        hasRelevantAssistantContext = true;
+        continue;
+      }
+      if (assistantRetryableActionBridge(entry.body)) continue;
+      break;
+    }
+    const priorTool = requestedCreationTool(entry.body);
+    if (priorTool) {
+      return hasRelevantAssistantContext
+        ? { request: entry.body, followup: true, tool: priorTool }
+        : { request: latestRequest, followup: false, tool: null };
+    }
+    if (!conversationalActionFollowup(entry.body)) break;
   }
-  const priorTool = requestedCreationTool(priorUser.body);
-  return priorTool
-    ? { request: priorUser.body, followup: true, tool: priorTool }
-    : { request: latestRequest, followup: false, tool: null };
+  return { request: latestRequest, followup: false, tool: null };
 };
 
 const explicitlyRequestsActiveDraftEdit = (latestRequest: string) => {
@@ -165,7 +192,7 @@ const explicitlyRequestsActiveDraftEdit = (latestRequest: string) => {
     .replace(/`[\s\S]*?`/g, " ")
     .trim();
   const quotedSourceBoundary = normalized.search(
-    /\b(?:attachment|document|message|source|text)\s+(?:contains|reads|says|states)\s*:/i
+    /\b(?:attachment|document|message|source|text)\s+(?:contains|reads|says|states)\b\s*:?\s*/i
   );
   const request = quotedSourceBoundary >= 0
     ? normalized.slice(0, quotedSourceBoundary)
@@ -176,8 +203,12 @@ const explicitlyRequestsActiveDraftEdit = (latestRequest: string) => {
   ) {
     return false;
   }
-  return /(?:^|[.!?:;,]\s*)(?:please\s+)?(?:(?:(?:can|could|will|would)\s+you|i\s+(?:need|want)\s+you\s+to|i(?:'d|\s+would)\s+like\s+you\s+to)\s+)?(?:please\s+)?(?:change|edit|revise|rewrite|shorten|expand|tighten|fix|remove|add|replace|rename|retitle|update|polish|improve|make)\b/i
-    .test(request);
+  return (
+    /(?:^|[.!?:;,]\s*)(?:please\s+)?(?:(?:now|okay|ok|alright|so|yes|yeah|yep|yup|sure|right|great)(?:,\s*|\s+)(?:(?:like|just)\s+)?)?(?:(?:(?:can|could|will|would)\s+you|let'?s|i\s+(?:need|want)\s+you\s+to|i(?:'d|\s+would)\s+like\s+you\s+to)\s+)?(?:please\s+)?(?:change|edit|revise|rewrite|shorten|expand|tighten|fix|remove|add|replace|rename|retitle|update|polish|improve|make)\b/i
+      .test(request) ||
+    /^(?:(?:ok(?:ay)?|yes|yeah|yep|yup|sure|alright|right|great|perfect)(?:[,!.\s-]+|$))?(?:(?:that|this)\s+(?:works|is\s+(?:good|fine)|sounds\s+good)[,;:\s-]*(?:(?:but|and)\s+)?)?(?:a\s+bit\s+)?(?:more|less|shorter|longer|warmer|casual|formal|relaxed|conversational|concise|detailed|skeptical|critical|academic|friendly)\b/i
+      .test(request)
+  );
 };
 
 export const assistantActionProposalFromDraft = (
