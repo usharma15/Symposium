@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   Archive,
@@ -8,6 +8,7 @@ import {
   BrainCircuit,
   ChevronDown,
   File,
+  FilePenLine,
   History,
   Link2,
   LoaderCircle,
@@ -20,11 +21,15 @@ import {
   Send,
   X
 } from "lucide-react";
-import type { InquiryAttachmentContract } from "@/packages/contracts/src";
+import type {
+  AssistantDraftEditModeContract,
+  InquiryAttachmentContract
+} from "@/packages/contracts/src";
 import type { AssistantController } from "@/features/assistant/useAssistantController";
 import { nextAssistantProjectSelection } from "@/features/assistant/assistantControllerModel";
 import { assistantThreadActivityLabel } from "@/features/assistant/assistantThreadOrdering";
 import { AssistantContextDock } from "@/features/assistant/AssistantContextDock";
+import { AssistantDraftStudio } from "@/features/assistant/AssistantDraftStudio";
 import { AssistantMessageCard } from "@/features/assistant/AssistantMessageCard";
 import { AssistantProjectsPanel } from "@/features/assistant/AssistantProjectsPanel";
 import { AssistantThreadHistoryItem } from "@/features/assistant/AssistantThreadHistoryItem";
@@ -86,6 +91,7 @@ export function AssistantExperience({
     providerEnabled,
     providerConfigured,
     setDraft,
+    setError,
     uploadAssistantFiles,
     removePendingAttachment,
     openThread,
@@ -108,6 +114,14 @@ export function AssistantExperience({
   const [contextDockOpen, setContextDockOpen] = useState(mode === "workspace");
   const [threadQuery, setThreadQuery] = useState(threadSearch);
   const [mobilePane, setMobilePane] = useState<"threads" | "chat" | "context">("chat");
+  const [draftEditMode, setDraftEditMode] =
+    useState<AssistantDraftEditModeContract>("review");
+  const [rightPanel, setRightPanel] = useState<"draft" | "context">("context");
+  const [compactDraftOpen, setCompactDraftOpen] = useState(false);
+  const [draftStudioState, setDraftStudioState] = useState<{
+    revision: number | null;
+    pending: boolean;
+  }>({ revision: null, pending: false });
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -117,6 +131,29 @@ export function AssistantExperience({
     id: string;
     attachments: InquiryAttachmentContract[];
   } | null>(null);
+  const activeDraftReceipt = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const receipt = messages[index]?.actionReceipt;
+      if (
+        receipt?.tool === "office.note.create_draft" ||
+        receipt?.tool === "office.post.create_draft"
+      ) {
+        return receipt;
+      }
+    }
+    return null;
+  }, [messages]);
+  const previousDraftDocumentIdRef = useRef<string | null>(null);
+  const handleDraftStudioState = useCallback((state: {
+    revision: number | null;
+    pending: boolean;
+  }) => {
+    setDraftStudioState((current) =>
+      current.revision === state.revision && current.pending === state.pending
+        ? current
+        : state
+    );
+  }, []);
 
   const openAttachmentPreview = (
     attachments: InquiryAttachmentContract[],
@@ -146,6 +183,26 @@ export function AssistantExperience({
       setThreadLibraryFilters("", "all");
     }
   }, [mode, setThreadLibraryFilters, threadLibraryView, threadSearch]);
+
+  useEffect(() => {
+    const documentId = activeDraftReceipt?.documentId ?? null;
+    if (!documentId) {
+      previousDraftDocumentIdRef.current = null;
+      setCompactDraftOpen(false);
+      setRightPanel("context");
+      setDraftStudioState({ revision: null, pending: false });
+      setDraftEditMode("review");
+      return;
+    }
+    if (previousDraftDocumentIdRef.current === documentId) return;
+    previousDraftDocumentIdRef.current = documentId;
+    setRightPanel("draft");
+    setCompactDraftOpen(mode === "compact");
+    setDraftEditMode("review");
+    if (mode === "workspace" && window.innerWidth <= 1100) {
+      setMobilePane("context");
+    }
+  }, [activeDraftReceipt?.documentId, mode]);
 
   useEffect(() => {
     if (threadQuery === threadSearch) return;
@@ -192,7 +249,20 @@ export function AssistantExperience({
 
   const submitForm = (event?: FormEvent) => {
     event?.preventDefault();
-    void submit();
+    if (activeDraftReceipt && draftStudioState.pending) {
+      setError("Wait for the private draft to finish saving before asking the AI to work on its next revision.");
+      return;
+    }
+    void submit({
+      draftSession:
+        activeDraftReceipt && draftStudioState.revision
+          ? {
+              documentId: activeDraftReceipt.documentId,
+              expectedRevision: draftStudioState.revision,
+              mode: draftEditMode
+            }
+          : null
+    });
   };
 
   const renderThreadList = (inlineProject = false) => (
@@ -270,6 +340,18 @@ export function AssistantExperience({
             <span><BrainCircuit size={16} />AI Tablet</span>
           </div>
           <div className="assistant-header-actions">
+            {activeDraftReceipt ? (
+              <button
+                type="button"
+                className={compactDraftOpen ? "active" : ""}
+                aria-pressed={compactDraftOpen}
+                title={compactDraftOpen ? "Return to chat" : "Open Draft Studio"}
+                onClick={() => setCompactDraftOpen((current) => !current)}
+              >
+                <FilePenLine size={15} />
+                <span>{compactDraftOpen ? "Chat" : "Draft"}</span>
+              </button>
+            ) : null}
             <button type="button" title="Expand to AI Workspace" onClick={onExpand}>
               <Maximize2 size={16} /><span>Expand</span>
             </button>
@@ -287,7 +369,28 @@ export function AssistantExperience({
         <button type="button" aria-pressed={mobilePane === "chat"} className={mobilePane === "chat" ? "active" : ""} onClick={() => setMobilePane("chat")}>
           <BrainCircuit size={14} />Chat
         </button>
-        <button type="button" aria-pressed={mobilePane === "context"} className={mobilePane === "context" ? "active" : ""} onClick={() => setMobilePane("context")}>
+        {activeDraftReceipt ? (
+          <button
+            type="button"
+            aria-pressed={mobilePane === "context" && rightPanel === "draft"}
+            className={mobilePane === "context" && rightPanel === "draft" ? "active" : ""}
+            onClick={() => {
+              setRightPanel("draft");
+              setMobilePane("context");
+            }}
+          >
+            <FilePenLine size={14} />Draft
+          </button>
+        ) : null}
+        <button
+          type="button"
+          aria-pressed={mobilePane === "context" && rightPanel === "context"}
+          className={mobilePane === "context" && rightPanel === "context" ? "active" : ""}
+          onClick={() => {
+            setRightPanel("context");
+            setMobilePane("context");
+          }}
+        >
           <BookOpen size={14} />Context
         </button>
       </nav>
@@ -617,21 +720,63 @@ export function AssistantExperience({
         </form>
       </section>
 
+      {mode === "compact" && activeDraftReceipt && compactDraftOpen ? (
+        <aside className="assistant-draft-overlay" aria-label="Draft Studio panel">
+          <AssistantDraftStudio
+            actorHandle={actorHandle}
+            receipt={activeDraftReceipt}
+            mode={draftEditMode}
+            onModeChange={setDraftEditMode}
+            onStateChange={handleDraftStudioState}
+          />
+        </aside>
+      ) : null}
+
       {mode === "workspace" ? (
         <aside className="assistant-right" aria-label="Thread context">
-          <AssistantContextDock
-            context={context}
-            activeContext={activeContext}
-            thread={thread}
-            open={contextDockOpen}
-            busy={busy || contextBusy || Boolean(thread?.archivedAt)}
-            onCollapse={onCollapse}
-            onToggle={() => setContextDockOpen((current) => !current)}
-            onUseCurrentView={useCurrentView}
-            onClearContext={clearContext}
-            onContextChange={(change) => void changeThreadContext(change)}
-            onSourceChange={(source, action) => void changeSavedSource(source, action)}
-          />
+          {activeDraftReceipt ? (
+            <nav className="assistant-right-tabs" aria-label="Assistant side panel">
+              <button
+                type="button"
+                className={rightPanel === "draft" ? "active" : ""}
+                aria-pressed={rightPanel === "draft"}
+                onClick={() => setRightPanel("draft")}
+              >
+                <FilePenLine size={13} />Draft
+              </button>
+              <button
+                type="button"
+                className={rightPanel === "context" ? "active" : ""}
+                aria-pressed={rightPanel === "context"}
+                onClick={() => setRightPanel("context")}
+              >
+                <BookOpen size={13} />Context
+              </button>
+            </nav>
+          ) : null}
+          {activeDraftReceipt && rightPanel === "draft" ? (
+            <AssistantDraftStudio
+              actorHandle={actorHandle}
+              receipt={activeDraftReceipt}
+              mode={draftEditMode}
+              onModeChange={setDraftEditMode}
+              onStateChange={handleDraftStudioState}
+            />
+          ) : (
+            <AssistantContextDock
+              context={context}
+              activeContext={activeContext}
+              thread={thread}
+              open={contextDockOpen}
+              busy={busy || contextBusy || Boolean(thread?.archivedAt)}
+              onCollapse={onCollapse}
+              onToggle={() => setContextDockOpen((current) => !current)}
+              onUseCurrentView={useCurrentView}
+              onClearContext={clearContext}
+              onContextChange={(change) => void changeThreadContext(change)}
+              onSourceChange={(source, action) => void changeSavedSource(source, action)}
+            />
+          )}
         </aside>
       ) : null}
       {attachmentPreview ? (

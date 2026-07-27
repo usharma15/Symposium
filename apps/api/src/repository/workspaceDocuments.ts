@@ -9,6 +9,8 @@ import {
   updateWorkspaceDocumentInputSchema,
   updateWorkspaceNotebookInputSchema,
   workspaceSearchInputSchema,
+  type AssistantDraftEditModeContract,
+  type AssistantDraftEditOperationContract,
   type CreateWorkspaceDocumentInputContract,
   type VersionedDocumentContract,
   type WorkspaceAccessRoleContract,
@@ -25,6 +27,7 @@ import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 import { assertExpectedRevision } from "./workspace";
 import { resolveNativeDocumentCitations } from "../services/nativeCitations";
+import { applyAssistantDraftEditOperations } from "../services/assistantDraftEdits";
 
 type WorkspaceRow = { id: string; name: string; ownerHandle: string };
 type AccessRow = {
@@ -465,6 +468,279 @@ export const createWorkspaceDocument = async (rawInput: unknown, actor: Actor, m
     await completeMutation(client, handle, mutation, created.value);
     return { value: created.value, events: [created.event] };
   });
+};
+
+type AssistantWorkspaceDraftEditInput = {
+  noteId: string;
+  expectedRevision: number;
+  operations: AssistantDraftEditOperationContract[];
+  mode: AssistantDraftEditModeContract;
+  assistantMessageId: string;
+  conversationId: string;
+};
+
+export const applyAssistantWorkspaceDraftEditInTransaction = async (
+  client: PoolClient,
+  input: AssistantWorkspaceDraftEditInput,
+  handle: string
+) => {
+  await lockWorkspaceDocument(client, input.noteId);
+  const access = await findDocumentAccess(client, input.noteId, handle, true);
+  if (!access || access.role !== "owner" || access.ownerHandle !== handle) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Private Assistant draft not found." });
+  }
+  assertExpectedRevision("note", access.revision, input.expectedRevision);
+  const current = await selectDocument(client, input.noteId, handle) as Record<string, any>;
+  if (current.lifecycle !== "draft") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "AI co-editing is limited to private Office drafts."
+    });
+  }
+  const applied = applyAssistantDraftEditOperations(
+    current.document as VersionedDocumentContract,
+    input.operations
+  );
+  const nextTitle = applied.title ?? String(current.title);
+  const citationResolution = await resolveNativeDocumentCitations(
+    client,
+    applied.document,
+    handle,
+    current.document as VersionedDocumentContract
+  );
+  const updated = await client.query<{ revision: number }>(
+    `UPDATE notes SET
+       title = $2,
+       body = $3,
+       content_document = $4,
+       revision = revision + 1,
+       updated_at = now()
+     WHERE id = $1
+       AND revision = $5
+       AND owner_handle = $6
+       AND lifecycle = 'draft'
+       AND visibility = 'private'
+       AND deleted_at IS NULL
+     RETURNING revision`,
+    [
+      input.noteId,
+      nextTitle,
+      applied.body,
+      JSON.stringify(citationResolution.document),
+      input.expectedRevision,
+      handle
+    ]
+  );
+  if (!updated.rowCount) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This draft changed before the AI edit committed."
+    });
+  }
+  const revision = updated.rows[0]!.revision;
+  const attachmentIds = (Array.isArray(current.attachments)
+    ? current.attachments
+    : []).flatMap((attachment: unknown) => (
+      attachment &&
+      typeof attachment === "object" &&
+      typeof (attachment as { id?: unknown }).id === "string"
+        ? [(attachment as { id: string }).id]
+        : []
+    ));
+  const checkpointId = await insertRevision(client, {
+    noteId: input.noteId,
+    revision,
+    editorHandle: handle,
+    title: nextTitle,
+    body: applied.body,
+    document: citationResolution.document,
+    kind: String(current.kind),
+    publicationTarget: String(current.publicationTarget),
+    proposal: current.proposal ?? null,
+    opportunity: current.opportunity ?? null,
+    targetId: typeof current.targetId === "string" ? current.targetId : null,
+    notebookId: typeof current.notebookId === "string" ? current.notebookId : null,
+    attachmentIds,
+    reason: "assistant_edit"
+  });
+  const value = {
+    document: await selectDocument(client, input.noteId, handle),
+    checkpointId,
+    previousRevision: input.expectedRevision,
+    operationCount: applied.operationCount
+  };
+  await stageAuditLog(client, {
+    actorHandle: handle,
+    action: "workspace.document.assistant_edit",
+    subjectType: "note",
+    subjectId: input.noteId,
+    metadata: {
+      assistantMessageId: input.assistantMessageId,
+      conversationId: input.conversationId,
+      previousRevision: input.expectedRevision,
+      revision,
+      operationCount: applied.operationCount,
+      mode: input.mode,
+      citationCount: citationResolution.citationCount,
+      newCitationCount: citationResolution.newCitationCount,
+      publicationTargetChanged: false,
+      attachmentOwnershipChanged: false
+    }
+  });
+  const event = await stageEvent(client, {
+    kind: "note.document.updated",
+    actorHandle: handle,
+    audienceHandles: await documentAudienceHandles(client, input.noteId),
+    subjectType: "note",
+    subjectId: input.noteId,
+    visibility: "private",
+    payload: {
+      noteId: input.noteId,
+      revision,
+      notebookId: current.notebookId ?? null,
+      source: "assistant_edit",
+      assistantMessageId: input.assistantMessageId
+    }
+  });
+  return { value, event };
+};
+
+export const undoAssistantWorkspaceDraftEditInTransaction = async (
+  client: PoolClient,
+  input: {
+    noteId: string;
+    expectedRevision: number;
+    restoreRevision: number;
+    assistantMessageId: string;
+    conversationId: string;
+  },
+  handle: string
+) => {
+  await lockWorkspaceDocument(client, input.noteId);
+  const access = await findDocumentAccess(client, input.noteId, handle, true);
+  if (!access || access.role !== "owner" || access.ownerHandle !== handle) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Private Assistant draft not found." });
+  }
+  assertExpectedRevision("note", access.revision, input.expectedRevision);
+  const current = await selectDocument(client, input.noteId, handle) as Record<string, any>;
+  if (current.lifecycle !== "draft") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Only a private draft can restore an AI edit."
+    });
+  }
+  const snapshot = await client.query<{
+    title: string;
+    body: string;
+    document: VersionedDocumentContract;
+  }>(
+    `SELECT title, body, content_document AS document
+     FROM workspace_note_revisions
+     WHERE note_id = $1 AND revision = $2
+     FOR SHARE`,
+    [input.noteId, input.restoreRevision]
+  );
+  if (!snapshot.rows[0]) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "The previous draft revision is no longer available."
+    });
+  }
+  const restored = snapshot.rows[0]!;
+  const citationResolution = await resolveNativeDocumentCitations(
+    client,
+    restored.document,
+    handle,
+    current.document as VersionedDocumentContract
+  );
+  const updated = await client.query<{ revision: number }>(
+    `UPDATE notes SET
+       title = $2,
+       body = $3,
+       content_document = $4,
+       revision = revision + 1,
+       updated_at = now()
+     WHERE id = $1
+       AND revision = $5
+       AND owner_handle = $6
+       AND lifecycle = 'draft'
+       AND visibility = 'private'
+       AND deleted_at IS NULL
+     RETURNING revision`,
+    [
+      input.noteId,
+      restored.title,
+      restored.body,
+      JSON.stringify(citationResolution.document),
+      input.expectedRevision,
+      handle
+    ]
+  );
+  if (!updated.rowCount) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This draft changed before the AI edit could be undone."
+    });
+  }
+  const revision = updated.rows[0]!.revision;
+  const attachmentIds = (Array.isArray(current.attachments)
+    ? current.attachments
+    : []).flatMap((attachment: unknown) => (
+      attachment &&
+      typeof attachment === "object" &&
+      typeof (attachment as { id?: unknown }).id === "string"
+        ? [(attachment as { id: string }).id]
+        : []
+    ));
+  const checkpointId = await insertRevision(client, {
+    noteId: input.noteId,
+    revision,
+    editorHandle: handle,
+    title: restored.title,
+    body: restored.body,
+    document: citationResolution.document,
+    kind: String(current.kind),
+    publicationTarget: String(current.publicationTarget),
+    proposal: current.proposal ?? null,
+    opportunity: current.opportunity ?? null,
+    targetId: typeof current.targetId === "string" ? current.targetId : null,
+    notebookId: typeof current.notebookId === "string" ? current.notebookId : null,
+    attachmentIds,
+    reason: "assistant_edit_undo"
+  });
+  const value = {
+    document: await selectDocument(client, input.noteId, handle),
+    checkpointId
+  };
+  await stageAuditLog(client, {
+    actorHandle: handle,
+    action: "workspace.document.assistant_edit_undo",
+    subjectType: "note",
+    subjectId: input.noteId,
+    metadata: {
+      assistantMessageId: input.assistantMessageId,
+      conversationId: input.conversationId,
+      restoredRevision: input.restoreRevision,
+      previousRevision: input.expectedRevision,
+      revision
+    }
+  });
+  const event = await stageEvent(client, {
+    kind: "note.document.updated",
+    actorHandle: handle,
+    audienceHandles: await documentAudienceHandles(client, input.noteId),
+    subjectType: "note",
+    subjectId: input.noteId,
+    visibility: "private",
+    payload: {
+      noteId: input.noteId,
+      revision,
+      notebookId: current.notebookId ?? null,
+      source: "assistant_edit_undo",
+      assistantMessageId: input.assistantMessageId
+    }
+  });
+  return { value, event };
 };
 
 export const updateWorkspaceDocument = async (

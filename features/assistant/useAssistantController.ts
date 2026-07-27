@@ -1376,7 +1376,13 @@ export function useAssistantController({
     });
   }, [actorHandle, currentDraftKey, pendingAttachments]);
 
-  const submit = useCallback(async () => {
+  const submit = useCallback(async (options?: {
+    draftSession?: {
+      documentId: string;
+      expectedRevision: number;
+      mode: "review" | "live";
+    } | null;
+  }) => {
     const message = draft.trim() || (pendingAttachments.length === 1
       ? "Review the attached file."
       : "Review the attached files.");
@@ -1439,7 +1445,8 @@ export function useAssistantController({
       message,
       selectedContext,
       projectId: submissionProjectId,
-      attachmentIds: submittedAttachmentIds
+      attachmentIds: submittedAttachmentIds,
+      draftSession: options?.draftSession ?? null
     });
     if (messageRetryRef.current?.fingerprint !== fingerprint) {
       messageRetryRef.current = {
@@ -1474,7 +1481,8 @@ export function useAssistantController({
               ? assistantContextTypeForSurface(selectedContext.surface)
               : "general",
             contextId: selectedContext?.entityId,
-            context: selectedContext
+            context: selectedContext,
+            draftSession: options?.draftSession ?? null
           }
         }
       );
@@ -1551,7 +1559,8 @@ export function useAssistantController({
           translation: response.message.translation ?? response.translation,
           quickNote: response.message.quickNote ?? response.quickNote,
           actionProposal:
-            response.message.actionProposal ?? response.actionProposal
+            response.message.actionProposal ?? response.actionProposal,
+          actionReceipt: response.message.actionReceipt
         }
       ]);
       messageRetryRef.current = null;

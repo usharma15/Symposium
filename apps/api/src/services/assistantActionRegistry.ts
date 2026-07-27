@@ -1,6 +1,8 @@
 import {
   assistantActionProposalSchema,
+  assistantActionProposalDraftSchema,
   assistantActionToolSchema,
+  confirmAssistantOfficeDraftEditInputSchema,
   confirmAssistantOfficeNoteDraftInputSchema,
   confirmAssistantOfficePostDraftInputSchema,
   type AssistantActionProposalContract,
@@ -21,6 +23,12 @@ export const assistantActionRegistry = {
     requiresConfirmation: true,
     inputSchema: confirmAssistantOfficePostDraftInputSchema,
     destination: "private Office Thought or Paper draft"
+  },
+  "office.document.edit_draft": {
+    permission: "draft",
+    requiresConfirmation: true,
+    inputSchema: confirmAssistantOfficeDraftEditInputSchema,
+    destination: "the active private Office draft"
   }
 } as const satisfies Record<
   AssistantActionToolContract,
@@ -86,12 +94,55 @@ const explicitlyRequestsOfficeDraft = (
   );
 };
 
+const explicitlyRequestsActiveDraftEdit = (latestRequest: string) => {
+  const normalized = latestRequest
+    .normalize("NFKC")
+    .replace(/["“][\s\S]*?["”]/g, " ")
+    .replace(/`[\s\S]*?`/g, " ")
+    .trim();
+  const quotedSourceBoundary = normalized.search(
+    /\b(?:attachment|document|message|source|text)\s+(?:contains|reads|says|states)\s*:/i
+  );
+  const request = quotedSourceBoundary >= 0
+    ? normalized.slice(0, quotedSourceBoundary)
+    : normalized;
+  if (
+    /\b(?:do\s+not|don't|dont|never)\s+(?:please\s+)?(?:change|edit|revise|rewrite|shorten|expand|tighten|fix|remove|add|replace|rename|retitle|update|polish|improve|make)\b/i
+      .test(request)
+  ) {
+    return false;
+  }
+  return /(?:^|[.!?:;,]\s*)(?:please\s+)?(?:(?:(?:can|could|will|would)\s+you|i\s+(?:need|want)\s+you\s+to|i(?:'d|\s+would)\s+like\s+you\s+to)\s+)?(?:please\s+)?(?:change|edit|revise|rewrite|shorten|expand|tighten|fix|remove|add|replace|rename|retitle|update|polish|improve|make)\b/i
+    .test(request);
+};
+
 export const assistantActionProposalFromDraft = (
-  draft: AssistantActionProposalDraftContract,
+  draftInput: Omit<AssistantActionProposalDraftContract, "editOperations"> & {
+    editOperations?: AssistantActionProposalDraftContract["editOperations"];
+  },
   latestRequest: string,
-  source?: AssistantActionSourceContract
+  source?: AssistantActionSourceContract,
+  draftSession?: {
+    documentId: string;
+    expectedRevision: number;
+    title: string;
+  }
 ): AssistantActionProposalContract | undefined => {
+  const draft = assistantActionProposalDraftSchema.parse(draftInput);
   if (draft.tool === "none") return undefined;
+  if (draft.tool === "office.document.edit_draft") {
+    if (!draftSession || !explicitlyRequestsActiveDraftEdit(latestRequest)) return undefined;
+    const action = registeredAssistantAction(draft.tool);
+    return assistantActionProposalSchema.parse({
+      tool: draft.tool,
+      documentId: draftSession.documentId,
+      expectedRevision: draftSession.expectedRevision,
+      title: draftSession.title,
+      body: draft.body,
+      editOperations: draft.editOperations,
+      requiresConfirmation: action.requiresConfirmation
+    });
+  }
   if (!explicitlyRequestsOfficeDraft(latestRequest, draft.tool)) return undefined;
   const action = registeredAssistantAction(draft.tool);
   const shared = {

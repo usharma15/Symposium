@@ -48,7 +48,7 @@ const proposal = assistantActionProposalSchema.parse({
   }
 });
 
-assert.equal(Object.keys(assistantActionRegistry).length, 2);
+assert.equal(Object.keys(assistantActionRegistry).length, 3);
 assert.equal(
   assistantActionRegistry["office.note.create_draft"].requiresConfirmation,
   true
@@ -110,7 +110,13 @@ assert.equal(confirmAssistantOfficeNoteDraftInputSchema.safeParse({
 }).success, false);
 assert.equal(assistantActionProposalSchema.safeParse({
   ...proposal,
-  source: { ...proposal.source, route: "//attacker.invalid/escape" }
+  source: {
+    surface: "post",
+    route: "//attacker.invalid/escape",
+    title: "Action check source",
+    entityType: "post",
+    entityId: "action-check"
+  }
 }).success, false);
 assert.equal(assistantMessageSchema.safeParse({
   id: assistantMessageId,
@@ -492,7 +498,8 @@ const providerChecks = async () => {
           tool: "office.note.create_draft",
           title: "Provider proposal",
           body: "Editable provider proposal.",
-          postKind: "none"
+          postKind: "none",
+          editOperations: []
         }
       }),
       usage: { input_tokens: 80, output_tokens: 30 }
@@ -529,11 +536,16 @@ const providerChecks = async () => {
   };
   assert.deepEqual(
     payload.text.format.schema.properties.action.properties.tool.enum,
-    ["none", "office.note.create_draft", "office.post.create_draft"]
+    [
+      "none",
+      "office.note.create_draft",
+      "office.post.create_draft",
+      "office.document.edit_draft"
+    ]
   );
   assert.deepEqual(
     payload.text.format.schema.properties.action.required,
-    ["tool", "title", "body", "postKind"]
+    ["tool", "title", "body", "postKind", "editOperations"]
   );
   assert.deepEqual(
     payload.text.format.schema.properties.action.properties.postKind.enum,

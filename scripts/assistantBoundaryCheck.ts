@@ -532,6 +532,7 @@ assistantTranslationLanguageOptions.forEach((option) => {
 assert.equal(translationLanguageSelectionRegex.test("Italian"), false);
 assert.equal(translationLanguageSelectionRegex.test("san"), false);
 assert.equal(assistantMaxOutputTokens("translate"), 1200);
+assert.equal(assistantMaxOutputTokens("answer", { draftEdit: true }), 1200);
 assert.doesNotMatch(assistantRenderedInput({
   history: [{ role: "assistant", body: "Earlier answer must not inflate translation input." }],
   context: validInput.context,
@@ -1931,7 +1932,7 @@ const assistantWorkspaceBaseBlock = tabletStyles.slice(
 
 assert.match(provider, /store: false/);
 assert.match(provider, /service_tier: "default"/);
-assert.match(provider, /max_output_tokens: assistantMaxOutputTokens\(input\.intent\)/);
+assert.match(provider, /max_output_tokens: assistantMaxOutputTokens\(input\.intent, \{\s+draftEdit: Boolean\(input\.draftSession\)\s+\}\)/);
 assert.match(provider, /type: "json_schema"/);
 assert.match(provider, /strict: true/);
 assert.match(provider, /symposium-translation-v2/);
@@ -2178,7 +2179,8 @@ assert.match(tablet, /Search chats/);
 assert.match(tablet, /data-mobile-pane=\{mobilePane\}/);
 assert.match(tablet, /aria-pressed=\{mobilePane === "threads"\}/);
 assert.match(tablet, /aria-pressed=\{mobilePane === "chat"\}/);
-assert.match(tablet, /aria-pressed=\{mobilePane === "context"\}/);
+assert.match(tablet, /aria-pressed=\{mobilePane === "context" && rightPanel === "context"\}/);
+assert.match(tablet, /aria-pressed=\{mobilePane === "context" && rightPanel === "draft"\}/);
 assert.match(tablet, /className="tablet-thread-current assistant-panel-title" aria-label="Assistant chat history"/);
 assert.match(tablet, /<strong>Assistant<\/strong>/);
 assert.match(tablet, /\{thread \? <small>\{thread\.sourceCount\} active source/);

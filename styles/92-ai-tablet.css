@@ -116,8 +116,262 @@
 
 .assistant-workspace .assistant-right {
   background: color-mix(in srgb, var(--aqua) 5%, color-mix(in srgb, var(--document-surface-solid) 88%, transparent));
+  display: flex;
+  flex-direction: column;
   grid-column: 3;
   grid-row: 1;
+}
+
+.assistant-right-tabs {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0.34rem;
+}
+
+.assistant-right-tabs button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 0.42rem;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.65rem;
+  font-weight: 800;
+  gap: 0.28rem;
+  justify-content: center;
+  min-height: 1.9rem;
+}
+
+.assistant-right-tabs button.active {
+  background: color-mix(in srgb, var(--aqua) 22%, var(--document-control-solid));
+  color: var(--ink);
+}
+
+.assistant-draft-overlay {
+  background: var(--document-surface-solid);
+  inset: 3.1rem 0 0;
+  overflow: hidden;
+  position: absolute;
+  z-index: 6;
+}
+
+.assistant-draft-studio {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.assistant-draft-studio.loading,
+.assistant-draft-studio.unavailable {
+  align-items: center;
+  color: var(--muted);
+  gap: 0.42rem;
+  justify-content: center;
+  padding: 1rem;
+  text-align: center;
+}
+
+.assistant-draft-studio.loading strong,
+.assistant-draft-studio.unavailable strong {
+  color: var(--ink);
+}
+
+.assistant-draft-studio.unavailable p {
+  font-size: 0.68rem;
+  margin: 0;
+  max-width: 18rem;
+}
+
+.assistant-draft-studio-header {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  padding: 0.52rem 0.62rem;
+}
+
+.assistant-draft-studio-header > span,
+.assistant-draft-studio-header > span > span,
+.assistant-draft-permission > div:first-child,
+.assistant-draft-permission > div:first-child > span {
+  display: flex;
+}
+
+.assistant-draft-studio-header > span {
+  align-items: center;
+  gap: 0.38rem;
+}
+
+.assistant-draft-studio-header > span > span,
+.assistant-draft-permission > div:first-child > span {
+  flex-direction: column;
+}
+
+.assistant-draft-studio-header strong {
+  font-size: 0.72rem;
+}
+
+.assistant-draft-studio-header small,
+.assistant-draft-permission small {
+  color: var(--muted);
+  font-size: 0.56rem;
+}
+
+.assistant-draft-studio-header a {
+  align-items: center;
+  color: var(--ink);
+  display: flex;
+  font-size: 0.61rem;
+  font-weight: 800;
+  gap: 0.24rem;
+  text-decoration: none;
+}
+
+.assistant-draft-permission {
+  align-items: center;
+  background: color-mix(in srgb, var(--aqua) 9%, var(--document-surface-solid));
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.45rem;
+  justify-content: space-between;
+  padding: 0.44rem 0.55rem;
+}
+
+.assistant-draft-permission > div:first-child {
+  align-items: center;
+  gap: 0.32rem;
+  min-width: 0;
+}
+
+.assistant-draft-permission strong {
+  font-size: 0.61rem;
+}
+
+.assistant-draft-mode {
+  background: var(--document-control-solid);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  display: flex;
+  flex: 0 0 auto;
+  padding: 2px;
+}
+
+.assistant-draft-mode button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.56rem;
+  font-weight: 800;
+  gap: 0.2rem;
+  min-height: 1.45rem;
+  padding: 0.16rem 0.38rem;
+}
+
+.assistant-draft-mode button.active {
+  background: var(--document-surface-solid);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  color: var(--ink);
+}
+
+.assistant-draft-mode button.active.live {
+  background: color-mix(in srgb, var(--aqua) 30%, var(--document-surface-solid));
+}
+
+.assistant-draft-mode-copy {
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 0.58rem;
+  line-height: 1.35;
+  margin: 0;
+  padding: 0.36rem 0.58rem;
+}
+
+.assistant-draft-editor {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.52rem;
+}
+
+.assistant-draft-editor > input {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 850;
+  margin-bottom: 0.45rem;
+  min-width: 0;
+  outline: 0;
+  padding: 0.32rem 0.14rem 0.42rem;
+  width: 100%;
+}
+
+.assistant-draft-editor .symposium-document-editor {
+  flex: 1 1 auto;
+  min-height: 12rem;
+}
+
+.assistant-draft-error {
+  background: color-mix(in srgb, var(--danger) 10%, var(--document-control-solid));
+  color: var(--danger);
+  font-size: 0.59rem;
+  margin: 0;
+  padding: 0.42rem 0.55rem;
+}
+
+.assistant-draft-status {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 0.56rem;
+  justify-content: space-between;
+  padding: 0.4rem 0.55rem;
+}
+
+.assistant-draft-status span {
+  align-items: center;
+  display: flex;
+  gap: 0.22rem;
+}
+
+.tablet-action-edit-plan {
+  color: var(--muted);
+  font-size: 0.61rem;
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.tablet-action-edit-plan li + li {
+  margin-top: 0.18rem;
+}
+
+.tablet-action-edit-complete {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.tablet-action-edit-complete > button {
+  align-items: center;
+  display: flex;
+  gap: 0.28rem;
+  justify-content: center;
 }
 
 .assistant-workspace .tablet-thread-bar {
@@ -1326,7 +1580,7 @@
     display: grid;
     grid-column: 1;
     grid-row: 1;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
     padding: 0.32rem;
   }
 
@@ -1349,13 +1603,14 @@
   .assistant-workspace .assistant-left,
   .assistant-workspace .assistant-center,
   .assistant-workspace .assistant-right {
+    align-self: stretch;
     border: 0;
     border-radius: 0;
     box-shadow: none;
     display: none;
     grid-column: 1;
     grid-row: 2;
-    height: auto;
+    height: 100%;
   }
 
   .assistant-workspace[data-mobile-pane="threads"] .assistant-left,

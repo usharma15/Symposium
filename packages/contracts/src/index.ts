@@ -1370,10 +1370,82 @@ export const assistantQuickNoteSchema = assistantQuickNoteDraftSchema.extend({
 
 export const assistantActionToolSchema = z.enum([
   "office.note.create_draft",
-  "office.post.create_draft"
+  "office.post.create_draft",
+  "office.document.edit_draft"
 ]);
 
 export const assistantPostDraftKindSchema = z.enum(["thought", "paper"]);
+
+export const assistantDraftEditModeSchema = z.enum(["review", "live"]);
+
+export const assistantDraftEditSessionSchema = z.object({
+  documentId: z.string().uuid(),
+  expectedRevision: z.number().int().positive(),
+  mode: assistantDraftEditModeSchema.default("review")
+}).strict();
+
+export const assistantDraftEditOperationSchema = z.object({
+  operation: z.enum([
+    "replace_title",
+    "replace_block_text",
+    "insert_paragraph_after",
+    "delete_block"
+  ]),
+  blockId: z.string().trim().max(120),
+  afterBlockId: z.string().trim().max(120),
+  text: z.string().max(8000)
+}).strict().superRefine((operation, context) => {
+  if (operation.operation === "replace_title") {
+    if (operation.blockId || operation.afterBlockId || !operation.text.trim() || operation.text.trim().length > 240) {
+      context.addIssue({ code: "custom", message: "A title replacement requires only a non-empty title of at most 240 characters." });
+    }
+    return;
+  }
+  if (operation.operation === "replace_block_text") {
+    if (!operation.blockId || operation.afterBlockId || !operation.text.trim()) {
+      context.addIssue({ code: "custom", message: "A block replacement requires one block ID and non-empty replacement text." });
+    }
+    return;
+  }
+  if (operation.operation === "insert_paragraph_after") {
+    if (operation.blockId || !operation.afterBlockId || !operation.text.trim()) {
+      context.addIssue({ code: "custom", message: "A paragraph insertion requires an anchor block and non-empty text." });
+    }
+    return;
+  }
+  if (!operation.blockId || operation.afterBlockId || operation.text) {
+    context.addIssue({ code: "custom", message: "A block deletion requires only one block ID." });
+  }
+});
+
+export const assistantDraftEditOperationsSchema = z.array(
+  assistantDraftEditOperationSchema
+).min(1).max(24).superRefine((operations, context) => {
+  const targetedBlocks = new Set<string>();
+  let textLength = 0;
+  for (const operation of operations) {
+    textLength += operation.text.length;
+    const target = operation.operation === "replace_title"
+      ? "__title__"
+      : operation.operation === "insert_paragraph_after"
+        ? `after:${operation.afterBlockId}`
+        : operation.blockId;
+    if (targetedBlocks.has(target)) {
+      context.addIssue({
+        code: "custom",
+        message: "An AI draft edit cannot target the same title, block, or insertion point twice."
+      });
+      break;
+    }
+    targetedBlocks.add(target);
+  }
+  if (textLength > 16000) {
+    context.addIssue({
+      code: "custom",
+      message: "AI draft edit text is limited to 16,000 characters per revision."
+    });
+  }
+});
 
 export const assistantActionProposalDraftSchema = z.object({
   tool: z.union([z.literal("none"), assistantActionToolSchema]),
@@ -1382,7 +1454,8 @@ export const assistantActionProposalDraftSchema = z.object({
   postKind: z.union([
     z.literal("none"),
     assistantPostDraftKindSchema
-  ]).optional().default("none")
+  ]).optional().default("none"),
+  editOperations: z.array(assistantDraftEditOperationSchema).max(24).optional().default([])
 }).superRefine((proposal, context) => {
   if (proposal.tool !== "none" && (!proposal.title || !proposal.body)) {
     context.addIssue({
@@ -1416,6 +1489,26 @@ export const assistantActionProposalDraftSchema = z.object({
       message: "Only an Office post draft can specify a post type."
     });
   }
+  if (
+    proposal.tool === "office.document.edit_draft" &&
+    !assistantDraftEditOperationsSchema.safeParse(proposal.editOperations).success
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["editOperations"],
+      message: "A private draft edit requires a valid bounded edit plan."
+    });
+  }
+  if (
+    proposal.tool !== "office.document.edit_draft" &&
+    proposal.editOperations.length
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["editOperations"],
+      message: "Only a private draft edit can contain block operations."
+    });
+  }
 });
 
 const assistantActionProposalBaseShape = {
@@ -1436,9 +1529,20 @@ export const assistantOfficePostActionProposalSchema = z.object({
   ...assistantActionProposalBaseShape
 }).strict();
 
+export const assistantOfficeDraftEditActionProposalSchema = z.object({
+  tool: z.literal("office.document.edit_draft"),
+  documentId: z.string().uuid(),
+  expectedRevision: z.number().int().positive(),
+  title: z.string().trim().min(1).max(240),
+  body: z.string().trim().min(1).max(8000),
+  editOperations: assistantDraftEditOperationsSchema,
+  requiresConfirmation: z.literal(true)
+}).strict();
+
 export const assistantActionProposalSchema = z.discriminatedUnion("tool", [
   assistantOfficeNoteActionProposalSchema,
-  assistantOfficePostActionProposalSchema
+  assistantOfficePostActionProposalSchema,
+  assistantOfficeDraftEditActionProposalSchema
 ]);
 
 const assistantActionReceiptBaseShape = {
@@ -1463,9 +1567,44 @@ export const assistantOfficePostActionReceiptSchema = z.object({
   ...assistantActionReceiptBaseShape
 }).strict();
 
+export const assistantOfficeDraftEditActionReceiptSchema = z.object({
+  tool: z.literal("office.document.edit_draft"),
+  status: z.enum(["completed", "undone"]),
+  documentId: z.string().uuid(),
+  title: z.string().trim().min(1).max(240),
+  previousRevision: z.number().int().positive(),
+  revision: z.number().int().positive(),
+  mode: assistantDraftEditModeSchema,
+  operationCount: z.number().int().positive().max(24),
+  href: z.string().startsWith("/workspace?"),
+  appliedAt: z.string().datetime(),
+  undoRevision: z.number().int().positive().optional(),
+  undoneAt: z.string().datetime().optional()
+}).strict().superRefine((receipt, context) => {
+  if (receipt.revision !== receipt.previousRevision + 1) {
+    context.addIssue({
+      code: "custom",
+      message: "An AI draft edit receipt must advance exactly one revision."
+    });
+  }
+  if (receipt.status === "completed" && (receipt.undoRevision || receipt.undoneAt)) {
+    context.addIssue({ code: "custom", message: "A completed edit cannot contain undo metadata." });
+  }
+  if (receipt.status === "undone" && (!receipt.undoRevision || !receipt.undoneAt)) {
+    context.addIssue({ code: "custom", message: "An undone edit requires its restoration revision and time." });
+  }
+  if (receipt.status === "undone" && receipt.undoRevision !== receipt.revision + 1) {
+    context.addIssue({
+      code: "custom",
+      message: "An undone AI draft edit must restore into the next monotonic revision."
+    });
+  }
+});
+
 export const assistantActionReceiptSchema = z.discriminatedUnion("tool", [
   assistantOfficeNoteActionReceiptSchema,
-  assistantOfficePostActionReceiptSchema
+  assistantOfficePostActionReceiptSchema,
+  assistantOfficeDraftEditActionReceiptSchema
 ]);
 
 export const confirmAssistantOfficeNoteDraftInputSchema = z.object({
@@ -1480,6 +1619,15 @@ export const confirmAssistantOfficePostDraftInputSchema =
   confirmAssistantOfficeNoteDraftInputSchema.extend({
     postKind: assistantPostDraftKindSchema
   }).strict();
+
+export const confirmAssistantOfficeDraftEditInputSchema = z.object({
+  assistantMessageId: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  expectedRevision: z.number().int().positive()
+}).strict();
+
+export const undoAssistantOfficeDraftEditInputSchema =
+  confirmAssistantOfficeDraftEditInputSchema;
 
 export const assistantEvidenceClaimKindSchema = z.enum([
   "direct",
@@ -1550,7 +1698,8 @@ export const assistantMessageInputSchema = z.object({
   targetLanguage: assistantTranslationLanguageSchema.optional(),
   contextType: z.enum(["general", "room", "post", "community", "note"]).default("general"),
   contextId: z.string().trim().min(1).max(240).optional(),
-  context: assistantContextSchema.nullable().default(null)
+  context: assistantContextSchema.nullable().default(null),
+  draftSession: assistantDraftEditSessionSchema.nullable().default(null)
 }).superRefine((input, context) => {
   if (input.conversationId && input.projectId) {
     context.addIssue({
@@ -1564,6 +1713,9 @@ export const assistantMessageInputSchema = z.object({
   }
   if (input.intent === "translate" && !input.context) {
     context.addIssue({ code: "custom", path: ["context"], message: "Attach a Symposium source before starting a source translation." });
+  }
+  if (input.intent === "translate" && input.draftSession) {
+    context.addIssue({ code: "custom", path: ["draftSession"], message: "Draft co-editing is unavailable during source translation." });
   }
 });
 
@@ -2299,6 +2451,20 @@ export const assistantMessageSchema = z.object({
       message: "A post draft receipt must match the confirmed post type."
     });
   }
+  if (
+    message.actionReceipt?.tool === "office.document.edit_draft" &&
+    message.actionProposal?.tool === "office.document.edit_draft" &&
+    (
+      message.actionReceipt.documentId !== message.actionProposal.documentId ||
+      message.actionReceipt.previousRevision !== message.actionProposal.expectedRevision
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["actionReceipt"],
+      message: "A draft edit receipt must match the proposed document and starting revision."
+    });
+  }
   if (message.role !== "assistant" && (message.actionProposal || message.actionReceipt)) {
     context.addIssue({
       code: "custom",
@@ -2623,11 +2789,16 @@ export type AssistantQuickNoteContract = z.infer<typeof assistantQuickNoteSchema
 export type AssistantAnswerDraftContract = z.infer<typeof assistantAnswerDraftSchema>;
 export type AssistantActionToolContract = z.infer<typeof assistantActionToolSchema>;
 export type AssistantPostDraftKindContract = z.infer<typeof assistantPostDraftKindSchema>;
+export type AssistantDraftEditModeContract = z.infer<typeof assistantDraftEditModeSchema>;
+export type AssistantDraftEditSessionContract = z.infer<typeof assistantDraftEditSessionSchema>;
+export type AssistantDraftEditOperationContract = z.infer<typeof assistantDraftEditOperationSchema>;
 export type AssistantActionProposalDraftContract = z.infer<typeof assistantActionProposalDraftSchema>;
 export type AssistantActionProposalContract = z.infer<typeof assistantActionProposalSchema>;
 export type AssistantActionReceiptContract = z.infer<typeof assistantActionReceiptSchema>;
 export type ConfirmAssistantOfficeNoteDraftInputContract = z.infer<typeof confirmAssistantOfficeNoteDraftInputSchema>;
 export type ConfirmAssistantOfficePostDraftInputContract = z.infer<typeof confirmAssistantOfficePostDraftInputSchema>;
+export type ConfirmAssistantOfficeDraftEditInputContract = z.infer<typeof confirmAssistantOfficeDraftEditInputSchema>;
+export type UndoAssistantOfficeDraftEditInputContract = z.infer<typeof undoAssistantOfficeDraftEditInputSchema>;
 export type AssistantEvidenceClaimDraftContract = z.infer<typeof assistantEvidenceClaimDraftSchema>;
 export type AssistantEvidenceClaimKindContract = z.infer<typeof assistantEvidenceClaimKindSchema>;
 export type AssistantContextContract = z.infer<typeof assistantContextSchema>;

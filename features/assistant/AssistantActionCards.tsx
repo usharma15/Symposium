@@ -9,7 +9,9 @@ import {
   Folder,
   FolderPlus,
   LoaderCircle,
-  LockKeyhole
+  LockKeyhole,
+  Sparkles,
+  Undo2
 } from "lucide-react";
 import {
   createClientMutationId,
@@ -21,6 +23,11 @@ import type {
   AssistantActionReceiptContract
 } from "@/packages/contracts/src";
 import type { ScribbleSnapshot } from "@/lib/workspaceTypes";
+
+type CreatedOfficeDraftReceipt = Exclude<
+  AssistantActionReceiptContract,
+  { tool: "office.document.edit_draft" }
+>;
 
 export function AssistantOfficeDraftCard({
   actorHandle,
@@ -35,6 +42,56 @@ export function AssistantOfficeDraftCard({
   messageId: string;
   proposal: AssistantActionProposalContract;
   receipt?: AssistantActionReceiptContract;
+  onSaved: () => void;
+}) {
+  if (proposal.tool === "office.document.edit_draft") {
+    return (
+      <AssistantDraftEditCard
+        actorHandle={actorHandle}
+        conversationId={conversationId}
+        messageId={messageId}
+        proposal={proposal}
+        receipt={
+          receipt?.tool === "office.document.edit_draft"
+            ? receipt
+            : undefined
+        }
+        onSaved={onSaved}
+      />
+    );
+  }
+  return (
+    <AssistantCreatedOfficeDraftCard
+      actorHandle={actorHandle}
+      conversationId={conversationId}
+      messageId={messageId}
+      proposal={proposal}
+      receipt={
+        receipt?.tool === "office.document.edit_draft"
+          ? undefined
+          : receipt
+      }
+      onSaved={onSaved}
+    />
+  );
+}
+
+function AssistantCreatedOfficeDraftCard({
+  actorHandle,
+  conversationId,
+  messageId,
+  proposal,
+  receipt,
+  onSaved
+}: {
+  actorHandle: string;
+  conversationId: string;
+  messageId: string;
+  proposal: Exclude<
+    AssistantActionProposalContract,
+    { tool: "office.document.edit_draft" }
+  >;
+  receipt?: CreatedOfficeDraftReceipt;
   onSaved: () => void;
 }) {
   const isPostDraft = proposal.tool === "office.post.create_draft";
@@ -55,7 +112,7 @@ export function AssistantOfficeDraftCard({
   const [creatingNotebook, setCreatingNotebook] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState<AssistantActionReceiptContract | null>(
+  const [saved, setSaved] = useState<CreatedOfficeDraftReceipt | null>(
     receipt ?? null
   );
   const retryRef = useRef<{ fingerprint: string; key: string } | null>(null);
@@ -178,6 +235,9 @@ export function AssistantOfficeDraftCard({
           }
         }
       );
+      if (result.tool === "office.document.edit_draft") {
+        throw new Error("The Assistant returned a mismatched creation receipt.");
+      }
       setSaved(result);
       onSaved();
       window.dispatchEvent(new Event("symposium-workspace-change"));
@@ -340,6 +400,166 @@ export function AssistantOfficeDraftCard({
           {confirming
             ? "Creating private draft…"
             : "Confirm & create private draft"}
+        </button>
+      )}
+    </section>
+  );
+}
+
+function AssistantDraftEditCard({
+  actorHandle,
+  conversationId,
+  messageId,
+  proposal,
+  receipt,
+  onSaved
+}: {
+  actorHandle: string;
+  conversationId: string;
+  messageId: string;
+  proposal: Extract<
+    AssistantActionProposalContract,
+    { tool: "office.document.edit_draft" }
+  >;
+  receipt?: Extract<
+    AssistantActionReceiptContract,
+    { tool: "office.document.edit_draft" }
+  >;
+  onSaved: () => void;
+}) {
+  const [result, setResult] = useState(receipt ?? null);
+  const [busy, setBusy] = useState<"apply" | "undo" | null>(null);
+  const [error, setError] = useState("");
+  const mutationRef = useRef<Record<"apply" | "undo", string | null>>({
+    apply: null,
+    undo: null
+  });
+
+  useEffect(() => {
+    if (receipt) setResult(receipt);
+  }, [receipt]);
+
+  const mutate = async (operation: "apply" | "undo") => {
+    if (busy) return;
+    if (!mutationRef.current[operation]) {
+      mutationRef.current[operation] = createClientMutationId(
+        operation === "apply"
+          ? "assistant-office-draft-edit"
+          : "assistant-office-draft-edit-undo"
+      );
+    }
+    setBusy(operation);
+    setError("");
+    try {
+      const next = await symposiumApi.request<AssistantActionReceiptContract>(
+        operation === "apply"
+          ? "/api/assistant/actions/office-draft-edits"
+          : "/api/assistant/actions/office-draft-edits/undo",
+        {
+          method: "POST",
+          actorHandle,
+          idempotencyKey: mutationRef.current[operation]!,
+          body: {
+            assistantMessageId: messageId,
+            conversationId,
+            expectedRevision:
+              operation === "apply"
+                ? proposal.expectedRevision
+                : result?.tool === "office.document.edit_draft"
+                  ? result.revision
+                  : proposal.expectedRevision
+          }
+        }
+      );
+      if (next.tool !== "office.document.edit_draft") {
+        throw new Error("The Assistant returned a mismatched edit receipt.");
+      }
+      setResult(next);
+      onSaved();
+      window.dispatchEvent(new Event("symposium-workspace-change"));
+    } catch (caught) {
+      setError(
+        caught instanceof SymposiumApiError || caught instanceof Error
+          ? caught.message
+          : operation === "apply"
+            ? "The proposed draft edit could not be applied."
+            : "The AI edit could not be undone."
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section
+      className="tablet-action-draft tablet-action-edit"
+      aria-label="Proposed private draft revision"
+      aria-busy={Boolean(busy)}
+      aria-live="polite"
+    >
+      <header>
+        <span><Sparkles size={14} />Draft revision</span>
+        <small>
+          <LockKeyhole size={11} />
+          {result?.status === "undone"
+            ? "Undone"
+            : result
+              ? result.mode === "live"
+                ? "Applied live"
+                : "Applied after review"
+              : "Awaiting review"}
+        </small>
+      </header>
+      <p>{proposal.body}</p>
+      <ol className="tablet-action-edit-plan">
+        {proposal.editOperations.map((operation, index) => (
+          <li key={`${operation.operation}:${operation.blockId}:${operation.afterBlockId}:${index}`}>
+            {operation.operation === "replace_title"
+              ? `Retitle to “${operation.text}”`
+              : operation.operation === "replace_block_text"
+                ? "Rewrite one draft block"
+                : operation.operation === "insert_paragraph_after"
+                  ? "Insert one paragraph"
+                  : "Remove one draft block"}
+          </li>
+        ))}
+      </ol>
+      {error ? <p className="tablet-action-error" role="alert">{error}</p> : null}
+      {result?.status === "undone" ? (
+        <a className="tablet-note-saved" href={result.href}>
+          <CheckCircle2 size={14} />
+          Restored as revision {result.undoRevision}
+          <ExternalLink size={13} />
+        </a>
+      ) : result ? (
+        <div className="tablet-action-edit-complete">
+          <a className="tablet-note-saved" href={result.href}>
+            <CheckCircle2 size={14} />
+            Applied as revision {result.revision}
+            <ExternalLink size={13} />
+          </a>
+          <button
+            type="button"
+            disabled={Boolean(busy)}
+            onClick={() => void mutate("undo")}
+          >
+            {busy === "undo"
+              ? <LoaderCircle className="spin" size={13} />
+              : <Undo2 size={13} />}
+            Undo AI edit
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="primary"
+          disabled={Boolean(busy)}
+          onClick={() => void mutate("apply")}
+        >
+          {busy === "apply"
+            ? <LoaderCircle className="spin" size={14} />
+            : <Sparkles size={14} />}
+          {busy === "apply" ? "Applying revision…" : "Apply to private draft"}
         </button>
       )}
     </section>

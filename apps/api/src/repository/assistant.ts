@@ -14,6 +14,7 @@ import {
   isSafeInternalRoute,
   inquiryAttachmentSchema,
   type AssistantContextContract,
+  type AssistantActionReceiptContract,
   type AssistantContextUpdateResultContract,
   type AssistantMessageContract,
   type AssistantQuotaStatusContract,
@@ -81,6 +82,11 @@ import {
 } from "../services/assistantEvidence";
 import { assistantActionProposalFromDraft } from "../services/assistantActionRegistry";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
+import {
+  applyAssistantOfficeDraftEditForMessageInTransaction,
+  findAuthorizedAssistantDraftInTransaction
+} from "./assistantActions";
+import type { AssistantDraftModelContext } from "../services/assistantDraftEdits";
 
 type ParsedInput = ReturnType<typeof assistantMessageInputSchema.parse>;
 type HistoryMessage = { role: "user" | "assistant"; body: string };
@@ -117,6 +123,7 @@ type PreparedAssistant = {
   evidence: AssistantMessageContract["evidence"];
   evidenceBlocks: AssistantEvidenceBlock[];
   evidencePackets: AssistantEvidencePacket[];
+  draftSession: AssistantDraftModelContext | null;
   userMessage: AssistantMessageContract;
   thread: AssistantThreadStateContract;
   input: ParsedInput;
@@ -1585,6 +1592,14 @@ const prepareAssistant = async (
     byteSize: row.byteSize,
     objectKey: row.objectKey
   }));
+  const draftSession = input.draftSession
+    ? await findAuthorizedAssistantDraftInTransaction(
+        client,
+        input.draftSession,
+        conversationId,
+        owner
+      )
+    : null;
   const renderedInput = assistantRenderedInput({
     history,
     context,
@@ -1592,13 +1607,16 @@ const prepareAssistant = async (
     evidencePackets,
     message: input.message,
     intent: input.intent,
-    targetLanguage: input.targetLanguage
+    targetLanguage: input.targetLanguage,
+    draftSession: draftSession ?? undefined
   });
   const reservation = await reserveAssistantUsage(client, {
     owner,
     conversationId,
     renderedInput,
-    maxOutputTokens: assistantMaxOutputTokens(input.intent),
+    maxOutputTokens: assistantMaxOutputTokens(input.intent, {
+      draftEdit: Boolean(draftSession)
+    }),
     additionalInputTokens: assistantVisionTokenCeiling(visionAttachments.length),
     visionInputCount: visionAttachments.length
   });
@@ -1654,6 +1672,7 @@ const prepareAssistant = async (
       evidence,
       evidenceBlocks,
       evidencePackets,
+      draftSession,
       userMessage: messageFromRow(userMessage.rows[0]!),
       thread: assistantThreadState({ ...conversationRow, contextSources: sources }),
       input,
@@ -1709,14 +1728,21 @@ const finalizeAssistant = async (
         ...(prepared.context.entityId ? { entityId: prepared.context.entityId } : {})
       }
     : undefined;
-  const actionProposal = result?.action
+  let actionProposal = result?.action
     ? assistantActionProposalFromDraft(
         result.action,
         prepared.input.message,
-        actionSource
+        actionSource,
+        prepared.draftSession
+          ? {
+              documentId: prepared.draftSession.documentId,
+              expectedRevision: prepared.draftSession.revision,
+              title: prepared.draftSession.title
+            }
+          : undefined
       )
     : undefined;
-  const body = result?.action && !actionProposal
+  let body = result?.action && !actionProposal
     ? "I did not prepare an Office action because your latest request did not explicitly ask for a private note, Thought, Paper, or post draft. Nothing was created."
     : providerBody;
   const actualMicros = result
@@ -1803,6 +1829,43 @@ const finalizeAssistant = async (
       actionProposal: actionProposal ?? null
     })]
   );
+  let actionReceipt: AssistantActionReceiptContract | undefined;
+  let actionEvents: Awaited<ReturnType<typeof stageEvent>>[] = [];
+  if (
+    actionProposal?.tool === "office.document.edit_draft" &&
+    prepared.input.draftSession?.mode === "live"
+  ) {
+    try {
+      const applied = await applyAssistantOfficeDraftEditForMessageInTransaction(
+        client,
+        {
+          assistantMessageId: assistantMessage.rows[0]!.id,
+          conversationId: prepared.conversationId,
+          expectedRevision: actionProposal.expectedRevision
+        },
+        prepared.owner,
+        "live"
+      );
+      actionReceipt = applied.value;
+      actionEvents = applied.events;
+    } catch (caught) {
+      if (!(caught instanceof TRPCError)) throw caught;
+      actionProposal = undefined;
+      body = `${providerBody}\n\nThe live draft edit was not applied because the private draft changed or the proposed edit no longer matched its protected structure. No draft content was changed; review the current revision and try again.`;
+      await client.query(
+        `UPDATE ai_messages
+         SET body = $2,
+             metadata = metadata || $3::jsonb
+         WHERE id = $1`,
+        [
+          assistantMessage.rows[0]!.id,
+          body,
+          JSON.stringify({ actionProposal: null, actionReceipt: null })
+        ]
+      );
+      assistantMessage.rows[0]!.body = body;
+    }
+  }
   await completeAssistantUsage(client, {
     usageId: prepared.usageId,
     owner: prepared.owner,
@@ -1846,7 +1909,8 @@ const finalizeAssistant = async (
       claims,
       ...(translation ? { translation } : {}),
       ...(quickNote ? { quickNote } : {}),
-      ...(actionProposal ? { actionProposal } : {})
+      ...(actionProposal ? { actionProposal } : {}),
+      ...(actionReceipt ? { actionReceipt } : {})
     }),
     userMessage: prepared.userMessage,
     ...(translation ? { translation } : {}),
@@ -1880,7 +1944,7 @@ const finalizeAssistant = async (
     visibility: "private",
     payload: { messageId: response.message.id, status: response.status }
   });
-  return { value: response, events: [event] };
+  return { value: response, events: [...actionEvents, event] };
 });
 
 export const askAssistant = async (
@@ -1918,7 +1982,8 @@ export const askAssistant = async (
       message: input.message,
       intent: input.intent,
       targetLanguage: input.targetLanguage,
-      visionInputs
+      visionInputs,
+      draftSession: prepared.draftSession ?? undefined
     });
   } catch (error) {
     failure = error instanceof TRPCError

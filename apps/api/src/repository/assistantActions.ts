@@ -4,11 +4,17 @@ import type { PoolClient } from "pg";
 import {
   assistantActionProposalSchema,
   assistantActionReceiptSchema,
+  confirmAssistantOfficeDraftEditInputSchema,
   confirmAssistantOfficeNoteDraftInputSchema,
   confirmAssistantOfficePostDraftInputSchema,
+  undoAssistantOfficeDraftEditInputSchema,
+  versionedDocumentSchema,
   type AssistantActionReceiptContract,
   type AssistantActionSourceContract,
   type AssistantActionToolContract,
+  type AssistantDraftEditModeContract,
+  type AssistantDraftEditSessionContract,
+  type ConfirmAssistantOfficeDraftEditInputContract,
   type ConfirmAssistantOfficeNoteDraftInputContract,
   type ConfirmAssistantOfficePostDraftInputContract
 } from "../../../../packages/contracts/src";
@@ -19,13 +25,89 @@ import type { Actor } from "../services/auth";
 import { stageEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { registeredAssistantAction } from "../services/assistantActionRegistry";
+import {
+  assistantDraftModelBlocks,
+  type AssistantDraftModelContext
+} from "../services/assistantDraftEdits";
 import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
-import { createWorkspaceDocumentInTransaction } from "./workspaceDocuments";
+import {
+  applyAssistantWorkspaceDraftEditInTransaction,
+  createWorkspaceDocumentInTransaction,
+  undoAssistantWorkspaceDraftEditInTransaction
+} from "./workspaceDocuments";
 
 type ActionMessageRow = {
   id: string;
   metadata: Record<string, unknown>;
+};
+
+export const findAuthorizedAssistantDraftInTransaction = async (
+  client: PoolClient,
+  session: AssistantDraftEditSessionContract,
+  conversationId: string,
+  handle: string
+): Promise<AssistantDraftModelContext> => {
+  const result = await client.query<{
+    id: string;
+    title: string;
+    revision: number;
+    kind: string;
+    document: unknown;
+  }>(
+    `SELECT
+       note.id::text,
+       note.title,
+       note.revision,
+       note.kind,
+       note.content_document AS document
+     FROM notes note
+     WHERE note.id = $1
+       AND note.owner_handle = $2
+       AND note.lifecycle = 'draft'
+       AND note.visibility = 'private'
+       AND note.deleted_at IS NULL
+       AND EXISTS (
+         SELECT 1
+         FROM ai_messages message
+         JOIN ai_conversations conversation ON conversation.id = message.conversation_id
+         WHERE message.conversation_id = $3
+           AND conversation.owner_handle = $2
+           AND conversation.kind = 'research_thread'
+           AND conversation.archived_at IS NULL
+           AND conversation.deleted_at IS NULL
+           AND message.role = 'assistant'
+           AND message.metadata -> 'actionReceipt' ->> 'documentId' = note.id::text
+           AND message.metadata -> 'actionReceipt' ->> 'tool' IN (
+             'office.note.create_draft',
+             'office.post.create_draft'
+           )
+       )
+     FOR SHARE OF note`,
+    [session.documentId, handle, conversationId]
+  );
+  const draft = result.rows[0];
+  if (!draft) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "That private Assistant draft is not available in this chat."
+    });
+  }
+  if (draft.revision !== session.expectedRevision) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: `This draft changed from revision ${session.expectedRevision} to ${draft.revision}. Review the current draft before asking the AI to edit it.`
+    });
+  }
+  const document = versionedDocumentSchema.parse(draft.document);
+  const modelBlocks = assistantDraftModelBlocks(document);
+  return {
+    documentId: draft.id,
+    title: draft.title,
+    revision: draft.revision,
+    kind: draft.kind,
+    ...modelBlocks
+  };
 };
 
 const assistantActionResourceTypes = {
@@ -94,6 +176,9 @@ const confirmAssistantOfficeDraftInTransaction = async (
   value: AssistantActionReceiptContract;
   events?: Awaited<ReturnType<typeof stageEvent>>[];
 }> => {
+    if (expectedTool === "office.document.edit_draft") {
+      throw mismatchedAssistantAction();
+    }
     const claim = await claimMutation<AssistantActionReceiptContract>(client, handle, mutation);
     if (claim.replayed) {
       return { value: receiptForExpectedTool(claim.response, expectedTool) };
@@ -143,6 +228,9 @@ const confirmAssistantOfficeDraftInTransaction = async (
         actionMessage.metadata.actionReceipt,
         expectedTool
       );
+      if (existingReceipt.tool === "office.document.edit_draft") {
+        throw mismatchedAssistantAction();
+      }
       if (
         existingReceipt.tool === "office.post.create_draft" &&
         proposal.data.tool === "office.post.create_draft" &&
@@ -213,6 +301,9 @@ const confirmAssistantOfficeDraftInTransaction = async (
         ? { ...receiptBase, documentKind }
         : receiptBase
     );
+    if (receipt.tool === "office.document.edit_draft") {
+      throw mismatchedAssistantAction();
+    }
     const confirmedProposal = proposal.data.tool === "office.post.create_draft"
       ? {
           ...proposal.data,
@@ -290,26 +381,351 @@ export const confirmAssistantOfficeNoteDraftInTransaction = async (
   input: ConfirmAssistantOfficeNoteDraftInputContract,
   handle: string,
   mutation?: MutationContext
-) => confirmAssistantOfficeDraftInTransaction(
+): Promise<{
+  value: Extract<
+    AssistantActionReceiptContract,
+    { tool: "office.note.create_draft" }
+  >;
+  events?: Awaited<ReturnType<typeof stageEvent>>[];
+}> => confirmAssistantOfficeDraftInTransaction(
   client,
   input,
   handle,
   "office.note.create_draft",
   mutation
-);
+) as Promise<{
+  value: Extract<
+    AssistantActionReceiptContract,
+    { tool: "office.note.create_draft" }
+  >;
+  events?: Awaited<ReturnType<typeof stageEvent>>[];
+}>;
 
 export const confirmAssistantOfficePostDraftInTransaction = async (
   client: PoolClient,
   input: ConfirmAssistantOfficePostDraftInputContract,
   handle: string,
   mutation?: MutationContext
-) => confirmAssistantOfficeDraftInTransaction(
+): Promise<{
+  value: Extract<
+    AssistantActionReceiptContract,
+    { tool: "office.post.create_draft" }
+  >;
+  events?: Awaited<ReturnType<typeof stageEvent>>[];
+}> => confirmAssistantOfficeDraftInTransaction(
   client,
   input,
   handle,
   "office.post.create_draft",
   mutation
-);
+) as Promise<{
+  value: Extract<
+    AssistantActionReceiptContract,
+    { tool: "office.post.create_draft" }
+  >;
+  events?: Awaited<ReturnType<typeof stageEvent>>[];
+}>;
+
+export const applyAssistantOfficeDraftEditForMessageInTransaction = async (
+  client: PoolClient,
+  input: ConfirmAssistantOfficeDraftEditInputContract,
+  handle: string,
+  mode: AssistantDraftEditModeContract
+): Promise<{
+  value: AssistantActionReceiptContract;
+  events: Awaited<ReturnType<typeof stageEvent>>[];
+}> => {
+  const assistantMessage = await client.query<ActionMessageRow>(
+    `SELECT message.id::text, message.metadata
+     FROM ai_messages message
+     JOIN ai_conversations conversation ON conversation.id = message.conversation_id
+     WHERE message.id = $1
+       AND message.conversation_id = $2
+       AND message.role = 'assistant'
+       AND conversation.owner_handle = $3
+       AND conversation.kind = 'research_thread'
+       AND conversation.archived_at IS NULL
+       AND conversation.deleted_at IS NULL
+       AND message.metadata -> 'actionProposal' IS NOT NULL
+       AND message.metadata -> 'actionProposal' <> 'null'::jsonb
+     FOR UPDATE OF message, conversation`,
+    [input.assistantMessageId, input.conversationId, handle]
+  );
+  const actionMessage = assistantMessage.rows[0];
+  if (!actionMessage) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "That Assistant draft edit is no longer available."
+    });
+  }
+  const proposal = assistantActionProposalSchema.safeParse(
+    actionMessage.metadata.actionProposal
+  );
+  if (!proposal.success || proposal.data.tool !== "office.document.edit_draft") {
+    throw mismatchedAssistantAction();
+  }
+  if (
+    actionMessage.metadata.actionReceipt !== undefined &&
+    actionMessage.metadata.actionReceipt !== null
+  ) {
+    return {
+      value: receiptForExpectedTool(
+        actionMessage.metadata.actionReceipt,
+        "office.document.edit_draft"
+      ),
+      events: []
+    };
+  }
+  if (input.expectedRevision !== proposal.data.expectedRevision) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "The confirmation does not match the proposed draft revision."
+    });
+  }
+  const action = registeredAssistantAction(proposal.data.tool);
+  action.inputSchema.parse(input);
+  const applied = await applyAssistantWorkspaceDraftEditInTransaction(
+    client,
+    {
+      noteId: proposal.data.documentId,
+      expectedRevision: proposal.data.expectedRevision,
+      operations: proposal.data.editOperations,
+      mode,
+      assistantMessageId: input.assistantMessageId,
+      conversationId: input.conversationId
+    },
+    handle
+  );
+  const document = applied.value.document as unknown as {
+    id: string;
+    title: string;
+    revision: number;
+  };
+  const receipt = assistantActionReceiptSchema.parse({
+    tool: "office.document.edit_draft",
+    status: "completed",
+    documentId: document.id,
+    title: document.title,
+    previousRevision: applied.value.previousRevision,
+    revision: document.revision,
+    mode,
+    operationCount: applied.value.operationCount,
+    href: `/workspace?view=notes&note=${encodeURIComponent(document.id)}`,
+    appliedAt: new Date().toISOString()
+  });
+  if (receipt.tool !== "office.document.edit_draft") {
+    throw mismatchedAssistantAction();
+  }
+  await client.query(
+    `UPDATE ai_messages
+     SET metadata = metadata || $2::jsonb
+     WHERE id = $1`,
+    [
+      input.assistantMessageId,
+      JSON.stringify({ actionProposal: proposal.data, actionReceipt: receipt })
+    ]
+  );
+  await client.query(
+    `UPDATE ai_conversations
+     SET updated_at = now(), last_message_at = GREATEST(last_message_at, now())
+     WHERE id = $1 AND owner_handle = $2`,
+    [input.conversationId, handle]
+  );
+  await stageAuditLog(client, {
+    actorHandle: handle,
+    action: "assistant.action.office_document.edit_draft",
+    subjectType: "note",
+    subjectId: receipt.documentId,
+    metadata: {
+      assistantMessageId: input.assistantMessageId,
+      conversationId: input.conversationId,
+      tool: proposal.data.tool,
+      mode,
+      previousRevision: receipt.previousRevision,
+      revision: receipt.revision,
+      operationCount: receipt.operationCount,
+      permission: action.permission,
+      requiresConfirmation: action.requiresConfirmation,
+      publicationChanged: false
+    }
+  });
+  const assistantEvent = await stageEvent(client, {
+    kind: "assistant.action.completed",
+    actorHandle: handle,
+    audienceHandles: [handle],
+    subjectType: "ai_conversation",
+    subjectId: input.conversationId,
+    visibility: "private",
+    payload: {
+      messageId: input.assistantMessageId,
+      tool: proposal.data.tool,
+      documentId: receipt.documentId,
+      previousRevision: receipt.previousRevision,
+      revision: receipt.revision,
+      mode
+    }
+  });
+  return {
+    value: receipt,
+    events: [applied.event, assistantEvent]
+  };
+};
+
+export const confirmAssistantOfficeDraftEditInTransaction = async (
+  client: PoolClient,
+  input: ConfirmAssistantOfficeDraftEditInputContract,
+  handle: string,
+  mutation?: MutationContext
+) => {
+  const claim = await claimMutation<AssistantActionReceiptContract>(
+    client,
+    handle,
+    mutation
+  );
+  if (claim.replayed) {
+    return {
+      value: receiptForExpectedTool(
+        claim.response,
+        "office.document.edit_draft"
+      )
+    };
+  }
+  const applied = await applyAssistantOfficeDraftEditForMessageInTransaction(
+    client,
+    input,
+    handle,
+    "review"
+  );
+  await completeMutation(client, handle, mutation, applied.value);
+  return applied;
+};
+
+export const undoAssistantOfficeDraftEditInTransaction = async (
+  client: PoolClient,
+  input: ConfirmAssistantOfficeDraftEditInputContract,
+  handle: string,
+  mutation?: MutationContext
+) => {
+  const claim = await claimMutation<AssistantActionReceiptContract>(
+    client,
+    handle,
+    mutation
+  );
+  if (claim.replayed) {
+    return {
+      value: receiptForExpectedTool(
+        claim.response,
+        "office.document.edit_draft"
+      )
+    };
+  }
+  const assistantMessage = await client.query<ActionMessageRow>(
+    `SELECT message.id::text, message.metadata
+     FROM ai_messages message
+     JOIN ai_conversations conversation ON conversation.id = message.conversation_id
+     WHERE message.id = $1
+       AND message.conversation_id = $2
+       AND message.role = 'assistant'
+       AND conversation.owner_handle = $3
+       AND conversation.kind = 'research_thread'
+       AND conversation.archived_at IS NULL
+       AND conversation.deleted_at IS NULL
+     FOR UPDATE OF message, conversation`,
+    [input.assistantMessageId, input.conversationId, handle]
+  );
+  const actionMessage = assistantMessage.rows[0];
+  if (!actionMessage) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "That Assistant draft edit is no longer available."
+    });
+  }
+  const proposal = assistantActionProposalSchema.safeParse(
+    actionMessage.metadata.actionProposal
+  );
+  const receipt = assistantActionReceiptSchema.safeParse(
+    actionMessage.metadata.actionReceipt
+  );
+  if (
+    !proposal.success ||
+    proposal.data.tool !== "office.document.edit_draft" ||
+    !receipt.success ||
+    receipt.data.tool !== "office.document.edit_draft"
+  ) {
+    throw mismatchedAssistantAction();
+  }
+  if (receipt.data.status === "undone") {
+    await completeMutation(client, handle, mutation, receipt.data);
+    return { value: receipt.data };
+  }
+  if (input.expectedRevision !== receipt.data.revision) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Undo must target the exact AI-applied revision."
+    });
+  }
+  const restored = await undoAssistantWorkspaceDraftEditInTransaction(
+    client,
+    {
+      noteId: receipt.data.documentId,
+      expectedRevision: receipt.data.revision,
+      restoreRevision: receipt.data.previousRevision,
+      assistantMessageId: input.assistantMessageId,
+      conversationId: input.conversationId
+    },
+    handle
+  );
+  const document = restored.value.document as unknown as {
+    id: string;
+    title: string;
+    revision: number;
+  };
+  const undoneReceipt = assistantActionReceiptSchema.parse({
+    ...receipt.data,
+    status: "undone",
+    title: document.title,
+    undoRevision: document.revision,
+    undoneAt: new Date().toISOString()
+  });
+  await client.query(
+    `UPDATE ai_messages
+     SET metadata = metadata || $2::jsonb
+     WHERE id = $1`,
+    [input.assistantMessageId, JSON.stringify({ actionReceipt: undoneReceipt })]
+  );
+  await stageAuditLog(client, {
+    actorHandle: handle,
+    action: "assistant.action.office_document.edit_draft_undo",
+    subjectType: "note",
+    subjectId: receipt.data.documentId,
+    metadata: mutationAuditMetadata(mutation, {
+      assistantMessageId: input.assistantMessageId,
+      conversationId: input.conversationId,
+      appliedRevision: receipt.data.revision,
+      restoredFromRevision: receipt.data.previousRevision,
+      undoRevision: document.revision
+    })
+  });
+  await completeMutation(client, handle, mutation, undoneReceipt);
+  const assistantEvent = await stageEvent(client, {
+    kind: "assistant.action.undone",
+    actorHandle: handle,
+    audienceHandles: [handle],
+    subjectType: "ai_conversation",
+    subjectId: input.conversationId,
+    visibility: "private",
+    payload: {
+      messageId: input.assistantMessageId,
+      tool: proposal.data.tool,
+      documentId: receipt.data.documentId,
+      revision: document.revision
+    }
+  });
+  return {
+    value: undoneReceipt,
+    events: [restored.event, assistantEvent]
+  };
+};
 
 export const confirmAssistantOfficeNoteDraft = async (
   rawInput: unknown,
@@ -327,6 +743,44 @@ export const confirmAssistantOfficeNoteDraft = async (
   await ensureLiveData();
   return runAtomic((client) =>
     confirmAssistantOfficeNoteDraftInTransaction(client, input, handle, mutation)
+  );
+};
+
+export const confirmAssistantOfficeDraftEdit = async (
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+): Promise<AssistantActionReceiptContract> => {
+  const input = confirmAssistantOfficeDraftEditInputSchema.parse(rawInput);
+  const handle = await ensureProfileHandle(actorHandle(actor));
+  if (!hasDatabase()) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "AI Assistant actions require the live workspace."
+    });
+  }
+  await ensureLiveData();
+  return runAtomic((client) =>
+    confirmAssistantOfficeDraftEditInTransaction(client, input, handle, mutation)
+  );
+};
+
+export const undoAssistantOfficeDraftEdit = async (
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+): Promise<AssistantActionReceiptContract> => {
+  const input = undoAssistantOfficeDraftEditInputSchema.parse(rawInput);
+  const handle = await ensureProfileHandle(actorHandle(actor));
+  if (!hasDatabase()) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "AI Assistant actions require the live workspace."
+    });
+  }
+  await ensureLiveData();
+  return runAtomic((client) =>
+    undoAssistantOfficeDraftEditInTransaction(client, input, handle, mutation)
   );
 };
 

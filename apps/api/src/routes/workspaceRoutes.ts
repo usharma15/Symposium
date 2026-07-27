@@ -15,8 +15,10 @@ import {
   updateAssistantConversationSource
 } from "../repository/assistant";
 import {
+  confirmAssistantOfficeDraftEdit,
   confirmAssistantOfficeNoteDraft,
-  confirmAssistantOfficePostDraft
+  confirmAssistantOfficePostDraft,
+  undoAssistantOfficeDraftEdit
 } from "../repository/assistantActions";
 import {
   createAssistantProject,
@@ -743,6 +745,48 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
         mutationContextFromRequest(
           request,
           "assistant.action.office-post.create-draft",
+          request.body
+        )
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/assistant/actions/office-draft-edits", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request, {
+        shared: true,
+        scope: "assistant-action",
+        limit: 30
+      });
+      return reply.send(await confirmAssistantOfficeDraftEdit(
+        request.body,
+        actor,
+        mutationContextFromRequest(
+          request,
+          "assistant.action.office-document.edit-draft",
+          request.body
+        )
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/assistant/actions/office-draft-edits/undo", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request, {
+        shared: true,
+        scope: "assistant-action",
+        limit: 30
+      });
+      return reply.send(await undoAssistantOfficeDraftEdit(
+        request.body,
+        actor,
+        mutationContextFromRequest(
+          request,
+          "assistant.action.office-document.edit-draft.undo",
           request.body
         )
       ));
