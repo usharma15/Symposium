@@ -3072,6 +3072,17 @@ const migrations: Migration[] = [
       ON CONFLICT (owner_handle, usage_day)
       DO UPDATE SET reset_at = EXCLUDED.reset_at;
     `
+  },
+  {
+    id: "0062_canonical_owner_daily_ai_quota_reset_20260727",
+    sql: `
+      INSERT INTO ai_daily_quota_resets (owner_handle, usage_day, reset_at)
+      SELECT profile.handle, current_date, now()
+      FROM profiles profile
+      WHERE profile.handle IN ('@udayan', '@bantz')
+      ON CONFLICT (owner_handle, usage_day)
+      DO UPDATE SET reset_at = EXCLUDED.reset_at;
+    `
   }
 ];
 
