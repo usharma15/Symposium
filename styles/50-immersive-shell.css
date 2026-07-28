@@ -185,6 +185,13 @@
   transform: translateX(-50%);
 }
 
+@media (min-width: 901px) and (min-aspect-ratio: 16 / 9) {
+  .hall-world {
+    width: max(100vw, 177.68vh);
+    height: max(100vh, 56.28vw);
+  }
+}
+
 .hall-world::after,
 .hall-render-image,
 .hall-vault,
