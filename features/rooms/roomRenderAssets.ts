@@ -11,7 +11,7 @@ export const entranceRenders: Record<Theme, string> = {
 
 export const roomRenders: Record<Theme, Record<RoomId, string>> = {
   day: {
-    hall: "/symposium-renders/main-hall-updated-v1.avif",
+    hall: "/symposium-renders/main-hall-day-v2.avif",
     office: "/symposium-renders/office-v1.avif",
     symposium: "/symposium-renders/symposium-v1.avif",
     library: "/symposium-renders/library-1-v1.avif",
@@ -21,7 +21,7 @@ export const roomRenders: Record<Theme, Record<RoomId, string>> = {
     opportunities: "/symposium-renders/opportunities-v1.avif"
   },
   night: {
-    hall: "/symposium-renders/main-hall-night-v1.avif",
+    hall: "/symposium-renders/main-hall-night-v2.avif",
     office: "/symposium-renders/office-night-v1.avif",
     symposium: "/symposium-renders/symposium-night-v1.avif",
     library: "/symposium-renders/library-night-v1.avif",
