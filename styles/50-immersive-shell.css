@@ -192,6 +192,13 @@
   }
 }
 
+@media (min-width: 901px) and (min-aspect-ratio: 15 / 8) {
+  .hall-world {
+    width: 187.66vh;
+    height: 105.61vh;
+  }
+}
+
 .hall-world::after,
 .hall-render-image,
 .hall-vault,
