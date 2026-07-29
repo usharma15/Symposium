@@ -49,35 +49,52 @@ export function AuthoredBottomCaricature({
   postType: "paper" | "thought";
 }) {
   const bottom = BOTTOM_CARICATURE_REGISTRY[bottomCaricatureId];
-  const assets = postType === "thought" ? bottom.thoughtSurfaceAssets : bottom.assets;
+  const desktopWidth = bottom.placement.desktop.height * bottom.canvas.width / bottom.canvas.height;
+  const mobileWidth = bottom.placement.mobile.height * bottom.canvas.width / bottom.canvas.height;
   return (
     <div
       className="authored-bottom-caricature"
       data-bottom-caricature-id={bottom.id}
-      data-bottom-fill-contract={postType === "thought" ? "surface-through" : "paper-surface"}
+      data-bottom-fill-contract={postType === "thought" ? "thought-material" : "paper-material"}
+      data-bottom-layer-contract="foreground-occlusion"
       style={{
         "--authored-bottom-height": `${bottom.placement.desktop.height}px`,
+        "--authored-bottom-width": `${desktopWidth}px`,
         "--authored-bottom-translate-y": `${bottom.placement.desktop.translateY}px`,
         "--authored-bottom-max-width": `${bottom.placement.desktop.maxWidthPercent}%`,
         "--authored-bottom-mobile-height": `${bottom.placement.mobile.height}px`,
+        "--authored-bottom-mobile-width": `${mobileWidth}px`,
         "--authored-bottom-mobile-translate-y": `${bottom.placement.mobile.translateY}px`,
         "--authored-bottom-mobile-max-width": `${bottom.placement.mobile.maxWidthPercent}%`,
-        "--authored-bottom-optical-x": `${bottom.placement.opticalOffsetX}px`
+        "--authored-bottom-optical-x": `${bottom.placement.opticalOffsetX}px`,
+        "--authored-bottom-silhouette-day": `url("${bottom.assets.day}")`,
+        "--authored-bottom-silhouette-night": `url("${bottom.assets.night}")`
       } as CSSProperties}
       aria-hidden="true"
     >
-      <img className="authored-artifact-day" src={assets.day} alt="" draggable={false} />
-      <img className="authored-artifact-night" src={assets.night} alt="" draggable={false} />
+      {postType === "thought" ? (
+        <>
+          <span className="authored-bottom-caricature-matte authored-artifact-day" />
+          <span className="authored-bottom-caricature-matte authored-artifact-night" />
+          <img className="authored-bottom-caricature-line authored-artifact-day" src={bottom.thoughtSurfaceAssets.day} alt="" draggable={false} />
+          <img className="authored-bottom-caricature-line authored-artifact-night" src={bottom.thoughtSurfaceAssets.night} alt="" draggable={false} />
+        </>
+      ) : (
+        <>
+          <img className="authored-bottom-caricature-line authored-artifact-day" src={bottom.assets.day} alt="" draggable={false} />
+          <img className="authored-bottom-caricature-line authored-artifact-night" src={bottom.assets.night} alt="" draggable={false} />
+        </>
+      )}
     </div>
   );
 }
 
 export function PostTypeEmblem({ postType }: { postType: "paper" | "thought" }) {
   const source = postType === "paper"
-    ? AUTHORED_ARTIFACT_FOUNDATION.paper.perimeter.cornerDay
+    ? AUTHORED_ARTIFACT_FOUNDATION.paper.compactEmblem.day
     : AUTHORED_ARTIFACT_FOUNDATION.thought.perimeter.cornerDay;
   const nightSource = postType === "paper"
-    ? AUTHORED_ARTIFACT_FOUNDATION.paper.perimeter.cornerNight
+    ? AUTHORED_ARTIFACT_FOUNDATION.paper.compactEmblem.night
     : AUTHORED_ARTIFACT_FOUNDATION.thought.perimeter.cornerNight;
   return (
     <span className={`authored-post-type-emblem authored-post-type-emblem-${postType}`} aria-hidden="true">

@@ -52,6 +52,7 @@
     "post-semantics:check": "tsx scripts/postSemanticsCheck.ts",
     "post-design:check": "tsx scripts/postDesignAssignmentCheck.ts",
     "authored-artifacts:check": "tsx scripts/authoredArtifactCheck.ts",
+    "compact-emblems:build": "node scripts/buildCompactPostEmblems.mjs",
     "workspace:check": "tsx scripts/workspaceConstructionCheck.ts",
     "workspace-collaboration:check": "tsx scripts/workspaceCollaborationCheck.ts",
     "profile:check": "tsx scripts/profileActivityCheck.ts",

@@ -4,6 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import {
+  AUTHORED_ARTIFACT_FOUNDATION,
   AUTHORED_ARTIFACT_ASSET_MANIFEST,
   BOTTOM_CARICATURE_REGISTRY,
   PAPER_MUSE_REGISTRY,
@@ -16,7 +17,7 @@ const main = async () => {
   const publicRoot = path.join(root, "public");
   const artifactRoot = path.join(publicRoot, "symposium-artifacts", "v1");
   const manifestPaths = AUTHORED_ARTIFACT_ASSET_MANIFEST.map((entry) => entry.path);
-  assert.equal(AUTHORED_ARTIFACT_ASSET_MANIFEST.length, 51, "The frozen runtime manifest must contain exactly 51 assets.");
+  assert.equal(AUTHORED_ARTIFACT_ASSET_MANIFEST.length, 53, "The frozen runtime manifest must contain exactly 53 assets.");
   assert.equal(new Set(manifestPaths).size, manifestPaths.length, "The runtime manifest must not contain duplicate assets.");
 
   const copiedFiles = (await readdir(artifactRoot)).sort();
@@ -30,6 +31,30 @@ const main = async () => {
       createHash("sha256").update(contents).digest("hex"),
       entry.sha256,
       `Frozen asset hash changed: ${entry.path}`
+    );
+  }
+
+  for (const [theme, emblem] of Object.entries({
+    day: AUTHORED_ARTIFACT_FOUNDATION.paper.compactEmblem.day,
+    night: AUTHORED_ARTIFACT_FOUNDATION.paper.compactEmblem.night
+  })) {
+    const { data, info } = await sharp(path.join(publicRoot, emblem.slice(1)))
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    assert.deepEqual([info.width, info.height], [920, 920], `Paper ${theme} compact emblem canvas drifted`);
+    const cornerOffsets = [
+      3,
+      (info.width - 1) * 4 + 3,
+      (info.height - 1) * info.width * 4 + 3,
+      (info.width * info.height - 1) * 4 + 3
+    ];
+    for (const offset of cornerOffsets) {
+      assert.equal(data[offset], 0, `Paper ${theme} compact emblem retained its square backing`);
+    }
+    assert.ok(
+      data.some((channel, offset) => offset % 4 === 3 && channel > 0),
+      `Paper ${theme} compact emblem is empty`
     );
   }
 
@@ -158,11 +183,12 @@ const main = async () => {
   );
   assert.match(sources[4], /!isPaper && !isThought/, "Thought and Paper detail indicators must be absent.");
   assert.match(sources[4], /isThought && thoughtMuseId \? <ThoughtOpeningMuse/, "Thought muses must be title-independent.");
-  assert.match(
-    sources[1],
-    /postType === "thought" \? bottom\.thoughtSurfaceAssets : bottom\.assets/,
-    "Every Thought bottom caricature must use its surface-through artwork."
-  );
+  assert.match(sources[1], /bottom\.thoughtSurfaceAssets\.day/);
+  assert.match(sources[1], /bottom\.thoughtSurfaceAssets\.night/);
+  assert.match(sources[1], /authored-bottom-caricature-matte/);
+  assert.match(sources[1], /data-bottom-layer-contract="foreground-occlusion"/);
+  assert.match(sources[1], /paper\.compactEmblem\.day/);
+  assert.match(sources[1], /paper\.compactEmblem\.night/);
   assert.doesNotMatch(
     sources[1],
     /bottom\.id\s*===\s*"chariot"/,
@@ -178,6 +204,14 @@ const main = async () => {
     /width:\s*min\(980px/,
     "Authored design CSS must retain the original centre-feed width."
   );
+  assert.match(sources[5], /\.authored-bottom-caricature-matte\s*\{[\s\S]*?z-index:\s*1/);
+  assert.match(sources[5], /\.authored-bottom-caricature-line\s*\{[\s\S]*?z-index:\s*4/);
+  assert.match(sources[5], /mask-image:\s*var\(--authored-bottom-silhouette-day\)/);
+  assert.match(sources[5], /mask-image:\s*var\(--authored-bottom-silhouette-night\)/);
+  assert.match(sources[4], /className="feed-post-header-artifacts"/);
+  assert.match(sources[5], /\.feed-post-card-header\s*\{[\s\S]*?display:\s*flex[\s\S]*?justify-content:\s*space-between/);
+  assert.match(sources[5], /\.feed-post-header-artifacts\s*\{[\s\S]*?flex:\s*0 0 auto/);
+  assert.match(sources[5], /\.authored-post-type-emblem\s*\{[\s\S]*?width:\s*42px[\s\S]*?height:\s*42px/);
   const nextConfig = await readFile(path.join(root, "next.config.mjs"), "utf8");
   assert.match(nextConfig, /source: "\/symposium-artifacts\/v1\/:path\*"/);
   assert.match(nextConfig, /max-age=31536000, immutable/);

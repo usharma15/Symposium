@@ -390,6 +390,14 @@ export const AUTHORED_ARTIFACT_FOUNDATION = {
         night: "9d7ea0dc064f3b0a2264510434e115e885f8cebb30561be56d3d36a249de0142"
       }
     },
+    compactEmblem: {
+      day: asset("paper-sun-emblem-day-oxblood-v1.png"),
+      night: asset("paper-sun-emblem-night-antique-gold-v1.png"),
+      sha256: {
+        day: "468f085284739f6184e8f582416730965f8c62222aa915536b0bc91895450362",
+        night: "a13718cc87e306e6673adf11b47d6cf9888156368f894b084bb9949a770da946"
+      }
+    },
     perimeter: {
       day: asset("greek-key-running-frame-day-oxblood-v1.png"),
       night: asset("greek-key-running-frame-night-antique-gold-v1.png"),
@@ -450,6 +458,8 @@ export const AUTHORED_ARTIFACT_ASSET_MANIFEST: readonly AuthoredArtifactAsset[] 
   { path: AUTHORED_ARTIFACT_FOUNDATION.paper.surface.night, sha256: AUTHORED_ARTIFACT_FOUNDATION.paper.surface.sha256.night },
   { path: AUTHORED_ARTIFACT_FOUNDATION.paper.grain.day, sha256: AUTHORED_ARTIFACT_FOUNDATION.paper.grain.sha256.day },
   { path: AUTHORED_ARTIFACT_FOUNDATION.paper.grain.night, sha256: AUTHORED_ARTIFACT_FOUNDATION.paper.grain.sha256.night },
+  { path: AUTHORED_ARTIFACT_FOUNDATION.paper.compactEmblem.day, sha256: AUTHORED_ARTIFACT_FOUNDATION.paper.compactEmblem.sha256.day },
+  { path: AUTHORED_ARTIFACT_FOUNDATION.paper.compactEmblem.night, sha256: AUTHORED_ARTIFACT_FOUNDATION.paper.compactEmblem.sha256.night },
   { path: AUTHORED_ARTIFACT_FOUNDATION.paper.perimeter.day, sha256: AUTHORED_ARTIFACT_FOUNDATION.paper.perimeter.sha256.day },
   { path: AUTHORED_ARTIFACT_FOUNDATION.paper.perimeter.night, sha256: AUTHORED_ARTIFACT_FOUNDATION.paper.perimeter.sha256.night },
   { path: AUTHORED_ARTIFACT_FOUNDATION.paper.perimeter.cornerDay, sha256: AUTHORED_ARTIFACT_FOUNDATION.paper.perimeter.sha256.cornerDay },

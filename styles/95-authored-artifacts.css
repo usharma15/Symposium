@@ -46,6 +46,7 @@
   background-position: 0 0;
   background-repeat: repeat;
   background-size: 768px 768px;
+  background-blend-mode: normal;
   color: #211e17;
   box-shadow: none;
 }
@@ -501,7 +502,7 @@
 
 .authored-bottom-caricature {
   position: absolute;
-  z-index: 3;
+  z-index: auto;
   right: 48px;
   bottom: 0;
   left: 48px;
@@ -512,18 +513,50 @@
   pointer-events: none;
 }
 
-.authored-bottom-caricature img {
+.authored-bottom-caricature > :where(.authored-bottom-caricature-line, .authored-bottom-caricature-matte) {
   grid-area: 1 / 1;
-  width: auto;
+  width: var(--authored-bottom-width);
   max-width: var(--authored-bottom-max-width, 62%);
   height: var(--authored-bottom-height, 160px);
-  object-fit: contain;
-  object-position: center bottom;
   transform: translate(
     var(--authored-bottom-optical-x, 0),
     var(--authored-bottom-translate-y, -42px)
   );
   user-select: none;
+}
+
+.authored-bottom-caricature-line {
+  position: relative;
+  z-index: 4;
+  object-fit: contain;
+  object-position: center bottom;
+}
+
+.authored-bottom-caricature-matte {
+  position: relative;
+  z-index: 1;
+  background-color: #dce8ea;
+  background-image: url("/symposium-artifacts/v1/paper-surface-study.png");
+  background-position: 0 0;
+  background-repeat: repeat;
+  background-size: 768px 768px;
+  background-blend-mode: luminosity;
+  -webkit-mask-image: var(--authored-bottom-silhouette-day);
+  mask-image: var(--authored-bottom-silhouette-day);
+  -webkit-mask-position: center bottom;
+  mask-position: center bottom;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.symposium-shell.night .authored-bottom-caricature-matte {
+  background-color: #050d0d;
+  background-image: url("/symposium-artifacts/v1/thought-surface-night-deep-ink-v4.png");
+  background-blend-mode: normal;
+  -webkit-mask-image: var(--authored-bottom-silhouette-night);
+  mask-image: var(--authored-bottom-silhouette-night);
 }
 
 .symposium-shell.night .detail-layout.authored-artifact-detail > .detail-main {
@@ -689,18 +722,44 @@
   position: relative;
 }
 
-.authored-post-type-emblem {
-  position: absolute;
-  z-index: 1;
-  top: -2px;
-  right: 0;
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  overflow: hidden;
+.feed-post-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.feed-post-card-header > .post-author {
+  min-width: 0;
+}
+
+.feed-post-header-artifacts {
+  position: relative;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: 6px;
   pointer-events: none;
-  opacity: 0.72;
+}
+
+.feed-post-header-artifacts > .post-owner-actions {
+  pointer-events: auto;
+}
+
+.authored-post-type-emblem {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0.84;
 }
 
 .authored-post-type-emblem img {
@@ -711,12 +770,8 @@
 }
 
 .authored-post-type-emblem-thought img {
-  width: 27px;
-  height: 27px;
-}
-
-.feed-post:has(.authored-post-type-emblem) .post-card-kind-label {
-  padding-right: 38px;
+  width: 40px;
+  height: 40px;
 }
 
 @media (max-width: 1100px) {
@@ -858,7 +913,8 @@
     height: 180px;
   }
 
-  .authored-bottom-caricature img {
+  .authored-bottom-caricature > :where(.authored-bottom-caricature-line, .authored-bottom-caricature-matte) {
+    width: var(--authored-bottom-mobile-width);
     max-width: var(--authored-bottom-mobile-max-width, 84%);
     height: var(--authored-bottom-mobile-height, 125px);
     transform: translate(

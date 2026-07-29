@@ -3,11 +3,11 @@
 .post-tone-thought {
   --post-tone-border: rgba(34, 121, 134, 0.28);
   --post-tone-surface:
-    linear-gradient(180deg, rgba(226, 246, 250, 0.92), rgba(205, 232, 238, 0.88)),
-    rgba(222, 243, 248, 0.9);
-  --post-tone-hover:
-    linear-gradient(180deg, rgba(230, 248, 252, 0.96), rgba(210, 237, 243, 0.92)),
-    rgba(222, 243, 248, 0.94);
+    url("/symposium-artifacts/v1/paper-grain-study.png") 0 0 / 768px 768px repeat,
+    url("/symposium-artifacts/v1/paper-surface-study.png") 0 0 / 768px 768px repeat,
+    #dce8ea;
+  --post-tone-hover: var(--post-tone-surface);
+  --post-tone-blend-mode: soft-light, luminosity;
   --post-tone-accent: #227986;
   --post-tone-sidebar-accent: #8fd8e1;
 }
@@ -15,11 +15,11 @@
 .post-tone-paper {
   --post-tone-border: rgba(168, 103, 50, 0.26);
   --post-tone-surface:
-    linear-gradient(180deg, rgba(255, 253, 245, 0.94), rgba(247, 238, 214, 0.82)),
-    rgba(247, 238, 214, 0.9);
-  --post-tone-hover:
-    linear-gradient(180deg, rgba(255, 253, 245, 0.97), rgba(247, 238, 214, 0.88)),
-    rgba(247, 238, 214, 0.92);
+    url("/symposium-artifacts/v1/paper-grain-study.png") 0 0 / 768px 768px repeat,
+    url("/symposium-artifacts/v1/paper-surface-study.png") 0 0 / 768px 768px repeat,
+    #e8dfc3;
+  --post-tone-hover: var(--post-tone-surface);
+  --post-tone-blend-mode: soft-light, normal;
   --post-tone-accent: #a86732;
   --post-tone-sidebar-accent: #e1bd80;
 }
@@ -52,11 +52,11 @@
 .scribble-panel.night .post-tone-thought {
   --post-tone-border: rgba(157, 238, 243, 0.22);
   --post-tone-surface:
-    linear-gradient(180deg, rgba(13, 33, 40, 0.94), rgba(8, 16, 20, 0.9)),
-    rgba(8, 18, 22, 0.94);
-  --post-tone-hover:
-    linear-gradient(180deg, rgba(15, 39, 47, 0.96), rgba(10, 19, 24, 0.93)),
-    rgba(9, 21, 26, 0.96);
+    url("/symposium-artifacts/v1/paper-grain-night-study.png") 0 0 / 768px 768px repeat,
+    url("/symposium-artifacts/v1/thought-surface-night-deep-ink-v4.png") 0 0 / 768px 768px repeat,
+    #050d0d;
+  --post-tone-hover: var(--post-tone-surface);
+  --post-tone-blend-mode: soft-light, normal;
   --post-tone-accent: #83cbd1;
 }
 
@@ -64,11 +64,11 @@
 .scribble-panel.night .post-tone-paper {
   --post-tone-border: rgba(248, 211, 149, 0.24);
   --post-tone-surface:
-    linear-gradient(180deg, rgba(39, 33, 24, 0.94), rgba(16, 18, 18, 0.86)),
-    rgba(17, 15, 13, 0.92);
-  --post-tone-hover:
-    linear-gradient(180deg, rgba(45, 38, 27, 0.96), rgba(19, 20, 18, 0.9)),
-    rgba(20, 18, 15, 0.94);
+    url("/symposium-artifacts/v1/paper-grain-night-study.png") 0 0 / 768px 768px repeat,
+    url("/symposium-artifacts/v1/paper-surface-night-study.png") 0 0 / 768px 768px repeat,
+    #111112;
+  --post-tone-hover: var(--post-tone-surface);
+  --post-tone-blend-mode: soft-light, normal;
   --post-tone-accent: #e1bd80;
 }
 
@@ -104,6 +104,7 @@
 .symposium-shell.night .profile-comment-card.post-tone {
   border-color: var(--post-tone-border);
   background: var(--post-tone-surface);
+  background-blend-mode: var(--post-tone-blend-mode, normal);
 }
 
 .feed-post.post-tone,
@@ -117,11 +118,13 @@
 .symposium-shell.night .profile-comment-card.post-tone:hover {
   border-color: color-mix(in srgb, var(--post-tone-accent) 58%, var(--post-tone-border));
   background: var(--post-tone-hover);
+  background-blend-mode: var(--post-tone-blend-mode, normal);
 }
 
 .workspace-detail-paper.post-tone:hover {
   border-color: var(--post-tone-border);
   background: var(--post-tone-surface);
+  background-blend-mode: var(--post-tone-blend-mode, normal);
 }
 
 .comment-thread.post-tone .comment-card,
@@ -131,6 +134,7 @@
   border-radius: var(--radius);
   padding: 12px 82px 12px 12px;
   background: var(--post-tone-surface);
+  background-blend-mode: var(--post-tone-blend-mode, normal);
 }
 
 .comment-thread.post-tone .comment-card.highlighted,
@@ -138,6 +142,7 @@
   margin-inline: 0;
   padding: 12px 82px 12px 12px;
   background: var(--post-tone-hover);
+  background-blend-mode: var(--post-tone-blend-mode, normal);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--post-tone-accent) 34%, transparent);
 }
 
@@ -149,6 +154,7 @@
 .symposium-shell.night .scribble-source-shelf a.post-tone {
   border-color: var(--post-tone-border);
   background: var(--post-tone-surface);
+  background-blend-mode: var(--post-tone-blend-mode, normal);
 }
 
 .document-source-card.post-tone small,

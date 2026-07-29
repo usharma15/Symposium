@@ -111,6 +111,20 @@ assert.match(tones, /\.document-source-card\.post-tone,/);
 assert.match(tones, /\.document-source-editor\.post-tone,/);
 assert.match(tones, /\.scribble-source-shelf a\.post-tone/);
 assert.match(tones, /\.workspace-sidebar-document-row\.post-tone \.workspace-sidebar-document/);
+for (const material of [
+  "paper-grain-study.png",
+  "paper-surface-study.png",
+  "paper-grain-night-study.png",
+  "paper-surface-night-study.png",
+  "thought-surface-night-deep-ink-v4.png"
+]) {
+  assert.match(tones, new RegExp(`/symposium-artifacts/v1/${material.replaceAll(".", "\\.")}`));
+}
+for (const materialColor of ["#dce8ea", "#e8dfc3", "#050d0d", "#111112"]) {
+  assert.match(tones, new RegExp(materialColor));
+}
+assert.match(tones, /--post-tone-hover:\s*var\(--post-tone-surface\)/);
+assert.match(tones, /background-blend-mode:\s*var\(--post-tone-blend-mode,\s*normal\)/);
 assert.doesNotMatch(tones, /inset 3px 0 var\(--post-tone-sidebar-accent\)/);
 assert.doesNotMatch(feedStyles, /\.post-kind-(?:paper|draft|code|thought|note)/);
 assert.doesNotMatch(nightStyles, /\.post-kind-(?:paper|draft|code|thought|note)/);

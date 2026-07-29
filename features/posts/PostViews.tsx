@@ -782,17 +782,22 @@ export function FeedPost({
             {showCommunityContext && community && onOpenCommunity ? <CommunityActivityBadge community={community} onOpenCommunity={onOpenCommunity} onClick={(event) => event.stopPropagation()} compact className="profile-community-provenance" /> : null}
             {activityLabel ? <span className="profile-post-activity-label"><Repeat2 size={14} />{activityLabel}</span> : null}
             {!interactionLocked ? <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} inline /> : null}
+            {isPaper || isThought ? <PostTypeEmblem postType={isPaper ? "paper" : "thought"} /> : null}
           </div>
         </div>
       ) : (
         <>
-          {!interactionLocked ? <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} /> : null}
-          <PostAuthor item={item} profiles={profiles} onOpenProfile={onOpenProfile} onClickStop={(event) => event.stopPropagation()} />
+          <div className="feed-post-card-header">
+            <PostAuthor item={item} profiles={profiles} onOpenProfile={onOpenProfile} onClickStop={(event) => event.stopPropagation()} />
+            <div className="feed-post-header-artifacts">
+              {!interactionLocked ? <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} inline /> : null}
+              {isPaper || isThought ? <PostTypeEmblem postType={isPaper ? "paper" : "thought"} /> : null}
+            </div>
+          </div>
           {showCommunityContext && community && onOpenCommunity ? <CommunityActivityBadge community={community} onOpenCommunity={onOpenCommunity} onClick={(event) => event.stopPropagation()} /> : null}
         </>
       )}
       <div className="post-body">
-        {isPaper || isThought ? <PostTypeEmblem postType={isPaper ? "paper" : "thought"} /> : null}
         {!isThought ? <p className="post-card-kind-label">{feedKindLabel}</p> : null}
         {!isDeletedPost(item) && !interactionLocked ? (
           <ContentTranslationControl state={translation} sourceLabel="post" />
