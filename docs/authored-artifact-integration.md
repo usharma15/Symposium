@@ -25,6 +25,10 @@ pre-migration and local compatibility records that have no assignment yet.
 
 - Full frames, muse ceremonies, and bottom caricatures mount only on Paper and
   Thought detail pages selected by `postType`.
+- Authored styling never owns or overrides the detail grid or centre-feed
+  width. Paper and Thought inherit the established post geometry so the back
+  control, Paper metadata, Scribble, and AI Tablet retain their original
+  collision-free panel relationships.
 - Paper title ink is measured from the authored muse anchor to the first
   semantic grapheme without breaking the title's shaped text run. It remeasures
   after translation, font readiness, or geometry changes.
@@ -37,17 +41,27 @@ pre-migration and local compatibility records that have no assignment yet.
 - Both theme assets occupy identical geometry. Foundational and selected
   figure assets for both themes are eagerly warmed by the active detail
   renderer, so theme switching does not wait on a new image request.
-- Chariot uses its approved Thought surface-through pair. The other six shared
-  figures retain their frozen Paper-surface assets.
+- Every member of the seven-figure pool has a separate Thought
+  surface-through pair. The engraving remains opaque while the interior stays
+  transparent, allowing the real Thought background colour and repeating
+  texture to continue through the figure. Paper keeps its separate
+  Paper-surface-filled pairs.
 
 ## Asset ownership
 
-The production runtime owns exactly 39 immutable files under
+The production runtime owns exactly 51 immutable files under
 `public/symposium-artifacts/v1`. Rejected studies, source photography, edit
 masters, and extraction intermediates are excluded. The registry records every
 runtime SHA-256 digest, and `npm run authored-artifacts:check` rejects missing,
 extra, renamed, modified, or non-versioned files. Versioned assets receive a
 one-year immutable cache header.
+
+The six additional Thought pairs are reproducibly derived by
+`scripts/buildThoughtBottomCaricatureVariants.mjs` from the frozen Paper
+composites. The build recovers only the original engraving coverage and does
+not alter the approved canvas, silhouette, antialiasing, scale, or placement.
+The focused check verifies every Day/Night alpha pair, pigment, canvas, source
+silhouette containment, transparent-fill ratio, and immutable digest.
 
 ## Verification and release gates
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 import {
   AUTHORED_ARTIFACT_ASSET_MANIFEST,
   BOTTOM_CARICATURE_REGISTRY,
@@ -15,7 +16,7 @@ const main = async () => {
   const publicRoot = path.join(root, "public");
   const artifactRoot = path.join(publicRoot, "symposium-artifacts", "v1");
   const manifestPaths = AUTHORED_ARTIFACT_ASSET_MANIFEST.map((entry) => entry.path);
-  assert.equal(AUTHORED_ARTIFACT_ASSET_MANIFEST.length, 39, "The frozen runtime manifest must contain exactly 39 assets.");
+  assert.equal(AUTHORED_ARTIFACT_ASSET_MANIFEST.length, 51, "The frozen runtime manifest must contain exactly 51 assets.");
   assert.equal(new Set(manifestPaths).size, manifestPaths.length, "The runtime manifest must not contain duplicate assets.");
 
   const copiedFiles = (await readdir(artifactRoot)).sort();
@@ -45,10 +46,68 @@ const main = async () => {
     "lovers",
     "chariot"
   ]);
-  assert.ok(BOTTOM_CARICATURE_REGISTRY.chariot.thoughtSurfaceAssets);
   for (const bottom of Object.values(BOTTOM_CARICATURE_REGISTRY)) {
     assert.deepEqual(bottom.eligiblePostTypes, ["paper", "thought"]);
     assert.equal(bottom.approved, true);
+    assert.ok(bottom.thoughtSurfaceAssets, `${bottom.id}: missing Thought surface-through artwork`);
+
+    const [
+      { data: paperDay, info: paperDayInfo },
+      { data: thoughtDay, info: thoughtDayInfo },
+      { data: thoughtNight, info: thoughtNightInfo }
+    ] = await Promise.all([
+      sharp(path.join(publicRoot, bottom.assets.day.slice(1)))
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true }),
+      sharp(path.join(publicRoot, bottom.thoughtSurfaceAssets.day.slice(1)))
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true }),
+      sharp(path.join(publicRoot, bottom.thoughtSurfaceAssets.night.slice(1)))
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true })
+    ]);
+
+    for (const info of [paperDayInfo, thoughtDayInfo, thoughtNightInfo]) {
+      assert.deepEqual(
+        [info.width, info.height],
+        [bottom.canvas.width, bottom.canvas.height],
+        `${bottom.id}: runtime canvas drifted`
+      );
+    }
+
+    let paperAlphaMass = 0;
+    let thoughtAlphaMass = 0;
+    let visibleThoughtPixels = 0;
+    for (let offset = 0; offset < thoughtDay.length; offset += 4) {
+      const paperAlpha = paperDay[offset + 3];
+      const dayAlpha = thoughtDay[offset + 3];
+      const nightAlpha = thoughtNight[offset + 3];
+      assert.equal(dayAlpha, nightAlpha, `${bottom.id}: Thought Day/Night alpha geometry drifted`);
+      assert.ok(dayAlpha <= paperAlpha, `${bottom.id}: Thought line escaped the approved Paper silhouette`);
+      if (dayAlpha > 0) {
+        assert.deepEqual(
+          [thoughtDay[offset], thoughtDay[offset + 1], thoughtDay[offset + 2]],
+          [79, 91, 70],
+          `${bottom.id}: Thought Day engraving pigment drifted`
+        );
+        assert.deepEqual(
+          [thoughtNight[offset], thoughtNight[offset + 1], thoughtNight[offset + 2]],
+          [88, 97, 95],
+          `${bottom.id}: Thought Night engraving pigment drifted`
+        );
+        visibleThoughtPixels += 1;
+      }
+      paperAlphaMass += paperAlpha;
+      thoughtAlphaMass += dayAlpha;
+    }
+    assert.ok(visibleThoughtPixels > 0, `${bottom.id}: Thought engraving is empty`);
+    assert.ok(
+      thoughtAlphaMass < paperAlphaMass * 0.75,
+      `${bottom.id}: Thought artwork retained an opaque Paper fill`
+    );
   }
   assert.deepEqual(paperTitleEntry("“Éclair”"), {
     direction: "ltr",
@@ -99,6 +158,26 @@ const main = async () => {
   );
   assert.match(sources[4], /!isPaper && !isThought/, "Thought and Paper detail indicators must be absent.");
   assert.match(sources[4], /isThought && thoughtMuseId \? <ThoughtOpeningMuse/, "Thought muses must be title-independent.");
+  assert.match(
+    sources[1],
+    /postType === "thought" \? bottom\.thoughtSurfaceAssets : bottom\.assets/,
+    "Every Thought bottom caricature must use its surface-through artwork."
+  );
+  assert.doesNotMatch(
+    sources[1],
+    /bottom\.id\s*===\s*"chariot"/,
+    "Thought surface-through behavior must not special-case Chariot."
+  );
+  assert.doesNotMatch(
+    sources[5],
+    /\.detail-layout\.authored-artifact-detail\s*\{/,
+    "Authored design CSS must not override the established detail grid or width."
+  );
+  assert.doesNotMatch(
+    sources[5],
+    /width:\s*min\(980px/,
+    "Authored design CSS must retain the original centre-feed width."
+  );
   const nextConfig = await readFile(path.join(root, "next.config.mjs"), "utf8");
   assert.match(nextConfig, /source: "\/symposium-artifacts\/v1\/:path\*"/);
   assert.match(nextConfig, /max-age=31536000, immutable/);

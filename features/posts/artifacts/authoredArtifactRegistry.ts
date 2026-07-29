@@ -146,7 +146,7 @@ type BottomCaricature = Readonly<{
   id: BottomCaricatureIdContract;
   label: string;
   assets: ThemedAssets;
-  thoughtSurfaceAssets?: ThemedAssets;
+  thoughtSurfaceAssets: ThemedAssets;
   canvas: Readonly<{ width: number; height: number }>;
   visibleBounds: Readonly<{ x: number; y: number; width: number; height: number }>;
   placement: Readonly<{
@@ -171,6 +171,14 @@ export const BOTTOM_CARICATURE_REGISTRY = {
         night: "d17f7fa61ab27fec3a0f5d3828829560cca4b1606c873ee8e1000dcd51affd3c"
       }
     },
+    thoughtSurfaceAssets: {
+      day: asset("resting-warrior-thought-surface-line-day-olive-v1.png"),
+      night: asset("resting-warrior-thought-surface-line-night-smoked-mineral-v1.png"),
+      sha256: {
+        day: "21f41c329d2b4268d1e4a637dc733d72a274b94b3399b86cc4ad74a6624de275",
+        night: "2f079eb1dd7a3c606b76331dd433774114617a84e1535fdcae25547c46bd2340"
+      }
+    },
     canvas: { width: 500, height: 635 },
     visibleBounds: { x: 7, y: 5, width: 484, height: 627 },
     placement: {
@@ -191,6 +199,14 @@ export const BOTTOM_CARICATURE_REGISTRY = {
       sha256: {
         day: "fa0d3502ea09acfcc06868cf230317deb6895ef9e12881a227c3f8e970df3cbc",
         night: "6f92e3a0e73907715903bc985afaca5b186f1dffb95cae2ad2bf95882f398499"
+      }
+    },
+    thoughtSurfaceAssets: {
+      day: asset("flute-woman-thought-surface-line-day-olive-v1.png"),
+      night: asset("flute-woman-thought-surface-line-night-smoked-mineral-v1.png"),
+      sha256: {
+        day: "7b620318e9e926d943402d0806d8dbc663218c17851eabee2cd301b73c3629dd",
+        night: "d9b418e2751689ae5b3e2387c46525b82af55d3ead7f0c030f0987b185c66802"
       }
     },
     canvas: { width: 923, height: 1704 },
@@ -215,6 +231,14 @@ export const BOTTOM_CARICATURE_REGISTRY = {
         night: "c3cd0d5dd0630a49b6951a5f3da35b73eca397be0e4ecf2dfd155463b06bc864"
       }
     },
+    thoughtSurfaceAssets: {
+      day: asset("discus-thrower-thought-surface-line-day-olive-v1.png"),
+      night: asset("discus-thrower-thought-surface-line-night-smoked-mineral-v1.png"),
+      sha256: {
+        day: "2f8bc16a7b44e5da4747c60c9c614e5edab15c73d95fc470be3b7c1067b07a10",
+        night: "f21c9f0579fc46df0c8f0c950e54b861fbbb1ff646d499159d60e0d9833211d3"
+      }
+    },
     canvas: { width: 564, height: 991 },
     visibleBounds: { x: 10, y: 49, width: 538, height: 925 },
     placement: {
@@ -235,6 +259,14 @@ export const BOTTOM_CARICATURE_REGISTRY = {
       sha256: {
         day: "782af5816ad8b41c971d5aa10483d5e4ef28d868aa7974bcdda81122fe41e431",
         night: "20c5508f2514f33f01116d08797a40ab3a5fcf9ceb44a8ca61ab71cb05016a8c"
+      }
+    },
+    thoughtSurfaceAssets: {
+      day: asset("harp-girl-thought-surface-line-day-olive-v1.png"),
+      night: asset("harp-girl-thought-surface-line-night-smoked-mineral-v1.png"),
+      sha256: {
+        day: "cd0677e84a432bfa6ca4d55f6e54aad89bd2c3802fcbf5dc121890b35020b386",
+        night: "5967d70f27e8a5f2f7d7f0f4f3362e1c8a0b81cb8a085477dc7e88c8a9ac8e60"
       }
     },
     canvas: { width: 738, height: 923 },
@@ -259,6 +291,14 @@ export const BOTTOM_CARICATURE_REGISTRY = {
         night: "aa93af942e6786ec217185525f3a3956bd1e1791f4b41715dadd30aea096dbfd"
       }
     },
+    thoughtSurfaceAssets: {
+      day: asset("wanderer-thought-surface-line-day-olive-v1.png"),
+      night: asset("wanderer-thought-surface-line-night-smoked-mineral-v1.png"),
+      sha256: {
+        day: "c5a3d134c7dccddfd369e6c4d8b3e2dfd6fbd48afb5c1b5b905021562099781e",
+        night: "981b3149593354aa0f2d4c946b86edcbd4183c61fca6e120b1f3134735a4c388"
+      }
+    },
     canvas: { width: 258, height: 480 },
     visibleBounds: { x: 15, y: 31, width: 227, height: 440 },
     placement: {
@@ -279,6 +319,14 @@ export const BOTTOM_CARICATURE_REGISTRY = {
       sha256: {
         day: "c328543154c18742c10a94f9c5c28dae7fb3515fd302371477c0f10b6375e922",
         night: "60f6d32afe2d9130149764667a06988aaae5adf317ca235d1722c1119e6917bf"
+      }
+    },
+    thoughtSurfaceAssets: {
+      day: asset("lovers-thought-surface-line-day-olive-v1.png"),
+      night: asset("lovers-thought-surface-line-night-smoked-mineral-v1.png"),
+      sha256: {
+        day: "7cd2bc124fb7f952f3ef76069d3928676faba1bcf56b480c4ebe5daec7bf959e",
+        night: "f2d160ea41166c874f51fcaa1edca787a652cae73db7a3d67ccc5c24c6ad5101"
       }
     },
     canvas: { width: 685, height: 1381 },
@@ -417,7 +465,7 @@ export const AUTHORED_ARTIFACT_ASSET_MANIFEST: readonly AuthoredArtifactAsset[] 
   ...Object.values(THOUGHT_MUSE_REGISTRY).flatMap((muse) => themedAssetEntries(muse.assets)),
   ...Object.values(BOTTOM_CARICATURE_REGISTRY).flatMap((bottom) => [
     ...themedAssetEntries(bottom.assets),
-    ...("thoughtSurfaceAssets" in bottom ? themedAssetEntries(bottom.thoughtSurfaceAssets) : [])
+    ...themedAssetEntries(bottom.thoughtSurfaceAssets)
   ])
 ];
 

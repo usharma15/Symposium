@@ -49,14 +49,12 @@ export function AuthoredBottomCaricature({
   postType: "paper" | "thought";
 }) {
   const bottom = BOTTOM_CARICATURE_REGISTRY[bottomCaricatureId];
-  const assets = postType === "thought" && bottom.id === "chariot"
-    ? bottom.thoughtSurfaceAssets
-    : bottom.assets;
+  const assets = postType === "thought" ? bottom.thoughtSurfaceAssets : bottom.assets;
   return (
     <div
       className="authored-bottom-caricature"
       data-bottom-caricature-id={bottom.id}
-      data-bottom-fill-contract={postType === "thought" && bottom.id === "chariot" ? "surface-through" : "paper-surface"}
+      data-bottom-fill-contract={postType === "thought" ? "surface-through" : "paper-surface"}
       style={{
         "--authored-bottom-height": `${bottom.placement.desktop.height}px`,
         "--authored-bottom-translate-y": `${bottom.placement.desktop.translateY}px`,

@@ -30,11 +30,6 @@
   height: 1px;
 }
 
-.detail-layout.authored-artifact-detail {
-  grid-template-columns: minmax(0, 1fr);
-  width: min(980px, calc(100vw - 32px));
-}
-
 .detail-layout.authored-artifact-detail > .detail-main,
 .symposium-shell.night .detail-layout.authored-artifact-detail > .detail-main {
   --authored-title-ink: #181510;
