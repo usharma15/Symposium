@@ -93,9 +93,7 @@ export async function PATCH(request: Request, context: Context) {
     document: body.document === undefined ? undefined : versionedDocumentSchema.safeParse(body.document).data
   };
 
-  if (!input.title || !input.body) {
-    return jsonError("Title and body are required.", 400);
-  }
+  if (!input.body) return jsonError("A post body is required.", 400);
   if (body.document !== undefined && !versionedDocumentSchema.safeParse(body.document).success) {
     return jsonError("The post document is invalid or unsupported.", 400);
   }

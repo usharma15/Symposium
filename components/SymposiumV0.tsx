@@ -185,6 +185,7 @@ import { invalidateQuotedSource, resolveLocalContentQuote } from "@/lib/contentQ
 import { communityViewerProjectionChanged } from "@/lib/communityContentProjection";
 import {
   postContextLabel,
+  postTitlePolicyError,
   preservePostSemanticProjection,
   publicPostTitle
 } from "@/lib/postSemantics";
@@ -3933,11 +3934,10 @@ function SymposiumExperience({
   ) => {
     const cleanTitle = draft.title.trim();
     const cleanBody = draft.body.trim();
-    if (!cleanTitle || !cleanBody) return;
-
     const previousItems = itemsRef.current;
     const existing = previousItems.find((item) => item.id === itemId);
     if (!existing || isDeletedPost(existing)) return;
+    if (!cleanBody || postTitlePolicyError(existing, cleanTitle)) return;
     itemMutationCoordinatorRef.current.begin(itemId);
     const editedAt = new Date().toISOString();
     const optimisticItems = previousItems.map((item) =>

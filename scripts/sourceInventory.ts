@@ -29,7 +29,6 @@ export const sourcePolicy = {
   baselinePhysical: 127_151,
   baselineNonblank: 119_000,
   passMaximum: 128_351,
-  temporaryMaximum: 128_651,
   programMaximum: 99_999
 } as const;
 

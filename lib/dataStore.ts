@@ -53,7 +53,7 @@ import {
   projectCanonicalActionLedger
 } from "@/lib/profileActivity";
 import { invalidateQuotedSource } from "@/lib/contentQuotes";
-import { postHasVisibleTitle, postTypeForItem } from "@/lib/postSemantics";
+import { postTitlePolicyError, postTypeForItem } from "@/lib/postSemantics";
 import {
   deterministicPostDesignAssignment,
   postTypeHasAuthoredArtifact,
@@ -1730,7 +1730,7 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
-    if (postHasVisibleTitle(existing) ? !cleanInput.title : Boolean(cleanInput.title)) return null;
+    if (postTitlePolicyError(existing, cleanInput.title)) return null;
     if (input.attachments?.length && (existing.room === "office" || existing.kind === "draft")) return null;
 
     const updated = updatePostShape(existing, cleanInput);
@@ -1767,7 +1767,7 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
   let updated: InquiryItem | null = null;
   local.items = local.items.map((item) => {
     if (item.id !== itemId || isDeletedPost(item) || !canManagePost(item, actorHandle)) return item;
-    if (postHasVisibleTitle(item) ? !cleanInput.title : Boolean(cleanInput.title)) return item;
+    if (postTitlePolicyError(item, cleanInput.title)) return item;
     if (input.attachments?.length && (item.room === "office" || item.kind === "draft")) return item;
     updated = updatePostShape(item, cleanInput);
     return updated;

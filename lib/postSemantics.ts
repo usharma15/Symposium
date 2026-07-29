@@ -61,6 +61,12 @@ export const publicPostTypeLabel = (item: PostSemanticSource) => {
 export const postHasVisibleTitle = (item: PostSemanticSource) =>
   postTypeForItem(item) !== "thought";
 
+export const postTitlePolicyError = (item: PostSemanticSource, title: string) => {
+  const hasTitle = Boolean(title.trim());
+  if (postHasVisibleTitle(item)) return hasTitle ? null : "This post type requires a title.";
+  return hasTitle ? "Thoughts do not have titles." : null;
+};
+
 export const publicPostTitle = <T extends PostSemanticSource & { title: string }>(item: T) =>
   postHasVisibleTitle(item) ? item.title : "";
 

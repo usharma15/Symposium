@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   itemHasPostType,
+  postTitlePolicyError,
   postTypeForItem,
   preservePostSemanticProjection,
   publicPostTypeLabel
@@ -26,6 +27,12 @@ assert.equal(postTypeForItem({ kind: "paper", room: "office", postType: "paper" 
 assert.equal(publicPostTypeLabel(opportunities[0]!), "Opportunity");
 assert.equal(publicPostTypeLabel(proposals[0]!), "Patronage Proposal");
 assert.equal(publicPostTypeLabel(thoughts[0]!), "Thought");
+assert.equal(postTitlePolicyError(thoughts[0]!, ""), null);
+assert.equal(postTitlePolicyError(thoughts[0]!, "A stale Thought title"), "Thoughts do not have titles.");
+assert.equal(postTitlePolicyError(papers[0]!, ""), "This post type requires a title.");
+assert.equal(postTitlePolicyError(papers[0]!, "A Paper title"), null);
+assert.equal(postTitlePolicyError(proposals[0]!, "A proposal title"), null);
+assert.equal(postTitlePolicyError(opportunities[0]!, "An opportunity title"), null);
 
 const currentOpportunity = opportunities[0]!;
 const partialLiveOpportunity = {
@@ -38,14 +45,16 @@ assert.equal(protectedOpportunity.postType, "opportunity");
 assert.equal(protectedOpportunity.opportunity, currentOpportunity.opportunity);
 
 const root = process.cwd();
-const [feedVisibility, profileViews, discovery, quoteService, workspacePublishing, migration, shell] = await Promise.all([
+const [feedVisibility, profileViews, discovery, quoteService, workspacePublishing, migration, shell, createBridge, updateBridge] = await Promise.all([
   readFile(path.join(root, "features/feeds/feedVisibility.ts"), "utf8"),
   readFile(path.join(root, "features/profiles/ProfileViews.tsx"), "utf8"),
   readFile(path.join(root, "features/discovery/discoveryPolicy.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/contentQuotes.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/notePublishing.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8"),
-  readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8")
+  readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8"),
+  readFile(path.join(root, "app/api/posts/route.ts"), "utf8"),
+  readFile(path.join(root, "app/api/posts/[id]/route.ts"), "utf8")
 ]);
 
 assert.match(feedVisibility, /activeRoom === "library"\) return itemHasPostType\(item, "paper"\)/);
@@ -59,6 +68,10 @@ assert.match(migration, /0027_semantic_post_types/);
 assert.match(migration, /posts_semantic_destination_check/);
 assert.match(shell, /postContextLabel\(attachmentPreviewBaseItem\)/);
 assert.doesNotMatch(shell, /inside .\$\{attachmentPreviewBaseItem\.title\}/);
+assert.match(shell, /!cleanBody \|\| postTitlePolicyError\(existing, cleanTitle\)/);
+assert.match(createBridge, /postTitlePolicyError\(input, input\.title\)/);
+assert.doesNotMatch(createBridge, /!input\.title \|\| !input\.body/);
+assert.doesNotMatch(updateBridge, /!input\.title \|\| !input\.body/);
 
 console.log(JSON.stringify({
   ok: true,

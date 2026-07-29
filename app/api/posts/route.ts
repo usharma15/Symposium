@@ -5,7 +5,7 @@ import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { cleanHandle, contentKinds, isSavedBy, postRooms } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, postPageQuerySchema, postTypeSchema, versionedDocumentSchema } from "@/packages/contracts/src";
-import { postTypeForItem } from "@/lib/postSemantics";
+import { postTitlePolicyError, postTypeForItem } from "@/lib/postSemantics";
 import {
   LocalAttachmentStoreError,
   replaceLocalOwnerAttachments,
@@ -154,9 +154,9 @@ export async function POST(request: Request) {
     attachments: Array.isArray(body.attachments) ? body.attachments : []
   };
 
-  if (!input.title || !input.body) {
-    return jsonError("Title and body are required.", 400);
-  }
+  if (!input.body) return jsonError("A post body is required.", 400);
+  const titleError = postTitlePolicyError(input, input.title);
+  if (titleError) return jsonError(titleError, 400);
   if (input.kind !== "paper" && input.kind !== "thought" && input.kind !== "note") {
     return jsonError("Private drafts and code artifacts publish through the Workspace, not the public post endpoint.", 400);
   }

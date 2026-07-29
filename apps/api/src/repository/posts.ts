@@ -21,7 +21,7 @@ import {
   postTypeHasAuthoredArtifact,
   randomPostDesignAssignment
 } from "@/lib/postDesign";
-import { postHasVisibleTitle } from "@/lib/postSemantics";
+import { postTitlePolicyError } from "@/lib/postSemantics";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
@@ -637,14 +637,8 @@ export const updatePost = async (
     if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
-    if (postHasVisibleTitle(existing) ? !input.title : Boolean(input.title)) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: postHasVisibleTitle(existing)
-          ? "This post type requires a title."
-          : "Thoughts do not have titles."
-      });
-    }
+    const titleError = postTitlePolicyError(existing, input.title);
+    if (titleError) throw new TRPCError({ code: "BAD_REQUEST", message: titleError });
     assertCanonicalOpportunityUpdate(input.opportunity, existing);
     const patronage = updatePatronageProjection(input.patronage, existing.patronage);
     const opportunity = updateOpportunityProjection(input.opportunity, existing.opportunity);
@@ -692,14 +686,8 @@ export const updatePost = async (
     if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
-    if (postHasVisibleTitle(row) ? !input.title : Boolean(input.title)) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: postHasVisibleTitle(row)
-          ? "This post type requires a title."
-          : "Thoughts do not have titles."
-      });
-    }
+    const titleError = postTitlePolicyError(row, input.title);
+    if (titleError) throw new TRPCError({ code: "BAD_REQUEST", message: titleError });
     assertCanonicalOpportunityUpdate(input.opportunity, row);
     if (row.kind !== "paper" && input.document && !documentFitsReducedEditor(input.document)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Thoughts use the reduced editor formatting set." });

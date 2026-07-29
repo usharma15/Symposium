@@ -901,18 +901,12 @@ export const createPostInputSchema = z.object({
       message: "The public post type must describe the publication itself, independently of its editor grade."
     });
   }
-  if (input.postType === "thought" && input.title) {
+  const titleRequired = input.postType !== "thought";
+  if (titleRequired !== Boolean(input.title)) {
     context.addIssue({
       code: "custom",
       path: ["title"],
-      message: "Thoughts do not have titles."
-    });
-  }
-  if (input.postType !== "thought" && !input.title) {
-    context.addIssue({
-      code: "custom",
-      path: ["title"],
-      message: "This post type requires a title."
+      message: titleRequired ? "This post type requires a title." : "Thoughts do not have titles."
     });
   }
   if (input.communityId && input.postType === "paper" && input.room !== "library") {
