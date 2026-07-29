@@ -5,8 +5,8 @@ import type { RoomId } from "@/lib/mockData";
 export type Theme = "day" | "night";
 
 export const entranceRenders: Record<Theme, string> = {
-  day: "/symposium-renders/entrance-v1.avif",
-  night: "/symposium-renders/entrance-night-v1.avif"
+  day: "/symposium-renders/entrance-day-v2.avif",
+  night: "/symposium-renders/entrance-night-v2.avif"
 };
 
 export const roomRenders: Record<Theme, Record<RoomId, string>> = {
