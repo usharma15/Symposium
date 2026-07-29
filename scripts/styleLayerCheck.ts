@@ -92,10 +92,12 @@ const main = async () => {
   const workspaceStyles = sources.get("88-workspace.css") ?? "";
   const immersiveOverlayStyles = sources.get("80-immersive-overlays.css") ?? "";
   const foundationStyles = sources.get("00-foundations-entry.css") ?? "";
+  const legacyContentStyles = sources.get("20-legacy-content.css") ?? "";
   const legacyDetailStyles = sources.get("30-legacy-discussion-profile.css") ?? "";
   const legacyResponsiveStyles = sources.get("40-legacy-responsive.css") ?? "";
   const immersiveShellStyles = sources.get("50-immersive-shell.css") ?? "";
   const communityDirectoryStyles = sources.get("89-communities.css") ?? "";
+  const authoredArtifactStyles = sources.get("95-authored-artifacts.css") ?? "";
   assert.match(patronageStyles, /\.patronage-proposal-fields/);
   assert.match(patronageStyles, /\.patronage-feed-summary/);
   assert.match(patronageStyles, /\.patronage-side-inline > \.patronage-side/);
@@ -108,6 +110,8 @@ const main = async () => {
   assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar\s*\{[^}]*position:\s*fixed/);
   assert.match(immersiveOverlayStyles, /\.paper-detail > \.paper-side\s*\{[^}]*position:\s*fixed/);
   assert.match(foundationStyles, /--symposium-content-top:\s*104px/);
+  assert.match(foundationStyles, /--symposium-post-title-size:\s*2rem/);
+  assert.match(foundationStyles, /@media \(max-width:\s*760px\)[\s\S]*--symposium-post-title-size:\s*1\.625rem/);
   assert.match(foundationStyles, /--symposium-side-tool-top:\s*var\(--symposium-content-top\)/);
   assert.match(foundationStyles, /--symposium-detail-top:\s*var\(--symposium-content-top\)/);
   assert.match(immersiveShellStyles, /\.stage\s*\{[^}]*padding:\s*var\(--symposium-content-top\) 24px 118px/);
@@ -205,7 +209,10 @@ const main = async () => {
   assert.match(documentStyles, /\.feed-post \.symposium-document-feed h2\s*\{[^}]*font-size:\s*clamp\(1\.05rem, 1\.8vw, 1\.2rem\)/);
   assert.match(documentStyles, /\.document-editor-canvas \.tiptap pre\s*\{[^}]*font-family:\s*var\(--document-font-mono\)[^}]*line-height:\s*1\.55/);
   assert.match(documentStyles, /\.document-editor-canvas \.tiptap\.ProseMirror-focused pre\.is-active-code-block\s*\{[^}]*--document-code-visible-lines:\s*18/);
-  assert.match(feedStyles, /\.feed-post \.post-card-title\s*\{[^}]*font-family:\s*Georgia[^}]*font-size:\s*clamp\(1\.42rem, 2\.35vw, 1\.82rem\)[^}]*font-weight:\s*820/);
+  assert.match(feedStyles, /\.feed-post \.post-card-title\s*\{[^}]*font-family:\s*Georgia[^}]*font-size:\s*var\(--symposium-post-title-size\)[^}]*font-weight:\s*820/);
+  assert.match(legacyContentStyles, /\.detail-main h1\s*\{[^}]*font-size:\s*var\(--symposium-post-title-size\)/);
+  assert.match(workspaceStyles, /\.workspace-detail-paper \.post-body > h1\s*\{[^}]*font-size:\s*var\(--symposium-post-title-size\)/);
+  assert.match(authoredArtifactStyles, /\.authored-paper-title-ceremony h1\s*\{[^}]*font-size:\s*var\(--symposium-post-title-size\)/);
   assert.match(attachmentStyles, /\.attachment-modal[\s\S]*background:\s*var\(--document-surface-solid\)/);
   assert.match(attachmentStyles, /\.attachment-sheet-scroll[\s\S]*background:\s*var\(--attachment-preview-surface\)/);
   assert.match(

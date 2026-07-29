@@ -228,7 +228,7 @@ button.quote-card-opportunity:hover {
 .feed-post .post-card-title {
   margin: 14px 0 0;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.42rem, 2.35vw, 1.82rem);
+  font-size: var(--symposium-post-title-size);
   font-weight: 820;
   letter-spacing: -0.018em;
   line-height: 1.12;

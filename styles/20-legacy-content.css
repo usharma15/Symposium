@@ -1504,7 +1504,7 @@
 
 .detail-main h1 {
   max-width: 880px;
-  font-size: clamp(1.75rem, 3.6vw, 3.35rem);
+  font-size: var(--symposium-post-title-size);
   line-height: 1.06;
 }
 

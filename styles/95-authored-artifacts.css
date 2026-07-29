@@ -297,7 +297,7 @@
   margin-top: 0;
   color: var(--authored-title-ink);
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(2.2rem, 4.25vw, 4.2rem);
+  font-size: var(--symposium-post-title-size);
   font-weight: 560;
   letter-spacing: -0.025em;
   line-height: 1.02;

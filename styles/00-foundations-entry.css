@@ -19,6 +19,7 @@
   --small-shadow: 0 12px 34px rgba(15, 29, 31, 0.12);
   --radius: 8px;
   --symposium-feed-width: 840px;
+  --symposium-post-title-size: 2rem;
   --symposium-side-tool-width: max(
     268px,
     calc((100vw - min(var(--symposium-feed-width), calc(100vw - 28px))) / 2)
@@ -42,6 +43,7 @@
 
 @media (max-width: 760px) {
   :root {
+    --symposium-post-title-size: 1.625rem;
     --symposium-side-tool-top: 88px;
   }
 }
