@@ -225,6 +225,19 @@ button.quote-card-opportunity:hover {
   overflow-wrap: anywhere;
 }
 
+.feed-post .post-card-title {
+  margin: 14px 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.42rem, 2.35vw, 1.82rem);
+  font-weight: 820;
+  letter-spacing: -0.018em;
+  line-height: 1.12;
+}
+
+.feed-post .post-card-title + .content-translation-control {
+  margin-top: 0.58rem;
+}
+
 .feed-post h2 a,
 .profile-comment-card header > a,
 .profile-comment-card footer > a {

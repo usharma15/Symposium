@@ -53,8 +53,10 @@ const documentRuns = (document?: VersionedDocumentContract) =>
 
 export const contentMentionHandles = ({ body, document }: MentionContent) => {
   const handles = new Set<string>();
-  for (const match of body.matchAll(inlineMentionPattern)) {
-    handles.add(cleanHandle(match[2]!));
+  if (!document) {
+    for (const match of body.matchAll(inlineMentionPattern)) {
+      handles.add(cleanHandle(match[2]!));
+    }
   }
   for (const run of documentRuns(document)) {
     if (run.mentionHandle) handles.add(cleanHandle(run.mentionHandle));

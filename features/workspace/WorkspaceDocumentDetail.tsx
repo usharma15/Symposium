@@ -426,7 +426,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
             </div>
           ) : (
             <>
-              <h1>{document.title}</h1>
+              <h1 className="post-detail-title">{document.title}</h1>
               <SymposiumDocumentRenderer document={document.document} body={document.body} attachments={document.attachments} profiles={profiles} mode="detail" />
               <div className="workspace-reader-meta">
                 <span>Created {localDateTimeLabel(document.createdAt)}</span>

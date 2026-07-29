@@ -73,7 +73,7 @@ const findOwnedNote = async (client: PoolClient, handle: string, noteId: string)
     `SELECT note.id, note.workspace_id AS "workspaceId", note.revision
      FROM notes note
      JOIN workspaces workspace ON workspace.id = note.workspace_id
-     WHERE note.id = $1 AND workspace.owner_handle = $2
+     WHERE note.id = $1 AND workspace.owner_handle = $2 AND note.deleted_at IS NULL
      FOR UPDATE OF note`,
     [noteId, handle]
   );
@@ -91,7 +91,7 @@ const findOwnedBlock = async (client: PoolClient, handle: string, blockId: strin
      FROM note_blocks block
      JOIN notes note ON note.id = block.note_id
      JOIN workspaces workspace ON workspace.id = note.workspace_id
-     WHERE block.id = $1 AND workspace.owner_handle = $2
+     WHERE block.id = $1 AND workspace.owner_handle = $2 AND note.deleted_at IS NULL
      FOR UPDATE OF block, note`,
     [blockId, handle]
   );
@@ -106,14 +106,14 @@ export const getWorkspace = async (actor: Actor) => {
   return runAtomic(async (client) => {
     const workspaceRow = await ensureOwnedWorkspace(client, handle);
     const notes = await client.query(
-      "SELECT id, title, visibility, revision, created_at AS \"createdAt\", updated_at AS \"updatedAt\" FROM notes WHERE workspace_id = $1 ORDER BY created_at ASC",
+      "SELECT id, title, visibility, revision, created_at AS \"createdAt\", updated_at AS \"updatedAt\" FROM notes WHERE workspace_id = $1 AND deleted_at IS NULL ORDER BY created_at ASC",
       [workspaceRow.id]
     );
     const blocks = await client.query(
       `SELECT nb.id, nb.note_id AS "noteId", nb.kind, nb.body, nb.sort_order AS "sortOrder", nb.revision, nb.updated_at AS "updatedAt"
        FROM note_blocks nb
        JOIN notes n ON n.id = nb.note_id
-       WHERE n.workspace_id = $1
+       WHERE n.workspace_id = $1 AND n.deleted_at IS NULL
        ORDER BY nb.sort_order ASC, nb.created_at ASC`,
       [workspaceRow.id]
     );
@@ -208,7 +208,7 @@ export const saveNoteBlock = async (rawInput: unknown, actor: Actor, mutation?: 
       const updatedNote = await client.query<{ revision: number }>(
         `UPDATE notes
          SET revision = revision + 1, updated_at = now()
-         WHERE id = $1 AND revision = $2
+         WHERE id = $1 AND revision = $2 AND deleted_at IS NULL
          RETURNING revision`,
         [noteId, currentNoteRevision]
       );

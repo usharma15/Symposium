@@ -28,6 +28,7 @@ import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 import { assertExpectedRevision } from "./workspace";
 import { resolveNativeDocumentCitations } from "../services/nativeCitations";
 import { applyAssistantDraftEditOperations } from "../services/assistantDraftEdits";
+import { resolveNotifications } from "../services/notificationDelivery";
 
 type WorkspaceRow = { id: string; name: string; ownerHandle: string };
 type AccessRow = {
@@ -891,6 +892,16 @@ export const deleteWorkspaceDocument = async (
     );
     removedAttachmentIds = Array.from(new Set([...noteAttachmentIds, ...commentAttachmentIds]));
     const value = { deleted: true, noteId, removedAttachmentIds };
+    const resolvedNotifications = await resolveNotifications(client, {
+      kinds: [
+        "workspace_comment",
+        "workspace_comment_reply",
+        "workspace_comment_signal",
+        "workspace_mention"
+      ],
+      metadataMatches: [{ noteId }],
+      reason: "source_workspace_document_deleted"
+    });
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "workspace.document.delete",
@@ -908,7 +919,7 @@ export const deleteWorkspaceDocument = async (
       subjectId: noteId,
       visibility: "private"
     });
-    return { value, events: [event] };
+    return { value, events: [...resolvedNotifications.events, event] };
   });
   if (removedAttachmentIds.length) await triggerStorageDeletion(removedAttachmentIds);
   return result;
@@ -1115,6 +1126,103 @@ export const deleteWorkspaceNotebook = async (
     });
     return { value, events: [event] };
   });
+};
+
+export const deleteWorkspaceNotebookWithContents = async (
+  notebookId: string,
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+) => {
+  const input = deleteWorkspaceNotebookInputSchema.parse(rawInput);
+  const handle = await ensureProfileHandle(actorHandle(actor));
+  if (!hasDatabase()) return { deleted: true, notebookId, deletedDocumentIds: [], removedAttachmentIds: [] };
+  await ensureLiveData();
+  let removedAttachmentIds: string[] = [];
+  const result = await runAtomic(async (client) => {
+    const claim = await claimMutation<Record<string, unknown>>(client, handle, mutation);
+    if (claim.replayed) return { value: claim.response };
+    const notebook = await client.query<{ workspaceId: string }>(
+      `SELECT workspace_id::text AS "workspaceId" FROM workspace_notebooks
+       WHERE id = $1 AND owner_handle = $2 AND revision = $3 AND deleted_at IS NULL FOR UPDATE`,
+      [notebookId, handle, input.expectedRevision]
+    );
+    if (!notebook.rowCount) throw new TRPCError({ code: "CONFLICT", message: "The notebook changed or is no longer available." });
+    await client.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended('symposium:workspace-note:' || locked_note.id::text, 0))
+       FROM (
+         SELECT id FROM notes WHERE notebook_id = $1 AND deleted_at IS NULL ORDER BY id
+       ) locked_note`,
+      [notebookId]
+    );
+    const deletedDocuments = await client.query<{ id: string }>(
+      `UPDATE notes SET deleted_at = now(), revision = revision + 1, updated_at = now()
+       WHERE notebook_id = $1 AND deleted_at IS NULL
+       RETURNING id::text`,
+      [notebookId]
+    );
+    const deletedDocumentIds = deletedDocuments.rows.map((row) => row.id);
+    const audienceHandles = await notebookAudienceHandles(client, notebookId);
+    const commentIds = deletedDocumentIds.length
+      ? (await client.query<{ id: string }>(
+          "SELECT id::text FROM workspace_note_comments WHERE note_id = ANY($1::uuid[])",
+          [deletedDocumentIds]
+        )).rows.map((comment) => comment.id)
+      : [];
+    const noteAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(
+      client,
+      "note",
+      deletedDocumentIds,
+      "workspace_notebook_deleted"
+    );
+    const commentAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(
+      client,
+      "note_comment",
+      commentIds,
+      "workspace_notebook_deleted"
+    );
+    removedAttachmentIds = Array.from(new Set([...noteAttachmentIds, ...commentAttachmentIds]));
+    const resolvedNotifications = deletedDocumentIds.length
+      ? await resolveNotifications(client, {
+          kinds: [
+            "workspace_comment",
+            "workspace_comment_reply",
+            "workspace_comment_signal",
+            "workspace_mention"
+          ],
+          metadataMatches: deletedDocumentIds.map((noteId) => ({ noteId })),
+          reason: "source_workspace_notebook_deleted"
+        })
+      : { notifications: [], events: [] };
+    await client.query(
+      `UPDATE workspace_notebooks SET deleted_at = now(), revision = revision + 1, updated_at = now()
+       WHERE id = $1`,
+      [notebookId]
+    );
+    const value = { deleted: true, notebookId, deletedDocumentIds, removedAttachmentIds };
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "workspace.notebook.delete_with_contents",
+      subjectType: "notebook",
+      subjectId: notebookId,
+      metadata: mutationAuditMetadata(mutation, {
+        deletedDocumentIds,
+        removedAttachmentIds
+      })
+    });
+    await completeMutation(client, handle, mutation, value);
+    const event = await stageEvent(client, {
+      kind: "note.notebook.deleted",
+      actorHandle: handle,
+      audienceHandles,
+      subjectType: "notebook",
+      subjectId: notebookId,
+      visibility: "private"
+    });
+    return { value, events: [...resolvedNotifications.events, event] };
+  });
+  if (removedAttachmentIds.length) await triggerStorageDeletion(removedAttachmentIds);
+  return result;
 };
 
 export const searchWorkspaceDocuments = async (rawInput: unknown, actor: Actor) => {

@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   createWorkspaceCommentInputSchema,
   createWorkspaceDocumentInputSchema,
+  documentPlainTextProjection,
+  documentFitsReducedEditor,
   updateWorkspaceCommentInputSchema,
   updateWorkspaceDocumentInputSchema,
   workspaceCommentActionInputSchema,
@@ -25,6 +28,10 @@ const paragraph = {
 const heading = {
   version: 1 as const,
   nodes: [{ id: "h1", type: "heading" as const, level: 1, content: [{ text: "Paper heading" }], align: "left" as const }]
+};
+const codeDocument = {
+  version: 1 as const,
+  nodes: [{ id: "code-1", type: "code" as const, language: "typescript", code: "const answer = 42;\nconsole.log(answer);" }]
 };
 
 const workspaceDocument = (input: Partial<WorkspaceDocument> & Pick<WorkspaceDocument, "id" | "updatedAt">): WorkspaceDocument => {
@@ -79,6 +86,13 @@ const main = async () => {
     document: heading,
     kind: "thought"
   }).success, false);
+  assert.equal(documentFitsReducedEditor(codeDocument), true);
+  assert.equal(createWorkspaceDocumentInputSchema.safeParse({
+    title: "Thought with code",
+    body: "const answer = 42;\nconsole.log(answer);",
+    document: codeDocument,
+    kind: "thought"
+  }).success, true);
   assert.equal(createWorkspaceDocumentInputSchema.safeParse({
     title: "Quick note",
     body: "Reserved",
@@ -191,7 +205,12 @@ const main = async () => {
     commentThread,
     attachmentAccessRoute,
     localPublicationRoute,
-    localAttachmentStore
+    localAttachmentStore,
+    localWorkspaceStore,
+    localWorkspaceCommentStore,
+    workspaceRoutes,
+    cascadeNotebookRoute,
+    legacyWorkspaceRepository
   ] = await Promise.all([
     readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/workspaceDocuments.ts"), "utf8"),
@@ -216,7 +235,12 @@ const main = async () => {
     readFile(path.join(root, "features/comments/CommentThread.tsx"), "utf8"),
     readFile(path.join(root, "app/api/workspace/attachments/[attachmentId]/route.ts"), "utf8"),
     readFile(path.join(root, "app/api/workspace/documents/[noteId]/publish/route.ts"), "utf8"),
-    readFile(path.join(root, "lib/localAttachmentStore.ts"), "utf8")
+    readFile(path.join(root, "lib/localAttachmentStore.ts"), "utf8"),
+    readFile(path.join(root, "lib/localWorkspaceStore.ts"), "utf8"),
+    readFile(path.join(root, "lib/localWorkspaceCommentStore.ts"), "utf8"),
+    readFile(path.join(root, "apps/api/src/routes/workspaceRoutes.ts"), "utf8"),
+    readFile(path.join(root, "app/api/workspace/notebooks/[notebookId]/with-contents/route.ts"), "utf8"),
+    readFile(path.join(root, "apps/api/src/repository/workspace.ts"), "utf8")
   ]);
 
   assert.match(migration, /0020_workspace_documents/);
@@ -254,6 +278,8 @@ const main = async () => {
   assert.match(localPublicationRoute, /updateComment/);
   assert.doesNotMatch(localPublicationRoute, /Private draft attachments remain protected/);
   assert.match(localAttachmentStore, /ownerType: publicOwnerType/);
+  assert.match(localAttachmentStore, /const unlinkStoredFileIfPresent[\s\S]*code !== "ENOENT"/);
+  assert.match(localAttachmentStore, /deleteLocalOwnerAttachments[\s\S]*unlinkStoredFileIfPresent/);
   assert.match(attachmentRepository, /input\.ownerType === "note" \|\| input\.ownerType === "note_comment" \|\| input\.ownerType === "opportunity_application" \? null : publicObjectUrl/);
   assert.match(attachmentOwnership, /row\.ownerId === null && row\.uploaderHandle !== input\.uploaderHandle/);
   assert.match(workspaceHook, /symposium-workspace-sync-v1/);
@@ -294,7 +320,51 @@ const main = async () => {
   assert.match(commentThread, /allowReshares !== false/);
   assert.match(commentThread, /allowQuotes !== false/);
   assert.match(attachmentAccessRoute, /\["note", "note_comment"\]/);
-  assert.match(repository, /queueAttachmentsForOwnerStorageDeletion\([\s\S]*"note_comment"/);
+  const legacyNotebookDelete = repository.slice(
+    repository.indexOf("export const deleteWorkspaceNotebook ="),
+    repository.indexOf("export const deleteWorkspaceNotebookWithContents =")
+  );
+  const cascadeNotebookDelete = repository.slice(
+    repository.indexOf("export const deleteWorkspaceNotebookWithContents ="),
+    repository.indexOf("export const searchWorkspaceDocuments")
+  );
+  assert.match(legacyNotebookDelete, /movedDocumentIds/);
+  assert.doesNotMatch(legacyNotebookDelete, /deletedDocumentIds/);
+  assert.match(cascadeNotebookDelete, /queueAttachmentsForOwnerStorageDeletion\([\s\S]*"note_comment"/);
+  assert.match(cascadeNotebookDelete, /UPDATE notes SET deleted_at = now\(\), revision = revision \+ 1, updated_at = now\(\)[\s\S]*WHERE notebook_id = \$1 AND deleted_at IS NULL/);
+  assert.match(cascadeNotebookDelete, /workspace_notebook_deleted/);
+  assert.match(cascadeNotebookDelete, /deletedDocumentIds/);
+  assert.match(cascadeNotebookDelete, /action: "workspace\.notebook\.delete_with_contents"/);
+  assert.ok(
+    cascadeNotebookDelete.indexOf("const audienceHandles = await notebookAudienceHandles")
+      > cascadeNotebookDelete.indexOf("const deletedDocumentIds ="),
+    "cascade event recipients must be resolved after note-row mutation locks"
+  );
+  const localLegacyNotebookDelete = localWorkspaceStore.slice(
+    localWorkspaceStore.indexOf("export const deleteLocalWorkspaceNotebook ="),
+    localWorkspaceStore.indexOf("export const deleteLocalWorkspaceNotebookWithContents =")
+  );
+  const localCascadeNotebookDelete = localWorkspaceStore.slice(
+    localWorkspaceStore.indexOf("export const deleteLocalWorkspaceNotebookWithContents ="),
+    localWorkspaceStore.indexOf("export const searchLocalWorkspace")
+  );
+  assert.match(localLegacyNotebookDelete, /movedDocumentIds/);
+  assert.match(localCascadeNotebookDelete, /deletedDocumentIdSet/);
+  assert.match(localWorkspaceStore, /const cleanupLocalNotebookDocuments = async[\s\S]*deleteLocalWorkspaceCommentsForDocument/);
+  assert.match(localWorkspaceStore, /cleanupLocalNotebookDocuments[\s\S]*deleteLocalOwnerAttachments\("note", documentId\)/);
+  assert.match(localWorkspaceStore, /cleanupLocalNotebookDocuments[\s\S]*Promise\.allSettled/);
+  assert.match(localCascadeNotebookDelete, /pendingNotebookCleanup\[notebookId\]/);
+  assert.match(localCascadeNotebookDelete, /cleanupPending: true/);
+  assert.match(localCascadeNotebookDelete, /cleanupPending: false/);
+  assert.match(localCascadeNotebookDelete, /delete workspace\.pendingNotebookCleanup\[notebookId\]/);
+  assert.match(localWorkspaceCommentStore, /withLocalWorkspaceDocumentAccess\([\s\S]*\(\) => withStoreLock\(operation\)/);
+  assert.match(workspaceRoutes, /\/v1\/workspace\/notebooks\/:notebookId\/with-contents/);
+  assert.match(workspaceRoutes, /workspace\.notebook\.delete_with_contents/);
+  assert.match(cascadeNotebookRoute, /deleteLocalWorkspaceNotebookWithContents/);
+  assert.match(cascadeNotebookRoute, /\/with-contents/);
+  assert.match(legacyWorkspaceRepository, /workspace\.owner_handle = \$2 AND note\.deleted_at IS NULL/);
+  assert.match(legacyWorkspaceRepository, /block\.id = \$1 AND workspace\.owner_handle = \$2 AND note\.deleted_at IS NULL/);
+  assert.match(legacyWorkspaceRepository, /WHERE id = \$1 AND revision = \$2 AND deleted_at IS NULL/);
   assert.match(workspaceNavigator, /workspaceDocumentMetadataUpdate/);
   assert.match(workspaceNavigator, /runAfterWorkspaceSave/);
   assert.match(workspaceDetail, /Created \{localDateTimeLabel\(document\.createdAt\)\}/);
@@ -312,16 +382,17 @@ const main = async () => {
   assert.match(composerDrafts, /Draft saved to Notes/);
   assert.match(composerDrafts, /symposium-workspace-sync-v1/);
   assert.match(workspaceStyles, /\.room-layout\.workspace-room-layout[\s\S]*width: calc\(100vw - 48px\)/);
-  assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar[\s\S]*position: fixed[\s\S]*inset: 104px auto 144px 24px/);
+  assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar[\s\S]*position: fixed[\s\S]*inset: var\(--symposium-content-top\) auto 144px 24px/);
   assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar\s*\{[^}]*justify-content: stretch[^}]*grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(workspaceStyles, /\.workspace-sidebar-scroll[\s\S]*overflow-y: auto[\s\S]*overscroll-behavior: contain/);
   assert.match(workspaceStyles, /\.workspace-sidebar-document[\s\S]*height: 64px/);
   assert.match(workspaceStyles, /\.workspace-notebook-create\s*\{[^}]*position: sticky[^}]*top: 0/);
   assert.match(workspaceStyles, /\.workspace-notebook-documents\s*\{[^}]*display: grid/);
   assert.match(workspaceStyles, /\.workspace-document-card\s*\{[^}]*background: color-mix\(in srgb, var\(--panel-strong\) 90%, transparent\)/);
-  assert.match(workspaceStyles, /\.workspace-document-card \.document-collapsible-content\.collapsed\.is-collapsible::after\s*\{[^}]*content: none/);
+  assert.doesNotMatch(workspaceStyles, /\.document-collapsible-content\.collapsed\.is-collapsible::after/);
   assert.match(workspaceStyles, /\.workspace-sidebar-document-menu\s*\{[^}]*display: grid/);
   assert.match(workspaceStyles, /\.workspace-main-column[\s\S]*width: min\(var\(--symposium-feed-width\), calc\(100vw - 48px\)\)/);
+  assert.match(workspaceStyles, /\.workspace-main-column\s*\{[^}]*margin: 0 auto 96px/);
   assert.match(workspaceStyles, /\.workspace-feed\.feed-stream[\s\S]*max-width: var\(--symposium-feed-width\)/);
   assert.match(workspaceStyles, /\.workspace-detail-nav[\s\S]*position: relative[\s\S]*top: auto/);
   assert.match(workspaceStyles, /\.workspace-detail-nav\s*\{[^}]*background: var\(--document-surface-solid\)[^}]*color: var\(--ink\)/);
@@ -333,6 +404,239 @@ const main = async () => {
   assert.match(workspaceStyles, /\.workspace-editor-footer\s*\{[^}]*position: sticky;[^}]*bottom: 0/);
   assert.match(workspaceStyles, /\.workspace-editor \.document-editor-toolbar\s*\{[^}]*z-index: 8/);
   assert.doesNotMatch(workspaceStyles, /\.workspace-editor \.document-editor-toolbar\s*\{[^}]*top:/);
+  assert.match(workspaceView, /every note currently inside it\? Their comments and attachments will be permanently deleted too\. This cannot be undone\./);
+  assert.match(workspaceView, /setSearchResults\(\(current\) =>/);
+  assert.match(workspaceView, /current\.documents\.filter\(\(document\) => documentIds\.has\(document\.id\)\)/);
+  assert.doesNotMatch(workspaceView, /Its drafts will move to All/);
+  assert.match(workspaceHook, /Notebook and its notes deleted/);
+  assert.match(workspaceHook, /comment and attachment cleanup is finishing/);
+  assert.match(workspaceHook, /deletedDocumentIds/);
+  assert.match(workspaceHook, /mutationEpochRef/);
+  assert.match(workspaceHook, /refreshRequestRef/);
+  assert.match(workspaceHook, /requestId === refreshRequestRef\.current && mutationEpoch === mutationEpochRef\.current/);
+  assert.match(workspaceHook, /applyMutationSnapshot/);
+  assert.match(workspaceHook, /applyMutationSnapshot[\s\S]*setLoading\(false\)/);
+  assert.match(workspaceHook, /\/with-contents/);
+  assert.match(workspaceHook, /void refresh\(\{ quiet: true \}\)\.catch/);
+  assert.doesNotMatch(workspaceHook, /its drafts are now in All/);
+  const feedPostSource = postViews.slice(
+    postViews.indexOf("export function FeedPost"),
+    postViews.indexOf("function PostAuthor")
+  );
+  assert.ok(feedPostSource.indexOf('className="post-card-title"') < feedPostSource.indexOf("<ContentTranslationControl"));
+  assert.doesNotMatch(feedPostSource, /post-card-kind-label/);
+  const detailPostSource = postViews.slice(postViews.indexOf("export function DetailView"));
+  assert.doesNotMatch(detailPostSource, /className="eyebrow"/);
+
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "symposium-notebook-deletion-check-"));
+  try {
+    process.chdir(temporaryRoot);
+    const {
+      createLocalWorkspaceDocument,
+      createLocalWorkspaceNotebook,
+      deleteLocalWorkspaceNotebook,
+      deleteLocalWorkspaceNotebookWithContents,
+      getLocalWorkspace
+    } = await import("@/lib/localWorkspaceStore");
+    const { createLocalWorkspaceComment } = await import("@/lib/localWorkspaceCommentStore");
+    const {
+      confirmLocalAttachment,
+      createLocalAttachmentUpload,
+      writeLocalAttachmentFile
+    } = await import("@/lib/localAttachmentStore");
+    const actor = "@workspace_notebook_deletion_check";
+    const notebook = (await createLocalWorkspaceNotebook({ name: "Ephemeral notebook" }, actor)).notebook;
+    const prepareAttachment = async (ownerType: "note" | "note_comment", fileName: string) => {
+      const bytes = Buffer.from(`fixture:${fileName}`, "utf8");
+      const prepared = await createLocalAttachmentUpload({
+        actorHandle: actor,
+        byteSize: bytes.byteLength,
+        contentType: "text/plain",
+        fileName,
+        ownerType
+      });
+      await writeLocalAttachmentFile(prepared.attachmentId, bytes);
+      await confirmLocalAttachment({ attachmentId: prepared.attachmentId, byteSize: bytes.byteLength });
+      return prepared.attachmentId;
+    };
+    const noteAttachmentId = await prepareAttachment("note", "contained-note.txt");
+    const commentAttachmentId = await prepareAttachment("note_comment", "contained-comment.txt");
+    const createDocument = (title: string, notebookId: string | null, attachmentIds: string[] = []) =>
+      createLocalWorkspaceDocument({
+        title,
+        body: documentPlainTextProjection(codeDocument),
+        document: codeDocument,
+        kind: "note",
+        publicationTarget: "undecided",
+        notebookId,
+        targetId: null,
+        proposal: null,
+        opportunity: null,
+        attachmentIds
+      }, actor);
+    const first = (await createDocument("First contained note", notebook.id, [noteAttachmentId])).document;
+    const second = (await createDocument("Second contained note", notebook.id)).document;
+    const outside = (await createDocument("Unfiled survivor", null)).document;
+    const legacyNotebook = (await createLocalWorkspaceNotebook({ name: "Legacy compatibility notebook" }, actor)).notebook;
+    const legacyContained = (await createDocument("Legacy moved note", legacyNotebook.id)).document;
+    const legacyDeleted = await deleteLocalWorkspaceNotebook(
+      legacyNotebook.id,
+      { expectedRevision: legacyNotebook.revision },
+      actor
+    );
+    assert.deepEqual(legacyDeleted.movedDocumentIds, [legacyContained.id]);
+    await createLocalWorkspaceComment(first.id, {
+      body: "Delete this discussion with its note.",
+      document: paragraph,
+      stance: "Comment",
+      attachmentIds: [commentAttachmentId]
+    }, actor);
+    const deleted = await deleteLocalWorkspaceNotebookWithContents(
+      notebook.id,
+      { expectedRevision: notebook.revision },
+      actor
+    );
+    assert.deepEqual(
+      [...deleted.deletedDocumentIds].sort(),
+      [first.id, second.id].sort(),
+      "notebook deletion must report every contained note and no unrelated note"
+    );
+    const snapshot = await getLocalWorkspace(actor);
+    assert.equal(snapshot.notebooks.some((candidate) => candidate.id === notebook.id), false);
+    assert.equal(snapshot.documents.some((candidate) => candidate.id === first.id || candidate.id === second.id), false);
+    assert.equal(snapshot.documents.some((candidate) => candidate.id === outside.id), true);
+    assert.equal(
+      snapshot.documents.some((candidate) => candidate.id === legacyContained.id && candidate.notebookId === null),
+      true,
+      "the legacy endpoint must retain its move-to-All behavior during rolling deployment"
+    );
+    const commentStore = JSON.parse(
+      await readFile(path.join(temporaryRoot, ".data", "workspace-comments", "index.json"), "utf8")
+    ) as { notes?: Record<string, unknown> };
+    assert.equal(commentStore.notes?.[first.id], undefined, "contained-note discussions must be deleted too");
+    const attachmentStore = JSON.parse(
+      await readFile(path.join(temporaryRoot, ".data", "attachments", "index.json"), "utf8")
+    ) as { attachments?: Record<string, unknown> };
+    assert.equal(attachmentStore.attachments?.[noteAttachmentId], undefined);
+    assert.equal(attachmentStore.attachments?.[commentAttachmentId], undefined);
+
+    const commentFirstNotebook = (await createLocalWorkspaceNotebook({ name: "Comment-first race" }, actor)).notebook;
+    const commentFirstNote = (await createDocument("Comment-first note", commentFirstNotebook.id)).document;
+    const commentWrites = Array.from({ length: 8 }, (_, index) => createLocalWorkspaceComment(commentFirstNote.id, {
+      body: `Concurrent comment ${index}`,
+      document: paragraph,
+      stance: "Comment",
+      attachmentIds: []
+    }, actor));
+    const commentFirstDeletion = deleteLocalWorkspaceNotebookWithContents(
+      commentFirstNotebook.id,
+      { expectedRevision: commentFirstNotebook.revision },
+      actor
+    );
+    const commentFirstResults = await Promise.allSettled([...commentWrites, commentFirstDeletion]);
+    assert.equal(commentFirstResults.at(-1)?.status, "fulfilled", "queued comments must not prevent cascade deletion");
+
+    const deleteFirstNotebook = (await createLocalWorkspaceNotebook({ name: "Delete-first race" }, actor)).notebook;
+    const deleteFirstNote = (await createDocument("Delete-first note", deleteFirstNotebook.id)).document;
+    const deleteFirstDeletion = deleteLocalWorkspaceNotebookWithContents(
+      deleteFirstNotebook.id,
+      { expectedRevision: deleteFirstNotebook.revision },
+      actor
+    );
+    const lateComment = createLocalWorkspaceComment(deleteFirstNote.id, {
+      body: "This must not survive a queued deletion.",
+      document: paragraph,
+      stance: "Comment",
+      attachmentIds: []
+    }, actor);
+    const [deleteFirstResult, lateCommentResult] = await Promise.allSettled([deleteFirstDeletion, lateComment]);
+    assert.equal(deleteFirstResult.status, "fulfilled");
+    assert.equal(lateCommentResult.status, "rejected", "a comment queued after deletion must fail access revalidation");
+
+    const racedCommentStore = JSON.parse(
+      await readFile(path.join(temporaryRoot, ".data", "workspace-comments", "index.json"), "utf8")
+    ) as { notes?: Record<string, unknown> };
+    assert.equal(racedCommentStore.notes?.[commentFirstNote.id], undefined);
+    assert.equal(racedCommentStore.notes?.[deleteFirstNote.id], undefined);
+
+    const retryNotebook = (await createLocalWorkspaceNotebook({ name: "Retriable cleanup" }, actor)).notebook;
+    const retryAttachmentId = await prepareAttachment("note", "retriable-cleanup.txt");
+    const retryNote = (await createDocument("Retriable cleanup note", retryNotebook.id, [retryAttachmentId])).document;
+    const attachmentStorePath = path.join(temporaryRoot, ".data", "attachments", "index.json");
+    const retryAttachmentStore = JSON.parse(await readFile(attachmentStorePath, "utf8")) as {
+      attachments?: Record<string, { storedFileName: string }>;
+    };
+    const retryStoredFileName = retryAttachmentStore.attachments?.[retryAttachmentId]?.storedFileName;
+    assert.ok(retryStoredFileName);
+    const retryStoredFilePath = path.join(temporaryRoot, ".data", "attachments", "files", retryStoredFileName);
+    await rm(retryStoredFilePath);
+    await mkdir(retryStoredFilePath);
+    const originalConsoleError = console.error;
+    let cleanupFailureLogged = false;
+    console.error = () => {
+      cleanupFailureLogged = true;
+    };
+    let pendingDeletion: Awaited<ReturnType<typeof deleteLocalWorkspaceNotebookWithContents>> | undefined;
+    try {
+      pendingDeletion = await deleteLocalWorkspaceNotebookWithContents(
+        retryNotebook.id,
+        { expectedRevision: retryNotebook.revision },
+        actor
+      );
+    } finally {
+      console.error = originalConsoleError;
+      await rm(retryStoredFilePath, { recursive: true, force: true });
+    }
+    assert.equal(cleanupFailureLogged, true, "dependent cleanup failures must remain observable to operators");
+    assert.equal(pendingDeletion?.deleted, true);
+    assert.equal(
+      pendingDeletion?.cleanupPending,
+      true,
+      "the committed deletion must return authoritative IDs while dependent cleanup remains retriable"
+    );
+    const pendingStore = JSON.parse(
+      await readFile(path.join(temporaryRoot, ".data", "workspace", "index.json"), "utf8")
+    ) as {
+      workspaces?: Record<string, {
+        pendingNotebookCleanup?: Record<string, { documentIds: string[] }>;
+      }>;
+    };
+    const pendingWorkspace = Object.values(pendingStore.workspaces ?? {})[0];
+    assert.deepEqual(
+      pendingWorkspace?.pendingNotebookCleanup?.[retryNotebook.id]?.documentIds,
+      [retryNote.id],
+      "a durable marker must retain the exact cleanup retry set"
+    );
+    const retried = await deleteLocalWorkspaceNotebookWithContents(
+      retryNotebook.id,
+      { expectedRevision: retryNotebook.revision },
+      actor
+    );
+    assert.deepEqual(retried.deletedDocumentIds, [retryNote.id]);
+    assert.equal(retried.cleanupPending, false);
+    const retriedAttachmentStore = JSON.parse(await readFile(attachmentStorePath, "utf8")) as {
+      attachments?: Record<string, unknown>;
+    };
+    assert.equal(retriedAttachmentStore.attachments?.[retryAttachmentId], undefined);
+    const retriedSnapshot = await getLocalWorkspace(actor);
+    assert.equal(retriedSnapshot.notebooks.some((candidate) => candidate.id === retryNotebook.id), false);
+    assert.equal(retriedSnapshot.documents.some((candidate) => candidate.id === retryNote.id), false);
+    const completedStore = JSON.parse(
+      await readFile(path.join(temporaryRoot, ".data", "workspace", "index.json"), "utf8")
+    ) as {
+      workspaces?: Record<string, {
+        pendingNotebookCleanup?: Record<string, { documentIds: string[] }>;
+      }>;
+    };
+    assert.equal(
+      Object.values(completedStore.workspaces ?? {})[0]?.pendingNotebookCleanup?.[retryNotebook.id],
+      undefined,
+      "the durable cleanup marker must clear only after dependent deletion succeeds"
+    );
+  } finally {
+    process.chdir(root);
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 
   console.log(JSON.stringify({
     ok: true,
@@ -364,6 +668,7 @@ const main = async () => {
       "clean-editor convergence to newer cross-tab revisions",
       "immediate notebook document-count reconciliation",
       "theme-tokened detail navigation and artifact-free night search",
+      "transaction-shaped local notebook deletion with contained notes and discussions",
       "Note, Thought, and Paper-only draft creation",
       "canonical centered feed-width Notes composition",
       "New Post to private draft creation"

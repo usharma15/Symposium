@@ -141,7 +141,7 @@ assert.match(source.styles, /\.capability-scribble \.document-source-editor/);
 assert.match(source.styles, /\.workspace-kind-quick \.document-source-card/);
 assert.match(source.styles, /-webkit-line-clamp: 2/);
 assert.match(source.editor, /capability === "scribble"[^\n]*Insert drawing/);
-assert.match(source.editor, /capability === "scribble"[^\n]*Insert code block/);
+assert.match(source.editor, /<ToolbarButton title="Insert code block" onClick=\{onInsertCode\}>/);
 assert.match(source.editor, /insertContentAt\(editor\.state\.selection\.to/);
 assert.match(source.editor, /setEditable\(!disabled, false\)/);
 assert.match(source.drawing, /setPointerCapture/);

@@ -175,7 +175,17 @@ export function SymposiumDocumentRenderer({
       );
     }
     if (node.type === "equation") return <div key={node.id} data-document-block-id={node.id}><Equation source={node.source} display={node.display} /></div>;
-    if (node.type === "code") return <pre key={node.id} className="document-code" data-document-block-id={node.id}><code>{node.code}</code></pre>;
+    if (node.type === "code") return (
+      <pre
+        key={node.id}
+        className="document-code"
+        data-document-block-id={node.id}
+        tabIndex={0}
+        aria-label={`${node.language ? `${node.language} ` : ""}code block`}
+      >
+        <code>{node.code}</code>
+      </pre>
+    );
     if (node.type === "drawing") return <figure key={node.id} className="document-drawing" data-document-block-id={node.id}><DocumentDrawingPreview drawing={node.drawing} />{node.caption ? <figcaption>{node.caption}</figcaption> : null}</figure>;
     if (node.type === "list") {
       const Tag = node.style === "decimal" || node.style.includes("alpha") ? "ol" : "ul";

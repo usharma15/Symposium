@@ -1,4 +1,5 @@
 import { jsonError, readJson } from "@/lib/api";
+import { createCommentInputSchema, createPostInputSchema } from "@/packages/contracts/src";
 import { addComment, createPost, updateComment, updatePost } from "@/lib/dataStore";
 import {
   promoteLocalWorkspaceCommentAttachments,
@@ -37,6 +38,13 @@ const publishLocalWorkspaceDiscussion = async (input: {
         continue;
       }
       const publicCommentId = `comment-workspace-${comment.id}`;
+      const commentInput = createCommentInputSchema.parse({
+        body: comment.body,
+        document: comment.document,
+        stance: comment.stance,
+        parentId,
+        attachmentIds: (comment.attachments ?? []).map((attachment) => attachment.id)
+      });
       const attachments = await promoteLocalWorkspaceCommentAttachments(
         comment.id,
         publicCommentId,
@@ -44,10 +52,10 @@ const publishLocalWorkspaceDiscussion = async (input: {
       );
       const published = await addComment(input.postId, {
         id: publicCommentId,
-        body: comment.body,
-        document: comment.document,
-        stance: comment.stance,
-        parentId,
+        body: commentInput.body,
+        document: commentInput.document,
+        stance: commentInput.stance,
+        parentId: commentInput.parentId,
         attachments
       }, comment.authorHandle ?? input.actorHandle);
       if (!published) throw new Error("The draft discussion could not be published with its post.");
@@ -95,7 +103,7 @@ export async function POST(request: Request, context: Context) {
       if (target === "opportunity" && !document.opportunity) {
         return jsonError("Add opportunity details before publishing this Opportunity.", 400);
       }
-      const createdItem = await createPost({
+      const postInput = createPostInputSchema.parse({
         title: target === "thought" ? "" : document.title,
         body: document.body,
         document: document.document,
@@ -104,6 +112,19 @@ export async function POST(request: Request, context: Context) {
         room: target === "proposal" ? "funding" : target === "opportunity" ? "opportunities" : target === "paper" ? "library" : "amphitheater",
         patronage: target === "proposal" ? document.proposal ?? undefined : undefined,
         opportunity: target === "opportunity" ? document.opportunity ?? undefined : undefined,
+        attachmentIds: checkpoint.attachmentIds,
+        attachments: []
+      });
+      const createdItem = await createPost({
+        title: postInput.title,
+        body: postInput.body,
+        document: postInput.document,
+        kind: postInput.kind,
+        postType: postInput.postType,
+        room: postInput.room,
+        communityId: postInput.communityId,
+        patronage: postInput.patronage,
+        opportunity: postInput.opportunity,
         attachments: []
       }, actorHandle);
       const attachments = await promoteLocalWorkspaceDocumentAttachments(noteId, "post", createdItem.id, actorHandle);
@@ -144,11 +165,18 @@ export async function POST(request: Request, context: Context) {
     const postId = target === "reply" && separator > 0 ? document.targetId.slice(0, separator) : document.targetId;
     const parentId = target === "reply" && separator > 0 ? document.targetId.slice(separator + 1) : null;
     if (target === "reply" && !parentId) return jsonError("A reply draft must be linked as post-id:comment-id.", 400);
-    let result = await addComment(postId, {
+    const commentInput = createCommentInputSchema.parse({
       body: document.body,
       document: document.document,
       stance: document.title,
       parentId,
+      attachmentIds: checkpoint.attachmentIds
+    });
+    let result = await addComment(postId, {
+      body: commentInput.body,
+      document: commentInput.document,
+      stance: commentInput.stance,
+      parentId: commentInput.parentId,
       attachments: []
     }, actorHandle);
     if (!result?.comment?.id) return jsonError("The comment draft could not be published.", 409);

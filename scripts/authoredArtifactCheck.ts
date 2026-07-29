@@ -182,7 +182,21 @@ const main = async () => {
     /PostTypeEmblem/,
     "Comments must remain emblem-free."
   );
-  assert.match(sources[4], /!isPaper && !isThought/, "Thought and Paper detail indicators must be absent.");
+  const feedPostImplementation = sources[4].slice(
+    sources[4].indexOf("export function FeedPost"),
+    sources[4].indexOf("export function DetailView")
+  );
+  const detailViewImplementation = sources[4].slice(sources[4].indexOf("export function DetailView"));
+  assert.doesNotMatch(
+    feedPostImplementation,
+    /feedKindLabel|post-card-kind-label/,
+    "Feed and profile cards must not repeat a textual post-type qualifier."
+  );
+  assert.doesNotMatch(
+    detailViewImplementation,
+    /className="eyebrow"/,
+    "Clicked posts must not repeat a textual post-type qualifier."
+  );
   assert.match(sources[4], /isThought && thoughtMuseId \? <ThoughtOpeningMuse/, "Thought muses must be title-independent.");
   assert.match(sources[1], /bottom\.thoughtSurfaceAssets\.day/);
   assert.match(sources[1], /bottom\.thoughtSurfaceAssets\.night/);

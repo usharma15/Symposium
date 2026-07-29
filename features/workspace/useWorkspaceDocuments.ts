@@ -69,6 +69,8 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
   const [error, setError] = useState<string | null>(null);
   const sourceIdRef = useRef(createClientMutationId("workspace-tab"));
   const snapshotRef = useRef(snapshot);
+  const mutationEpochRef = useRef(0);
+  const refreshRequestRef = useRef(0);
   snapshotRef.current = snapshot;
 
   const applySnapshot = useCallback((next: WorkspaceSnapshot) => {
@@ -78,24 +80,36 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     cacheSnapshot(actorHandle, normalized);
   }, [actorHandle]);
 
+  const applyMutationSnapshot = useCallback((next: WorkspaceSnapshot) => {
+    mutationEpochRef.current += 1;
+    applySnapshot(next);
+    setLoading(false);
+  }, [applySnapshot]);
+
   const refresh = useCallback(async (options: { quiet?: boolean } = {}) => {
+    const requestId = ++refreshRequestRef.current;
+    const mutationEpoch = mutationEpochRef.current;
+    const isCurrentRequest = () =>
+      requestId === refreshRequestRef.current && mutationEpoch === mutationEpochRef.current;
     if (!options.quiet) setStatus("Synchronising workspace…");
     try {
       const next = await symposiumApi.request<WorkspaceSnapshot>(
         `/api/workspace?actorHandle=${encodeURIComponent(actorHandle)}`,
         { cache: "no-store" }
       );
+      if (!isCurrentRequest()) return snapshotRef.current;
       applySnapshot(next);
       setError(null);
       setStatus("Workspace current");
       return next;
     } catch (caught) {
+      if (!isCurrentRequest()) return snapshotRef.current;
       const message = messageForError(caught, "Workspace could not be loaded.");
       setError(message);
       setStatus(message);
       throw caught;
     } finally {
-      setLoading(false);
+      if (isCurrentRequest()) setLoading(false);
     }
   }, [actorHandle, applySnapshot]);
 
@@ -117,6 +131,8 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
   }), [actorHandle, publishChange]);
 
   useEffect(() => {
+    mutationEpochRef.current += 1;
+    refreshRequestRef.current += 1;
     const cached = cachedSnapshot(actorHandle);
     if (cached) {
       applySnapshot(cached);
@@ -141,11 +157,17 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
       idempotencyKey: createClientMutationId("workspace-document-create"),
       body: { ...input, actorHandle }
     });
-    applySnapshot({ ...snapshotRef.current, documents: [result.document, ...snapshotRef.current.documents] });
+    applyMutationSnapshot({
+      ...snapshotRef.current,
+      documents: [
+        result.document,
+        ...snapshotRef.current.documents.filter((document) => document.id !== result.document.id)
+      ]
+    });
     announceChange();
     setStatus("Draft created");
     return result.document;
-  }, [actorHandle, announceChange, applySnapshot]);
+  }, [actorHandle, announceChange, applyMutationSnapshot]);
 
   const updateDocument = useCallback(async (noteId: string, input: UpdateWorkspaceDocumentInputContract) => {
     setStatus(input.checkpoint ? "Saving draft…" : "Autosaving…");
@@ -157,7 +179,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
         body: { ...input, actorHandle }
       }
     );
-    applySnapshot({
+    applyMutationSnapshot({
       ...snapshotRef.current,
       documents: snapshotRef.current.documents.map((document) => document.id === noteId ? result.document : document)
     });
@@ -165,7 +187,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     setError(null);
     setStatus(input.checkpoint ? "Draft saved" : "Autosaved");
     return result.document;
-  }, [actorHandle, announceChange, applySnapshot]);
+  }, [actorHandle, announceChange, applyMutationSnapshot]);
 
   const updateDocumentMetadata = useCallback(async (
     document: WorkspaceDocument,
@@ -179,13 +201,13 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
       idempotencyKey: createClientMutationId("workspace-document-delete"),
       body: { actorHandle, expectedRevision: document.revision }
     });
-    applySnapshot({
+    applyMutationSnapshot({
       ...snapshotRef.current,
       documents: snapshotRef.current.documents.filter((candidate) => candidate.id !== document.id)
     });
     announceChange();
     setStatus("Draft deleted");
-  }, [actorHandle, announceChange, applySnapshot]);
+  }, [actorHandle, announceChange, applyMutationSnapshot]);
 
   const createNotebook = useCallback(async (name: string) => {
     setStatus("Creating notebook…");
@@ -194,11 +216,17 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
       idempotencyKey: createClientMutationId("workspace-notebook-create"),
       body: { actorHandle, name }
     });
-    applySnapshot({ ...snapshotRef.current, notebooks: [result.notebook, ...snapshotRef.current.notebooks] });
+    applyMutationSnapshot({
+      ...snapshotRef.current,
+      notebooks: [
+        result.notebook,
+        ...snapshotRef.current.notebooks.filter((notebook) => notebook.id !== result.notebook.id)
+      ]
+    });
     announceChange();
     setStatus("Notebook created");
     return result.notebook;
-  }, [actorHandle, announceChange, applySnapshot]);
+  }, [actorHandle, announceChange, applyMutationSnapshot]);
 
   const renameNotebook = useCallback(async (notebook: WorkspaceNotebook, name: string) => {
     setStatus("Renaming notebook…");
@@ -210,7 +238,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
         body: { actorHandle, name, expectedRevision: notebook.revision }
       }
     );
-    applySnapshot({
+    applyMutationSnapshot({
       ...snapshotRef.current,
       notebooks: snapshotRef.current.notebooks.map((candidate) => candidate.id === notebook.id ? result.notebook : candidate),
       documents: snapshotRef.current.documents.map((document) => document.notebookId === notebook.id ? { ...document, notebookName: result.notebook.name } : document)
@@ -218,19 +246,36 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     announceChange();
     setStatus("Notebook renamed");
     return result.notebook;
-  }, [actorHandle, announceChange, applySnapshot]);
+  }, [actorHandle, announceChange, applyMutationSnapshot]);
 
   const deleteNotebook = useCallback(async (notebook: WorkspaceNotebook) => {
-    setStatus("Removing notebook…");
-    await symposiumApi.request(`/api/workspace/notebooks/${encodeURIComponent(notebook.id)}`, {
-      method: "DELETE",
-      idempotencyKey: createClientMutationId("workspace-notebook-delete"),
-      body: { actorHandle, expectedRevision: notebook.revision }
+    setStatus("Deleting notebook and its notes…");
+    const result = await symposiumApi.request<{
+      notebookId: string;
+      deletedDocumentIds: string[];
+      cleanupPending?: boolean;
+    }>(
+      `/api/workspace/notebooks/${encodeURIComponent(notebook.id)}/with-contents`,
+      {
+        method: "DELETE",
+        idempotencyKey: createClientMutationId("workspace-notebook-delete-with-contents"),
+        body: { actorHandle, expectedRevision: notebook.revision }
+      }
+    );
+    const deletedDocumentIds = new Set(result.deletedDocumentIds);
+    applyMutationSnapshot({
+      ...snapshotRef.current,
+      notebooks: snapshotRef.current.notebooks.filter((candidate) => candidate.id !== result.notebookId),
+      documents: snapshotRef.current.documents.filter((document) =>
+        document.notebookId !== result.notebookId && !deletedDocumentIds.has(document.id)
+      )
     });
-    await refresh({ quiet: true });
     announceChange();
-    setStatus("Notebook removed; its drafts are now in All");
-  }, [actorHandle, announceChange, refresh]);
+    setStatus(result.cleanupPending
+      ? "Notebook and notes deleted; comment and attachment cleanup is finishing"
+      : "Notebook and its notes deleted");
+    void refresh({ quiet: true }).catch(() => undefined);
+  }, [actorHandle, announceChange, applyMutationSnapshot, refresh]);
 
   const search = useCallback(async (query: string, options?: { kind?: string; notebookId?: string | null }) => {
     const parameters = new URLSearchParams({ query, actorHandle, limit: "24" });
@@ -252,6 +297,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
         body: { actorHandle, expectedRevision: document.revision, publicationTarget }
       }
     );
+    mutationEpochRef.current += 1;
     await refresh({ quiet: true });
     announceChange();
     setStatus("Published and moved out of the workspace");

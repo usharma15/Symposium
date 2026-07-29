@@ -11,7 +11,7 @@
 
 .workspace-toolbar.feed-toolbar {
   position: fixed;
-  inset: 104px auto 144px 24px;
+  inset: var(--symposium-content-top) auto 144px 24px;
   z-index: 9;
   display: grid;
   align-items: stretch;
@@ -43,7 +43,7 @@
   position: relative;
   z-index: 5;
   width: min(var(--symposium-feed-width), calc(100vw - 48px));
-  margin: 28px auto 96px;
+  margin: 0 auto 96px;
 }
 
 .workspace-toolbar .room-mini-title {
@@ -796,7 +796,6 @@
   position: relative;
   background: color-mix(in srgb, var(--panel-strong) 90%, transparent);
 }
-.workspace-document-card .document-collapsible-content.collapsed.is-collapsible::after { content: none; }
 .workspace-card-title-button {
   max-width: 100%;
   padding: 0;

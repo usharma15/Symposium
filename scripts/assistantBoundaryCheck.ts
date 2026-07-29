@@ -28,6 +28,7 @@ import {
 import {
   contentTranslatedDocument,
   contentTranslationFingerprint,
+  contentTranslationSourceBody,
   contentTranslationSourceSegments
 } from "@/apps/api/src/repository/contentTranslations";
 import {
@@ -1274,6 +1275,28 @@ assert.deepEqual(contentTranslationSourceSegments(importedWhitespaceDocument), [
   { id: "n0:r0:t0", text: "Comment 3a2" },
   { id: "n0:r0:t1", text: "Show previous replies" }
 ]);
+const longTranslationRun = `${"scientific explanation ".repeat(650)}conclusion`;
+const longTranslationDocument = {
+  version: 1 as const,
+  nodes: [{
+    id: "long-translation-run",
+    type: "paragraph" as const,
+    content: [{ text: longTranslationRun }],
+    align: "left" as const,
+    indent: 0
+  }]
+};
+const longTranslationSegments = contentTranslationSourceSegments(longTranslationDocument);
+assert.ok(longTranslationSegments.length > 1);
+assert.ok(longTranslationSegments.every((segment) => segment.text.length <= 12_000));
+const restoredLongTranslation = contentTranslatedDocument(
+  longTranslationDocument,
+  longTranslationSegments
+);
+assert.equal(restoredLongTranslation.nodes[0]?.type, "paragraph");
+if (restoredLongTranslation.nodes[0]?.type === "paragraph") {
+  assert.equal(restoredLongTranslation.nodes[0].content[0]?.text, longTranslationRun);
+}
 const translatedImportedWhitespaceDocument = contentTranslatedDocument(importedWhitespaceDocument, [
   { id: "n0:r0:t0", text: "\n  Comentario 3a2  " },
   { id: "n0:r0:t1", text: "Mostrar respuestas anteriores\t" }
@@ -1287,6 +1310,47 @@ if (translatedImportedParagraph?.type === "paragraph") {
   );
   assert.deepEqual(translatedImportedParagraph.content[0]?.marks, ["bold"]);
 }
+const preservedLongCode = Array.from({ length: 600 }, (_, index) =>
+  `const line${index + 1} = "${"x".repeat(120)}";`
+).join("\n");
+const codeTranslationDocument = {
+  version: 1 as const,
+  nodes: [
+    {
+      id: "translate-this",
+      type: "paragraph" as const,
+      content: [{ text: "Translate this explanation." }],
+      align: "left" as const,
+      indent: 0
+    },
+    {
+      id: "preserve-code",
+      type: "code" as const,
+      language: "typescript",
+      code: preservedLongCode
+    }
+  ],
+  settings: { width: "standard" as const, margin: "normal" as const }
+};
+assert.equal(contentTranslationSourceBody(codeTranslationDocument), "Translate this explanation.");
+assert.deepEqual(contentTranslationSourceSegments(codeTranslationDocument), [
+  { id: "n0:r0", text: "Translate this explanation." }
+]);
+const translatedCodeDocument = contentTranslatedDocument(codeTranslationDocument, [
+  { id: "n0:r0", text: "Traduire cette explication." }
+]);
+assert.equal(translatedCodeDocument.nodes[1]?.type, "code");
+if (translatedCodeDocument.nodes[1]?.type === "code") {
+  assert.equal(translatedCodeDocument.nodes[1].code, preservedLongCode);
+}
+assert.equal(contentTranslationSourceBody({
+  version: 1,
+  nodes: [{ id: "only-code", type: "code", code: preservedLongCode }]
+}), "Content");
+assert.deepEqual(contentTranslationSourceSegments({
+  version: 1,
+  nodes: [{ id: "only-code", type: "code", code: preservedLongCode }]
+}), [{ id: "fallback:body", text: "Content" }]);
 assert.equal(contentTranslationModelOutputSchema.parse({
   targetLanguage: "french",
   targetLanguageLabel: "French",
@@ -1320,6 +1384,23 @@ const translatedContentResult = contentTranslationResultSchema.parse({
   quota: { dailyLimit: 10, remainingToday: 9, monthlyBudgetUsd: 40, extremelyLimited: true }
 });
 assert.equal(contentTranslationResultSchema.safeParse(translatedContentResult).success, true);
+assert.equal(contentTranslationResultSchema.safeParse({
+  ...translatedContentResult,
+  translatedBody: `${preservedLongCode}${" expansion".repeat(6_000)}`,
+  translatedDocument: {
+    version: 1,
+    nodes: [
+      { id: "preserved-code", type: "code", code: preservedLongCode },
+      {
+        id: "expanded-translation",
+        type: "paragraph",
+        content: [{ text: " expansion".repeat(6_000) }],
+        align: "left",
+        indent: 0
+      }
+    ]
+  }
+}).success, true, "translation results must allow natural-language expansion around preserved long code");
 
 const contentTranslationSessionValues = new Map<string, string>();
 const contentTranslationSessionStorage = {

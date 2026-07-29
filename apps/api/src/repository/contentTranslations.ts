@@ -86,20 +86,55 @@ const sourceDocument = (document: unknown, fallback: string) => {
   return parsed.success ? parsed.data : plainTextDocument(fallback);
 };
 
+export const contentTranslationSourceBody = (document: VersionedDocumentContract) =>
+  documentPlainTextProjection({
+    ...document,
+    nodes: document.nodes.filter((node) => node.type !== "code")
+  }) || "Content";
+
 type TranslationTextPiece =
   | { kind: "structure"; text: string }
   | { kind: "text"; text: string; ordinal: number };
 
+const translationSegmentCharacterLimit = 12_000;
+
 const translationTextPieces = (text: string): TranslationTextPiece[] => {
   const pieces: TranslationTextPiece[] = [];
   let textOrdinal = 0;
+  const pushBoundedNaturalText = (value: string) => {
+    let remaining = value;
+    while (remaining.length > translationSegmentCharacterLimit) {
+      let splitAt = remaining.lastIndexOf(" ", translationSegmentCharacterLimit);
+      if (splitAt < translationSegmentCharacterLimit / 2) {
+        splitAt = remaining.lastIndexOf("\u00a0", translationSegmentCharacterLimit);
+      }
+      if (splitAt < translationSegmentCharacterLimit / 2) {
+        pieces.push({
+          kind: "text",
+          text: remaining.slice(0, translationSegmentCharacterLimit),
+          ordinal: textOrdinal++
+        });
+        remaining = remaining.slice(translationSegmentCharacterLimit);
+        continue;
+      }
+      pieces.push({ kind: "text", text: remaining.slice(0, splitAt), ordinal: textOrdinal++ });
+      let structureEnd = splitAt;
+      while (
+        remaining[structureEnd] === " "
+        || remaining[structureEnd] === "\u00a0"
+      ) structureEnd += 1;
+      pieces.push({ kind: "structure", text: remaining.slice(splitAt, structureEnd) });
+      remaining = remaining.slice(structureEnd);
+    }
+    if (remaining) pieces.push({ kind: "text", text: remaining, ordinal: textOrdinal++ });
+  };
   const pushNaturalText = (value: string) => {
     if (!value) return;
     const leading = value.match(/^[ \u00a0]+/)?.[0] ?? "";
     const trailing = value.slice(leading.length).match(/[ \u00a0]+$/)?.[0] ?? "";
     const natural = value.slice(leading.length, value.length - trailing.length);
     if (leading) pieces.push({ kind: "structure", text: leading });
-    if (natural) pieces.push({ kind: "text", text: natural, ordinal: textOrdinal++ });
+    if (natural) pushBoundedNaturalText(natural);
     if (trailing) pieces.push({ kind: "structure", text: trailing });
   };
 
@@ -125,7 +160,7 @@ const addRunSegments = (
 ) => {
   if (!text) return;
   const pieces = translationTextPieces(text);
-  const hasStructure = pieces.some((piece) => piece.kind === "structure");
+  const hasStructure = pieces.length > 1;
   for (const piece of pieces) {
     if (piece.kind === "text" && piece.text.trim()) {
       segments.push({ id: translationPieceId(baseId, piece, hasStructure), text: piece.text });
@@ -139,7 +174,7 @@ const translatedRunText = (
   translated: Map<string, string>
 ) => {
   const pieces = translationTextPieces(sourceText);
-  const hasStructure = pieces.some((piece) => piece.kind === "structure");
+  const hasStructure = pieces.length > 1;
   return pieces.map((piece) => {
     if (piece.kind === "structure") return piece.text;
     const value = translated.get(translationPieceId(baseId, piece, hasStructure));
@@ -193,7 +228,7 @@ export const contentTranslationSourceSegments = (document: VersionedDocumentCont
 
   return [{
     id: "fallback:body",
-    text: documentPlainTextProjection(document).trim() || "Content"
+    text: contentTranslationSourceBody(document)
   }];
 };
 
@@ -295,7 +330,7 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
       ...input,
       sourceRevision: row.revision,
       sourceTitle: row.postType === "thought" ? "Thought" : row.title,
-      sourceBody: documentPlainTextProjection(document) || row.body,
+      sourceBody: contentTranslationSourceBody(document),
       sourceDocument: document,
       sourceSegments: contentTranslationSourceSegments(document)
     });
@@ -346,7 +381,7 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
     ...input,
     sourceRevision: row.revision,
     sourceTitle: `Comment by ${row.authorName} on ${row.postType === "thought" ? "Thought" : row.postTitle}`.slice(0, 300),
-    sourceBody: documentPlainTextProjection(document) || row.body,
+    sourceBody: contentTranslationSourceBody(document),
     sourceDocument: document,
     sourceSegments: contentTranslationSourceSegments(document)
   });

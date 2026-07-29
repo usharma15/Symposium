@@ -94,6 +94,8 @@ const main = async () => {
   const foundationStyles = sources.get("00-foundations-entry.css") ?? "";
   const legacyDetailStyles = sources.get("30-legacy-discussion-profile.css") ?? "";
   const legacyResponsiveStyles = sources.get("40-legacy-responsive.css") ?? "";
+  const immersiveShellStyles = sources.get("50-immersive-shell.css") ?? "";
+  const communityDirectoryStyles = sources.get("89-communities.css") ?? "";
   assert.match(patronageStyles, /\.patronage-proposal-fields/);
   assert.match(patronageStyles, /\.patronage-feed-summary/);
   assert.match(patronageStyles, /\.patronage-side-inline > \.patronage-side/);
@@ -105,7 +107,17 @@ const main = async () => {
   assert.match(communityStyles, /\.selected-community-panel\s*\{[^}]*position:\s*fixed/);
   assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar\s*\{[^}]*position:\s*fixed/);
   assert.match(immersiveOverlayStyles, /\.paper-detail > \.paper-side\s*\{[^}]*position:\s*fixed/);
-  assert.match(foundationStyles, /--symposium-detail-top:\s*120px/);
+  assert.match(foundationStyles, /--symposium-content-top:\s*104px/);
+  assert.match(foundationStyles, /--symposium-side-tool-top:\s*var\(--symposium-content-top\)/);
+  assert.match(foundationStyles, /--symposium-detail-top:\s*var\(--symposium-content-top\)/);
+  assert.match(immersiveShellStyles, /\.stage\s*\{[^}]*padding:\s*var\(--symposium-content-top\) 24px 118px/);
+  assert.match(communityStyles, /\.feed-toolbar\s*\{[^}]*top:\s*var\(--symposium-content-top\)/);
+  assert.match(communityStyles, /\.selected-community-panel\s*\{[^}]*top:\s*var\(--symposium-content-top\)/);
+  assert.match(immersiveShellStyles, /\.communities-context\s*\{[^}]*top:\s*var\(--symposium-content-top\)/);
+  assert.match(communityDirectoryStyles, /\.communities-directory-rail,[\s\S]*top:\s*var\(--symposium-content-top\)/);
+  assert.match(communityDirectoryStyles, /\.selected-community-right\s*\{[^}]*top:\s*var\(--symposium-content-top\)/);
+  assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar\s*\{[^}]*inset:\s*var\(--symposium-content-top\) auto 144px 24px/);
+  assert.match(workspaceStyles, /\.workspace-main-column\s*\{[^}]*margin:\s*0 auto 96px/);
   assert.match(immersiveOverlayStyles, /\.symposium-shell\[data-view="detail"\] \.stage,[\s\S]*padding-top:\s*var\(--symposium-detail-top\)/);
   assert.match(immersiveOverlayStyles, /\.detail-layout > \.back-button,[\s\S]*\.opportunity-review-back\s*\{[^}]*position:\s*fixed[^}]*top:\s*var\(--symposium-detail-top\)[^}]*left:\s*var\(--symposium-shell-edge\)/);
   assert.match(immersiveOverlayStyles, /\.paper-detail > \.paper-side\s*\{[^}]*top:\s*var\(--symposium-detail-top\)/);
@@ -118,7 +130,6 @@ const main = async () => {
   assert.doesNotMatch(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*opacity:/);
   const attachmentStyles = [sources.get("20-legacy-content.css") ?? "", sources.get("87-structured-attachments.css") ?? ""].join("\n");
   const shellStyles = sources.get("10-legacy-shell.css") ?? "";
-  const immersiveShellStyles = sources.get("50-immersive-shell.css") ?? "";
   const feedStyles = [
     sources.get("60-immersive-communities-feed.css") ?? "",
     sources.get("70-immersive-content-profile.css") ?? "",
@@ -131,7 +142,7 @@ const main = async () => {
   const tabletStyles = sources.get("92-ai-tablet.css") ?? "";
   assert.match(foundationStyles, /--symposium-feed-width:\s*840px/);
   assert.match(foundationStyles, /--symposium-side-tool-width:\s*max\(/);
-  assert.match(foundationStyles, /--symposium-side-tool-top:\s*104px/);
+  assert.match(foundationStyles, /--symposium-side-tool-top:\s*var\(--symposium-content-top\)/);
   assert.match(foundationStyles, /--symposium-side-tool-bottom:\s*84px/);
   assert.match(foundationStyles, /@media \(max-width:\s*640px\)[\s\S]*?--symposium-side-tool-bottom:\s*76px/);
   assert.match(foundationStyles, /@media \(max-width:\s*760px\)[\s\S]*?--symposium-side-tool-top:\s*88px/);
@@ -186,7 +197,15 @@ const main = async () => {
       );
     }
   }
-  assert.match(documentStyles, /\.document-collapsible-content\.collapsed\.is-collapsible::after/);
+  assert.doesNotMatch(documentStyles, /\.document-collapsible-content\.collapsed\.is-collapsible::after/);
+  assert.match(documentStyles, /\.document-code\s*\{[^}]*--document-code-visible-lines:\s*8[^}]*max-height:/);
+  assert.match(documentStyles, /\.document-code\s*\{[^}]*white-space:\s*pre/);
+  assert.match(documentStyles, /\.document-code:focus-visible\s*\{[^}]*outline:/);
+  assert.match(documentStyles, /\.feed-post \.symposium-document-feed h1\s*\{[^}]*font-size:\s*clamp\(1\.12rem, 1\.9vw, 1\.28rem\)/);
+  assert.match(documentStyles, /\.feed-post \.symposium-document-feed h2\s*\{[^}]*font-size:\s*clamp\(1\.05rem, 1\.8vw, 1\.2rem\)/);
+  assert.match(documentStyles, /\.document-editor-canvas \.tiptap pre\s*\{[^}]*font-family:\s*var\(--document-font-mono\)[^}]*line-height:\s*1\.55/);
+  assert.match(documentStyles, /\.document-editor-canvas \.tiptap\.ProseMirror-focused pre\.is-active-code-block\s*\{[^}]*--document-code-visible-lines:\s*18/);
+  assert.match(feedStyles, /\.feed-post \.post-card-title\s*\{[^}]*font-family:\s*Georgia[^}]*font-size:\s*clamp\(1\.42rem, 2\.35vw, 1\.82rem\)[^}]*font-weight:\s*820/);
   assert.match(attachmentStyles, /\.attachment-modal[\s\S]*background:\s*var\(--document-surface-solid\)/);
   assert.match(attachmentStyles, /\.attachment-sheet-scroll[\s\S]*background:\s*var\(--attachment-preview-surface\)/);
   assert.match(
@@ -223,7 +242,7 @@ const main = async () => {
           "focus-scoped inline comment and compact reply toolbars",
           "compact single-line post metrics across feed and detail surfaces",
           "aligned compact comment metrics with quote and link actions",
-          "overflow-only feed preview fades"
+          "fade-free overflow-only feed previews"
         ]
       },
       null,

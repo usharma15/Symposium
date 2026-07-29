@@ -72,6 +72,14 @@ const ensureStoreDirectory = async () => {
   await mkdir(filesRoot, { recursive: true });
 };
 
+const unlinkStoredFileIfPresent = async (filePath: string) => {
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+};
+
 const emptyStore = (): LocalAttachmentStore => ({
   version: 1,
   attachments: {}
@@ -226,7 +234,7 @@ export const deleteLocalPendingAttachment = async (attachmentId: string, actorHa
     ) {
       throw new LocalAttachmentStoreError("Unsent attachment upload not found.", 404);
     }
-    await unlink(recordFilePath(record)).catch(() => undefined);
+    await unlinkStoredFileIfPresent(recordFilePath(record));
     delete store.attachments[attachmentId];
     await saveStore(store);
     return { attachmentId, discarded: true };
@@ -293,7 +301,7 @@ export const replaceLocalOwnerAttachments = async (input: {
         record.ownerType === input.ownerType && record.ownerId === input.ownerId && !desiredIds.has(record.attachmentId)
     );
     for (const record of removed) {
-      await unlink(recordFilePath(record)).catch(() => undefined);
+      await unlinkStoredFileIfPresent(recordFilePath(record));
       delete store.attachments[record.attachmentId];
     }
     for (const record of desired as LocalAttachmentRecord[]) {
@@ -315,7 +323,7 @@ export const deleteLocalOwnerAttachments = async (ownerType: "post" | "comment" 
       (record) => record.ownerType === ownerType && record.ownerId === ownerId
     );
     for (const record of owned) {
-      await unlink(recordFilePath(record)).catch(() => undefined);
+      await unlinkStoredFileIfPresent(recordFilePath(record));
       delete store.attachments[record.attachmentId];
     }
     if (owned.length) await saveStore(store);

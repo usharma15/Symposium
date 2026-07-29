@@ -37,6 +37,7 @@ import { emptySymposiumDocument } from "@/lib/documentModel";
 import type { ResearchProfile, Room } from "@/lib/mockData";
 import type {
   WorkspaceDocument,
+  WorkspaceNotebook,
   WorkspacePublicationResponse,
   WorkspaceSearchResponse
 } from "@/lib/workspaceTypes";
@@ -130,8 +131,36 @@ export function WorkspaceView({
     return () => window.clearTimeout(timer);
   }, [query, selectedNotebookId, workspace.search, workspace.setStatus]);
 
+  useEffect(() => {
+    const documentIds = new Set(workspace.snapshot.documents.map((document) => document.id));
+    const notebookIds = new Set(workspace.snapshot.notebooks.map((notebook) => notebook.id));
+    setSearchResults((current) => {
+      if (!current) return current;
+      const documents = current.documents.filter((document) => documentIds.has(document.id));
+      const notebooks = current.notebooks.filter((notebook) => notebookIds.has(notebook.id));
+      if (
+        documents.length === current.documents.length
+        && notebooks.length === current.notebooks.length
+      ) return current;
+      return { ...current, documents, notebooks };
+    });
+  }, [workspace.snapshot.documents, workspace.snapshot.notebooks]);
+
+  const reconciledSearchResults = useMemo(() => {
+    if (!searchResults) return null;
+    const documentIds = new Set(workspace.snapshot.documents.map((document) => document.id));
+    const notebookIds = new Set(workspace.snapshot.notebooks.map((notebook) => notebook.id));
+    return {
+      ...searchResults,
+      documents: searchResults.documents.filter((document) => documentIds.has(document.id)),
+      notebooks: searchResults.notebooks.filter((notebook) => notebookIds.has(notebook.id))
+    };
+  }, [searchResults, workspace.snapshot.documents, workspace.snapshot.notebooks]);
+
   const visibleDocuments = useMemo(() => {
-    const candidates = query.trim() && searchResults ? searchResults.documents : workspace.snapshot.documents;
+    const candidates = query.trim() && reconciledSearchResults
+      ? reconciledSearchResults.documents
+      : workspace.snapshot.documents;
     if (section === "notebooks") {
       const notebookDocuments = selectedNotebookId
         ? candidates.filter((document) => document.notebookId === selectedNotebookId)
@@ -140,7 +169,7 @@ export function WorkspaceView({
     }
     if (section === "quick") return sortWorkspaceDocuments(candidates.filter((document) => document.kind === "quick"));
     return sortWorkspaceDocuments(candidates);
-  }, [query, searchResults, section, selectedNotebookId, workspace.snapshot.documents]);
+  }, [query, reconciledSearchResults, section, selectedNotebookId, workspace.snapshot.documents]);
 
   const afterSavingCurrent = useCallback(async (action: () => void | Promise<void>) => {
     if (navigationInFlightRef.current) return false;
@@ -240,6 +269,25 @@ export function WorkspaceView({
     } catch (error) {
       workspace.setStatus(error instanceof Error ? error.message : "Notebook could not be created");
     }
+  };
+
+  const deleteNotebook = (notebook: WorkspaceNotebook) => {
+    if (!window.confirm(
+      `Delete “${notebook.name}” and every note currently inside it? Their comments and attachments will be permanently deleted too. This cannot be undone.`
+    )) return;
+    void afterSavingCurrent(async () => {
+      await workspace.deleteNotebook(notebook);
+      setExpandedNotebookIds((current) => {
+        const next = new Set(current);
+        next.delete(notebook.id);
+        return next;
+      });
+      if (selectedNotebookId === notebook.id) setSelectedNotebookId(null);
+      if (selectedDocument?.notebookId === notebook.id) {
+        setSelectedDocumentId(null);
+        setEditSelected(false);
+      }
+    }).catch((error) => workspace.setStatus(error instanceof Error ? error.message : "Notebook and its notes could not be deleted"));
   };
 
   const mutateNavigatorDocument = async (
@@ -404,14 +452,7 @@ export function WorkspaceView({
                           const name = window.prompt("Rename notebook", notebook.name)?.trim();
                           if (name && name !== notebook.name) void workspace.renameNotebook(notebook, name).catch((error) => workspace.setStatus(error instanceof Error ? error.message : "Notebook could not be renamed"));
                         }}><MoreHorizontal size={15} /></button>
-                        <button type="button" title="Delete notebook" onClick={() => {
-                          if (window.confirm(`Delete “${notebook.name}”? Its drafts will move to All.`)) {
-                            void workspace.deleteNotebook(notebook).then(() => {
-                              setExpandedNotebookIds((current) => { const next = new Set(current); next.delete(notebook.id); return next; });
-                              if (selectedNotebookId === notebook.id) setSelectedNotebookId(null);
-                            }).catch((error) => workspace.setStatus(error instanceof Error ? error.message : "Notebook could not be removed"));
-                          }
-                        }}><Trash2 size={14} /></button>
+                        <button type="button" title="Delete notebook and notes" onClick={() => deleteNotebook(notebook)}><Trash2 size={14} /></button>
                         </>
                       ) : null}
                     </div>
@@ -441,10 +482,10 @@ export function WorkspaceView({
           </div>
           ) : null}
 
-          {query.trim() && searchResults && (searchResults.notebooks.length || searchResults.collaborators.length) ? (
+          {query.trim() && reconciledSearchResults && (reconciledSearchResults.notebooks.length || reconciledSearchResults.collaborators.length) ? (
             <section className="workspace-search-groups" aria-label="Additional workspace search results">
-              {searchResults.notebooks.length ? <div><strong>Notebooks</strong>{searchResults.notebooks.map((notebook) => <button type="button" key={notebook.id} onClick={() => openNotebook(notebook.id)}><Folder size={15} /><span>{notebook.name}</span></button>)}</div> : null}
-              {searchResults.collaborators.length ? <div><strong>Authors & collaborators</strong>{searchResults.collaborators.map((collaborator) => <span key={collaborator.handle}><b>{collaborator.name}</b><small>{collaborator.handle}</small></span>)}</div> : null}
+              {reconciledSearchResults.notebooks.length ? <div><strong>Notebooks</strong>{reconciledSearchResults.notebooks.map((notebook) => <button type="button" key={notebook.id} onClick={() => openNotebook(notebook.id)}><Folder size={15} /><span>{notebook.name}</span></button>)}</div> : null}
+              {reconciledSearchResults.collaborators.length ? <div><strong>Authors & collaborators</strong>{reconciledSearchResults.collaborators.map((collaborator) => <span key={collaborator.handle}><b>{collaborator.name}</b><small>{collaborator.handle}</small></span>)}</div> : null}
             </section>
           ) : null}
 

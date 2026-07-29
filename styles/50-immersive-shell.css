@@ -82,7 +82,7 @@
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: 104px 24px 118px;
+  padding: var(--symposium-content-top) 24px 118px;
 }
 
 .symposium-shell[data-room="hall"][data-view="hall"] .stage {
@@ -529,7 +529,7 @@
 .communities-context {
   position: fixed;
   left: 24px;
-  top: 104px;
+  top: var(--symposium-content-top);
   z-index: 7;
   display: grid;
   gap: 7px;
@@ -580,7 +580,7 @@
 
 .communities-search {
   position: sticky;
-  top: 104px;
+  top: var(--symposium-content-top);
   z-index: 8;
   display: flex;
   align-items: center;

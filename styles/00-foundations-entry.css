@@ -23,10 +23,11 @@
     268px,
     calc((100vw - min(var(--symposium-feed-width), calc(100vw - 28px))) / 2)
   );
-  --symposium-side-tool-top: 104px;
+  --symposium-content-top: 104px;
+  --symposium-side-tool-top: var(--symposium-content-top);
   --symposium-side-tool-bottom: 84px;
   --symposium-shell-edge: 24px;
-  --symposium-detail-top: 120px;
+  --symposium-detail-top: var(--symposium-content-top);
   --symposium-topbar-brand-slot: 112px;
   --symposium-view-nav-width: 156px;
   --symposium-left-rail-width: calc(var(--symposium-topbar-brand-slot) + 8px + var(--symposium-view-nav-width));

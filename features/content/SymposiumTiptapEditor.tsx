@@ -47,7 +47,8 @@ import TextAlign from "@tiptap/extension-text-align";
 import Link from "@tiptap/extension-link";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Placeholder } from "@tiptap/extensions";
-import { Plugin } from "@tiptap/pm/state";
+import { Plugin, type EditorState } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import katex from "katex";
 import type { InquiryAttachment, InquiryItem, ResearchProfile } from "@/lib/mockData";
 import { postAttachmentAccept } from "@/lib/attachmentRules";
@@ -310,7 +311,7 @@ export const tiptapToSymposiumDocument = (
       });
       return capability === "paper" ? [{ id: blockId(node, "list"), type: "list", style, depth: Math.max(0, Math.min(8, Number(node.attrs?.depth) || 0)), items: items.length ? items : [[]] }] : items.map((content, index) => ({ id: `${blockId(node, "list")}-${index}`, type: "paragraph" as const, content, align: "left" as const, indent: 0 }));
     }
-    if (node.type === "codeBlock") return capability === "paper" || capability === "scribble" ? [{ id: blockId(node, "code"), type: "code", ...(typeof node.attrs?.language === "string" ? { language: node.attrs.language } : {}), code: node.content?.map((child) => child.text ?? "").join("") ?? "" }] : [{ id: blockId(node), type: "paragraph", content: [{ text: node.content?.map((child) => child.text ?? "").join("") ?? "" }], align: "left", indent: 0 }];
+    if (node.type === "codeBlock") return [{ id: blockId(node, "code"), type: "code", ...(typeof node.attrs?.language === "string" ? { language: node.attrs.language } : {}), code: node.content?.map((child) => child.text ?? "").join("") ?? "" }];
     if (node.type === "symposiumDrawing" && node.attrs?.drawing) return [{ id: blockId(node, "drawing"), type: "drawing", drawing: node.attrs.drawing, ...(typeof node.attrs?.caption === "string" && node.attrs.caption ? { caption: node.attrs.caption } : {}) }];
     if (node.type === "symposiumEquation") return [{ id: blockId(node, "equation"), type: "equation", source: typeof node.attrs?.source === "string" && node.attrs.source.trim() ? node.attrs.source : "x", display: node.attrs?.display !== false, ...(typeof node.attrs?.label === "string" && node.attrs.label ? { label: node.attrs.label } : {}) }];
     if (node.type === "symposiumAttachment" && typeof node.attrs?.attachmentId === "string") return [{ id: blockId(node, "asset"), type: "attachment", attachmentId: node.attrs.attachmentId, placement: "inline", ...(typeof node.attrs?.caption === "string" && node.attrs.caption ? { caption: node.attrs.caption } : {}) }];
@@ -356,6 +357,63 @@ const StableBlockIds = Extension.create({
           } else seen.add(currentId);
         });
         return changed ? transaction : null;
+      }
+    })];
+  }
+});
+
+const activeCodeBlockForState = (state: EditorState) => {
+  const { $from } = state.selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    const node = $from.node(depth);
+    if (node.type.name !== "codeBlock") continue;
+    return {
+      blockId: typeof node.attrs.blockId === "string" ? node.attrs.blockId : null,
+      from: $from.before(depth),
+      node
+    };
+  }
+  return null;
+};
+
+const resetCodeBlockScroll = (root: HTMLElement, blockId: string | null) => {
+  if (!blockId) return;
+  for (const codeBlock of root.querySelectorAll<HTMLPreElement>("pre[data-block-id]")) {
+    if (codeBlock.dataset.blockId !== blockId) continue;
+    codeBlock.scrollTop = 0;
+    codeBlock.scrollLeft = 0;
+    break;
+  }
+};
+
+const ActiveCodeBlock = Extension.create({
+  name: "activeCodeBlock",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      props: {
+        decorations: (state) => {
+          const active = activeCodeBlockForState(state);
+          return active
+            ? DecorationSet.create(state.doc, [
+                Decoration.node(active.from, active.from + active.node.nodeSize, {
+                  class: "is-active-code-block"
+                })
+              ])
+            : DecorationSet.empty;
+        }
+      },
+      view: (view) => {
+        let activeBlockId = activeCodeBlockForState(view.state)?.blockId ?? null;
+        const resetActiveBlock = () => resetCodeBlockScroll(view.dom, activeBlockId);
+        view.dom.addEventListener("blur", resetActiveBlock, true);
+        return {
+          update: (currentView) => {
+            const nextBlockId = activeCodeBlockForState(currentView.state)?.blockId ?? null;
+            if (activeBlockId !== nextBlockId) resetCodeBlockScroll(currentView.dom, activeBlockId);
+            activeBlockId = nextBlockId;
+          },
+          destroy: () => view.dom.removeEventListener("blur", resetActiveBlock, true)
+        };
       }
     })];
   }
@@ -697,7 +755,7 @@ const editorExtensions = (placeholder: string, capability: EditorCapability) => 
     bulletList: capability === "paper" ? { keepMarks: true, keepAttributes: true } : false,
     orderedList: capability === "paper" ? { keepMarks: true, keepAttributes: true } : false,
     listItem: capability === "paper" ? {} : false,
-    codeBlock: capability === "paper" || capability === "scribble" ? {} : false,
+    codeBlock: {},
     link: false,
     underline: false
   }),
@@ -712,6 +770,7 @@ const editorExtensions = (placeholder: string, capability: EditorCapability) => 
   TextAlign.configure({ types: ["heading", "paragraph"], alignments: ["left", "center", "right"], defaultAlignment: "left" }),
   Placeholder.configure({ placeholder, showOnlyCurrent: true, includeChildren: true }),
   StableBlockIds,
+  ActiveCodeBlock,
   DocumentAttributes,
   PersistentFormatting.configure({ capability }),
   SymposiumMention,
@@ -966,7 +1025,7 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
       <div>
         <ToolbarButton title="Insert equation" onClick={onInsertEquation}><Sigma size={17} /></ToolbarButton>
         {capability === "scribble" ? <ToolbarButton title="Insert drawing" onClick={onInsertDrawing}><PenLine size={17} /></ToolbarButton> : null}
-        {capability === "scribble" ? <ToolbarButton title="Insert code block" onClick={onInsertCode}><Code2 size={17} /></ToolbarButton> : null}
+        <ToolbarButton title="Insert code block" onClick={onInsertCode}><Code2 size={17} /></ToolbarButton>
         {capability !== "scribble" ? <ToolbarButton title="Insert attachment here" disabled={uploadDisabled} onClick={onInsertAttachment}><FilePlus2 size={17} /></ToolbarButton> : null}
       </div>
     </div>
@@ -1085,10 +1144,7 @@ export const SymposiumDocumentEditor = forwardRef<SymposiumDocumentEditorHandle,
 
   const insertCode = () => {
     if (!editor) return;
-    editor.chain().focus().insertContent([
-      { type: "codeBlock", attrs: { blockId: newDocumentBlockId("code"), language: null } },
-      { type: "paragraph", attrs: currentParagraphAttributes(editor) }
-    ]).run();
+    editor.chain().focus().setCodeBlock().run();
   };
 
   const insertPendingCitation = () => {

@@ -43,6 +43,7 @@ import {
   createWorkspaceNotebook,
   deleteWorkspaceDocument,
   deleteWorkspaceNotebook,
+  deleteWorkspaceNotebookWithContents,
   getWorkspaceDocuments,
   searchWorkspaceDocuments,
   updateWorkspaceDocument,
@@ -365,6 +366,20 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
         request.body,
         actor,
         mutationContextFromRequest(request, "workspace.notebook.delete", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: { notebookId: string } }>("/v1/workspace/notebooks/:notebookId/with-contents", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await deleteWorkspaceNotebookWithContents(
+        request.params.notebookId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.notebook.delete_with_contents", request.body)
       ));
     } catch (error) {
       return sendError(app, reply, error);

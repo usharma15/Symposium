@@ -104,7 +104,20 @@
 .symposium-document a:hover { text-decoration: underline; text-underline-offset: 0.18em; }
 .symposium-document ::selection,
 .document-editor-canvas .tiptap ::selection { background: color-mix(in srgb, var(--aqua) 34%, transparent); color: var(--ink); }
-.document-code { overflow: auto; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--document-control-solid); padding: 1rem; font-family: var(--document-font-mono); font-size: 0.86rem; line-height: 1.55; }
+.document-code {
+  --document-code-visible-lines: 8;
+  max-height: calc((1.55em * var(--document-code-visible-lines)) + 2rem + 2px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--document-control-solid);
+  padding: 1rem;
+  font-family: var(--document-font-mono);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  white-space: pre;
+}
+.document-code:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 52%, transparent); outline-offset: 2px; }
 .document-list { padding-left: 1.4rem; }
 .document-list-dash { list-style: "—  "; }
 .document-list-lower-alpha { list-style: lower-alpha; }
@@ -118,6 +131,14 @@
 .document-citation { display: inline-flex; border: 1px solid var(--line); border-radius: 0.55rem; padding: 0.45rem 0.65rem; margin: 0.25rem 0; }
 .document-expand-button { display: inline-block; margin-top: -0.55rem; }
 .feed-post .symposium-document-feed { font-size: inherit; margin-top: 14px; }
+.feed-post .symposium-document-feed h1 {
+  font-size: clamp(1.12rem, 1.9vw, 1.28rem);
+  line-height: 1.22;
+}
+.feed-post .symposium-document-feed h2 {
+  font-size: clamp(1.05rem, 1.8vw, 1.2rem);
+  line-height: 1.25;
+}
 .feed-post .symposium-document-feed h3 {
   font-size: clamp(1rem, 1.7vw, 1.18rem);
   line-height: 1.28;
@@ -131,7 +152,6 @@
   font-size: clamp(1.38rem, 2.2vw, 1.85rem);
 }
 .document-collapsible-content.collapsed { max-height: calc(1.65em * 5); overflow: hidden; position: relative; }
-.document-collapsible-content.collapsed.is-collapsible::after { background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--document-canvas-solid) 82%, transparent)); bottom: 0; content: ""; height: 1.15em; left: 0; pointer-events: none; position: absolute; right: 0; }
 .document-collapsible-content.expanded { max-height: none; }
 .comment-card .symposium-document-comment { margin-left: 2.8rem; max-width: calc(100% - 2.8rem); }
 .comment-card .symposium-document-comment .post-attachments-comment { margin-left: 0; max-width: 100%; }
@@ -219,7 +239,23 @@
 .document-editor-canvas .tiptap p[data-indent] { margin-left: calc(var(--document-indent, 0) * 1.5rem); }
 .document-editor-canvas .tiptap p.is-editor-empty:first-child::before { color: var(--muted); content: attr(data-placeholder); float: left; height: 0; pointer-events: none; }
 .document-editor-canvas .tiptap code { background: color-mix(in srgb, var(--ink) 8%, transparent); border-radius: 0.25rem; font-family: var(--document-font-mono); padding: 0.08em 0.28em; }
-.document-editor-canvas .tiptap pre { background: var(--document-control-solid); border: 1px solid var(--line); border-radius: 0.75rem; overflow: auto; padding: 1rem; }
+.document-editor-canvas .tiptap pre {
+  --document-code-visible-lines: 8;
+  max-height: calc((1.55em * var(--document-code-visible-lines)) + 2rem + 2px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--document-control-solid);
+  padding: 1rem;
+  font-family: var(--document-font-mono);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  white-space: pre;
+  transition: max-height 160ms ease;
+}
+.document-editor-canvas .tiptap.ProseMirror-focused pre.is-active-code-block {
+  --document-code-visible-lines: 18;
+}
 .document-editor-canvas .tiptap pre code { background: transparent; padding: 0; }
 .document-equation-editor { border: 1px solid var(--line); border-radius: 0.7rem; background: var(--document-control-solid); padding: 0.75rem; }
 .document-equation-editor > input,

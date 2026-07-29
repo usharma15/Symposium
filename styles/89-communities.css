@@ -30,7 +30,7 @@
 .selected-community-left {
   position: fixed;
   left: 24px;
-  top: 104px;
+  top: var(--symposium-content-top);
   z-index: 8;
   display: grid;
   align-content: start;
@@ -707,7 +707,7 @@
 .selected-community-right {
   position: fixed;
   right: 24px;
-  top: 104px;
+  top: var(--symposium-content-top);
   z-index: 8;
   display: grid;
   align-content: start;

@@ -234,7 +234,22 @@ const main = async () => {
       body: "Ask @Ada, @q and @ada, but not researcher@example.com.",
       document: mentionDocument
     }),
-    ["@ada", "@grace", "@linus", "@q"]
+    ["@grace", "@linus"],
+    "structured content must ignore the legacy body projection so code and stale text cannot emit mentions"
+  );
+  assert.deepEqual(
+    contentMentionHandles({
+      body: "@ada appears only in the plain-text projection",
+      document: {
+        version: 1,
+        nodes: [
+          { id: "code", type: "code", code: "const decorator = '@grace';" },
+          { id: "paragraph", type: "paragraph", content: [{ text: "Ask @linus" }], align: "left", indent: 0 }
+        ]
+      }
+    }),
+    ["@linus"],
+    "code blocks must remain inert for mention notifications"
   );
   assert.deepEqual(
     mentionHandleChanges(

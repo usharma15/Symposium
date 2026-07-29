@@ -65,7 +65,7 @@ export function WorkspaceDocumentCard({
           {document.notebookName ? <><b aria-hidden="true">•</b><span>{document.notebookName}</span></> : null}
           {document.lifecycle === "published" ? <span className="workspace-published-badge">Published checkpoint</span> : null}
         </div>
-        <h2><button type="button" className="workspace-card-title-button" onClick={(event) => { event.stopPropagation(); onOpen(); }}>{document.title}</button></h2>
+        <h2 className="post-card-title"><button type="button" className="workspace-card-title-button" onClick={(event) => { event.stopPropagation(); onOpen(); }}>{document.title}</button></h2>
         <SymposiumDocumentRenderer
           document={document.document}
           body={document.body}

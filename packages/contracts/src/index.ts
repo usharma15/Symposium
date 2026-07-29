@@ -462,7 +462,7 @@ export const workspaceRoleWithinCeiling = (
 
 export const documentFitsReducedEditor = (document: z.infer<typeof versionedDocumentSchema>) =>
   document.nodes.every((node) => {
-    if (!["paragraph", "heading", "equation", "attachment", "quote", "reference", "citation"].includes(node.type)) return false;
+    if (!["paragraph", "heading", "code", "equation", "attachment", "quote", "reference", "citation"].includes(node.type)) return false;
     if (node.type !== "paragraph" && node.type !== "heading" && node.type !== "quote") return true;
     if (node.type === "heading" && (node.level < 2 || node.level > 3)) return false;
     return node.content.every((run) => !run.font && !run.size && !run.color && !run.marks?.includes("code") && !run.marks?.includes("strikethrough"));
@@ -495,6 +495,50 @@ export const documentPlainTextProjection = (document: z.infer<typeof versionedDo
     .filter(Boolean)
     .join("\n\n")
     .trim();
+
+const structuredContentBodySchema = z.string().trim().min(1).max(100000);
+
+const validateCodeAwareBodyLength = (
+  input: {
+    body: string;
+    document?: z.infer<typeof versionedDocumentSchema>;
+  },
+  proseLimit: number,
+  context: z.core.$RefinementCtx<unknown>
+) => {
+  const document = input.document;
+  if (!document) {
+    if (input.body.length <= proseLimit) return;
+    context.addIssue({
+      code: "custom",
+      path: ["body"],
+      message: `Content outside code blocks is limited to ${proseLimit.toLocaleString()} characters.`
+    });
+    return;
+  }
+  const hasCode = document.nodes.some((node) => node.type === "code");
+  const canonicalBody = documentPlainTextProjection(document);
+  const proseDocument = {
+    ...document,
+    nodes: document.nodes.filter((node) => node.type !== "code")
+  };
+  const proseLength = documentPlainTextProjection(proseDocument).length;
+  const extendedCodeContent = hasCode && (
+    input.body.length > proseLimit || canonicalBody.length > proseLimit
+  );
+  if (
+    proseLength > proseLimit
+    || canonicalBody.length > 100000
+    || (!hasCode && input.body.length > proseLimit)
+    || (extendedCodeContent && input.body !== canonicalBody)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["body"],
+      message: `Content outside code blocks is limited to ${proseLimit.toLocaleString()} characters.`
+    });
+  }
+};
 
 const validateDocumentAttachmentReferences = (
   document: z.infer<typeof versionedDocumentSchema> | undefined,
@@ -826,7 +870,7 @@ export const authSyncInputSchema = z.object({
 
 export const createPostInputSchema = z.object({
   title: z.string().trim().max(240),
-  body: z.string().trim().min(1).max(20000),
+  body: structuredContentBodySchema,
   document: versionedDocumentSchema.optional(),
   kind: contentKindSchema,
   postType: postTypeSchema,
@@ -839,6 +883,7 @@ export const createPostInputSchema = z.object({
   opportunity: opportunityPostInputSchema.optional(),
   attachments: z.array(postAttachmentInputSchema).max(10).default([])
 }).superRefine((input, context) => {
+  validateCodeAwareBodyLength(input, 20000, context);
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
   const expectedPostType = input.patronage
     ? "proposal"
@@ -908,7 +953,7 @@ export const createPostInputSchema = z.object({
 
 export const updatePostInputSchema = z.object({
   title: z.string().trim().max(240),
-  body: z.string().trim().min(1).max(20000),
+  body: structuredContentBodySchema,
   document: versionedDocumentSchema.optional(),
   expectedEditedAt: z.string().datetime().nullable().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
@@ -917,6 +962,7 @@ export const updatePostInputSchema = z.object({
   opportunity: opportunityPostInputSchema.optional(),
   actorHandle: z.string().optional()
 }).superRefine((input, context) => {
+  validateCodeAwareBodyLength(input, 20000, context);
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
   if ((input.attachmentIds !== undefined || input.quoteSource !== undefined || input.document !== undefined || input.patronage !== undefined || input.opportunity !== undefined) && input.expectedEditedAt === undefined) {
     context.addIssue({
@@ -928,7 +974,7 @@ export const updatePostInputSchema = z.object({
 });
 
 export const createCommentInputSchema = z.object({
-  body: z.string().trim().min(1).max(8000),
+  body: structuredContentBodySchema,
   document: versionedDocumentSchema.optional(),
   stance: z.string().trim().min(1).default("Comment"),
   parentId: z.string().nullable().optional(),
@@ -936,6 +982,7 @@ export const createCommentInputSchema = z.object({
   quoteSource: contentQuoteSourceSchema.optional(),
   authorHandle: z.string().optional()
 }).superRefine((input, context) => {
+  validateCodeAwareBodyLength(input, 8000, context);
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
   if (input.document && !documentFitsReducedEditor(input.document)) {
     context.addIssue({ code: "custom", path: ["document"], message: "Comments use the reduced editor formatting set." });
@@ -943,13 +990,14 @@ export const createCommentInputSchema = z.object({
 });
 
 export const updateCommentInputSchema = z.object({
-  body: z.string().trim().min(1).max(8000),
+  body: structuredContentBodySchema,
   document: versionedDocumentSchema.optional(),
   expectedEditedAt: z.string().datetime().nullable().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.nullable().optional(),
   actorHandle: z.string().optional()
 }).superRefine((input, context) => {
+  validateCodeAwareBodyLength(input, 8000, context);
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
   if (input.document && !documentFitsReducedEditor(input.document)) {
     context.addIssue({ code: "custom", path: ["document"], message: "Comments use the reduced editor formatting set." });
@@ -1296,12 +1344,13 @@ export const restoreScribbleInputSchema = z.object({
 });
 
 export const createWorkspaceCommentInputSchema = z.object({
-  body: z.string().trim().min(1).max(8000),
+  body: structuredContentBodySchema,
   document: versionedDocumentSchema.optional(),
   stance: z.string().trim().min(1).max(80).default("Comment"),
   parentId: z.string().uuid().nullable().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).default([])
 }).superRefine((input, context) => {
+  validateCodeAwareBodyLength(input, 8000, context);
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
   if (input.document && !documentFitsReducedEditor(input.document)) {
     context.addIssue({ code: "custom", path: ["document"], message: "Draft comments use the reduced editor formatting set." });
@@ -1309,11 +1358,12 @@ export const createWorkspaceCommentInputSchema = z.object({
 });
 
 export const updateWorkspaceCommentInputSchema = z.object({
-  body: z.string().trim().min(1).max(8000),
+  body: structuredContentBodySchema,
   document: versionedDocumentSchema.optional(),
   expectedRevision: z.number().int().positive(),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).default([])
 }).superRefine((input, context) => {
+  validateCodeAwareBodyLength(input, 8000, context);
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
   if (input.document && !documentFitsReducedEditor(input.document)) {
     context.addIssue({ code: "custom", path: ["document"], message: "Draft comments use the reduced editor formatting set." });
@@ -2681,7 +2731,7 @@ export const contentTranslationResultSchema = z.object({
   targetLanguage: assistantTranslationLanguageSchema.nullable(),
   targetLanguageLabel: z.string().max(40).nullable(),
   translatedTitle: z.string().max(300),
-  translatedBody: z.string().max(32000),
+  translatedBody: z.string().max(200000),
   translatedDocument: versionedDocumentSchema.nullable(),
   message: z.string().max(1000),
   model: z.string(),

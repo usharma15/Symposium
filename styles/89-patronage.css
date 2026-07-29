@@ -82,21 +82,12 @@
 }
 
 .patronage-feed-summary strong {
-  margin-left: auto;
   font-size: 0.84rem;
 }
 
 .patronage-feed-summary small {
   color: var(--muted);
   font-size: 0.74rem;
-}
-
-.patronage-proposal-badge {
-  color: color-mix(in srgb, var(--aqua) 80%, var(--ink));
-  font-size: 0.68rem;
-  font-weight: 880;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
 }
 
 .patronage-progress {
@@ -119,10 +110,6 @@
 .post-tone-patronage .patronage-feed-summary {
   border-color: rgba(91, 125, 59, 0.3);
   background: rgba(247, 250, 239, 0.58);
-}
-
-.post-tone-patronage .patronage-proposal-badge {
-  color: #4e7130;
 }
 
 .post-tone-patronage .patronage-progress > i {
@@ -323,10 +310,6 @@
 .symposium-shell.night .post-tone-patronage .patronage-feed-summary {
   border-color: rgba(177, 204, 131, 0.3);
   background: rgba(12, 20, 14, 0.42);
-}
-
-.symposium-shell.night .post-tone-patronage .patronage-proposal-badge {
-  color: #bddb91;
 }
 
 .symposium-shell.night .patronage-status-open { color: #b9cf86; }

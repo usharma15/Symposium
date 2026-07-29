@@ -152,6 +152,7 @@ assert.doesNotMatch(composer, /<ScribbleActionButton[^>]*label="post"/);
 assert.match(patronageViews, /CircleDollarSign size=\{17\} \/>Contribute/);
 assert.match(patronageViews, /Private Capital <small>Coming soon<\/small>/);
 assert.match(patronageViews, /No contribution has been created or charged/);
+assert.doesNotMatch(patronageViews, /patronage-proposal-badge/);
 assert.match(patronageStyles, /\.post-tone-patronage \.patronage-feed-summary/);
 assert.match(patronageStyles, /\.patronage-side-inline \{[\s\S]*position: fixed;[\s\S]*right: var\(--symposium-shell-edge\)/);
 assert.match(patronageStyles, /\.patronage-side-inline \{[\s\S]*top: var\(--symposium-detail-top\)/);

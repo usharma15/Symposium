@@ -21,7 +21,7 @@ import {
   localAttachmentsForOwner,
   replaceLocalOwnerAttachments
 } from "@/lib/localAttachmentStore";
-import { getLocalWorkspace, LocalWorkspaceStoreError } from "@/lib/localWorkspaceStore";
+import { LocalWorkspaceStoreError, withLocalWorkspaceDocumentAccess } from "@/lib/localWorkspaceStore";
 
 type StoredComment = Omit<InquiryComment, "attachments" | "replies"> & { replies: StoredComment[] };
 type LocalWorkspaceCommentStore = { version: 1; notes: Record<string, StoredComment[]> };
@@ -58,14 +58,17 @@ const saveStore = async (store: LocalWorkspaceCommentStore) => {
   }
 };
 
-const assertDocumentAccess = async (noteId: string, actorHandle: string, comment = false) => {
-  const workspace = await getLocalWorkspace(actorHandle);
-  const document = workspace.documents.find((candidate) => candidate.id === noteId);
-  if (!document) throw new LocalWorkspaceStoreError("Draft not found.", 404);
-  if (comment && !document.access.canComment) {
-    throw new LocalWorkspaceStoreError("This draft cannot be commented on with your current access.", 403);
-  }
-};
+const withDocumentAccess = <T>(
+  noteId: string,
+  actorHandle: string,
+  requireCommentAccess: boolean,
+  operation: () => Promise<T>
+) => withLocalWorkspaceDocumentAccess(
+  noteId,
+  actorHandle,
+  requireCommentAccess,
+  () => withStoreLock(operation)
+);
 
 const hydrateComment = async (comment: StoredComment, actorHandle: string): Promise<InquiryComment> => ({
   ...comment,
@@ -86,18 +89,15 @@ export const getLocalWorkspaceCommentCount = async (noteId: string) => withStore
   return activeCommentCount(store.notes[noteId] ?? []);
 });
 
-export const getLocalWorkspaceComments = async (noteId: string, actorHandle: string) => {
-  await assertDocumentAccess(noteId, actorHandle);
-  return withStoreLock(async () => {
+export const getLocalWorkspaceComments = async (noteId: string, actorHandle: string) =>
+  withDocumentAccess(noteId, actorHandle, false, async () => {
     const store = await loadStore();
     return { comments: await hydrateComments(store.notes[noteId] ?? [], actorHandle) };
   });
-};
 
 export const createLocalWorkspaceComment = async (noteId: string, rawInput: unknown, actorHandle: string) => {
   const input = createWorkspaceCommentInputSchema.parse(rawInput);
-  await assertDocumentAccess(noteId, actorHandle, true);
-  return withStoreLock(async () => {
+  return withDocumentAccess(noteId, actorHandle, true, async () => {
     const store = await loadStore();
     const current = store.notes[noteId] ?? [];
     if (input.parentId && !findCommentInTree(current, input.parentId)) {
@@ -144,8 +144,7 @@ export const updateLocalWorkspaceComment = async (
   actorHandle: string
 ) => {
   const input = updateWorkspaceCommentInputSchema.parse(rawInput);
-  await assertDocumentAccess(noteId, actorHandle);
-  return withStoreLock(async () => {
+  return withDocumentAccess(noteId, actorHandle, false, async () => {
     const store = await loadStore();
     const current = store.notes[noteId] ?? [];
     const existing = findCommentInTree(current, commentId);
@@ -179,8 +178,7 @@ export const deleteLocalWorkspaceComment = async (
   actorHandle: string
 ) => {
   const input = deleteWorkspaceCommentInputSchema.parse(rawInput);
-  await assertDocumentAccess(noteId, actorHandle);
-  return withStoreLock(async () => {
+  return withDocumentAccess(noteId, actorHandle, false, async () => {
     const store = await loadStore();
     const current = store.notes[noteId] ?? [];
     const existing = findCommentInTree(current, commentId);
@@ -206,8 +204,7 @@ export const applyLocalWorkspaceCommentAction = async (
   actorHandle: string
 ) => {
   const input = workspaceCommentActionInputSchema.parse(rawInput);
-  await assertDocumentAccess(noteId, actorHandle);
-  return withStoreLock(async () => {
+  return withDocumentAccess(noteId, actorHandle, false, async () => {
     const store = await loadStore();
     const current = store.notes[noteId] ?? [];
     const existing = findCommentInTree(current, commentId);

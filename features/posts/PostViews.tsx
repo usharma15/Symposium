@@ -742,11 +742,6 @@ export function FeedPost({
   const hasVisibleTitle = postHasVisibleTitle(item);
   const isPaper = itemHasPostType(item, "paper");
   const isThought = itemHasPostType(item, "thought");
-  const feedKindLabel = itemHasPostType(item, "proposal")
-    ? "Patronage Proposal"
-    : itemHasPostType(item, "opportunity")
-      ? "Opportunity"
-      : kindLabels[item.kind];
   const interactionLocked = !communityPostIsInteractive(item);
   const openPost = () => onSelect(item.id);
   const openPostUnlessSelecting = () => {
@@ -798,12 +793,8 @@ export function FeedPost({
         </>
       )}
       <div className="post-body">
-        {!isThought ? <p className="post-card-kind-label">{feedKindLabel}</p> : null}
-        {!isDeletedPost(item) && !interactionLocked ? (
-          <ContentTranslationControl state={translation} sourceLabel="post" />
-        ) : null}
         {hasVisibleTitle || isDeletedPost(item) ? (
-          <h2>
+          <h2 className="post-card-title">
             <CanonicalLink
               route={{ kind: "post", postId: item.id }}
               onNavigate={openPost}
@@ -814,6 +805,9 @@ export function FeedPost({
                 : deletedPostContextTitle(item)}
             </CanonicalLink>
           </h2>
+        ) : null}
+        {!isDeletedPost(item) && !interactionLocked ? (
+          <ContentTranslationControl state={translation} sourceLabel="post" />
         ) : null}
         {interactionLocked ? (
           <SymposiumDocumentRenderer
@@ -1167,13 +1161,10 @@ export function DetailView({
               : "This source now belongs to a private community. Only the cited content and its author remain visible; community context and interactions are unavailable."}
           </div>
         ) : <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />}
-        {!isPaper && !isThought ? (
-          <p className="eyebrow">{isProposal ? "Patronage Proposal" : isOpportunity ? "Opportunity" : kindLabels[item.kind]}</p>
-        ) : null}
         {isPaper && paperMuseId ? (
           <PaperTitleCeremony museId={paperMuseId} title={displayTitle} />
         ) : !isThought && (hasVisibleTitle || postDeleted) ? (
-          <h1>
+          <h1 className="post-detail-title">
             {displayTitle}
           </h1>
         ) : null}

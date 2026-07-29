@@ -80,7 +80,6 @@ export function PatronageFeedSummary({ item }: { item: InquiryItem }) {
   return (
     <section className="patronage-feed-summary" aria-label="Proposal funding progress">
       <div>
-        <span className="patronage-proposal-badge">Patronage proposal</span>
         <strong>{formatPatronageMoney(proposal.raisedMinorUnits, proposal.currency)} raised</strong>
         <small>of {formatPatronageMoney(proposal.goalMinorUnits, proposal.currency)}</small>
       </div>

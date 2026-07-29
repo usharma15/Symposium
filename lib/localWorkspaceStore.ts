@@ -74,6 +74,7 @@ type StoredWorkspace = {
   notebooks: WorkspaceNotebook[];
   documents: StoredDocument[];
   revisions: Record<string, StoredRevision[]>;
+  pendingNotebookCleanup: Record<string, { documentIds: string[]; createdAt: string }>;
   notebookGrants: Record<string, StoredGrant[]>;
   documentGrants: Record<string, StoredGrant[]>;
   scribble: StoredScribble;
@@ -107,6 +108,7 @@ const loadStore = async () => {
     const parsed = JSON.parse(await readFile(storePath, "utf8")) as Partial<LocalWorkspaceStore>;
     const workspaces = parsed.workspaces ?? {};
     for (const workspace of Object.values(workspaces)) {
+      workspace.pendingNotebookCleanup ??= {};
       workspace.notebookGrants ??= {};
       workspace.documentGrants ??= {};
       for (const document of workspace.documents) document.proposal ??= null;
@@ -142,6 +144,19 @@ const saveStore = async (store: LocalWorkspaceStore) => {
   } finally {
     await unlink(temporaryPath).catch(() => undefined);
   }
+};
+
+const cleanupLocalNotebookDocuments = async (documentIds: string[]) => {
+  const { deleteLocalWorkspaceCommentsForDocument } = await import("@/lib/localWorkspaceCommentStore");
+  const cleanupResults = await Promise.allSettled(documentIds.flatMap((documentId) => [
+    deleteLocalOwnerAttachments("note", documentId),
+    deleteLocalWorkspaceCommentsForDocument(documentId)
+  ]));
+  const failures = cleanupResults.filter((result) => result.status === "rejected");
+  if (failures.length) {
+    console.error("Local notebook contents were deleted, but dependent cleanup needs maintenance.", failures);
+  }
+  return failures.length === 0;
 };
 
 const emptyScribbleDocument = (): WorkspaceDocument["document"] => ({
@@ -185,6 +200,7 @@ const ensureWorkspace = (store: LocalWorkspaceStore, rawHandle: string) => {
       notebooks: [],
       documents: [],
       revisions: {},
+      pendingNotebookCleanup: {},
       notebookGrants: {},
       documentGrants: {},
       scribble,
@@ -344,9 +360,35 @@ const assertLocalDocumentAccess = (
   return role;
 };
 
+export const withLocalWorkspaceDocumentAccess = async <T>(
+  noteId: string,
+  actorHandle: string,
+  requireCommentAccess: boolean,
+  operation: () => Promise<T>
+) => withStoreLock(async () => {
+  const store = await loadStore();
+  const handle = cleanHandle(actorHandle);
+  const located = documentWorkspaceFor(store, noteId);
+  if (!located) throw new LocalWorkspaceStoreError("Draft not found.", 404);
+  const role = assertLocalDocumentAccess(located.workspace, located.document, handle, "view");
+  if (
+    requireCommentAccess
+    && located.document.ownerHandle !== handle
+    && workspaceAccessRoleRank[role] < workspaceAccessRoleRank.commenter
+  ) {
+    throw new LocalWorkspaceStoreError("This draft cannot be commented on with your current access.", 403);
+  }
+  return operation();
+});
+
 export const getLocalWorkspace = async (actorHandle: string) => withStoreLock(async () => {
   const store = await loadStore();
   const workspace = ensureWorkspace(store, actorHandle);
+  for (const [notebookId, cleanup] of Object.entries(workspace.pendingNotebookCleanup)) {
+    if (await cleanupLocalNotebookDocuments(cleanup.documentIds)) {
+      delete workspace.pendingNotebookCleanup[notebookId];
+    }
+  }
   await saveStore(store);
   return snapshot(store, workspace, cleanHandle(actorHandle));
 });
@@ -728,6 +770,65 @@ export const deleteLocalWorkspaceNotebook = async (notebookId: string, rawInput:
     delete workspace.notebookGrants[notebookId];
     await saveStore(store);
     return { deleted: true, notebookId, movedDocumentIds };
+  });
+};
+
+export const deleteLocalWorkspaceNotebookWithContents = async (notebookId: string, rawInput: unknown, actorHandle: string) => {
+  const input = deleteWorkspaceNotebookInputSchema.parse(rawInput);
+  return withStoreLock(async () => {
+    const store = await loadStore();
+    const handle = cleanHandle(actorHandle);
+    const located = notebookWorkspaceFor(store, notebookId);
+    if (!located) {
+      const workspace = store.workspaces[handle];
+      const pendingCleanup = workspace?.pendingNotebookCleanup[notebookId];
+      if (!workspace || !pendingCleanup) {
+        throw new LocalWorkspaceStoreError("The notebook changed or is no longer available.", 409);
+      }
+      if (!await cleanupLocalNotebookDocuments(pendingCleanup.documentIds)) {
+        return {
+          deleted: true,
+          cleanupPending: true,
+          notebookId,
+          deletedDocumentIds: pendingCleanup.documentIds
+        };
+      }
+      delete workspace.pendingNotebookCleanup[notebookId];
+      await saveStore(store);
+      return {
+        deleted: true,
+        cleanupPending: false,
+        notebookId,
+        deletedDocumentIds: pendingCleanup.documentIds
+      };
+    }
+    const { workspace, notebook } = located;
+    if (notebook.ownerHandle !== handle) throw new LocalWorkspaceStoreError("The notebook is only removable by its owner.", 403);
+    if (notebook.revision !== input.expectedRevision) {
+      throw new LocalWorkspaceStoreError("The notebook changed or is no longer available.", 409);
+    }
+    const deletedDocumentIds = workspace.documents
+      .filter((document) => document.notebookId === notebookId)
+      .map((document) => document.id);
+    const deletedDocumentIdSet = new Set(deletedDocumentIds);
+    workspace.documents = workspace.documents.filter((document) => !deletedDocumentIdSet.has(document.id));
+    for (const documentId of deletedDocumentIds) {
+      delete workspace.revisions[documentId];
+      delete workspace.documentGrants[documentId];
+    }
+    workspace.pendingNotebookCleanup[notebookId] = {
+      documentIds: deletedDocumentIds,
+      createdAt: new Date().toISOString()
+    };
+    workspace.notebooks = workspace.notebooks.filter((candidate) => candidate.id !== notebookId);
+    delete workspace.notebookGrants[notebookId];
+    await saveStore(store);
+    if (!await cleanupLocalNotebookDocuments(deletedDocumentIds)) {
+      return { deleted: true, cleanupPending: true, notebookId, deletedDocumentIds };
+    }
+    delete workspace.pendingNotebookCleanup[notebookId];
+    await saveStore(store);
+    return { deleted: true, cleanupPending: false, notebookId, deletedDocumentIds };
   });
 };
 
