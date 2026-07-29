@@ -15,7 +15,7 @@ export const roomRenders: Record<Theme, Record<RoomId, string>> = {
     office: "/symposium-renders/office-day-v2.avif",
     symposium: "/symposium-renders/symposium-v1.avif",
     library: "/symposium-renders/library-day-v2.avif",
-    amphitheater: "/symposium-renders/amphitheatre-2-v1.avif",
+    amphitheater: "/symposium-renders/amphitheater-day-v2.avif",
     funding: "/symposium-renders/patronage-civic-v1.avif",
     communities: "/symposium-renders/communities-v1.avif",
     opportunities: "/symposium-renders/opportunities-v1.avif"
@@ -25,7 +25,7 @@ export const roomRenders: Record<Theme, Record<RoomId, string>> = {
     office: "/symposium-renders/office-night-v2.avif",
     symposium: "/symposium-renders/symposium-night-v1.avif",
     library: "/symposium-renders/library-night-v2.avif",
-    amphitheater: "/symposium-renders/amphitheatre-night-v1.avif",
+    amphitheater: "/symposium-renders/amphitheater-night-v2.avif",
     funding: "/symposium-renders/patronage-civic-night-v1.avif",
     communities: "/symposium-renders/communities-night-v1.avif",
     opportunities: "/symposium-renders/opportunities-night-v1.avif"
