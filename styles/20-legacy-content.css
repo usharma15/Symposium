@@ -1502,10 +1502,15 @@
   right: 18px;
 }
 
-.detail-main h1 {
+.detail-main > .post-detail-title {
   max-width: 880px;
+  font-family: Georgia, "Times New Roman", serif;
   font-size: var(--symposium-post-title-size);
-  line-height: 1.06;
+  font-weight: 820;
+  letter-spacing: -0.018em;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+  text-wrap: wrap;
 }
 
 .detail-byline-button {

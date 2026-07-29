@@ -210,7 +210,8 @@ const main = async () => {
   assert.match(documentStyles, /\.document-editor-canvas \.tiptap pre\s*\{[^}]*font-family:\s*var\(--document-font-mono\)[^}]*line-height:\s*1\.55/);
   assert.match(documentStyles, /\.document-editor-canvas \.tiptap\.ProseMirror-focused pre\.is-active-code-block\s*\{[^}]*--document-code-visible-lines:\s*18/);
   assert.match(feedStyles, /\.feed-post \.post-card-title\s*\{[^}]*font-family:\s*Georgia[^}]*font-size:\s*var\(--symposium-post-title-size\)[^}]*font-weight:\s*820/);
-  assert.match(legacyContentStyles, /\.detail-main h1\s*\{[^}]*font-size:\s*var\(--symposium-post-title-size\)/);
+  assert.match(legacyContentStyles, /\.detail-main > \.post-detail-title\s*\{[^}]*font-family:\s*Georgia[^}]*font-size:\s*var\(--symposium-post-title-size\)[^}]*font-weight:\s*820[^}]*text-wrap:\s*wrap/);
+  assert.doesNotMatch(legacyContentStyles, /\.detail-main h1\s*\{[^}]*font-size:/);
   assert.match(workspaceStyles, /\.workspace-detail-paper \.post-body > h1\s*\{[^}]*font-size:\s*var\(--symposium-post-title-size\)/);
   assert.match(authoredArtifactStyles, /\.authored-paper-title-ceremony h1\s*\{[^}]*font-size:\s*var\(--symposium-post-title-size\)/);
   assert.match(attachmentStyles, /\.attachment-modal[\s\S]*background:\s*var\(--document-surface-solid\)/);
