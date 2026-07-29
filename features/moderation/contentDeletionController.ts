@@ -10,6 +10,7 @@ import {
   tombstoneCommentInItem,
   tombstonePost
 } from "@/lib/symposiumCore";
+import { postContextLabel } from "@/lib/postSemantics";
 
 type ContentDeletionControllerInput = {
   itemsRef: MutableRefObject<InquiryItem[]>;
@@ -45,7 +46,8 @@ export const createContentDeletionController = (input: ContentDeletionController
     const isAuthor = cleanHandle(item.authorHandle ?? item.author) === policy.actorHandle;
     const mayModerate = item.postType !== "paper" && policy.isManager;
     if (!isAuthor && !mayModerate) return;
-    if (!window.confirm(isAuthor ? `Delete "${item.title}"?` : `Remove "${item.title}" from ${policy.community?.name ?? "this community"}?`)) return;
+    const itemLabel = postContextLabel(item);
+    if (!window.confirm(isAuthor ? `Delete "${itemLabel}"?` : `Remove "${itemLabel}" from ${policy.community?.name ?? "this community"}?`)) return;
 
     input.beginMutation(itemId);
     const previousItems = input.itemsRef.current;

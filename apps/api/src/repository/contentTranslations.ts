@@ -258,6 +258,7 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
     const result = await getPool().query<{
       id: string;
       title: string;
+      postType: string | null;
       body: string;
       document: unknown;
       revision: number;
@@ -265,6 +266,7 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
       `SELECT
          post.id,
          post.title,
+         post.post_type AS "postType",
          post.body,
          post.content_document AS document,
          post.revision
@@ -292,7 +294,7 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
     return contentTranslationModelInputSchema.parse({
       ...input,
       sourceRevision: row.revision,
-      sourceTitle: row.title,
+      sourceTitle: row.postType === "thought" ? "Thought" : row.title,
       sourceBody: documentPlainTextProjection(document) || row.body,
       sourceDocument: document,
       sourceSegments: contentTranslationSourceSegments(document)
@@ -303,6 +305,7 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
     id: string;
     authorName: string;
     postTitle: string;
+    postType: string | null;
     body: string;
     document: unknown;
     revision: number;
@@ -311,6 +314,7 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
        comment.id,
        comment.author_name AS "authorName",
        post.title AS "postTitle",
+       post.post_type AS "postType",
        comment.body,
        comment.content_document AS document,
        comment.revision
@@ -341,7 +345,7 @@ const loadContentSource = async (input: ParsedInput, owner: string): Promise<Con
   return contentTranslationModelInputSchema.parse({
     ...input,
     sourceRevision: row.revision,
-    sourceTitle: `Comment by ${row.authorName} on ${row.postTitle}`.slice(0, 300),
+    sourceTitle: `Comment by ${row.authorName} on ${row.postType === "thought" ? "Thought" : row.postTitle}`.slice(0, 300),
     sourceBody: documentPlainTextProjection(document) || row.body,
     sourceDocument: document,
     sourceSegments: contentTranslationSourceSegments(document)

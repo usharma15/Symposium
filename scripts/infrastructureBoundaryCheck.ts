@@ -38,7 +38,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0063_assistant_chat_projects");
+  assert.equal(latestMigrationId, "0064_authored_artifact_design_assignments");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");

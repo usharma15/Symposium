@@ -30,6 +30,7 @@ import type {
 import type { FiledScribble, ScribbleNotebook, ScribbleSnapshot, WorkspaceScribble } from "@/lib/workspaceTypes";
 import { documentSourceContextLabel, documentSourceKey } from "@/lib/documentCitations";
 import { postToneClassName, postToneForItem, type PostTone } from "@/lib/postTone";
+import { postContextLabel } from "@/lib/postSemantics";
 import { useNativeCitation } from "@/features/citations/NativeCitationContext";
 import { decideScribbleSnapshot } from "@/features/scribble/scribbleReconciliation";
 
@@ -81,7 +82,7 @@ export const postScribbleSource = (item: InquiryItem): DocumentSourceSnapshotCon
     ...(item.revision ? { sourceRevision: item.revision } : {}),
     author: item.author,
     ...(item.authorHandle ? { authorHandle: item.authorHandle } : {}),
-    title: item.title,
+    title: postContextLabel(item),
     body: item.body.slice(0, 4000),
     ...(postTone ? { postTone } : {}),
     ...(item.createdAt ? { createdAt: item.createdAt } : {}),

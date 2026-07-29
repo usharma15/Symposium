@@ -1,5 +1,6 @@
 import type {
   ContentKindContract,
+  PostDesignAssignmentContract,
   PostTypeContract,
   WorkspacePublicationTargetContract
 } from "@/packages/contracts/src";
@@ -8,8 +9,16 @@ type PostSemanticSource = {
   kind: ContentKindContract;
   room: string;
   postType?: PostTypeContract;
+  designAssignment?: PostDesignAssignmentContract;
   patronage?: unknown;
   opportunity?: unknown;
+};
+
+export const postTypeLabels: Record<PostTypeContract, string> = {
+  paper: "Paper",
+  thought: "Thought",
+  proposal: "Patronage Proposal",
+  opportunity: "Opportunity"
 };
 
 export const postTypeForItem = (item: PostSemanticSource): PostTypeContract | null => {
@@ -44,16 +53,36 @@ export const postTypeForWorkspaceTarget = (
 export const itemHasPostType = (item: PostSemanticSource, postType: PostTypeContract) =>
   postTypeForItem(item) === postType;
 
+export const publicPostTypeLabel = (item: PostSemanticSource) => {
+  const postType = postTypeForItem(item);
+  return postType ? postTypeLabels[postType] : null;
+};
+
+export const postHasVisibleTitle = (item: PostSemanticSource) =>
+  postTypeForItem(item) !== "thought";
+
+export const publicPostTitle = <T extends PostSemanticSource & { title: string }>(item: T) =>
+  postHasVisibleTitle(item) ? item.title : "";
+
+export const postContextLabel = <T extends PostSemanticSource & { title: string }>(item: T) =>
+  publicPostTitle(item) || "Thought";
+
 export const preservePostSemanticProjection = <T extends PostSemanticSource>(
   incoming: T,
   current?: T
 ): T => {
   if (!current) return incoming;
   const postType = postTypeForItem(incoming) ?? postTypeForItem(current) ?? undefined;
+  const designAssignment = incoming.designAssignment ?? current.designAssignment;
   const patronage = postType === "proposal" && !incoming.patronage ? current.patronage : incoming.patronage;
   const opportunity = postType === "opportunity" && !incoming.opportunity ? current.opportunity : incoming.opportunity;
-  if (postType === incoming.postType && patronage === incoming.patronage && opportunity === incoming.opportunity) {
+  if (
+    postType === incoming.postType &&
+    designAssignment === incoming.designAssignment &&
+    patronage === incoming.patronage &&
+    opportunity === incoming.opportunity
+  ) {
     return incoming;
   }
-  return { ...incoming, postType, patronage, opportunity };
+  return { ...incoming, postType, designAssignment, patronage, opportunity };
 };

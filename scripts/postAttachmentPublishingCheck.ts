@@ -31,7 +31,7 @@ const baseRow = {
 };
 
 const parsed = createPostInputSchema.parse({
-  title: "Attachment contract",
+  title: "",
   body: "The post mutation carries stable attachment identities only.",
   kind: "thought",
   postType: "thought",
@@ -97,7 +97,7 @@ assert.equal(
 assert.throws(
   () =>
     createPostInputSchema.parse({
-      title: "Mismatched references",
+      title: "",
       body: "Legacy and canonical references must agree during the rollout window.",
       kind: "thought",
       postType: "thought",

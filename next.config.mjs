@@ -32,6 +32,12 @@ const nextConfig = {
   ],
   headers: async () => [
     {
+      source: "/symposium-artifacts/v1/:path*",
+      headers: [
+        { key: "Cache-Control", value: "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
       source: "/symposium-renders/:path*.avif",
       headers: [
         { key: "Cache-Control", value: "public, max-age=31536000, immutable" }

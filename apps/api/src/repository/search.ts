@@ -3,6 +3,7 @@ import {
   type SearchResponseContract
 } from "../../../../packages/contracts/src";
 import { cleanHandle } from "@/lib/symposiumCore";
+import { publicPostTitle } from "@/lib/postSemantics";
 import { getPool, hasDatabase } from "../db/client";
 import { ensureLiveData, listPublicCommunities, publicProfile, seedSnapshot } from "./foundation";
 import { listPostPage } from "./inquiryReads";
@@ -42,7 +43,7 @@ export const search = async (
           : !item.communityId || item.postType === "paper")
         .filter((item) => !input.room || item.room === input.room)
         .filter((item) => !input.postTypes?.length || Boolean(item.postType && input.postTypes.includes(item.postType)))
-        .filter((item) => [item.title, item.body, item.excerpt, item.author, ...item.tags, localCommentText(item.comments)]
+        .filter((item) => [publicPostTitle(item), item.body, item.excerpt, item.author, ...item.tags, localCommentText(item.comments)]
           .join(" ").toLowerCase().includes(term))
         .slice(0, input.limit)
         .map((item) => ({

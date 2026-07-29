@@ -130,7 +130,7 @@ assert.equal(createPostInputSchema.safeParse({
 }).success, true);
 
 assert.equal(createPostInputSchema.safeParse({
-  title: "Thought",
+  title: "",
   body: "A thought",
   document: { ...document, nodes: [{ id: "heading", type: "heading", level: 1, content: [{ text: "Not reduced" }], align: "left" }] },
   kind: "thought",

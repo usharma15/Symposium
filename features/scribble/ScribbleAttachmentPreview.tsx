@@ -10,6 +10,7 @@ import {
 } from "@/features/scribble/ScribbleContext";
 import type { InquiryComment, InquiryItem } from "@/lib/mockData";
 import { postToneForItem } from "@/lib/postTone";
+import { postContextLabel } from "@/lib/postSemantics";
 import { useNativeCitation } from "@/features/citations/NativeCitationContext";
 
 export function ScribbleAttachmentPreview({
@@ -35,7 +36,7 @@ export function ScribbleAttachmentPreview({
     <AttachmentPreviewModal
       item={item}
       attachments={comment ? comment.attachments ?? [] : undefined}
-      contextTitle={comment ? `Comment on ${item.title}` : undefined}
+      contextTitle={comment ? `Comment on ${postContextLabel(item)}` : undefined}
       attachmentId={attachmentId}
       onClose={onClose}
       onViewContextChange={onViewContextChange}

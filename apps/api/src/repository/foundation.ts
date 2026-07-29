@@ -8,6 +8,7 @@ import type {
   InquiryCommentContract,
   InquiryItemContract,
   OpportunityContract,
+  PostTypeContract,
   ResearchCommunityContract,
   ResearchProfileContract,
   VersionedDocumentContract
@@ -27,6 +28,11 @@ import { syncHistoricalWorldAssetFixtures, syncHistoricalWorldFixtures } from ".
 import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
 import { activeCommunityAnnouncements } from "@/lib/communityAnnouncements";
 import { postTypeForItem } from "@/lib/postSemantics";
+import {
+  deterministicPostDesignAssignment,
+  postTypeHasAuthoredArtifact,
+  resolvePostDesignAssignment
+} from "@/lib/postDesign";
 import { env, webOrigins } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { ensureDatabase } from "../db/migrate";
@@ -121,7 +127,14 @@ export const searchablePostText = (item: {
   excerpt?: string;
   tags?: string[];
   authorName?: string;
-}) => [item.title, item.body, item.excerpt, item.authorName, ...(item.tags ?? [])].filter(Boolean).join(" ");
+  postType?: PostTypeContract | null;
+}) => [
+  item.postType === "thought" ? "" : item.title,
+  item.body,
+  item.excerpt,
+  item.authorName,
+  ...(item.tags ?? [])
+].filter(Boolean).join(" ");
 
 export const normalizeProfile = (input: CreateProfileInputContract): ResearchProfileContract => ({
   name: input.name.trim(),
@@ -321,8 +334,17 @@ export const seedSnapshot = (): BootstrapResponseContract => {
   const profiles = Object.fromEntries(seedProfiles().map((person) => [person.handle, person]));
   const items = inquiryItems.map((item, itemIndex) => {
     const author = getProfileForName(item.author);
+    const postType = postTypeForItem(item) ?? undefined;
     return {
       ...item,
+      postType,
+      designAssignment: postTypeHasAuthoredArtifact(postType)
+        ? resolvePostDesignAssignment({
+            postType,
+            assignment: item.designAssignment,
+            identity: item.id
+          })
+        : undefined,
       authorHandle: item.authorHandle ?? author.handle,
       comments: normalizeComments(item.comments, item.id, itemIndex),
       savedBy: item.savedBy ?? (item.saved ? [defaultProfile.handle] : []),
@@ -581,6 +603,13 @@ const fixtureActionRows = (
   occurred_at: new Date(Date.parse(createdAt) + (actionIndex * 20 + actorIndex + 1) * 60_000).toISOString()
 })));
 
+const fixturePostDesignAssignment = (item: InquiryItemContract) => {
+  const postType = postTypeForItem(item);
+  return postTypeHasAuthoredArtifact(postType)
+    ? deterministicPostDesignAssignment(postType, item.id)
+    : null;
+};
+
 const syncCommunityContentFixtures = async (client: PoolClient) => {
   const alreadyApplied = await client.query("SELECT 1 FROM fixture_revisions WHERE id = $1", [communityContentFixtureRevision]);
   if (alreadyApplied.rowCount) return;
@@ -616,6 +645,7 @@ const syncCommunityContentFixtures = async (client: PoolClient) => {
     quote: item.quote ?? null,
     patronage: item.patronage ?? null,
     opportunity: item.opportunity ?? null,
+    design_assignment: fixturePostDesignAssignment(item),
     search_text: searchablePostText({ ...item, authorName: item.author }),
     visibility: item.postType === "paper" ? "public" : "community"
   }));
@@ -624,21 +654,22 @@ const syncCommunityContentFixtures = async (client: PoolClient) => {
        id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation,
        date_label, created_at, status, metrics, gathering_reason, excerpt, body, tags, signals,
        claims, objections, evidence, tests, forks, saved, saved_by, signaled_by, forked_by,
-       quote, patronage, opportunity, search_text, visibility
+       quote, patronage, opportunity, design_assignment, search_text, visibility
      )
      SELECT
        row.id, row.kind, row.post_type, row.room, row.community_id, row.title, row.author_handle,
        row.author_name, row.affiliation, row.date_label, row.created_at::timestamptz, row.status,
        row.metrics, row.gathering_reason, row.excerpt, row.body, row.tags, row.signals, row.claims,
        row.objections, row.evidence, row.tests, row.forks, row.saved, row.saved_by, row.signaled_by,
-       row.forked_by, row.quote, row.patronage, row.opportunity, row.search_text, row.visibility
+       row.forked_by, row.quote, row.patronage, row.opportunity, row.design_assignment,
+       row.search_text, row.visibility
      FROM jsonb_to_recordset($1::jsonb) AS row(
        id text, kind text, post_type text, room text, community_id text, title text,
        author_handle text, author_name text, affiliation text, date_label text, created_at text,
        status text, metrics jsonb, gathering_reason text, excerpt text, body text, tags jsonb,
        signals jsonb, claims jsonb, objections jsonb, evidence jsonb, tests jsonb, forks jsonb,
        saved boolean, saved_by jsonb, signaled_by jsonb, forked_by jsonb, quote jsonb,
-       patronage jsonb, opportunity jsonb, search_text text, visibility text
+       patronage jsonb, opportunity jsonb, design_assignment jsonb, search_text text, visibility text
      )
      ON CONFLICT (id) DO NOTHING`,
     [JSON.stringify(posts)]
@@ -812,12 +843,13 @@ const legacySeedDatabase = async () => {
         `INSERT INTO posts (
           id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, created_at, status,
           metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-          tests, forks, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity, search_text, visibility
+          tests, forks, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity,
+          search_text, visibility, design_assignment
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
           $11, $12, $13, $14, $15, $16, $17, $18, $19,
-          $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
+          $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33
         )
         ON CONFLICT (id) DO NOTHING`,
         [
@@ -852,7 +884,8 @@ const legacySeedDatabase = async () => {
           item.patronage ? JSON.stringify(item.patronage) : null,
           item.opportunity ? JSON.stringify(item.opportunity) : null,
           searchablePostText({ ...item, authorName: item.author }),
-          item.communityId && postTypeForItem(item) !== "paper" ? "community" : "public"
+          item.communityId && postTypeForItem(item) !== "paper" ? "community" : "public",
+          fixturePostDesignAssignment(item)
         ]
       );
       if (item.patronage) {
@@ -1076,11 +1109,18 @@ export const rowToItem = (
   attachments?: InquiryAttachmentContract[]
 ): InquiryItemContract => {
   const postAttachments = attachments ?? row.attachments ?? [];
+  const postType = row.postType ?? postTypeForItem(row) ?? undefined;
+  const designAssignment = resolvePostDesignAssignment({
+    postType,
+    assignment: row.designAssignment,
+    identity: row.id
+  });
   return {
     id: row.id,
     revision: row.revision,
     kind: row.kind,
-    postType: row.postType ?? postTypeForItem(row) ?? undefined,
+    postType,
+    designAssignment,
     room: row.room,
     communityId: row.communityId ?? undefined,
     title: row.title,
@@ -1203,7 +1243,8 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           forked_by AS "forkedBy",
           quote,
           patronage,
-          opportunity
+          opportunity,
+          design_assignment AS "designAssignment"
          FROM posts
          ORDER BY created_at DESC`
       ),

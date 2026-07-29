@@ -59,7 +59,7 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
     }
     const item = await createPost(
       {
-        title: input.title,
+        title: input.publicationTarget === "thought" ? "" : input.title,
         body: input.body,
         kind: input.publicationTarget ?? "paper",
         postType: input.publicationTarget ?? "paper",
@@ -108,7 +108,7 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
       const ownerActor: Actor = { ...actor, handle: revision.ownerHandle };
       const item = await createPost(
         {
-          title: revision.title,
+          title: target === "thought" ? "" : revision.title,
           body: revision.body,
           document: publishedContent.document,
           kind: target === "proposal" ? "paper" : target === "opportunity" ? "thought" : target,

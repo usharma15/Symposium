@@ -1,4 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomInt } from "node:crypto";
 import path from "node:path";
 import { Pool } from "pg";
 import type {
@@ -52,7 +53,13 @@ import {
   projectCanonicalActionLedger
 } from "@/lib/profileActivity";
 import { invalidateQuotedSource } from "@/lib/contentQuotes";
-import { postTypeForItem } from "@/lib/postSemantics";
+import { postHasVisibleTitle, postTypeForItem } from "@/lib/postSemantics";
+import {
+  deterministicPostDesignAssignment,
+  postTypeHasAuthoredArtifact,
+  randomPostDesignAssignment,
+  resolvePostDesignAssignment
+} from "@/lib/postDesign";
 
 type AppData = {
   fixtureRevision?: string;
@@ -310,10 +317,16 @@ const normalizeCommentState = (comments: InquiryComment[]): InquiryComment[] =>
 
 const normalizeItem = (item: InquiryItem): InquiryItem => {
   const seedItem = seedItemById.get(item.id);
+  const postType = postTypeForItem(item) ?? undefined;
   return {
     ...item,
     communityId: item.communityId ?? seedItem?.communityId,
-    postType: postTypeForItem(item) ?? undefined,
+    postType,
+    designAssignment: resolvePostDesignAssignment({
+      postType,
+      assignment: item.designAssignment ?? seedItem?.designAssignment,
+      identity: item.id
+    }),
     kind: item.room === "funding" ? "paper" : item.room === "opportunities" ? "thought" : item.kind,
     patronage: item.patronage ?? (item.room === "funding" ? seedItem?.patronage : undefined),
     opportunity: item.opportunity ?? (item.room === "opportunities" ? seedItem?.opportunity : undefined),
@@ -568,6 +581,7 @@ const ensureSchema = async () => {
           quote JSONB,
           patronage JSONB,
           opportunity JSONB,
+          design_assignment JSONB,
           edited_at TIMESTAMPTZ,
           deleted_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ DEFAULT now()
@@ -637,6 +651,7 @@ const ensureSchema = async () => {
         ALTER TABLE items ADD COLUMN IF NOT EXISTS quote JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS patronage JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS opportunity JSONB;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS design_assignment JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS post_type TEXT;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS community_id TEXT;
         UPDATE items SET post_type = CASE
@@ -656,6 +671,95 @@ const ensureSchema = async () => {
           OR (post_type = 'proposal' AND room = 'funding')
           OR (post_type = 'opportunity' AND room = 'opportunities')
           OR (post_type IN ('paper', 'thought') AND room NOT IN ('office', 'funding', 'opportunities'))
+        );
+        CREATE OR REPLACE FUNCTION symposium_items_design_fnv1a_32(value TEXT)
+        RETURNS BIGINT
+        LANGUAGE plpgsql
+        IMMUTABLE
+        STRICT
+        PARALLEL SAFE
+        AS $$
+        DECLARE
+          bytes BYTEA := convert_to(value, 'UTF8');
+          byte_index INTEGER;
+          accumulator BIGINT := 2166136261;
+        BEGIN
+          IF length(bytes) = 0 THEN
+            RETURN accumulator;
+          END IF;
+          FOR byte_index IN 0..length(bytes) - 1 LOOP
+            accumulator := (
+              (accumulator # get_byte(bytes, byte_index)::BIGINT) * 16777619
+            ) & 4294967295;
+          END LOOP;
+          RETURN accumulator;
+        END;
+        $$;
+        UPDATE items
+        SET design_assignment = jsonb_build_object(
+          'schemaVersion', 1,
+          'museId',
+            CASE post_type
+              WHEN 'paper' THEN
+                CASE (symposium_items_design_fnv1a_32(id || ':muse:v1') % 2)
+                  WHEN 0 THEN 'calliope'
+                  ELSE 'urania'
+                END
+              WHEN 'thought' THEN
+                CASE (symposium_items_design_fnv1a_32(id || ':muse:v1') % 2)
+                  WHEN 0 THEN 'erato'
+                  ELSE 'thalia'
+                END
+            END,
+          'bottomCaricatureId',
+            CASE (symposium_items_design_fnv1a_32(id || ':bottom:v1') % 7)
+              WHEN 0 THEN 'resting-warrior'
+              WHEN 1 THEN 'flute-girl'
+              WHEN 2 THEN 'discus-thrower'
+              WHEN 3 THEN 'harp-girl'
+              WHEN 4 THEN 'wanderer'
+              WHEN 5 THEN 'lovers'
+              ELSE 'chariot'
+            END
+        )
+        WHERE post_type IN ('paper', 'thought')
+          AND design_assignment IS NULL;
+        DROP FUNCTION symposium_items_design_fnv1a_32(TEXT);
+        UPDATE items
+        SET design_assignment = NULL
+        WHERE post_type IS NULL OR post_type NOT IN ('paper', 'thought');
+        ALTER TABLE items DROP CONSTRAINT IF EXISTS items_design_assignment_check;
+        ALTER TABLE items ADD CONSTRAINT items_design_assignment_check CHECK (
+          (
+            post_type = 'paper'
+            AND design_assignment IS NOT NULL
+            AND jsonb_typeof(design_assignment) = 'object'
+            AND design_assignment ?& ARRAY['schemaVersion', 'museId', 'bottomCaricatureId']
+            AND (design_assignment - 'schemaVersion' - 'museId' - 'bottomCaricatureId') = '{}'::jsonb
+            AND design_assignment->'schemaVersion' = '1'::jsonb
+            AND design_assignment->>'museId' IN ('calliope', 'urania')
+            AND design_assignment->>'bottomCaricatureId' IN (
+              'resting-warrior', 'flute-girl', 'discus-thrower', 'harp-girl',
+              'wanderer', 'lovers', 'chariot'
+            )
+          )
+          OR (
+            post_type = 'thought'
+            AND design_assignment IS NOT NULL
+            AND jsonb_typeof(design_assignment) = 'object'
+            AND design_assignment ?& ARRAY['schemaVersion', 'museId', 'bottomCaricatureId']
+            AND (design_assignment - 'schemaVersion' - 'museId' - 'bottomCaricatureId') = '{}'::jsonb
+            AND design_assignment->'schemaVersion' = '1'::jsonb
+            AND design_assignment->>'museId' IN ('erato', 'thalia')
+            AND design_assignment->>'bottomCaricatureId' IN (
+              'resting-warrior', 'flute-girl', 'discus-thrower', 'harp-girl',
+              'wanderer', 'lovers', 'chariot'
+            )
+          )
+          OR (
+            (post_type IS NULL OR post_type NOT IN ('paper', 'thought'))
+            AND design_assignment IS NULL
+          )
         );
         ALTER TABLE items ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
@@ -741,22 +845,27 @@ const seedPostgres = async () => {
   }
 
   for (const item of seed.items) {
+    const itemPostType = postTypeForItem(item);
+    const designAssignment = postTypeHasAuthoredArtifact(itemPostType)
+      ? deterministicPostDesignAssignment(itemPostType, item.id)
+      : null;
     await db.query(
       `INSERT INTO items (
         id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity, created_at
+        tests, forks, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity,
+        design_assignment, created_at
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
+        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
       )
       ON CONFLICT (id) DO NOTHING`,
       [
         item.id,
         item.kind,
-        item.postType,
+        itemPostType,
         item.room,
         item.communityId ?? null,
         item.title,
@@ -783,6 +892,7 @@ const seedPostgres = async () => {
         item.quote ? JSON.stringify(item.quote) : null,
         item.patronage ? JSON.stringify(item.patronage) : null,
         item.opportunity ? JSON.stringify(item.opportunity) : null,
+        designAssignment ? JSON.stringify(designAssignment) : null,
         item.createdAt ?? null
       ]
     );
@@ -995,6 +1105,7 @@ const loadPostgres = async (): Promise<AppData> => {
       quote: ContentQuoteContract | null;
       patronage: InquiryItem["patronage"] | null;
       opportunity: InquiryItem["opportunity"] | null;
+      design_assignment: InquiryItem["designAssignment"] | null;
     }>("SELECT * FROM items ORDER BY created_at DESC"),
     db.query<CommentRow>("SELECT * FROM comments ORDER BY created_at ASC"),
     db.query<ActionLedgerRow>(
@@ -1026,6 +1137,11 @@ const loadPostgres = async (): Promise<AppData> => {
     id: item.id,
     kind: item.kind,
     postType: item.post_type ?? undefined,
+    designAssignment: resolvePostDesignAssignment({
+      postType: item.post_type,
+      assignment: item.design_assignment,
+      identity: item.id
+    }),
     room: item.room,
     communityId: item.community_id ?? undefined,
     title: item.title,
@@ -1161,11 +1277,15 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
   const isPaper = input.kind === "paper";
   const isProposal = Boolean(input.patronage);
   const isOpportunity = Boolean(input.opportunity);
+  const designAssignment = postTypeHasAuthoredArtifact(input.postType)
+    ? randomPostDesignAssignment(input.postType, randomInt)
+    : undefined;
   const item: InquiryItem = {
     id: newId("post"),
     revision: 1,
     kind: input.kind,
     postType: input.postType,
+    designAssignment,
     room: input.room,
     communityId: input.communityId,
     title: input.title.trim(),
@@ -1214,12 +1334,13 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
       `INSERT INTO items (
         id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, attachments, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity
+        tests, forks, attachments, saved, saved_by, signaled_by, forked_by, quote, patronage,
+        opportunity, design_assignment
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
+        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
       )`,
       [
         item.id,
@@ -1252,7 +1373,8 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
         JSON.stringify(item.forkedBy),
         item.quote ? JSON.stringify(item.quote) : null,
         item.patronage ? JSON.stringify(item.patronage) : null,
-        item.opportunity ? JSON.stringify(item.opportunity) : null
+        item.opportunity ? JSON.stringify(item.opportunity) : null,
+        item.designAssignment ? JSON.stringify(item.designAssignment) : null
       ]
     );
     if (item.document) {
@@ -1602,12 +1724,13 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
     patronage: input.patronage,
     opportunity: input.opportunity
   };
-  if (!cleanInput.title || !cleanInput.body) return null;
+  if (!cleanInput.body) return null;
 
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
+    if (postHasVisibleTitle(existing) ? !cleanInput.title : Boolean(cleanInput.title)) return null;
     if (input.attachments?.length && (existing.room === "office" || existing.kind === "draft")) return null;
 
     const updated = updatePostShape(existing, cleanInput);
@@ -1644,6 +1767,7 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
   let updated: InquiryItem | null = null;
   local.items = local.items.map((item) => {
     if (item.id !== itemId || isDeletedPost(item) || !canManagePost(item, actorHandle)) return item;
+    if (postHasVisibleTitle(item) ? !cleanInput.title : Boolean(cleanInput.title)) return item;
     if (input.attachments?.length && (item.room === "office" || item.kind === "draft")) return item;
     updated = updatePostShape(item, cleanInput);
     return updated;

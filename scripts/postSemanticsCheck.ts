@@ -4,7 +4,8 @@ import path from "node:path";
 import {
   itemHasPostType,
   postTypeForItem,
-  preservePostSemanticProjection
+  preservePostSemanticProjection,
+  publicPostTypeLabel
 } from "@/lib/postSemantics";
 import { inquiryItems } from "@/lib/mockData";
 
@@ -22,6 +23,9 @@ assert.equal(postTypeForItem({ kind: "paper", room: "funding", patronage: {} }),
 assert.equal(postTypeForItem({ kind: "thought", room: "opportunities", opportunity: {} }), "opportunity");
 assert.equal(postTypeForItem({ kind: "draft", room: "office" }), null);
 assert.equal(postTypeForItem({ kind: "paper", room: "office", postType: "paper" }), null);
+assert.equal(publicPostTypeLabel(opportunities[0]!), "Opportunity");
+assert.equal(publicPostTypeLabel(proposals[0]!), "Patronage Proposal");
+assert.equal(publicPostTypeLabel(thoughts[0]!), "Thought");
 
 const currentOpportunity = opportunities[0]!;
 const partialLiveOpportunity = {
@@ -34,13 +38,14 @@ assert.equal(protectedOpportunity.postType, "opportunity");
 assert.equal(protectedOpportunity.opportunity, currentOpportunity.opportunity);
 
 const root = process.cwd();
-const [feedVisibility, profileViews, discovery, quoteService, workspacePublishing, migration] = await Promise.all([
+const [feedVisibility, profileViews, discovery, quoteService, workspacePublishing, migration, shell] = await Promise.all([
   readFile(path.join(root, "features/feeds/feedVisibility.ts"), "utf8"),
   readFile(path.join(root, "features/profiles/ProfileViews.tsx"), "utf8"),
   readFile(path.join(root, "features/discovery/discoveryPolicy.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/contentQuotes.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/notePublishing.ts"), "utf8"),
-  readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8")
+  readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8"),
+  readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8")
 ]);
 
 assert.match(feedVisibility, /activeRoom === "library"\) return itemHasPostType\(item, "paper"\)/);
@@ -52,11 +57,14 @@ assert.match(quoteService, /post\.post_type AS "postType"/);
 assert.match(workspacePublishing, /postType: target/);
 assert.match(migration, /0027_semantic_post_types/);
 assert.match(migration, /posts_semantic_destination_check/);
+assert.match(shell, /postContextLabel\(attachmentPreviewBaseItem\)/);
+assert.doesNotMatch(shell, /inside .\$\{attachmentPreviewBaseItem\.title\}/);
 
 console.log(JSON.stringify({
   ok: true,
   checked: [
     "exclusive public publication identities",
+    "semantic public labels independent of legacy content kind",
     "private drafts remain untyped",
     "partial live payload semantic preservation",
     "feed, profile, discovery, quote, Workspace, and database integration"

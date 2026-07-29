@@ -1,5 +1,6 @@
 import { inquiryItems, type InquiryComment, type InquiryItem } from "@/lib/mockData";
 import { postTypeForItem } from "@/lib/postSemantics";
+import { resolvePostDesignAssignment } from "@/lib/postDesign";
 
 const clientSeedItemById = new Map(inquiryItems.map((item) => [item.id, item]));
 const clientSeedCommentById = new Map<string, InquiryComment>();
@@ -39,9 +40,15 @@ const normalizeClientSeedCommentTimes = (comments: InquiryComment[]): InquiryCom
 export const normalizeClientSeedTimes = (items: InquiryItem[]): InquiryItem[] =>
   items.map((item) => {
     const seedItem = clientSeedItemById.get(item.id);
+    const postType = postTypeForItem(item) ?? undefined;
     return {
       ...item,
-      postType: postTypeForItem(item) ?? undefined,
+      postType,
+      designAssignment: resolvePostDesignAssignment({
+        postType,
+        assignment: item.designAssignment ?? seedItem?.designAssignment,
+        identity: item.id
+      }),
       createdAt: stableSeedCreatedAt(seedItem?.createdAt ?? item.createdAt, legacyLiveSeedCreatedAt(item.id)),
       comments: normalizeClientSeedCommentTimes(item.comments ?? [])
     };

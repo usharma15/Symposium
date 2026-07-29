@@ -32,6 +32,7 @@ import type {
 import { communitySummaryMaxLength } from "@/packages/contracts/src";
 import type { InquiryItem, ResearchCommunity, ResearchProfile } from "@/lib/mockData";
 import { normalizeSearchPhrase } from "@/lib/symposiumCore";
+import { publicPostTitle } from "@/lib/postSemantics";
 import {
   activeCommunityAnnouncements,
   communityAnnouncementExpiresAt,
@@ -581,7 +582,7 @@ export function SelectedCommunityView({
       const queryMatches = !term
         || (serverMatches
           ? serverMatches.has(item.id)
-          : normalizeSearchPhrase([item.title, item.body, item.author, ...item.tags].join(" ")).includes(term));
+          : normalizeSearchPhrase([publicPostTitle(item), item.body, item.author, ...item.tags].join(" ")).includes(term));
       return queryMatches;
     });
     return filterCommunityFeedItems(matching, filter);

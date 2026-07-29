@@ -5,6 +5,7 @@ import type {
   InquiryItemContract
 } from "@/packages/contracts/src";
 import { findCommentInTree, isDeletedComment, isDeletedPost } from "@/lib/symposiumCore";
+import { publicPostTitle } from "@/lib/postSemantics";
 
 export const quoteExcerptLength = 320;
 
@@ -63,7 +64,7 @@ export const resolveLocalContentQuote = (
       available: true,
       author: item.author,
       authorHandle: item.authorHandle,
-      title: item.title,
+      title: publicPostTitle(item) || undefined,
       kind: item.kind,
       postType: item.postType,
       body: item.body,

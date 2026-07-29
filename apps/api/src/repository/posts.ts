@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { randomInt } from "node:crypto";
 import {
   createPostInputSchema,
   documentFitsReducedEditor,
@@ -16,6 +17,11 @@ import {
   setItemActionMembership,
   tombstonePost
 } from "@/lib/symposiumCore";
+import {
+  postTypeHasAuthoredArtifact,
+  randomPostDesignAssignment
+} from "@/lib/postDesign";
+import { postHasVisibleTitle } from "@/lib/postSemantics";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
@@ -72,12 +78,16 @@ type ActionMutationResult = {
   item: InquiryItemContract;
   activity?: CanonicalActionActivityContract;
 };
+const postNotificationBody = (item: Pick<InquiryItemContract, "title" | "body">) =>
+  item.title || item.body.trim().slice(0, 240);
+
 const lockedPostSelect = `SELECT
   id, revision, kind, post_type AS "postType", room, community_id AS "communityId", title, author_handle AS "authorHandle", author_name AS "authorName",
   affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt", deleted_at AS "deletedAt",
   status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
   claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-  signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity
+  signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity,
+  design_assignment AS "designAssignment"
  FROM posts
  WHERE id = $1
  FOR UPDATE`;
@@ -147,7 +157,12 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     forkedBy: []
   };
 
-  if (!hasDatabase()) return item;
+  if (!hasDatabase()) {
+    if (postTypeHasAuthoredArtifact(item.postType)) {
+      item.designAssignment = randomPostDesignAssignment(item.postType, randomInt);
+    }
+    return item;
+  }
   await ensureLiveData();
 
   const client = await getPool().connect();
@@ -160,6 +175,9 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     if (claim.replayed) {
       await client.query("COMMIT");
       return claim.response;
+    }
+    if (postTypeHasAuthoredArtifact(item.postType)) {
+      item.designAssignment = randomPostDesignAssignment(item.postType, randomInt);
     }
     const citationResolution = input.document
       ? await resolveNativeDocumentCitations(
@@ -178,12 +196,13 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       `INSERT INTO posts (
         id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by, quote, search_text, patronage, opportunity, visibility
+        tests, forks, saved, saved_by, signaled_by, forked_by, quote, search_text, patronage, opportunity, visibility,
+        design_assignment
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
+        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33
       )`,
       [
         item.id,
@@ -217,7 +236,8 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
         searchablePostText({ ...item, authorName: item.author }),
         item.patronage ? JSON.stringify(item.patronage) : null,
         item.opportunity ? JSON.stringify(item.opportunity) : null,
-        item.communityId && item.postType !== "paper" ? "community" : "public"
+        item.communityId && item.postType !== "paper" ? "community" : "public",
+        item.designAssignment ? JSON.stringify(item.designAssignment) : null
       ]
     );
     await insertPatronageProposal(client, item.id, item.patronage);
@@ -282,7 +302,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
         communityId: item.communityId,
         actorHandle: handle,
         actorName: author.name,
-        body: item.title,
+        body: postNotificationBody(item),
         href: `/posts/${encodeURIComponent(item.id)}`,
         next: { body: item.body, document: item.document },
         audienceHandles: eventScope.visibility === "community"
@@ -299,7 +319,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
         quoteOwnerPostId: item.id,
         actorHandle: handle,
         actorName: author.name,
-        body: item.title,
+        body: postNotificationBody(item),
         communityId: item.communityId,
         recipientCanRead: eventScope.visibility !== "community"
           || Boolean(quoteRecipient && eventScope.audienceHandles?.includes(quoteRecipient))
@@ -543,7 +563,7 @@ export const applyPostAction = async (
         profileHandle: updated.authorHandle!,
         kind: input.action === "signal" ? "post_signal" : "post_reshare",
         title: `${await notificationActorName(client, handle)} ${actionLabel} your ${subjectLabel}`,
-        body: updated.title,
+        body: postNotificationBody(updated),
         href: `/posts/${encodeURIComponent(postId)}?analytics=${analyticsView}`,
         dedupeKey: `post-${input.action}:${postId}:${handle}:${activity!.revision}`,
         metadata: { postId, action: input.action, actorHandle: handle, subjectLabel, analyticsView }
@@ -617,6 +637,14 @@ export const updatePost = async (
     if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
+    if (postHasVisibleTitle(existing) ? !input.title : Boolean(input.title)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: postHasVisibleTitle(existing)
+          ? "This post type requires a title."
+          : "Thoughts do not have titles."
+      });
+    }
     assertCanonicalOpportunityUpdate(input.opportunity, existing);
     const patronage = updatePatronageProjection(input.patronage, existing.patronage);
     const opportunity = updateOpportunityProjection(input.opportunity, existing.opportunity);
@@ -663,6 +691,14 @@ export const updatePost = async (
     }
     if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
+    }
+    if (postHasVisibleTitle(row) ? !input.title : Boolean(input.title)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: postHasVisibleTitle(row)
+          ? "This post type requires a title."
+          : "Thoughts do not have titles."
+      });
     }
     assertCanonicalOpportunityUpdate(input.opportunity, row);
     if (row.kind !== "paper" && input.document && !documentFitsReducedEditor(input.document)) {
@@ -733,7 +769,13 @@ export const updatePost = async (
         input.title,
         input.body,
         JSON.stringify([input.body]),
-        searchablePostText({ title: input.title, body: input.body, excerpt: input.body, authorName: row.authorName }),
+        searchablePostText({
+          title: input.title,
+          body: input.body,
+          excerpt: input.body,
+          authorName: row.authorName,
+          postType: row.postType
+        }),
         editedAt,
         quote ? JSON.stringify(quote) : null,
         nextDocument ? JSON.stringify(nextDocument) : null,
@@ -819,7 +861,7 @@ export const updatePost = async (
         communityId: updated.communityId,
         actorHandle: handle,
         actorName: row.authorName,
-        body: updated.title,
+        body: postNotificationBody(updated),
         href: `/posts/${encodeURIComponent(postId)}`,
         current: { body: row.body, document: row.document ?? undefined },
         next: { body: updated.body, document: updated.document },
@@ -858,7 +900,7 @@ export const updatePost = async (
             quoteOwnerPostId: postId,
             actorHandle: handle,
             actorName: row.authorName,
-            body: updated.title,
+            body: postNotificationBody(updated),
             communityId: updated.communityId,
             recipientCanRead: eventScope.visibility !== "community"
               || Boolean(quoteRecipient && eventScope.audienceHandles?.includes(quoteRecipient))
@@ -1033,7 +1075,8 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
             title: deletedPost.title,
             body: deletedPost.body,
             excerpt: deletedPost.excerpt,
-            authorName: deletedPost.author
+            authorName: deletedPost.author,
+            postType: deletedPost.postType
           }),
           deletedPost.deletedAt
         ]

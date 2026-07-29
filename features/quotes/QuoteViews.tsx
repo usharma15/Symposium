@@ -262,13 +262,13 @@ export function QuoteComposerModal({
     event.preventDefault();
     const cleanBody = body.trim();
     const cleanTitle = title.trim();
-    if (busy || !cleanBody || (destination === "post" && !cleanTitle)) return;
+    if (busy || !cleanBody || (destination === "post" && kind === "paper" && !cleanTitle)) return;
     setBusy(true);
     setStatus(destination === "post" ? "Publishing quoted post" : "Publishing quoted comment");
     try {
       if (destination === "post") {
         const result = await onCreatePost({
-          title: cleanTitle,
+          title: kind === "thought" ? "" : cleanTitle,
           body: cleanBody,
           document: postDocument,
           kind,
@@ -325,7 +325,9 @@ export function QuoteComposerModal({
             <button type="submit" disabled={busy}>{busy ? "Posting…" : "Post comment"}</button>
           </div>
         )}
-        {destination === "post" ? <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Title" /> : null}
+        {destination === "post" && kind === "paper" ? (
+          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Title" />
+        ) : null}
         <SymposiumDocumentEditor
           value={documentValue}
           capability={destination === "post" ? editorCapabilityForKind(kind) : "reduced"}

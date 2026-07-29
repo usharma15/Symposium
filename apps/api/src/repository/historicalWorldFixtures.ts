@@ -4,6 +4,10 @@ import { historicalProfiles } from "@/lib/historicalWorld/characters";
 import { historicalCommunities } from "@/lib/historicalWorld/communities";
 import { historicalInquiryItems, historicalWorldCounts } from "@/lib/historicalWorld/content";
 import type { HistoricalAsset } from "@/lib/historicalWorld/assets";
+import {
+  deterministicPostDesignAssignment,
+  postTypeHasAuthoredArtifact
+} from "@/lib/postDesign";
 
 export const historicalWorldFixtureRevision = "historical-world-v2-casual-activity";
 export const historicalWorldAssetFixtureRevision = "historical-world-assets-v1-pdfjs-compatibility";
@@ -28,7 +32,7 @@ const postType = (entry: InquiryItemContract) => entry.postType
   ?? (entry.room === "funding" ? "proposal" : entry.room === "opportunities" ? "opportunity" : entry.kind === "paper" ? "paper" : "thought");
 
 const searchableText = (entry: InquiryItemContract) => [
-  entry.title,
+  postType(entry) === "thought" ? "" : entry.title,
   entry.body,
   entry.excerpt,
   entry.author,
@@ -493,10 +497,12 @@ const insertCommunities = async (client: PoolClient) => {
 };
 
 const insertPosts = async (client: PoolClient) => {
-  const rows = historicalInquiryItems.map((entry) => ({
+  const rows = historicalInquiryItems.map((entry) => {
+    const entryPostType = postType(entry);
+    return {
     id: entry.id,
     kind: entry.kind,
-    post_type: postType(entry),
+    post_type: entryPostType,
     room: entry.room,
     community_id: entry.communityId ?? null,
     title: entry.title,
@@ -524,29 +530,34 @@ const insertPosts = async (client: PoolClient) => {
     quote: entry.quote ?? null,
     patronage: entry.patronage ?? null,
     opportunity: entry.opportunity ?? null,
+    design_assignment: postTypeHasAuthoredArtifact(entryPostType)
+      ? deterministicPostDesignAssignment(entryPostType, entry.id)
+      : null,
     search_text: searchableText(entry),
-    visibility: entry.communityId && postType(entry) !== "paper" ? "community" : "public"
-  }));
+    visibility: entry.communityId && entryPostType !== "paper" ? "community" : "public"
+  };
+  });
   await client.query(
     `INSERT INTO posts (
        id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation,
        date_label, created_at, status, metrics, gathering_reason, excerpt, body, content_document,
        tags, signals, claims, objections, evidence, tests, forks, saved_by, signaled_by, forked_by,
-       quote, patronage, opportunity, search_text, visibility
+       quote, patronage, opportunity, design_assignment, search_text, visibility
      )
      SELECT row.id, row.kind, row.post_type, row.room, row.community_id, row.title,
        row.author_handle, row.author_name, row.affiliation, row.date_label, row.created_at::timestamptz,
        row.status, row.metrics, row.gathering_reason, row.excerpt, row.body, row.content_document,
        row.tags, row.signals, row.claims, row.objections, row.evidence, row.tests, row.forks,
        row.saved_by, row.signaled_by, row.forked_by, row.quote, row.patronage, row.opportunity,
-       row.search_text, row.visibility
+       row.design_assignment, row.search_text, row.visibility
      FROM jsonb_to_recordset($1::jsonb) AS row(
        id text, kind text, post_type text, room text, community_id text, title text,
        author_handle text, author_name text, affiliation text, date_label text, created_at text,
        status text, metrics jsonb, gathering_reason text, excerpt text, body text,
        content_document jsonb, tags jsonb, signals jsonb, claims jsonb, objections jsonb,
        evidence jsonb, tests jsonb, forks jsonb, saved_by jsonb, signaled_by jsonb,
-       forked_by jsonb, quote jsonb, patronage jsonb, opportunity jsonb, search_text text, visibility text
+       forked_by jsonb, quote jsonb, patronage jsonb, opportunity jsonb, design_assignment jsonb,
+       search_text text, visibility text
      )
      ON CONFLICT (id) DO UPDATE SET
        kind = EXCLUDED.kind,
@@ -578,6 +589,7 @@ const insertPosts = async (client: PoolClient) => {
        quote = EXCLUDED.quote,
        patronage = EXCLUDED.patronage,
        opportunity = EXCLUDED.opportunity,
+       design_assignment = EXCLUDED.design_assignment,
        search_text = EXCLUDED.search_text,
        visibility = EXCLUDED.visibility,
        deleted_at = NULL,

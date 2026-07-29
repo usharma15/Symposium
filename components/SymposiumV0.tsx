@@ -183,7 +183,11 @@ import {
 import { resolveQuoteLink, type QuoteLinkResolver } from "@/features/quotes/quoteLinks";
 import { invalidateQuotedSource, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { communityViewerProjectionChanged } from "@/lib/communityContentProjection";
-import { preservePostSemanticProjection } from "@/lib/postSemantics";
+import {
+  postContextLabel,
+  preservePostSemanticProjection,
+  publicPostTitle
+} from "@/lib/postSemantics";
 import { selectVisibleFeedItems } from "@/features/feeds/feedVisibility";
 import {
   ProfileSettingsModal,
@@ -428,7 +432,7 @@ const findCommentPathById = (comments: InquiryComment[], id: string): InquiryCom
 
 const tabletItemLine = (item: InquiryItem) =>
   [
-    `${item.kind}: ${item.title}`,
+    `${item.kind}: ${postContextLabel(item)}`,
     `By ${item.author}${item.affiliation ? ` · ${item.affiliation}` : ""}`,
     item.excerpt || item.body
   ].filter(Boolean).join("\n");
@@ -2683,7 +2687,7 @@ function SymposiumExperience({
           profiles: Object.fromEntries(data.profiles.map((person) => [person.handle, person]))
         });
         const normalized = normalizeSearchPhrase(query);
-        const titleMatches = data.posts.filter((item) => normalizeSearchPhrase(item.title).includes(normalized));
+        const titleMatches = data.posts.filter((item) => normalizeSearchPhrase(publicPostTitle(item)).includes(normalized));
         const titleIds = new Set(titleMatches.map((item) => item.id));
         setRemoteSearchResults({
           titleMatches,
@@ -4171,8 +4175,8 @@ function SymposiumExperience({
         route: `/posts/${attachmentPreviewBaseItem.id}`,
         title: attachmentPreviewAttachment.fileName,
         summary: activePdfView
-          ? `PDF page ${activePdfView.page} of ${activePdfView.pageCount} open inside “${attachmentPreviewBaseItem.title}”.`
-          : `Attachment open inside “${attachmentPreviewBaseItem.title}”.`,
+          ? `PDF page ${activePdfView.page} of ${activePdfView.pageCount} open inside “${postContextLabel(attachmentPreviewBaseItem)}”.`
+          : `Attachment open inside “${postContextLabel(attachmentPreviewBaseItem)}”.`,
         content: trimContent([
           buildTabletAttachmentContext(attachmentPreviewAttachment, activePdfView),
           `Parent post context:\n${attachmentPreviewBaseItem.body}`
@@ -4190,7 +4194,7 @@ function SymposiumExperience({
       const term = normalizeSearchPhrase(searchQuery);
       const searchableItems = activeItems.filter(communityPostIsExternallyDiscoverable);
       const localTitleMatches = term
-        ? sortByPublishedRecency(searchableItems.filter((item) => normalizeSearchPhrase(item.title).includes(term)))
+        ? sortByPublishedRecency(searchableItems.filter((item) => normalizeSearchPhrase(publicPostTitle(item)).includes(term)))
         : [];
       const localTitleIds = new Set(localTitleMatches.map((item) => item.id));
       const localContentMatches = term
@@ -4290,9 +4294,9 @@ function SymposiumExperience({
         route: activeAttachment
           ? `/posts/${selectedItem.id}?attachment=${encodeURIComponent(activeAttachment.id)}`
           : `/posts/${selectedItem.id}`,
-        title: activeAttachment?.fileName ?? selectedItem.title,
+        title: activeAttachment?.fileName ?? postContextLabel(selectedItem),
         summary: activeAttachment && activePdfView
-          ? `PDF page ${activePdfView.page} of ${activePdfView.pageCount} open inside “${selectedItem.title}”.`
+          ? `PDF page ${activePdfView.page} of ${activePdfView.pageCount} open inside “${postContextLabel(selectedItem)}”.`
           : selectedItem.gatheringReason,
         content: trimContent([
           activeAttachment && activePdfView
@@ -4434,7 +4438,7 @@ function SymposiumExperience({
     const searchableItems = activeItems.filter(communityPostIsExternallyDiscoverable);
 
     const titleMatches = sortByPublishedRecency(
-      searchableItems.filter((item) => normalizeSearchPhrase(item.title).includes(term))
+      searchableItems.filter((item) => normalizeSearchPhrase(publicPostTitle(item)).includes(term))
     );
     const titleIds = new Set(titleMatches.map((item) => item.id));
     const contentMatches = sortByPublishedRecency(

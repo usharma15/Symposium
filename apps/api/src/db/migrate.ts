@@ -3143,6 +3143,131 @@ const migrations: Migration[] = [
         ON ai_conversations (project_id, last_message_at DESC, id DESC)
         WHERE deleted_at IS NULL;
     `
+  },
+  {
+    id: "0064_authored_artifact_design_assignments",
+    sql: `
+      ALTER TABLE posts
+        ADD COLUMN IF NOT EXISTS design_assignment JSONB;
+
+      CREATE OR REPLACE FUNCTION symposium_posts_design_fnv1a_32(value TEXT)
+      RETURNS BIGINT
+      LANGUAGE plpgsql
+      IMMUTABLE
+      STRICT
+      PARALLEL SAFE
+      AS $$
+      DECLARE
+        bytes BYTEA := convert_to(value, 'UTF8');
+        byte_index INTEGER;
+        accumulator BIGINT := 2166136261;
+      BEGIN
+        IF length(bytes) = 0 THEN
+          RETURN accumulator;
+        END IF;
+        FOR byte_index IN 0..length(bytes) - 1 LOOP
+          accumulator := (
+            (accumulator # get_byte(bytes, byte_index)::BIGINT) * 16777619
+          ) & 4294967295;
+        END LOOP;
+        RETURN accumulator;
+      END;
+      $$;
+
+      UPDATE posts
+      SET design_assignment = jsonb_build_object(
+        'schemaVersion', 1,
+        'museId',
+          CASE post_type
+            WHEN 'paper' THEN
+              CASE (symposium_posts_design_fnv1a_32(id || ':muse:v1') % 2)
+                WHEN 0 THEN 'calliope'
+                ELSE 'urania'
+              END
+            WHEN 'thought' THEN
+              CASE (symposium_posts_design_fnv1a_32(id || ':muse:v1') % 2)
+                WHEN 0 THEN 'erato'
+                ELSE 'thalia'
+              END
+          END,
+        'bottomCaricatureId',
+          CASE (symposium_posts_design_fnv1a_32(id || ':bottom:v1') % 7)
+            WHEN 0 THEN 'resting-warrior'
+            WHEN 1 THEN 'flute-girl'
+            WHEN 2 THEN 'discus-thrower'
+            WHEN 3 THEN 'harp-girl'
+            WHEN 4 THEN 'wanderer'
+            WHEN 5 THEN 'lovers'
+            ELSE 'chariot'
+          END
+      )
+      WHERE post_type IN ('paper', 'thought')
+        AND design_assignment IS NULL;
+
+      DROP FUNCTION symposium_posts_design_fnv1a_32(TEXT);
+
+      UPDATE posts
+      SET search_text = concat_ws(
+        ' ',
+        body,
+        excerpt,
+        author_name,
+        (
+          SELECT string_agg(value, ' ')
+          FROM jsonb_array_elements_text(COALESCE(tags, '[]'::jsonb)) value
+        )
+      )
+      WHERE post_type = 'thought';
+
+      ALTER TABLE posts
+        DROP CONSTRAINT IF EXISTS posts_design_assignment_check;
+      ALTER TABLE posts
+        ADD CONSTRAINT posts_design_assignment_check CHECK (
+          (
+            post_type = 'paper'
+            AND design_assignment IS NOT NULL
+            AND jsonb_typeof(design_assignment) = 'object'
+            AND design_assignment ?& ARRAY['schemaVersion', 'museId', 'bottomCaricatureId']
+            AND (design_assignment - 'schemaVersion' - 'museId' - 'bottomCaricatureId') = '{}'::jsonb
+            AND design_assignment->'schemaVersion' = '1'::jsonb
+            AND design_assignment->>'museId' IN ('calliope', 'urania')
+            AND design_assignment->>'bottomCaricatureId' IN (
+              'resting-warrior',
+              'flute-girl',
+              'discus-thrower',
+              'harp-girl',
+              'wanderer',
+              'lovers',
+              'chariot'
+            )
+          )
+          OR (
+            post_type = 'thought'
+            AND design_assignment IS NOT NULL
+            AND jsonb_typeof(design_assignment) = 'object'
+            AND design_assignment ?& ARRAY['schemaVersion', 'museId', 'bottomCaricatureId']
+            AND (design_assignment - 'schemaVersion' - 'museId' - 'bottomCaricatureId') = '{}'::jsonb
+            AND design_assignment->'schemaVersion' = '1'::jsonb
+            AND design_assignment->>'museId' IN ('erato', 'thalia')
+            AND design_assignment->>'bottomCaricatureId' IN (
+              'resting-warrior',
+              'flute-girl',
+              'discus-thrower',
+              'harp-girl',
+              'wanderer',
+              'lovers',
+              'chariot'
+            )
+          )
+          OR (
+            (post_type IS NULL OR post_type NOT IN ('paper', 'thought'))
+            AND design_assignment IS NULL
+          )
+        );
+
+      COMMENT ON COLUMN posts.design_assignment IS
+        'Immutable schema-versioned authored-artifact identity. Interface theme is derived and never persisted.';
+    `
   }
 ];
 

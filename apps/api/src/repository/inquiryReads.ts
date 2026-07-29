@@ -92,7 +92,8 @@ const postColumns = `
   post.forked_by AS "forkedBy",
   post.quote,
   post.patronage,
-  post.opportunity`;
+  post.opportunity,
+  post.design_assignment AS "designAssignment"`;
 
 const encodePostCursor = (row: Pick<FeedRow, "createdAt" | "id">) =>
   Buffer.from(JSON.stringify({

@@ -162,7 +162,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         saved_by AS "savedBy",
         signaled_by AS "signaledBy",
         forked_by AS "forkedBy",
-        quote, patronage, opportunity
+        quote, patronage, opportunity, design_assignment AS "designAssignment"
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -491,7 +491,8 @@ export const updateComment = async (
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity,
+        design_assignment AS "designAssignment"
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -764,7 +765,8 @@ export const deleteComment = async (
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity,
+        design_assignment AS "designAssignment"
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -1001,7 +1003,8 @@ export const applyCommentAction = async (
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity,
+        design_assignment AS "designAssignment"
        FROM posts
        WHERE id = $1
        FOR UPDATE`,

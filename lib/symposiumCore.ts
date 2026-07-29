@@ -1,4 +1,5 @@
 import type { ContentKind, InquiryComment, InquiryItem, RoomId } from "@/lib/mockData";
+import { postContextLabel } from "@/lib/postSemantics";
 
 export const contentKinds = ["paper", "thought", "draft", "note", "code"] as const satisfies readonly ContentKind[];
 
@@ -307,8 +308,9 @@ export const canManageComment = (
   actorHandle: string
 ) => (comment.authorHandle ? cleanHandle(comment.authorHandle) === cleanHandle(actorHandle) : false);
 
-export const deletedPostContextTitle = (item: Pick<InquiryItem, "deletedAt" | "title">) =>
-  isDeletedPost(item) ? deletedPostTitle : item.title;
+export const deletedPostContextTitle = (
+  item: Pick<InquiryItem, "deletedAt" | "title" | "kind" | "room" | "postType" | "patronage" | "opportunity">
+) => isDeletedPost(item) ? deletedPostTitle : postContextLabel(item);
 
 export const tombstonePost = (item: InquiryItem, deletedAt = new Date().toISOString()): InquiryItem => ({
   ...item,

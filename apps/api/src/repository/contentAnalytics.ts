@@ -56,14 +56,16 @@ const loadOwnedSubject = async (
 ) => {
   const result = subjectType === "post"
     ? await getPool().query<SubjectRow>(
-        `SELECT id AS "subjectId", id AS "postId", title, author_handle AS "authorHandle", metrics
+        `SELECT id AS "subjectId", id AS "postId",
+           CASE WHEN post_type = 'thought' THEN 'Thought' ELSE title END AS title,
+           author_handle AS "authorHandle", metrics
          FROM posts
          WHERE id = $1 AND deleted_at IS NULL`,
         [postId]
       )
     : await getPool().query<SubjectRow>(
         `SELECT comment.id AS "subjectId", post.id AS "postId",
-           ('Comment on ' || post.title) AS title,
+           ('Comment on ' || CASE WHEN post.post_type = 'thought' THEN 'Thought' ELSE post.title END) AS title,
            comment.author_handle AS "authorHandle", comment.metrics
          FROM comments comment
          INNER JOIN posts post ON post.id = comment.post_id
@@ -239,7 +241,8 @@ export const getContentAnalytics = async (
       occurredAt: Date | string;
     }>(
       `WITH quote_rows AS (
-         SELECT ('post:' || quoted_post.id) AS id, quoted_post.title,
+         SELECT ('post:' || quoted_post.id) AS id,
+           CASE WHEN quoted_post.post_type = 'thought' THEN 'Thought' ELSE quoted_post.title END AS title,
            profile.handle AS "authorHandle", profile.name AS "authorName",
            profile.avatar_url AS "avatarUrl",
            quoted_post.id AS "postId", NULL::text AS "commentId",
@@ -256,7 +259,10 @@ export const getContentAnalytics = async (
              $4::text IS NULL
              OR profile.name ILIKE $4 ESCAPE E'\\\\'
              OR profile.handle ILIKE $4 ESCAPE E'\\\\'
-             OR quoted_post.title ILIKE $4 ESCAPE E'\\\\'
+             OR (
+               quoted_post.post_type <> 'thought'
+               AND quoted_post.title ILIKE $4 ESCAPE E'\\\\'
+             )
            )
            ${quoteAccessSql}
          UNION ALL

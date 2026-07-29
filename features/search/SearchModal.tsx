@@ -5,6 +5,7 @@ import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
 import { profileInitials as initial } from "@/features/identity/profilePresentation";
 import { kindLabels } from "@/features/posts/PostViews";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
+import { publicPostTitle, publicPostTypeLabel } from "@/lib/postSemantics";
 
 export function SearchModal({
   query,
@@ -104,19 +105,24 @@ function SearchResultGroup({
   return (
     <section className="search-group">
       <h2>{title}</h2>
-      {items.slice(0, 8).map((item) => (
-        <CanonicalLink
-          key={item.id}
-          route={{ kind: "post", postId: item.id }}
-          onNavigate={() => onOpenPost(item.id)}
-        >
-          <span>{kindLabels[item.kind]}</span>
-          <strong>{item.title}</strong>
-          <small>
-            {item.author} · {item.date}
-          </small>
-        </CanonicalLink>
-      ))}
+      {items.slice(0, 8).map((item) => {
+        const semanticLabel = publicPostTypeLabel(item);
+        return (
+          <CanonicalLink
+            key={item.id}
+            route={{ kind: "post", postId: item.id }}
+            onNavigate={() => onOpenPost(item.id)}
+          >
+            {semanticLabel !== "Thought" ? <span>{semanticLabel ?? kindLabels[item.kind]}</span> : null}
+            <strong>
+              {publicPostTitle(item) || item.body.trim().replace(/\s+/g, " ").slice(0, 180)}
+            </strong>
+            <small>
+              {item.author} · {item.date}
+            </small>
+          </CanonicalLink>
+        );
+      })}
     </section>
   );
 }

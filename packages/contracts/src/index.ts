@@ -31,6 +31,31 @@ export const postRoomSchema = z.enum([
 
 export const contentKindSchema = z.enum(["paper", "thought", "draft", "note", "code"]);
 export const postTypeSchema = z.enum(["paper", "thought", "proposal", "opportunity"]);
+export const paperMuseIdSchema = z.enum(["calliope", "urania"]);
+export const thoughtMuseIdSchema = z.enum(["erato", "thalia"]);
+export const bottomCaricatureIdSchema = z.enum([
+  "resting-warrior",
+  "flute-girl",
+  "discus-thrower",
+  "harp-girl",
+  "wanderer",
+  "lovers",
+  "chariot"
+]);
+export const paperPostDesignAssignmentSchema = z.object({
+  schemaVersion: z.literal(1),
+  museId: paperMuseIdSchema,
+  bottomCaricatureId: bottomCaricatureIdSchema
+}).strict();
+export const thoughtPostDesignAssignmentSchema = z.object({
+  schemaVersion: z.literal(1),
+  museId: thoughtMuseIdSchema,
+  bottomCaricatureId: bottomCaricatureIdSchema
+}).strict();
+export const postDesignAssignmentSchema = z.union([
+  paperPostDesignAssignmentSchema,
+  thoughtPostDesignAssignmentSchema
+]);
 export const postActionSchema = z.enum(["signal", "save", "fork", "read"]);
 export const toggleActionSchema = z.enum(["signal", "save", "fork"]);
 export const actionSubjectTypeSchema = z.enum(["post", "comment"]);
@@ -695,6 +720,7 @@ export const inquiryItemSchema = z.object({
   revision: z.number().int().positive().optional(),
   kind: contentKindSchema,
   postType: postTypeSchema.optional(),
+  designAssignment: postDesignAssignmentSchema.optional(),
   room: postRoomSchema,
   communityId: z.string().trim().min(1).max(120).optional(),
   communityAccess: communityContentAccessSchema.optional(),
@@ -730,6 +756,29 @@ export const inquiryItemSchema = z.object({
   savedBy: z.array(z.string()).optional(),
   signaledBy: z.array(z.string()).optional(),
   forkedBy: z.array(z.string()).optional()
+}).superRefine((item, context) => {
+  if (!item.designAssignment) return;
+  if (!item.postType) {
+    context.addIssue({
+      code: "custom",
+      path: ["designAssignment"],
+      message: "An authored-artifact assignment requires an explicit post type."
+    });
+    return;
+  }
+  const paperAssignment = paperPostDesignAssignmentSchema.safeParse(item.designAssignment).success;
+  const thoughtAssignment = thoughtPostDesignAssignmentSchema.safeParse(item.designAssignment).success;
+  if (
+    (item.postType === "paper" && !paperAssignment) ||
+    (item.postType === "thought" && !thoughtAssignment) ||
+    ((item.postType === "proposal" || item.postType === "opportunity") && item.designAssignment)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["designAssignment"],
+      message: "The authored-artifact assignment is not eligible for this post type."
+    });
+  }
 });
 
 export const researchCommunitySchema = z.object({
@@ -776,7 +825,7 @@ export const authSyncInputSchema = z.object({
 });
 
 export const createPostInputSchema = z.object({
-  title: z.string().trim().min(1).max(240),
+  title: z.string().trim().max(240),
   body: z.string().trim().min(1).max(20000),
   document: versionedDocumentSchema.optional(),
   kind: contentKindSchema,
@@ -805,6 +854,20 @@ export const createPostInputSchema = z.object({
       code: "custom",
       path: ["postType"],
       message: "The public post type must describe the publication itself, independently of its editor grade."
+    });
+  }
+  if (input.postType === "thought" && input.title) {
+    context.addIssue({
+      code: "custom",
+      path: ["title"],
+      message: "Thoughts do not have titles."
+    });
+  }
+  if (input.postType !== "thought" && !input.title) {
+    context.addIssue({
+      code: "custom",
+      path: ["title"],
+      message: "This post type requires a title."
     });
   }
   if (input.communityId && input.postType === "paper" && input.room !== "library") {
@@ -844,7 +907,7 @@ export const createPostInputSchema = z.object({
 });
 
 export const updatePostInputSchema = z.object({
-  title: z.string().trim().min(1).max(240),
+  title: z.string().trim().max(240),
   body: z.string().trim().min(1).max(20000),
   document: versionedDocumentSchema.optional(),
   expectedEditedAt: z.string().datetime().nullable().optional(),
@@ -2671,6 +2734,12 @@ export type PatronageSupporterContract = z.infer<typeof patronageSupporterSchema
 export type PatronageContributionContract = z.infer<typeof patronageContributionSchema>;
 export type InquiryAttachmentContract = z.infer<typeof inquiryAttachmentSchema>;
 export type ResearchCommunityContract = z.infer<typeof researchCommunitySchema>;
+export type PaperMuseIdContract = z.infer<typeof paperMuseIdSchema>;
+export type ThoughtMuseIdContract = z.infer<typeof thoughtMuseIdSchema>;
+export type BottomCaricatureIdContract = z.infer<typeof bottomCaricatureIdSchema>;
+export type PaperPostDesignAssignmentContract = z.infer<typeof paperPostDesignAssignmentSchema>;
+export type ThoughtPostDesignAssignmentContract = z.infer<typeof thoughtPostDesignAssignmentSchema>;
+export type PostDesignAssignmentContract = z.infer<typeof postDesignAssignmentSchema>;
 export type CommunityMembershipStatusContract = z.infer<typeof communityMembershipStatusSchema>;
 export type CommunityContentAccessContract = z.infer<typeof communityContentAccessSchema>;
 export type CreateCommunityInputContract = z.infer<typeof createCommunityInputSchema>;

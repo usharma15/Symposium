@@ -91,7 +91,7 @@ const main = async () => {
 
   const quoteSource = { sourceType: "post" as const, sourceId: post.id };
   assert.equal(createPostInputSchema.safeParse({
-    title: "Quoted post",
+    title: "",
     body: "Framing",
     kind: "thought",
     postType: "thought",

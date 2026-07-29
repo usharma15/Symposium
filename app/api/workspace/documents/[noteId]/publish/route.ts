@@ -96,7 +96,7 @@ export async function POST(request: Request, context: Context) {
         return jsonError("Add opportunity details before publishing this Opportunity.", 400);
       }
       const createdItem = await createPost({
-        title: document.title,
+        title: target === "thought" ? "" : document.title,
         body: document.body,
         document: document.document,
         kind: target === "proposal" ? "paper" : target === "opportunity" ? "thought" : target,
@@ -109,7 +109,7 @@ export async function POST(request: Request, context: Context) {
       const attachments = await promoteLocalWorkspaceDocumentAttachments(noteId, "post", createdItem.id, actorHandle);
       const publicItem = attachments.length
         ? await updatePost(createdItem.id, {
-            title: document.title,
+            title: target === "thought" ? "" : document.title,
             body: document.body,
             document: document.document,
             attachments

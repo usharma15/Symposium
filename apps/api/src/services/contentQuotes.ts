@@ -139,7 +139,7 @@ export const resolveContentQuote = async (
       available: true,
       author: row.authorName,
       authorHandle: row.authorHandle ?? undefined,
-      title: row.title,
+      title: row.postType === "thought" ? undefined : row.title,
       kind: row.kind,
       postType: row.postType,
       body: row.body,

@@ -1,6 +1,6 @@
 import type { InquiryComment, InquiryItem, ResearchCommunity } from "@/lib/mockData";
 import { isDeletedComment, isDeletedPost, normalizeSearchPhrase } from "@/lib/symposiumCore";
-import { itemHasPostType } from "@/lib/postSemantics";
+import { itemHasPostType, publicPostTitle } from "@/lib/postSemantics";
 
 const commentSearchText = (comments: InquiryComment[]): string =>
   comments
@@ -18,7 +18,7 @@ const commentSearchText = (comments: InquiryComment[]): string =>
 
 export const searchableText = (item: InquiryItem) =>
   [
-    item.title,
+    publicPostTitle(item),
     item.author,
     item.affiliation,
     item.status,

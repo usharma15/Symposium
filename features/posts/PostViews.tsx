@@ -87,7 +87,23 @@ import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 import { postToneClassName, postToneForItem } from "@/lib/postTone";
-import { itemHasPostType } from "@/lib/postSemantics";
+import {
+  itemHasPostType,
+  postHasVisibleTitle,
+  publicPostTitle
+} from "@/lib/postSemantics";
+import { resolvePostDesignAssignment } from "@/lib/postDesign";
+import { PaperTitleCeremony } from "@/features/posts/artifacts/PaperTitleCeremony";
+import {
+  PaperPerimeterFrame,
+  ThoughtPerimeterFrame
+} from "@/features/posts/artifacts/AuthoredArtifactFrames";
+import {
+  AuthoredArtifactAssetPreload,
+  AuthoredBottomCaricature,
+  PostTypeEmblem,
+  ThoughtOpeningMuse
+} from "@/features/posts/artifacts/AuthoredArtifactFigures";
 import { communityPostIsInteractive } from "@/features/communities/communityPolicy";
 import { ContentAnalyticsDialog } from "@/features/analytics/ContentAnalyticsDialog";
 import {
@@ -203,12 +219,13 @@ export function PostComposerModal({
     const cleanBody = body.trim();
     const patronage = kind === "proposal" ? patronageInputForDraft(patronageFields) : undefined;
     const opportunity = kind === "opportunity" ? opportunityInputForDraft(opportunityFields) : undefined;
-    if (!cleanTitle || !cleanBody || uploading || submitting || savingDraft || (kind === "proposal" && !patronage)) return;
+    const titleRequired = kind !== "thought";
+    if ((titleRequired && !cleanTitle) || !cleanBody || uploading || submitting || savingDraft || (kind === "proposal" && !patronage)) return;
 
     setSubmitting(true);
     setAttachmentStatus(attachments.length ? "Publishing post with attachments" : "Publishing post");
     const result = await onCreatePost({
-      title: cleanTitle,
+      title: kind === "thought" ? "" : cleanTitle,
       body: cleanBody,
       document: documentValue,
       kind,
@@ -298,7 +315,7 @@ export function PostComposerModal({
             </button>
             <button
               type="submit"
-              disabled={uploading || submitting || savingDraft || !title.trim() || !body.trim() || (kind === "proposal" && !patronageInputForDraft(patronageFields))}
+              disabled={uploading || submitting || savingDraft || (kind !== "thought" && !title.trim()) || !body.trim() || (kind === "proposal" && !patronageInputForDraft(patronageFields))}
             >
               {submitting ? "Posting…" : "Post"}
             </button>
@@ -316,11 +333,13 @@ export function PostComposerModal({
             <small>{kind === "paper" ? "Papers are always public and published in the Library, wherever they begin." : destination.communityId ? "This post stays inside the selected community." : "This post enters the common global feeds."}</small>
           </label>
         ) : null}
-        <input
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="Title"
-        />
+        {kind !== "thought" ? (
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Title"
+          />
+        ) : null}
         {kind === "proposal" ? (
           <PatronageProposalFields
             value={patronageFields}
@@ -381,7 +400,8 @@ export function PostEditModal({
 }) {
   const isProposal = itemHasPostType(item, "proposal");
   const isOpportunity = itemHasPostType(item, "opportunity");
-  const [title, setTitle] = useState(item.title);
+  const hasVisibleTitle = postHasVisibleTitle(item);
+  const [title, setTitle] = useState(hasVisibleTitle ? item.title : "");
   const [body, setBody] = useState(item.body);
   const [documentValue, setDocumentValue] = useState<VersionedDocumentContract>(() => documentForContent(item.document, item.body));
   const [attachments, setAttachments] = useState<InquiryAttachment[]>(item.attachments ?? []);
@@ -398,10 +418,10 @@ export function PostEditModal({
     event.preventDefault();
     const patronage = item.patronage ? patronageInputForDraft(patronageFields) : undefined;
     const opportunity = item.opportunity ? opportunityInputForDraft(opportunityFields) : undefined;
-    if (busy || !title.trim() || !body.trim() || (item.patronage && !patronage)) return;
+    if (busy || (hasVisibleTitle && !title.trim()) || !body.trim() || (item.patronage && !patronage)) return;
     setBusy(true);
     try {
-      await onSave(item.id, { title, body, document: documentValue, attachments, quote: attachedQuote?.quote ?? null, patronage: patronage ?? undefined, opportunity });
+      await onSave(item.id, { title: hasVisibleTitle ? title : "", body, document: documentValue, attachments, quote: attachedQuote?.quote ?? null, patronage: patronage ?? undefined, opportunity });
     } finally {
       setBusy(false);
     }
@@ -426,11 +446,13 @@ export function PostEditModal({
           </button>
           <button type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
         </div>
-        <input
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="Title"
-        />
+        {hasVisibleTitle ? (
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Title"
+          />
+        ) : null}
         {item.patronage ? (
           <PatronageProposalFields
             value={patronageFields}
@@ -717,6 +739,9 @@ export function FeedPost({
     viewerHandle: actorHandle
   });
   const tone = postToneForItem(item);
+  const hasVisibleTitle = postHasVisibleTitle(item);
+  const isPaper = itemHasPostType(item, "paper");
+  const isThought = itemHasPostType(item, "thought");
   const feedKindLabel = itemHasPostType(item, "proposal")
     ? "Patronage Proposal"
     : itemHasPostType(item, "opportunity")
@@ -767,21 +792,24 @@ export function FeedPost({
         </>
       )}
       <div className="post-body">
-        <p className="post-card-kind-label">{feedKindLabel}</p>
+        {isPaper || isThought ? <PostTypeEmblem postType={isPaper ? "paper" : "thought"} /> : null}
+        {!isThought ? <p className="post-card-kind-label">{feedKindLabel}</p> : null}
         {!isDeletedPost(item) && !interactionLocked ? (
           <ContentTranslationControl state={translation} sourceLabel="post" />
         ) : null}
-        <h2>
-          <CanonicalLink
-            route={{ kind: "post", postId: item.id }}
-            onNavigate={openPost}
-            onClick={(event) => event.stopPropagation()}
-          >
-            {translation.showTranslation && translation.result?.status === "translated"
-              ? translation.result.translatedTitle
-              : deletedPostContextTitle(item)}
-          </CanonicalLink>
-        </h2>
+        {hasVisibleTitle || isDeletedPost(item) ? (
+          <h2>
+            <CanonicalLink
+              route={{ kind: "post", postId: item.id }}
+              onNavigate={openPost}
+              onClick={(event) => event.stopPropagation()}
+            >
+              {hasVisibleTitle && translation.showTranslation && translation.result?.status === "translated"
+                ? translation.result.translatedTitle
+                : deletedPostContextTitle(item)}
+            </CanonicalLink>
+          </h2>
+        ) : null}
         {interactionLocked ? (
           <SymposiumDocumentRenderer
             document={item.document}
@@ -1036,7 +1064,9 @@ export function DetailView({
   onReviewOpportunity: (item: InquiryItem) => void;
 }) {
   const governance = useCommunityGovernance();
-  const isPaper = item.kind === "paper";
+  const isPaper = itemHasPostType(item, "paper");
+  const isThought = itemHasPostType(item, "thought");
+  const hasVisibleTitle = postHasVisibleTitle(item);
   const isProposal = itemHasPostType(item, "proposal");
   const isOpportunity = itemHasPostType(item, "opportunity");
   const tone = postToneForItem(item);
@@ -1044,7 +1074,7 @@ export function DetailView({
   const interactionLocked = !communityPostIsInteractive(item);
   const detailRef = useRef<HTMLElement | null>(null);
   const doiSlug = item.id.replace(/[^a-z0-9]+/gi, ".").replace(/\.+/g, ".").replace(/\.$/, "");
-  const codeSlug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 44);
+  const codeSlug = publicPostTitle(item).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 44);
   const authorProfile = profileForHandle(profiles, item.authorHandle ?? item.author);
   const authorName = authorProfile?.name ?? item.author;
   const communityRole = !isPaper && governance.containsPost(item.id)
@@ -1062,6 +1092,28 @@ export function DetailView({
     sourceRevision: item.revision ?? 1,
     viewerHandle: actorHandle
   });
+  const designAssignment = isPaper || isThought
+    ? resolvePostDesignAssignment({
+        postType: isPaper ? "paper" : "thought",
+        assignment: item.designAssignment,
+        identity: item.id
+      })
+    : undefined;
+  const paperMuseId =
+    isPaper &&
+    designAssignment &&
+    (designAssignment.museId === "calliope" || designAssignment.museId === "urania")
+      ? designAssignment.museId
+      : null;
+  const thoughtMuseId =
+    isThought &&
+    designAssignment &&
+    (designAssignment.museId === "erato" || designAssignment.museId === "thalia")
+      ? designAssignment.museId
+      : null;
+  const displayTitle = hasVisibleTitle && translation.showTranslation && translation.result?.status === "translated"
+    ? translation.result.translatedTitle
+    : deletedPostContextTitle(item);
 
   useEffect(() => {
     if (selectedCommentId !== commentsSectionTargetId) return;
@@ -1094,13 +1146,15 @@ export function DetailView({
   });
 
   return (
-    <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}${isProposal ? " patronage-detail" : ""}${isOpportunity ? " opportunity-detail" : ""} ${postToneClassName(tone)}`}>
+    <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}${isThought ? " thought-detail" : ""}${isPaper || isThought ? " authored-artifact-detail" : ""}${isProposal ? " patronage-detail" : ""}${isOpportunity ? " opportunity-detail" : ""} ${postToneClassName(tone)}`}>
       <button className="back-button" type="button" onClick={onBack}>
         <ArrowLeft size={17} />
         Back to {room.feedLabel}
       </button>
 
       <section className="detail-main" ref={detailRef}>
+        {isPaper ? <PaperPerimeterFrame /> : isThought ? <ThoughtPerimeterFrame /> : null}
+        {isPaper || isThought ? <AuthoredArtifactAssetPreload postType={isPaper ? "paper" : "thought"} /> : null}
         {interactionLocked ? (
           <div className="community-citation-only-notice">
             {item.communityAccess === "activity-only"
@@ -1108,12 +1162,17 @@ export function DetailView({
               : "This source now belongs to a private community. Only the cited content and its author remain visible; community context and interactions are unavailable."}
           </div>
         ) : <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />}
-        <p className="eyebrow">{isProposal ? "Patronage Proposal" : isOpportunity ? "Opportunity" : kindLabels[item.kind]}</p>
-        <h1>
-          {translation.showTranslation && translation.result?.status === "translated"
-            ? translation.result.translatedTitle
-            : deletedPostContextTitle(item)}
-        </h1>
+        {!isPaper && !isThought ? (
+          <p className="eyebrow">{isProposal ? "Patronage Proposal" : isOpportunity ? "Opportunity" : kindLabels[item.kind]}</p>
+        ) : null}
+        {isPaper && paperMuseId ? (
+          <PaperTitleCeremony museId={paperMuseId} title={displayTitle} />
+        ) : !isThought && (hasVisibleTitle || postDeleted) ? (
+          <h1>
+            {displayTitle}
+          </h1>
+        ) : null}
+        {isThought && thoughtMuseId ? <ThoughtOpeningMuse museId={thoughtMuseId} /> : null}
         {postDeleted ? (
           <div className="detail-byline-button deleted-post-author" aria-label="Deleted post">
             <span className="avatar deleted-avatar" aria-hidden="true" />
@@ -1257,6 +1316,12 @@ export function DetailView({
             onVisibleCommentSegmentStackChange={onVisibleCommentSegmentStackChange}
           />
         </section>}
+        {designAssignment && (isPaper || isThought) ? (
+          <AuthoredBottomCaricature
+            bottomCaricatureId={designAssignment.bottomCaricatureId}
+            postType={isPaper ? "paper" : "thought"}
+          />
+        ) : null}
       </section>
 
       {!isProposal && !isOpportunity && isPaper ? (
