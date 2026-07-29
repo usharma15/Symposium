@@ -484,6 +484,22 @@
   --office-label-bottom: -23px;
 }
 
+@media (min-width: 901px) {
+  .office-hotspot-notes {
+    left: 6.5%;
+    top: 66%;
+    width: 25%;
+    height: 20%;
+  }
+
+  .office-hotspot-saved {
+    right: 5%;
+    top: 66%;
+    width: 26%;
+    height: 20%;
+  }
+}
+
 .symposium-shell[data-room="office"] .bottom-action {
   z-index: 45;
 }
