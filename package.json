@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=20.9.0"
+    "node": "24.x"
   },
   "scripts": {
     "action:check": "tsx scripts/actionLedgerCheck.ts",
@@ -35,6 +35,10 @@
     "historical-world:check": "tsx scripts/historicalWorldCheck.ts",
     "item-mutation:check": "tsx scripts/itemMutationGuardCheck.ts",
     "live-transport:check": "tsx scripts/liveTransportCheck.ts",
+    "loc:check": "tsx scripts/sourceInventory.ts --check",
+    "loc:baseline": "tsx scripts/sourceInventory.ts --ref 8e900d0fa675b311a67029b8d2f109b4da97301e --check-baseline",
+    "loc:report": "tsx scripts/sourceInventory.ts",
+    "loc:test": "tsx scripts/sourceInventoryCheck.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx apps/api/src/db/migrate.ts",
     "db:push": "drizzle-kit push",
@@ -49,6 +53,8 @@
     "patronage:check": "tsx scripts/patronageConstructionCheck.ts",
     "opportunity:check": "tsx scripts/opportunityConstructionCheck.ts",
     "post-tone:check": "tsx scripts/postToneConstructionCheck.ts",
+    "proof:check": "npm run loc:test && npm run verify:test && npm run browser:report:test && npm run browser:server:test && npm run proof:typecheck",
+    "proof:typecheck": "tsc --noEmit -p tsconfig.proof.json",
     "post-semantics:check": "tsx scripts/postSemanticsCheck.ts",
     "post-design:check": "tsx scripts/postDesignAssignmentCheck.ts",
     "authored-artifacts:check": "tsx scripts/authoredArtifactCheck.ts",
@@ -61,6 +67,10 @@
     "platform:check": "tsx scripts/platformKernelCheck.ts",
     "provider-cost:check": "tsx scripts/providerCostBoundaryCheck.ts",
     "bounded-read:check": "tsx scripts/boundedReadModelCheck.ts",
+    "browser:canary": "playwright test && tsx scripts/browserCanaryReportCheck.ts",
+    "browser:report:test": "tsx scripts/browserCanaryReportCheck.ts --self-test",
+    "browser:server:test": "tsx scripts/browserCanaryServer.ts --self-test",
+    "browser:serve": "tsx scripts/browserCanaryServer.ts",
     "reconciliation:check": "tsx scripts/inquiryReconciliationCheck.ts",
     "routing:check": "tsx scripts/canonicalRouteCheck.ts",
     "security:check": "tsx scripts/securityBoundaryCheck.ts",
@@ -79,7 +89,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "typecheck:all": "npm run typecheck && npm run api:typecheck",
     "deploy:api:check": "npm run api:preflight && npm run api:typecheck",
-    "verify": "npm run architecture:check && npm run platform:check && npm run styles:check && npm run post-tone:check && npm run post-semantics:check && npm run post-design:check && npm run authored-artifacts:check && npm run historical-world:check && npm run security:check && npm run infrastructure:check && npm run provider-cost:check && npm run bounded-read:check && npm run routing:check && npm run entities:check && npm run entity-revision:check && npm run follow-reconciliation:check && npm run api-client:check && npm run live-transport:check && npm run core:check && npm run action:check && npm run action-state:check && npm run reconciliation:check && npm run identity:check && npm run item-mutation:check && npm run cross-tab:check && npm run attachment:check && npm run attachment-preview:check && npm run comment-attachment:check && npm run community:check && npm run document-editor:check && npm run citation:check && npm run quote:check && npm run storage-deletion:check && npm run mutation:check && npm run messaging:check && npm run notifications:check && npm run content-analytics:check && npm run note-revision:check && npm run workspace:check && npm run workspace-collaboration:check && npm run scribble:check && npm run assistant:check && npm run assistant-project:check && npm run assistant-action:check && npm run assistant-post-draft:check && npm run assistant-draft-studio:check && npm run assistant-provider:check && npm run assistant-evidence:check && npm run assistant-vision:check && npm run patronage:check && npm run opportunity:check && npm run profile:check && npm run post-publishing:check && npm run entry-session:check && npm run typecheck:all && npm run build"
+    "verify": "tsx scripts/verificationRunner.ts",
+    "verify:legacy": "npm run architecture:check && npm run platform:check && npm run styles:check && npm run post-tone:check && npm run post-semantics:check && npm run post-design:check && npm run authored-artifacts:check && npm run historical-world:check && npm run security:check && npm run infrastructure:check && npm run provider-cost:check && npm run bounded-read:check && npm run routing:check && npm run entities:check && npm run entity-revision:check && npm run follow-reconciliation:check && npm run api-client:check && npm run live-transport:check && npm run core:check && npm run action:check && npm run action-state:check && npm run reconciliation:check && npm run identity:check && npm run item-mutation:check && npm run cross-tab:check && npm run attachment:check && npm run attachment-preview:check && npm run comment-attachment:check && npm run community:check && npm run document-editor:check && npm run citation:check && npm run quote:check && npm run storage-deletion:check && npm run mutation:check && npm run messaging:check && npm run notifications:check && npm run content-analytics:check && npm run note-revision:check && npm run workspace:check && npm run workspace-collaboration:check && npm run scribble:check && npm run assistant:check && npm run assistant-project:check && npm run assistant-action:check && npm run assistant-post-draft:check && npm run assistant-draft-studio:check && npm run assistant-provider:check && npm run assistant-evidence:check && npm run assistant-vision:check && npm run patronage:check && npm run opportunity:check && npm run profile:check && npm run post-publishing:check && npm run entry-session:check && npm run typecheck:all && npm run build",
+    "verify:test": "tsx scripts/verificationRunnerCheck.ts"
   },
   "overrides": {
     "postcss": "8.5.23",
@@ -121,7 +133,8 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^25.9.3",
+    "@playwright/test": "1.62.0",
+    "@types/node": "24.13.3",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
