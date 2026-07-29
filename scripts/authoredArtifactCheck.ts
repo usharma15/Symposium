@@ -61,7 +61,8 @@ const main = async () => {
   assert.deepEqual(Object.keys(PAPER_MUSE_REGISTRY), ["calliope", "urania"]);
   assert.deepEqual(Object.keys(THOUGHT_MUSE_REGISTRY), ["erato", "thalia"]);
   assert.equal(THOUGHT_MUSE_REGISTRY.erato.approvalScope, "all-registered-breakpoints");
-  assert.equal(THOUGHT_MUSE_REGISTRY.thalia.approvalScope, "desktop-day-night");
+  assert.equal(THOUGHT_MUSE_REGISTRY.thalia.approvalScope, "all-registered-breakpoints");
+  assert.equal(THOUGHT_MUSE_REGISTRY.thalia.responsiveApprovedAt, "2026-07-29");
   assert.deepEqual(Object.keys(BOTTOM_CARICATURE_REGISTRY), [
     "resting-warrior",
     "flute-girl",

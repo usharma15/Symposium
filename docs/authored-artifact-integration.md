@@ -49,7 +49,7 @@ pre-migration and local compatibility records that have no assignment yet.
 
 ## Asset ownership
 
-The production runtime owns exactly 51 immutable files under
+The production runtime owns exactly 53 immutable files under
 `public/symposium-artifacts/v1`. Rejected studies, source photography, edit
 masters, and extraction intermediates are excluded. The registry records every
 runtime SHA-256 digest, and `npm run authored-artifacts:check` rejects missing,
@@ -63,7 +63,14 @@ not alter the approved canvas, silhouette, antialiasing, scale, or placement.
 The focused check verifies every Day/Night alpha pair, pigment, canvas, source
 silhouette containment, transparent-fill ratio, and immutable digest.
 
-## Verification and release gates
+The two transparent compact Paper emblems are reproducibly derived by
+`scripts/buildCompactPostEmblems.mjs` from the approved Paper sun. The full
+technical-lineage and rights-evidence audit is recorded in
+`docs/authored-artifact-provenance.md`. Technical lineage is complete; the
+repository does not contain the external acquisition or license evidence
+needed to establish public-distribution clearance.
+
+## Verification and release state
 
 Focused checks:
 
@@ -77,18 +84,22 @@ npm run typecheck:all
 `npm run verify` includes those checks plus the complete application suite,
 both TypeScript projects, production build, and production hydration check.
 
-Before a public deployment:
+The production port and follow-up corrections were committed to `main` and
+deployed on July 29, 2026. Migration
+`0064_authored_artifact_design_assignments` is applied in production with no
+pending migrations. The deep readiness probe reports `ready`, strict mode,
+and exact migration convergence.
 
-- execute migration `0064` in a production-like PostgreSQL transaction and
-  verify assignment coverage and constraints;
-- complete the asset-rights/provenance review;
-- visually approve Thalia at compact, tablet, and mobile sizes (desktop
-  Day/Night is the currently frozen approval scope);
-- complete a real-browser matrix for both themes, both Paper muses, both
-  Thought muses, all seven bottom figures, RTL and complex-script Paper titles,
-  short/long/no-comment discussions, translation switching, refresh,
-  rehydration, and theme switching;
-- verify the deployed revision through `/readyz`.
+The release browser matrix covers Day/Night, Paper/Thought, detail/feed/profile
+surfaces, the two Paper muses, the two Thought muses, the seven bottom
+caricatures, desktop/tablet/mobile geometry, theme switching, material
+continuity, translation-control spacing, foreground occlusion, image loading,
+and horizontal overflow. Thalia is approved at all registered breakpoints.
+The static title-entry suite covers semantic grapheme handling, including RTL
+and complex-script inputs; manual linguistic review of every possible
+translation remains an ongoing product-quality concern rather than an
+integration gate.
 
-This integration is local and reversible until those gates are closed and an
-explicit deployment is authorized.
+The engineering integration is closed. Continued public use of externally
+supplied artwork still depends on the product owner retaining the rights
+evidence identified in `docs/authored-artifact-provenance.md`.

@@ -173,12 +173,32 @@
   }
 
   .topbar {
-    --brand-nav-slot: 112px;
+    --brand-nav-slot: 110px;
+    --symposium-view-nav-width: 56px;
     align-items: center;
   }
 
   .brand {
-    max-width: 112px;
+    max-width: 110px;
+  }
+
+  .view-nav {
+    min-height: 50px;
+    padding: 4px 5px;
+  }
+
+  .view-nav button:not(:first-child),
+  .view-nav a {
+    display: none;
+  }
+
+  .view-nav button:first-child {
+    width: 44px;
+    min-height: 40px;
+  }
+
+  .topbar-actions {
+    gap: 4px;
   }
 
   .profile-button {
@@ -261,5 +281,39 @@
     bottom: 10%;
     width: 44%;
     height: 18%;
+  }
+}
+
+@media (max-width: 375px) {
+  .topbar {
+    --brand-nav-slot: 90px;
+    --symposium-view-nav-width: 50px;
+    column-gap: 6px;
+  }
+
+  .brand {
+    max-width: 90px;
+    padding-inline: 8px;
+  }
+
+  .symposium-shell:not([data-room="hall"]) .brand {
+    min-width: 0;
+  }
+
+  .view-nav {
+    padding-inline: 4px;
+  }
+
+  .view-nav button:first-child {
+    width: 40px;
+  }
+
+  .topbar-actions {
+    gap: 3px;
+  }
+
+  .topbar-actions .icon-button,
+  .topbar-actions .profile-button {
+    width: 40px;
   }
 }

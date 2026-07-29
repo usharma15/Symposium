@@ -98,7 +98,8 @@ export const THOUGHT_MUSE_REGISTRY = {
     label: "Thalia",
     status: "approved-frozen",
     frozenAt: "2026-07-28",
-    approvalScope: "desktop-day-night",
+    approvalScope: "all-registered-breakpoints",
+    responsiveApprovedAt: "2026-07-29",
     assets: {
       day: asset("thought-muse-thalia-day-olive-v1.png"),
       night: asset("thought-muse-thalia-night-smoked-mineral-v1.png"),
@@ -122,7 +123,8 @@ export const THOUGHT_MUSE_REGISTRY = {
   label: string;
   status: "approved-frozen";
   frozenAt: string;
-  approvalScope: "all-registered-breakpoints" | "desktop-day-night";
+  approvalScope: "all-registered-breakpoints";
+  responsiveApprovedAt?: string;
   assets: ThemedAssets;
   canvas: { width: number; height: number };
   visibleBounds: {
