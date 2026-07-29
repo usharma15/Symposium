@@ -141,6 +141,19 @@ const main = async () => {
   assert.match(messageStyles, /--messages-aligned-side-width:\s*calc\(/);
   assert.match(messageStyles, /--messages-panel-top-clearance:\s*calc\([\s\S]*?var\(--symposium-side-tool-top\)\s*-\s*var\(--messages-stage-top\)/);
   assert.match(shellStyles, /\.symposium-shell[\s\S]*overflow-x:\s*clip/);
+  assert.match(
+    immersiveShellStyles,
+    /\.symposium-shell\[data-room="hall"\]\[data-view\]::before\s*\{[^}]*background:\s*var\(--room-bg\) center bottom \/ cover no-repeat/
+  );
+  assert.match(
+    immersiveShellStyles,
+    /\.hall-world\s*\{[^}]*width:\s*max\(100vw, 177\.6833vh\)[^}]*height:\s*max\(100vh, 56\.2799vw\)/
+  );
+  assert.doesNotMatch(
+    immersiveShellStyles,
+    /width:\s*187\.66vh|height:\s*105\.61vh/,
+    "Main hall sizing must never cap an ultra-wide viewport and reveal the shell background."
+  );
   assert.match(immersiveShellStyles, /\.room-hotspots\s*\{[^}]*z-index:\s*3/);
   assert.match(immersiveShellStyles, /\.office-hotspot\s*\{[^}]*clip-path:\s*var\(--office-hotspot-shape/);
   assert.match(immersiveShellStyles, /\.symposium-shell\[data-room="office"\] \.bottom-action\s*\{[^}]*z-index:\s*45/);
@@ -193,6 +206,7 @@ const main = async () => {
           "shared quote card and composer layout",
           "one canonical feed and clicked-post width",
           "one canonical desktop in-post top line for content, Back controls, and contextual rails",
+          "stable edge-to-edge main hall framing across shell views",
           "Office hotspots behind all four bottom launchers",
           "day and night document ink with theme-safe selection contrast",
           "flush sticky editor and opaque themed attachment surfaces",

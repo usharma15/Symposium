@@ -57,6 +57,10 @@
   filter: none;
 }
 
+.symposium-shell[data-room="hall"][data-view]::before {
+  background: var(--room-bg) center bottom / cover no-repeat;
+}
+
 .symposium-shell.night[data-room="office"]::after,
 .symposium-shell.night[data-room="library"]::after,
 .symposium-shell.night[data-room="symposium"]::after,
@@ -171,8 +175,8 @@
   position: fixed;
   left: 50%;
   bottom: 0;
-  width: max(100vw, 159.88vh);
-  height: max(100vh, 62.55vw);
+  width: max(100vw, 177.6833vh);
+  height: max(100vh, 56.2799vw);
   min-height: 0;
   overflow: hidden;
   border: 0;
@@ -183,20 +187,6 @@
   background-size: 100% 100%;
   box-shadow: none;
   transform: translateX(-50%);
-}
-
-@media (min-width: 901px) and (min-aspect-ratio: 16 / 9) {
-  .hall-world {
-    width: max(100vw, 177.68vh);
-    height: max(100vh, 56.28vw);
-  }
-}
-
-@media (min-width: 901px) and (min-aspect-ratio: 15 / 8) {
-  .hall-world {
-    width: 187.66vh;
-    height: 105.61vh;
-  }
 }
 
 .hall-world::after,
