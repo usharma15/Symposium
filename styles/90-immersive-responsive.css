@@ -173,31 +173,36 @@
   }
 
   .topbar {
-    --brand-nav-slot: 110px;
-    --symposium-view-nav-width: 56px;
+    --brand-nav-slot: 112px;
+    --symposium-view-nav-width: 156px;
     align-items: center;
+    grid-template-columns: var(--brand-nav-slot) minmax(0, 1fr);
+    grid-template-rows: 58px 50px;
+    row-gap: 6px;
   }
 
   .brand {
-    max-width: 110px;
+    grid-column: 1;
+    grid-row: 1;
+    max-width: 112px;
   }
 
   .view-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
     min-height: 50px;
     padding: 4px 5px;
   }
 
-  .view-nav button:not(:first-child),
+  .view-nav button,
   .view-nav a {
-    display: none;
-  }
-
-  .view-nav button:first-child {
     width: 44px;
     min-height: 40px;
   }
 
   .topbar-actions {
+    grid-column: 2;
+    grid-row: 1;
     gap: 4px;
   }
 
@@ -211,7 +216,7 @@
   }
 
   .stage {
-    padding-top: 88px;
+    padding-top: 148px;
   }
 
   .community-grid {
@@ -285,29 +290,6 @@
 }
 
 @media (max-width: 375px) {
-  .topbar {
-    --brand-nav-slot: 90px;
-    --symposium-view-nav-width: 50px;
-    column-gap: 6px;
-  }
-
-  .brand {
-    max-width: 90px;
-    padding-inline: 8px;
-  }
-
-  .symposium-shell:not([data-room="hall"]) .brand {
-    min-width: 0;
-  }
-
-  .view-nav {
-    padding-inline: 4px;
-  }
-
-  .view-nav button:first-child {
-    width: 40px;
-  }
-
   .topbar-actions {
     gap: 3px;
   }
