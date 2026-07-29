@@ -189,10 +189,19 @@ const main = async () => {
   assert.match(documentStyles, /\.document-collapsible-content\.collapsed\.is-collapsible::after/);
   assert.match(attachmentStyles, /\.attachment-modal[\s\S]*background:\s*var\(--document-surface-solid\)/);
   assert.match(attachmentStyles, /\.attachment-sheet-scroll[\s\S]*background:\s*var\(--attachment-preview-surface\)/);
-  assert.match(feedStyles, /\.social-actions\s*\{[^}]*repeat\(2, 42px\)[^}]*overflow-wrap:\s*normal/);
+  assert.match(
+    feedStyles,
+    /\.social-actions\s*\{[^}]*repeat\(5, max-content\)[^}]*repeat\(2, 36px\)[^}]*justify-content:\s*space-between[^}]*overflow-wrap:\s*normal/
+  );
+  assert.doesNotMatch(
+    feedStyles,
+    /\.social-actions\s*\{[^}]*repeat\(5,\s*minmax\(/,
+    "Post metrics must reserve wider tracks for Comments and Reshares instead of clipping labels in equal columns."
+  );
   assert.match(feedStyles, /\.social-actions button > svg,\s*\.social-actions a > svg,\s*\.social-actions strong\s*\{[^}]*flex:\s*0 0 auto/);
   assert.match(feedStyles, /\.social-actions strong\s*\{[^}]*margin-left:\s*0[^}]*white-space:\s*nowrap[^}]*word-break:\s*normal/);
-  assert.match(feedStyles, /\.social-actions button,\s*\.social-actions a\s*\{[^}]*gap:\s*8px[^}]*white-space:\s*nowrap/);
+  assert.match(feedStyles, /\.social-actions button,\s*\.social-actions a\s*\{[^}]*gap:\s*5px[^}]*min-height:\s*30px[^}]*font-size:\s*0\.76rem[^}]*white-space:\s*nowrap/);
+  assert.match(feedStyles, /\.social-actions button > svg,\s*\.social-actions a > svg\s*\{[^}]*width:\s*15px[^}]*height:\s*15px/);
   assert.match(feedStyles, /\.social-actions \.metric-label\s*\{[^}]*flex:\s*0 1 auto[^}]*min-width:\s*0/);
 
   console.log(

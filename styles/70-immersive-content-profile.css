@@ -329,15 +329,20 @@ button.quote-card-opportunity:hover {
 
 .social-actions {
   display: grid;
-  grid-template-columns: repeat(5, minmax(78px, 1fr)) repeat(2, 42px);
-  gap: clamp(4px, 0.55vw, 7px);
+  grid-template-columns: repeat(5, max-content) repeat(2, 36px);
+  gap: clamp(3px, 0.4vw, 4px);
+  justify-content: space-between;
   width: 100%;
   overflow-wrap: normal;
 }
 
 .social-actions .quote-action-button,
+.social-actions .content-link-action {
+  min-width: 34px;
+  padding-inline: 7px;
+}
+
 .comment-actions .quote-action-button,
-.social-actions .content-link-action,
 .comment-actions .content-link-action {
   min-width: 38px;
   padding-inline: 8px;
@@ -348,11 +353,19 @@ button.quote-card-opportunity:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 5px;
+  min-height: 30px;
   min-width: 0;
   padding: 0 2px;
+  font-size: 0.76rem;
   overflow-wrap: normal;
   white-space: nowrap;
+}
+
+.social-actions button > svg,
+.social-actions a > svg {
+  width: 15px;
+  height: 15px;
 }
 
 .social-actions button > svg,
@@ -385,12 +398,6 @@ button.quote-card-opportunity:hover {
 
 .social-actions button.active {
   color: #1a757d;
-}
-
-@media (max-width: 760px) {
-  .social-actions {
-    grid-template-columns: repeat(5, minmax(108px, 1fr)) repeat(2, 42px);
-  }
 }
 
 .detail-layout,
