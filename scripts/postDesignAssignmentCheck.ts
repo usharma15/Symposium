@@ -136,10 +136,8 @@ const main = async () => {
   assert.match(posts, /design_assignment/);
   assert.match(foundation, /postSelectColumns/);
   assert.match(projection, /design_assignment AS "designAssignment"/);
-  assert.match(localStore, /design_assignment/);
-  assert.match(localStore, /symposium_items_design_fnv1a_32\(id \|\| ':muse:v1'\) % 2/);
-  assert.match(localStore, /symposium_items_design_fnv1a_32\(id \|\| ':bottom:v1'\) % 7/);
-  assert.match(localStore, /DROP FUNCTION symposium_items_design_fnv1a_32\(TEXT\)/);
+  assert.match(localStore, /designAssignment:/);
+  assert.doesNotMatch(localStore, /design_assignment|symposium_items_design_fnv1a_32/);
   assert.match(localStore, /deterministicPostDesignAssignment/);
   assert.match(localStore, /randomPostDesignAssignment/);
   assert.match(localStore, /resolvePostDesignAssignment/);

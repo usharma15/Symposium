@@ -2,8 +2,11 @@ import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import type { PoolClient } from "pg";
 import type { VersionedDocumentContract } from "../../../../packages/contracts/src";
-import { env, hasR2Config } from "../config/env";
-import { promoteUploadedObject } from "./storage";
+import {
+  attachmentPublicBaseUrl,
+  hasAttachmentStorage
+} from "../config/env";
+import { promoteUploadedObject, storageBucket } from "./storage";
 import { queueAttachmentRowsForStorageDeletion, triggerStorageDeletion } from "./storageDeletion";
 
 type PublicOwnerType = "post" | "comment";
@@ -135,7 +138,7 @@ const ensurePublicAttachmentCopy = async (
   const current = existing.rows[0];
   if (current && (
     current.ownerType !== input.ownerType ||
-    current.bucket !== env.R2_BUCKET ||
+    current.bucket !== storageBucket() ||
     current.objectKey !== objectKey ||
     current.uploadObjectKey !== objectKey
   )) {
@@ -145,7 +148,7 @@ const ensurePublicAttachmentCopy = async (
 
   await client.query(
     `DELETE FROM storage_deletion_jobs WHERE bucket = $1 AND object_key = $2`,
-    [env.R2_BUCKET!, objectKey]
+    [storageBucket(), objectKey]
   );
   await client.query(
     `INSERT INTO attachments (
@@ -160,7 +163,7 @@ const ensurePublicAttachmentCopy = async (
       id,
       input.ownerType,
       input.uploaderHandle,
-      env.R2_BUCKET!,
+      storageBucket(),
       objectKey,
       input.source.fileName,
       input.source.contentType,
@@ -190,7 +193,7 @@ const ensurePublicAttachmentCopy = async (
   } catch (error) {
     await queueAttachmentRowsForStorageDeletion(client, [{
       attachmentId: id,
-      bucket: env.R2_BUCKET!,
+      bucket: storageBucket(),
       objectKey,
       uploadObjectKey: objectKey
     }], "workspace_publication_copy_failed");
@@ -214,7 +217,7 @@ export const prepareWorkspacePublicationAttachments = async (
   }
 ) => {
   if (!input.attachmentIds.length) return { attachmentIds: [], document: input.document };
-  if (!hasR2Config || !env.R2_PUBLIC_BASE_URL) {
+  if (!hasAttachmentStorage || !attachmentPublicBaseUrl) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "Public attachment delivery must be configured before this draft can be published."
@@ -223,7 +226,7 @@ export const prepareWorkspacePublicationAttachments = async (
   const sourceOwnerType = input.sourceOwnerType ?? "note";
   const sourceOwnerId = input.sourceOwnerId ?? input.noteId;
   const sources = await loadSourceAttachments(client, sourceOwnerType, sourceOwnerId, input.attachmentIds);
-  if (sources.some((source) => source.bucket !== env.R2_BUCKET)) {
+  if (sources.some((source) => source.bucket !== storageBucket())) {
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "A draft attachment is stored outside the active publication bucket." });
   }
   const publicAttachmentIds: string[] = [];

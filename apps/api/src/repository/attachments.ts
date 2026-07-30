@@ -15,7 +15,10 @@ import {
   validatePostAttachmentDetails
 } from "@/lib/attachmentRules";
 import { cleanHandle } from "@/lib/symposiumCore";
-import { env, hasR2Config } from "../config/env";
+import {
+  attachmentPublicBaseUrl,
+  hasAttachmentStorage
+} from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import type { Actor } from "../services/auth";
@@ -26,6 +29,8 @@ import {
   createUploadObjectKey,
   inspectUploadedObject,
   promoteUploadedObject,
+  publicStorageObjectUrl,
+  storageBucket,
   storeUploadedObject
 } from "../services/storage";
 import {
@@ -68,8 +73,7 @@ type AttachmentRow = {
   uploadObjectKey: string;
 };
 
-const publicObjectUrl = (objectKey: string) =>
-  env.R2_PUBLIC_BASE_URL ? `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${objectKey}` : null;
+const publicObjectUrl = (objectKey: string) => publicStorageObjectUrl(objectKey);
 
 const requireAttachmentDatabase = (ownerType: string) => {
   if (!hasDatabase()) {
@@ -78,13 +82,13 @@ const requireAttachmentDatabase = (ownerType: string) => {
       message: "Persistent attachment storage requires the live database."
     });
   }
-  if (!hasR2Config) {
+  if (!hasAttachmentStorage) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "Persistent attachment storage is not configured."
     });
   }
-  if (ownerType !== "message" && ownerType !== "assistant_message" && ownerType !== "note" && ownerType !== "note_comment" && ownerType !== "opportunity_application" && !env.R2_PUBLIC_BASE_URL) {
+  if (ownerType !== "message" && ownerType !== "assistant_message" && ownerType !== "note" && ownerType !== "note_comment" && ownerType !== "opportunity_application" && !attachmentPublicBaseUrl) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "Persistent public attachment delivery is not configured."
@@ -293,7 +297,7 @@ export const createAttachmentUpload = async (
         input.ownerType,
         input.ownerType === "profile" ? handle : null,
         handle,
-        env.R2_BUCKET ?? "symposium",
+        storageBucket(),
         objectKey,
         uploadObjectKey,
         input.fileName,
@@ -527,7 +531,11 @@ export const confirmAttachment = async (rawInput: unknown, actor: Actor) => {
 
   let inspection;
   try {
-    inspection = await inspectUploadedObject(attachment.uploadObjectKey, Boolean(officeArchiveFormatForContentType(attachment.contentType)));
+    inspection = await inspectUploadedObject(
+      attachment.uploadObjectKey,
+      Boolean(officeArchiveFormatForContentType(attachment.contentType)),
+      attachment.contentType
+    );
   } catch (error) {
     await getPool().query(
       `UPDATE attachments SET status = 'pending', updated_at = now()

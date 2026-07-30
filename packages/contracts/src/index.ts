@@ -8,6 +8,13 @@ export {
   assistantTranslationLanguages
 } from "./translationLanguages";
 
+const isoDateSource =
+  "(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))";
+const isoDateStringSchema = z.string().regex(new RegExp(`^${isoDateSource}$`));
+const isoDateTimeStringSchema = z.string().regex(
+  new RegExp(`^${isoDateSource}T(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?Z$`)
+);
+
 export const roomIdSchema = z.enum([
   "hall",
   "office",
@@ -73,7 +80,7 @@ export const patronageProposalInputSchema = z.object({
   status: patronageProposalStatusSchema.default("open"),
   currency: patronageCurrencySchema.default("USD"),
   goalMinorUnits: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  deadline: z.string().date().nullable().default(null)
+  deadline: isoDateStringSchema.nullable().default(null)
 });
 export const patronageSupporterSchema = z.object({
   displayName: z.string().trim().min(1).max(160),
@@ -95,8 +102,8 @@ export const patronageContributionSchema = z.object({
   anonymous: z.boolean().default(false),
   provider: z.string().trim().min(1).max(80),
   status: patronageContributionStatusSchema,
-  createdAt: z.string().datetime(),
-  confirmedAt: z.string().datetime().nullable().default(null)
+  createdAt: isoDateTimeStringSchema,
+  confirmedAt: isoDateTimeStringSchema.nullable().default(null)
 });
 export const attachmentStatusSchema = z.enum(["pending", "uploaded", "previewed", "failed"]);
 export const attachmentKindSchema = z.enum([
@@ -151,7 +158,7 @@ export const opportunityPostInputSchema = z.object({
   status: opportunityPostStatusSchema.default("open"),
   location: z.string().trim().min(1).max(160).nullable().default(null),
   compensation: z.string().trim().min(1).max(160).nullable().default(null),
-  deadline: z.string().date().nullable().default(null)
+  deadline: isoDateStringSchema.nullable().default(null)
 });
 export const opportunityPostSchema = opportunityPostInputSchema.extend({
   applicationCount: z.number().int().nonnegative().default(0)
@@ -263,7 +270,7 @@ export const documentNativeCitationSchema = z.object({
   source: documentSourceSnapshotSchema,
   locator: documentCitationLocatorSchema,
   excerpt: z.string().trim().min(1).max(4000),
-  capturedAt: z.string().datetime().optional()
+  capturedAt: isoDateTimeStringSchema.optional()
 });
 export const documentTextSchema = z.object({
   text: z.string().max(100000),
@@ -638,7 +645,7 @@ export const opportunityApplicationCommentSchema = z.object({
   authorHandle: z.string().trim().min(1).max(80),
   authorName: z.string().trim().min(1).max(160),
   body: z.string().trim().min(1).max(8000),
-  createdAt: z.string().datetime()
+  createdAt: isoDateTimeStringSchema
 });
 
 export const opportunityApplicationSchema = z.object({
@@ -654,8 +661,8 @@ export const opportunityApplicationSchema = z.object({
   shortlisted: z.boolean(),
   attachments: z.array(inquiryAttachmentSchema).max(20).default([]),
   comments: z.array(opportunityApplicationCommentSchema).max(1000).default([]),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime()
+  createdAt: isoDateTimeStringSchema,
+  updatedAt: isoDateTimeStringSchema
 });
 
 export const createOpportunityApplicationInputSchema = z.object({
@@ -843,7 +850,7 @@ export const researchCommunitySchema = z.object({
   membershipStatus: communityMembershipStatusSchema.optional(),
   viewerRole: z.enum(["owner", "moderator", "member"]).optional(),
   ownerHandle: z.string().optional(),
-  lastAccessedAt: z.string().datetime().optional(),
+  lastAccessedAt: isoDateTimeStringSchema.optional(),
   moderatorHandles: z.array(z.string()).optional(),
   guidelines: z.string().max(12000).optional(),
   announcements: z.array(z.object({
@@ -946,7 +953,7 @@ export const updatePostInputSchema = z.object({
   title: z.string().trim().max(240),
   body: structuredContentBodySchema,
   document: versionedDocumentSchema.optional(),
-  expectedEditedAt: z.string().datetime().nullable().optional(),
+  expectedEditedAt: isoDateTimeStringSchema.nullable().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.nullable().optional(),
   patronage: patronageProposalInputSchema.optional(),
@@ -983,7 +990,7 @@ export const createCommentInputSchema = z.object({
 export const updateCommentInputSchema = z.object({
   body: structuredContentBodySchema,
   document: versionedDocumentSchema.optional(),
-  expectedEditedAt: z.string().datetime().nullable().optional(),
+  expectedEditedAt: isoDateTimeStringSchema.nullable().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.nullable().optional(),
   actorHandle: z.string().optional()
@@ -1020,13 +1027,13 @@ export const canonicalActionActivitySchema = z.object({
   active: z.boolean(),
   count: z.number().int().nonnegative(),
   revision: z.number().int().positive(),
-  occurredAt: z.string().datetime()
+  occurredAt: isoDateTimeStringSchema
 });
 
 export const profileAuthoredCommentActivitySchema = z.object({
   commentId: z.string().min(1),
   postId: z.string().min(1),
-  occurredAt: z.string().datetime()
+  occurredAt: isoDateTimeStringSchema
 });
 
 export const profileActivityQuerySchema = z.object({
@@ -1147,7 +1154,7 @@ export const createCommunityCallInputSchema = z.object({
   communityId: z.string().trim().min(1).max(120),
   title: z.string().trim().min(1).max(160),
   kind: liveCallKindSchema.default("voice"),
-  startsAt: z.string().datetime().optional(),
+  startsAt: isoDateTimeStringSchema.optional(),
   provider: z.string().trim().max(80).optional(),
   providerRoomId: z.string().trim().max(160).optional()
 });
@@ -1641,7 +1648,7 @@ const assistantActionReceiptBaseShape = {
   notebookId: z.string().uuid().nullable(),
   notebookName: z.string().nullable(),
   href: z.string().startsWith("/workspace?"),
-  confirmedAt: z.string().datetime()
+  confirmedAt: isoDateTimeStringSchema
 };
 
 export const assistantOfficeNoteActionReceiptSchema = z.object({
@@ -1665,9 +1672,9 @@ export const assistantOfficeDraftEditActionReceiptSchema = z.object({
   mode: assistantDraftEditModeSchema,
   operationCount: z.number().int().positive().max(24),
   href: z.string().startsWith("/workspace?"),
-  appliedAt: z.string().datetime(),
+  appliedAt: isoDateTimeStringSchema,
   undoRevision: z.number().int().positive().optional(),
-  undoneAt: z.string().datetime().optional()
+  undoneAt: isoDateTimeStringSchema.optional()
 }).strict().superRefine((receipt, context) => {
   if (receipt.revision !== receipt.previousRevision + 1) {
     context.addIssue({
@@ -2106,9 +2113,9 @@ export const messageSchema = z.object({
   body: z.string().max(8000),
   attachments: z.array(inquiryAttachmentSchema).max(10).default([]),
   starred: z.boolean().default(false),
-  editedAt: z.string().datetime().nullable().default(null),
-  deletedAt: z.string().datetime().nullable().default(null),
-  createdAt: z.string().datetime()
+  editedAt: isoDateTimeStringSchema.nullable().default(null),
+  deletedAt: isoDateTimeStringSchema.nullable().default(null),
+  createdAt: isoDateTimeStringSchema
 });
 
 export const conversationSummarySchema = z.object({
@@ -2127,8 +2134,8 @@ export const conversationSummarySchema = z.object({
   draftBody: z.string().max(8000),
   draftRevision: z.number().int().positive(),
   draftClientVersion: z.string().max(160).nullable(),
-  draftUpdatedAt: z.string().datetime().nullable(),
-  updatedAt: z.string().datetime()
+  draftUpdatedAt: isoDateTimeStringSchema.nullable(),
+  updatedAt: isoDateTimeStringSchema
 });
 
 export const conversationListQuerySchema = z.object({
@@ -2251,10 +2258,10 @@ export const notificationSchema = z.object({
   title: z.string().min(1).max(200),
   body: z.string().max(1000),
   href: z.string().max(500).nullable(),
-  readAt: z.string().datetime().nullable(),
-  resolvedAt: z.string().datetime().nullable().default(null),
+  readAt: isoDateTimeStringSchema.nullable(),
+  resolvedAt: isoDateTimeStringSchema.nullable().default(null),
   metadata: z.record(z.string(), z.unknown()).default({}),
-  createdAt: z.string().datetime()
+  createdAt: isoDateTimeStringSchema
 }).transform((notification) => ({
   ...notification,
   groupKey: notification.groupKey ?? `notification:${notification.id}`
@@ -2293,7 +2300,7 @@ export const notificationPreferencesSchema = z.object({
   newFollowers: z.boolean(),
   workspaceActivity: z.boolean(),
   revision: z.number().int().positive(),
-  updatedAt: z.string().datetime()
+  updatedAt: isoDateTimeStringSchema
 }).strict();
 
 export const updateNotificationPreferencesInputSchema = z.object({
@@ -2350,7 +2357,7 @@ export const contentAnalyticsActorSchema = z.object({
   handle: z.string().min(1).max(80),
   name: z.string().min(1).max(200),
   avatarUrl: safeExternalUrlSchema.optional(),
-  occurredAt: z.string().datetime()
+  occurredAt: isoDateTimeStringSchema
 });
 
 export const contentAnalyticsQuoteSchema = z.object({
@@ -2360,7 +2367,7 @@ export const contentAnalyticsQuoteSchema = z.object({
   authorName: z.string().min(1).max(200),
   avatarUrl: safeExternalUrlSchema.optional(),
   href: z.string().min(1).max(500),
-  occurredAt: z.string().datetime()
+  occurredAt: isoDateTimeStringSchema
 });
 
 export const contentAnalyticsOverviewSchema = z.object({
@@ -2412,7 +2419,7 @@ export const communityMemberSchema = z.object({
   name: z.string(),
   avatarUrl: safeExternalUrlSchema.optional(),
   role: communityMemberRoleSchema,
-  joinedAt: z.string().datetime()
+  joinedAt: isoDateTimeStringSchema
 });
 
 export const communityMemberQuerySchema = z.object({
@@ -2567,7 +2574,7 @@ export const assistantThreadSourceSchema = z.object({
   revision: z.number().int().positive(),
   included: z.boolean(),
   context: assistantContextSchema,
-  attachedAt: z.string().datetime(),
+  attachedAt: isoDateTimeStringSchema,
   supersedesSourceId: z.string().uuid().nullable().default(null),
   provenance: z.enum(["captured", "recovered"]).default("captured")
 });
@@ -2578,7 +2585,7 @@ export const assistantThreadSummarySchema = z.object({
   title: z.string().trim().min(1).max(300),
   projectId: z.string().uuid().nullable(),
   pinned: z.boolean(),
-  archivedAt: z.string().datetime().nullable(),
+  archivedAt: isoDateTimeStringSchema.nullable(),
   metadataRevision: z.number().int().positive(),
   contextType: z.string().trim().min(1).max(80),
   contextId: z.string().trim().max(240).nullable(),
@@ -2588,9 +2595,9 @@ export const assistantThreadSummarySchema = z.object({
   contextRevision: z.number().int().positive(),
   sourceCount: z.number().int().nonnegative(),
   sourceRevisionCount: z.number().int().nonnegative(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-  lastMessageAt: z.string().datetime()
+  createdAt: isoDateTimeStringSchema,
+  updatedAt: isoDateTimeStringSchema,
+  lastMessageAt: isoDateTimeStringSchema
 });
 
 export const assistantThreadStateSchema = assistantThreadSummarySchema.extend({
@@ -2611,8 +2618,8 @@ export const assistantProjectSchema = z.object({
   name: z.string().trim().min(1).max(120),
   revision: z.number().int().positive(),
   activeThreadCount: z.number().int().nonnegative(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime()
+  createdAt: isoDateTimeStringSchema,
+  updatedAt: isoDateTimeStringSchema
 });
 
 export const assistantProjectListResultSchema = z.object({
@@ -2685,7 +2692,7 @@ export const documentTranslationResultSchema = z.object({
   pages: z.array(documentTranslationPageSchema).max(1),
   message: z.string().max(1000),
   model: z.string(),
-  createdAt: z.string().datetime(),
+  createdAt: isoDateTimeStringSchema,
   quota: assistantQuotaSchema
 }).superRefine((result, context) => {
   if (result.status === "translated" && (!result.targetLanguage || !result.translatedTitle.trim() || !result.pages.length)) {
@@ -2710,7 +2717,7 @@ export const contentTranslationResultSchema = z.object({
   translatedDocument: versionedDocumentSchema.nullable(),
   message: z.string().max(1000),
   model: z.string(),
-  createdAt: z.string().datetime(),
+  createdAt: isoDateTimeStringSchema,
   quota: assistantQuotaSchema
 }).superRefine((result, context) => {
   if (result.status === "translated" && (!result.targetLanguage || !result.translatedTitle.trim() || !result.translatedBody.trim() || !result.translatedDocument)) {

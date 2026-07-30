@@ -7,8 +7,10 @@ import {
 } from "../db/migrate";
 import { getMaintenanceStatus } from "../services/maintenance";
 import {
+  attachmentStorageMode,
   databaseUrl,
   env,
+  hasAttachmentStorage,
   hasR2Config,
   hasRedisConfig,
   requireAuthForWrites,
@@ -145,6 +147,13 @@ export const getRuntimeReadiness = async (
       hasRedisConfig ? "configured" : "missing"
     ),
     requiredCheck(
+      "attachment_storage",
+      "Selected attachment storage backend",
+      hasAttachmentStorage,
+      strict,
+      hasAttachmentStorage ? `${attachmentStorageMode} configured` : `${attachmentStorageMode} missing`
+    ),
+    requiredCheck(
       "r2",
       "Cloudflare R2 attachments",
       hasR2Config,
@@ -160,7 +169,7 @@ export const getRuntimeReadiness = async (
     ),
     {
       key: "storage_deletion_worker",
-      label: "Durable R2 deletion worker",
+      label: "Durable attachment deletion worker",
       configured: maintenance.active,
       required: strict,
       ok: !strict || maintenance.active,
@@ -186,7 +195,7 @@ export const getRuntimeReadiness = async (
 
   if ((maintenance.lastStorageDeletionResult?.failed ?? 0) > 0) {
     warnings.push(
-      `${maintenance.lastStorageDeletionResult?.failed} R2 deletion job(s) are awaiting a provider retry.`
+      `${maintenance.lastStorageDeletionResult?.failed} attachment deletion job(s) are awaiting a storage retry.`
     );
   }
 

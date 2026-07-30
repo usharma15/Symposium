@@ -47,6 +47,8 @@ services:
         value: symposium-api-render
       - key: SYMPOSIUM_SEED_ON_BOOT
         value: "false"
+      - key: SYMPOSIUM_ATTACHMENT_STORAGE
+        value: r2
       - key: CLERK_SECRET_KEY
         sync: false
       - key: CLERK_JWT_AUDIENCE

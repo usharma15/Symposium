@@ -365,5 +365,11 @@ derived-child backfill, PostgreSQL 18 reconstruction, migration `0065`
 reconciliation, normalized manifest comparison, and live read-only R2/static
 coherence audit have run and passed. The audit used the existing Render
 application credential exclusively through `HeadObject`; its provider-side
-permission scope was not independently narrowed. Authority replacement has not
-started.
+permission scope was not independently narrowed.
+
+Gate B is now complete and recorded in
+`docs/refactor-evidence/pass-04/checkpoint-04.md`. The canonical API has a
+provider-free Postgres/filesystem development mode, strict live operation
+remains R2-only, and the duplicate Next/Postgres schema and mutation authority
+has been removed. The JSON preview remains supported. Pass 04 itself remains
+incomplete against its explicit source ceiling.

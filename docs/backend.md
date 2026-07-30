@@ -90,6 +90,7 @@ SYMPOSIUM_OWNER_CLERK_USER_ID=user_...
 SYMPOSIUM_OWNER_HANDLE=@udayan
 UPSTASH_REDIS_REST_URL=https://...
 UPSTASH_REDIS_REST_TOKEN=...
+SYMPOSIUM_ATTACHMENT_STORAGE=r2
 R2_ACCOUNT_ID=...
 R2_BUCKET=symposium
 R2_ACCESS_KEY_ID=...
@@ -98,6 +99,25 @@ R2_PUBLIC_BASE_URL=https://your-public-r2-domain.example
 OPENAI_API_KEY=
 SYMPOSIUM_AI_MODEL=gpt-5.4-mini
 ```
+
+For provider-free database-backed development, keep Postgres as the metadata
+authority and run the canonical API with an isolated database plus filesystem
+object storage:
+
+```bash
+SYMPOSIUM_ATTACHMENT_STORAGE=filesystem
+SYMPOSIUM_FILESYSTEM_STORAGE_ROOT=/absolute/path/to/.data/api-attachments
+SYMPOSIUM_FILESYSTEM_STORAGE_BASE_URL=http://127.0.0.1:4000
+SYMPOSIUM_FILESYSTEM_STORAGE_SIGNING_SECRET=replace-with-at-least-32-random-characters
+SYMPOSIUM_FILESYSTEM_STORAGE_BUCKET=symposium-local
+```
+
+The filesystem adapter stores only object bytes. Ownership, status, byte size,
+content type, audit history, mutation receipts, revisions, events, and deletion
+jobs remain canonical Postgres rows. Public reads re-check uploaded public
+ownership in Postgres; private reads use short-lived signed URLs issued only
+after the existing authorization checks. Strict live mode rejects this backend
+and requires R2.
 
 Frontend/Vercel:
 

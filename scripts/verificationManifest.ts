@@ -24,6 +24,7 @@ const stage = (script: string, category: VerificationCategory): VerificationStag
 
 export const verificationManifest = [
   stage("architecture:check", "architecture-design-security"),
+  stage("authority:check", "architecture-design-security"),
   stage("platform:check", "architecture-design-security"),
   stage("styles:check", "architecture-design-security"),
   stage("post-tone:check", "architecture-design-security"),
@@ -58,6 +59,7 @@ export const verificationManifest = [
   stage("document-editor:check", "content-storage"),
   stage("citation:check", "content-storage"),
   stage("quote:check", "content-storage"),
+  stage("storage-adapter:check", "content-storage"),
   stage("storage-deletion:check", "content-storage"),
   stage("mutation:check", "content-storage"),
   stage("messaging:check", "collaboration"),

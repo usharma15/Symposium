@@ -43,7 +43,7 @@ export const prepareAssistantVisionInput = async (
   }
 
   try {
-    const stored = await inspectStoredObject(attachment.objectKey, true);
+    const stored = await inspectStoredObject(attachment.objectKey, true, attachment.contentType);
     if (
       !stored.body ||
       stored.byteSize !== attachment.byteSize ||

@@ -1,6 +1,9 @@
 import { TRPCError } from "@trpc/server";
 import type { PoolClient } from "pg";
-import { env, hasR2Config } from "../config/env";
+import {
+  attachmentPublicBaseUrl,
+  hasAttachmentStorage
+} from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { deleteUploadedObject } from "./storage";
 
@@ -158,8 +161,8 @@ export const queueUnreferencedProfileStorageDeletion = async (
   handle: string,
   retainedAvatarUrl?: string
 ) => {
-  const retainedObjectKey = env.R2_PUBLIC_BASE_URL && retainedAvatarUrl?.startsWith(`${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/`)
-    ? retainedAvatarUrl.slice(env.R2_PUBLIC_BASE_URL.replace(/\/$/, "").length + 1)
+  const retainedObjectKey = attachmentPublicBaseUrl && retainedAvatarUrl?.startsWith(`${attachmentPublicBaseUrl.replace(/\/$/, "")}/`)
+    ? decodeURIComponent(retainedAvatarUrl.slice(attachmentPublicBaseUrl.replace(/\/$/, "").length + 1))
     : null;
   if (retainedObjectKey) {
     const retained = await client.query(
@@ -230,7 +233,7 @@ const storageDeletionError = (error: unknown) =>
   (error instanceof Error ? error.message : String(error)).slice(0, maxDeletionErrorLength);
 
 export const processStorageDeletionJobs = async (options: { attachmentIds?: string[]; limit?: number } = {}) => {
-  if (!hasDatabase() || !hasR2Config) return { claimed: 0, deleted: 0, failed: 0 };
+  if (!hasDatabase() || !hasAttachmentStorage) return { claimed: 0, deleted: 0, failed: 0 };
   const jobs = await claimStorageDeletionJobs(Math.min(Math.max(options.limit ?? 50, 1), 200), options.attachmentIds);
   if (!jobs.length) return { claimed: 0, deleted: 0, failed: 0 };
 

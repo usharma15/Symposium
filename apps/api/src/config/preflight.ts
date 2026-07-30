@@ -1,12 +1,16 @@
 import { cleanHandle } from "@/lib/symposiumCore";
 import {
+  attachmentStorageMode,
   databaseUrl,
   env,
+  hasAttachmentStorage,
+  hasFilesystemStorageConfig,
   hasR2Config,
   hasRedisConfig,
   requireAuthForWrites,
   webOrigins
 } from "./env";
+import path from "node:path";
 
 const localOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
 
@@ -43,9 +47,33 @@ export const deploymentEnvWarnings = () => {
 };
 
 export const deploymentEnvIssues = () => {
-  if (!env.SYMPOSIUM_STRICT_ENV) return [];
-
   const issues: string[] = [];
+  if (attachmentStorageMode === "filesystem") {
+    if (!hasFilesystemStorageConfig) {
+      issues.push("Filesystem attachment storage requires a root, local base URL, and signing secret.");
+    }
+    if (
+      env.SYMPOSIUM_FILESYSTEM_STORAGE_ROOT &&
+      !path.isAbsolute(env.SYMPOSIUM_FILESYSTEM_STORAGE_ROOT)
+    ) {
+      issues.push("SYMPOSIUM_FILESYSTEM_STORAGE_ROOT must be an absolute path.");
+    }
+    if (env.SYMPOSIUM_FILESYSTEM_STORAGE_BASE_URL) {
+      const baseUrl = new URL(env.SYMPOSIUM_FILESYSTEM_STORAGE_BASE_URL);
+      if (
+        baseUrl.protocol !== "http:" ||
+        !["localhost", "127.0.0.1", "[::1]"].includes(baseUrl.hostname)
+      ) {
+        issues.push("Filesystem attachment delivery must use a loopback HTTP base URL.");
+      }
+    }
+  }
+
+  if (!env.SYMPOSIUM_STRICT_ENV) return issues;
+
+  if (attachmentStorageMode !== "r2") {
+    issues.push("Strict live mode requires the R2 attachment storage backend.");
+  }
 
   if (!databaseUrl) {
     issues.push("DATABASE_URL, POSTGRES_URL, or POSTGRES_PRISMA_URL is required for live persistence.");
@@ -81,6 +109,10 @@ export const deploymentEnvIssues = () => {
 
   if (!hasR2Config) {
     issues.push("R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY are required for live attachments.");
+  }
+
+  if (!hasAttachmentStorage) {
+    issues.push("The selected persistent attachment storage backend is not configured.");
   }
 
   if (!env.R2_PUBLIC_BASE_URL) {

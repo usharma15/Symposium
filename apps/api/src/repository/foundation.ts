@@ -33,7 +33,7 @@ import {
   postTypeHasAuthoredArtifact,
   resolvePostDesignAssignment
 } from "@/lib/postDesign";
-import { env, webOrigins } from "../config/env";
+import { attachmentPublicBaseUrl, env, webOrigins } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { ensureDatabase } from "../db/migrate";
 import type { Actor } from "../services/auth";
@@ -1020,7 +1020,12 @@ const attachmentPublicUrl = (row: Pick<AttachmentRow, "objectKey" | "metadata">)
     const publicWebOrigin = webOrigins.find((origin) => origin.startsWith("https://")) ?? webOrigins[0];
     return publicWebOrigin ? `${publicWebOrigin.replace(/\/$/, "")}${staticPublicPath}` : undefined;
   }
-  return env.R2_PUBLIC_BASE_URL ? `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${row.objectKey}` : undefined;
+  return attachmentPublicBaseUrl
+    ? `${attachmentPublicBaseUrl.replace(/\/$/, "")}/${row.objectKey
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/")}`
+    : undefined;
 };
 
 export const rowToAttachment = (row: AttachmentRow): InquiryAttachmentContract => ({

@@ -1,4 +1,4 @@
-import { env } from "../config/env";
+import { attachmentPublicBaseUrl } from "../config/env";
 import type { PoolClient } from "pg";
 import { getPool, hasDatabase } from "../db/client";
 import {
@@ -210,8 +210,8 @@ export const runDatabaseMaintenance = async () => {
       "legacy_staging_cleanup"
     );
     let replacedProfileIds: string[] = [];
-    if (env.R2_PUBLIC_BASE_URL) {
-      const publicBaseUrl = env.R2_PUBLIC_BASE_URL.replace(/\/$/, "");
+    if (attachmentPublicBaseUrl) {
+      const publicBaseUrl = attachmentPublicBaseUrl.replace(/\/$/, "");
       const replacedProfiles = await client.query<AttachmentStorageRow>(
         `SELECT
            attachment.id::text AS "attachmentId",

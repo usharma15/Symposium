@@ -45,6 +45,11 @@ const envSchema = z.object({
   R2_ACCESS_KEY_ID: z.string().optional(),
   R2_SECRET_ACCESS_KEY: z.string().optional(),
   R2_PUBLIC_BASE_URL: safeHttpUrl.optional().or(z.literal("")),
+  SYMPOSIUM_ATTACHMENT_STORAGE: z.enum(["r2", "filesystem"]).default("r2"),
+  SYMPOSIUM_FILESYSTEM_STORAGE_ROOT: z.string().trim().min(1).optional(),
+  SYMPOSIUM_FILESYSTEM_STORAGE_BASE_URL: safeHttpUrl.optional().or(z.literal("")),
+  SYMPOSIUM_FILESYSTEM_STORAGE_SIGNING_SECRET: z.string().min(32).optional(),
+  SYMPOSIUM_FILESYSTEM_STORAGE_BUCKET: z.string().trim().min(1).max(120).default("symposium-local"),
   APP_VERSION: z.string().max(120).optional(),
   RENDER_GIT_COMMIT: z.string().max(120).optional(),
   VERCEL_GIT_COMMIT_SHA: z.string().max(120).optional(),
@@ -70,7 +75,11 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 
-export const databaseUrl = env.POSTGRES_PRISMA_URL ?? env.POSTGRES_URL ?? env.DATABASE_URL;
+export const databaseUrl = [
+  env.POSTGRES_PRISMA_URL,
+  env.POSTGRES_URL,
+  env.DATABASE_URL
+].find((value) => Boolean(value?.trim()))?.trim();
 export const databaseApplicationName =
   env.DATABASE_APPLICATION_NAME === "symposium-api" && env.RENDER_GIT_COMMIT
     ? "symposium-api-render"
@@ -90,3 +99,26 @@ export const hasR2Config = Boolean(
     env.R2_ACCESS_KEY_ID &&
     env.R2_SECRET_ACCESS_KEY
 );
+
+export const hasFilesystemStorageConfig = Boolean(
+  env.SYMPOSIUM_FILESYSTEM_STORAGE_ROOT &&
+    env.SYMPOSIUM_FILESYSTEM_STORAGE_BASE_URL &&
+    env.SYMPOSIUM_FILESYSTEM_STORAGE_SIGNING_SECRET
+);
+
+export const attachmentStorageMode = env.SYMPOSIUM_ATTACHMENT_STORAGE;
+
+export const hasAttachmentStorage =
+  attachmentStorageMode === "r2" ? hasR2Config : hasFilesystemStorageConfig;
+
+export const attachmentStorageBucket =
+  attachmentStorageMode === "r2"
+    ? env.R2_BUCKET
+    : env.SYMPOSIUM_FILESYSTEM_STORAGE_BUCKET;
+
+export const attachmentPublicBaseUrl =
+  attachmentStorageMode === "r2"
+    ? env.R2_PUBLIC_BASE_URL || undefined
+    : env.SYMPOSIUM_FILESYSTEM_STORAGE_BASE_URL
+      ? `${env.SYMPOSIUM_FILESYSTEM_STORAGE_BASE_URL.replace(/\/$/, "")}/v1/storage/public`
+      : undefined;

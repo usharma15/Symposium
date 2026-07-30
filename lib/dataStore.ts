@@ -1,7 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomInt } from "node:crypto";
 import path from "node:path";
-import { Pool } from "pg";
 import type {
   CanonicalActionActivityContract,
   ContentQuoteContract,
@@ -149,13 +148,19 @@ type ViewTargetType = "post" | "comment";
 const localDataPath = process.env.VERCEL
   ? path.join("/tmp", "symposium.json")
   : path.join(process.cwd(), ".data", "symposium.json");
-const databaseUrl = process.env.POSTGRES_PRISMA_URL ?? process.env.POSTGRES_URL ?? process.env.DATABASE_URL;
-const usePostgres = Boolean(databaseUrl);
-
-let pool: Pool | null = null;
-let schemaReady: Promise<void> | null = null;
-let seedReady: Promise<void> | null = null;
+const databaseBackedModeConfigured = [
+  process.env.POSTGRES_PRISMA_URL,
+  process.env.POSTGRES_URL,
+  process.env.DATABASE_URL
+].some((value) => Boolean(value?.trim()));
 let localMutationQueue: Promise<void> = Promise.resolve();
+
+const assertLocalPreviewMode = () => {
+  if (!databaseBackedModeConfigured) return;
+  throw new Error(
+    "Direct Postgres access from the Next compatibility store has been retired. Configure SYMPOSIUM_API_URL and run the canonical API for database-backed development."
+  );
+};
 
 const withLocalMutation = <T>(operation: () => Promise<T>) => {
   const result = localMutationQueue.then(operation, operation);
@@ -205,66 +210,6 @@ const claimLocalContentView = (
 
   data.viewDedupe[key] = new Date(now).toISOString();
   return true;
-};
-
-const recordPostgresContentView = async (
-  targetType: ViewTargetType,
-  targetId: string,
-  actorHandle: string,
-  trigger?: string,
-  surface?: string
-) => {
-  const bucketStart = new Date(Math.floor(Date.now() / viewDedupeWindowMs) * viewDedupeWindowMs).toISOString();
-  const result = await getPool().query<{ id: string }>(
-    `INSERT INTO content_views (target_type, target_id, actor_handle, bucket_start, trigger, surface)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (target_type, target_id, actor_handle, bucket_start) DO NOTHING
-     RETURNING id`,
-    [targetType, targetId, normalizeViewActorHandle(actorHandle), bucketStart, trigger ?? null, surface ?? null]
-  );
-  return (result.rowCount ?? 0) > 0;
-};
-
-const persistPostgresActivity = async (activity: CanonicalActionActivityContract) => {
-  const result = await getPool().query<ActionLedgerRow>(
-    `INSERT INTO action_ledger (
-       subject_type, subject_id, post_id, actor_handle, action, active, count, revision, occurred_at
-     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
-     ON CONFLICT (subject_type, subject_id, actor_handle, action) DO UPDATE SET
-       post_id = EXCLUDED.post_id,
-       active = EXCLUDED.active,
-       count = EXCLUDED.count,
-       revision = action_ledger.revision +
-         CASE WHEN action_ledger.active IS DISTINCT FROM EXCLUDED.active THEN 1 ELSE 0 END,
-       occurred_at = CASE
-         WHEN action_ledger.active IS DISTINCT FROM EXCLUDED.active THEN EXCLUDED.occurred_at
-         ELSE action_ledger.occurred_at
-       END
-     RETURNING subject_type, subject_id, post_id, actor_handle, action, active, count, revision, occurred_at`,
-    [
-      activity.subjectType,
-      activity.subjectId,
-      activity.postId,
-      activity.actorHandle,
-      activity.action,
-      activity.active,
-      activity.count,
-      activity.occurredAt
-    ]
-  );
-  const row = result.rows[0];
-  return {
-    subjectType: row.subject_type,
-    subjectId: row.subject_id,
-    postId: row.post_id,
-    actorHandle: row.actor_handle,
-    action: row.action,
-    active: row.active,
-    count: row.count,
-    revision: Number(row.revision),
-    occurredAt: new Date(row.occurred_at).toISOString()
-  } satisfies CanonicalActionActivityContract;
 };
 
 const normalizeProfile = (input: CreateProfileInput): ResearchProfile => ({
@@ -502,430 +447,8 @@ const normalizeComments = (
     };
   });
 
-const getPool = () => {
-  if (!databaseUrl) throw new Error("No database URL configured.");
-  if (!pool) {
-    pool = new Pool({
-      connectionString: databaseUrl,
-      ssl: databaseUrl.includes("localhost") ? undefined : { rejectUnauthorized: false }
-    });
-  }
-  return pool;
-};
-
-const ensureSchema = async () => {
-  if (!usePostgres) return;
-  if (!schemaReady) {
-    schemaReady = (async () => {
-      const db = getPool();
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS profiles (
-          handle TEXT PRIMARY KEY,
-          email TEXT,
-          name TEXT NOT NULL,
-          role TEXT NOT NULL,
-          location TEXT NOT NULL,
-          bio TEXT NOT NULL,
-          fields JSONB NOT NULL,
-          created_at TIMESTAMPTZ DEFAULT now(),
-          updated_at TIMESTAMPTZ DEFAULT now()
-        );
-
-        CREATE TABLE IF NOT EXISTS items (
-          id TEXT PRIMARY KEY,
-          kind TEXT NOT NULL,
-          post_type TEXT,
-          room TEXT NOT NULL,
-          community_id TEXT,
-          title TEXT NOT NULL,
-          author_handle TEXT NOT NULL,
-          author_name TEXT NOT NULL,
-          affiliation TEXT NOT NULL,
-          date_label TEXT NOT NULL,
-          status TEXT NOT NULL,
-          metrics JSONB NOT NULL,
-          gathering_reason TEXT NOT NULL,
-          excerpt TEXT NOT NULL,
-          body TEXT NOT NULL,
-          content_document JSONB,
-          tags JSONB NOT NULL,
-          signals JSONB NOT NULL,
-          claims JSONB NOT NULL,
-          objections JSONB NOT NULL,
-          evidence JSONB NOT NULL,
-          tests JSONB NOT NULL,
-          forks JSONB NOT NULL,
-          attachments JSONB DEFAULT '[]'::jsonb,
-          saved BOOLEAN DEFAULT false,
-          saved_by JSONB DEFAULT '[]'::jsonb,
-          signaled_by JSONB DEFAULT '[]'::jsonb,
-          forked_by JSONB DEFAULT '[]'::jsonb,
-          quote JSONB,
-          patronage JSONB,
-          opportunity JSONB,
-          design_assignment JSONB,
-          edited_at TIMESTAMPTZ,
-          deleted_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ DEFAULT now()
-        );
-
-        CREATE TABLE IF NOT EXISTS comments (
-          id TEXT PRIMARY KEY,
-          item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-          parent_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
-          author_handle TEXT NOT NULL,
-          author_name TEXT NOT NULL,
-          stance TEXT NOT NULL,
-          body TEXT NOT NULL,
-          content_document JSONB,
-          metrics JSONB NOT NULL DEFAULT '{"signal":"0","forks":"0","saves":"0","reads":"0"}'::jsonb,
-          saved_by JSONB NOT NULL DEFAULT '[]'::jsonb,
-          signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb,
-          forked_by JSONB NOT NULL DEFAULT '[]'::jsonb,
-          quote JSONB,
-          edited_at TIMESTAMPTZ,
-          deleted_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ DEFAULT now(),
-          updated_at TIMESTAMPTZ DEFAULT now()
-        );
-
-        CREATE TABLE IF NOT EXISTS content_views (
-          id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-          target_type TEXT NOT NULL,
-          target_id TEXT NOT NULL,
-          actor_handle TEXT NOT NULL,
-          bucket_start TIMESTAMPTZ NOT NULL,
-          trigger TEXT,
-          surface TEXT,
-          created_at TIMESTAMPTZ DEFAULT now(),
-          updated_at TIMESTAMPTZ DEFAULT now(),
-          UNIQUE (target_type, target_id, actor_handle, bucket_start)
-        );
-
-        CREATE TABLE IF NOT EXISTS action_ledger (
-          subject_type TEXT NOT NULL,
-          subject_id TEXT NOT NULL,
-          post_id TEXT NOT NULL,
-          actor_handle TEXT NOT NULL,
-          action TEXT NOT NULL,
-          active BOOLEAN NOT NULL DEFAULT true,
-          count INTEGER NOT NULL DEFAULT 1,
-          revision INTEGER NOT NULL DEFAULT 1,
-          occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          PRIMARY KEY (subject_type, subject_id, actor_handle, action),
-          CHECK (subject_type IN ('post', 'comment')),
-          CHECK (action IN ('save', 'signal', 'fork')),
-          CHECK (count >= 0),
-          CHECK (revision > 0)
-        );
-      `);
-
-      await db.query(`
-        ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email TEXT;
-        ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
-        ALTER TABLE profiles ADD COLUMN IF NOT EXISTS likes_public BOOLEAN DEFAULT true;
-        ALTER TABLE profiles ADD COLUMN IF NOT EXISTS reshares_public BOOLEAN DEFAULT true;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS saved_by JSONB DEFAULT '[]'::jsonb;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS signaled_by JSONB DEFAULT '[]'::jsonb;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS forked_by JSONB DEFAULT '[]'::jsonb;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS content_document JSONB;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS quote JSONB;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS patronage JSONB;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS opportunity JSONB;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS design_assignment JSONB;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS post_type TEXT;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS community_id TEXT;
-        UPDATE items SET post_type = CASE
-          WHEN room = 'office' THEN NULL
-          WHEN patronage IS NOT NULL OR room = 'funding' THEN 'proposal'
-          WHEN opportunity IS NOT NULL OR room = 'opportunities' THEN 'opportunity'
-          WHEN kind = 'paper' THEN 'paper'
-          WHEN kind IN ('thought', 'note') THEN 'thought'
-          ELSE NULL
-        END WHERE post_type IS NULL OR room = 'office';
-        ALTER TABLE items DROP CONSTRAINT IF EXISTS items_post_type_check;
-        ALTER TABLE items ADD CONSTRAINT items_post_type_check
-          CHECK (post_type IN ('paper', 'thought', 'proposal', 'opportunity'));
-        ALTER TABLE items DROP CONSTRAINT IF EXISTS items_semantic_destination_check;
-        ALTER TABLE items ADD CONSTRAINT items_semantic_destination_check CHECK (
-          post_type IS NULL
-          OR (post_type = 'proposal' AND room = 'funding')
-          OR (post_type = 'opportunity' AND room = 'opportunities')
-          OR (post_type IN ('paper', 'thought') AND room NOT IN ('office', 'funding', 'opportunities'))
-        );
-        CREATE OR REPLACE FUNCTION symposium_items_design_fnv1a_32(value TEXT)
-        RETURNS BIGINT
-        LANGUAGE plpgsql
-        IMMUTABLE
-        STRICT
-        PARALLEL SAFE
-        AS $$
-        DECLARE
-          bytes BYTEA := convert_to(value, 'UTF8');
-          byte_index INTEGER;
-          accumulator BIGINT := 2166136261;
-        BEGIN
-          IF length(bytes) = 0 THEN
-            RETURN accumulator;
-          END IF;
-          FOR byte_index IN 0..length(bytes) - 1 LOOP
-            accumulator := (
-              (accumulator # get_byte(bytes, byte_index)::BIGINT) * 16777619
-            ) & 4294967295;
-          END LOOP;
-          RETURN accumulator;
-        END;
-        $$;
-        UPDATE items
-        SET design_assignment = jsonb_build_object(
-          'schemaVersion', 1,
-          'museId',
-            CASE post_type
-              WHEN 'paper' THEN
-                CASE (symposium_items_design_fnv1a_32(id || ':muse:v1') % 2)
-                  WHEN 0 THEN 'calliope'
-                  ELSE 'urania'
-                END
-              WHEN 'thought' THEN
-                CASE (symposium_items_design_fnv1a_32(id || ':muse:v1') % 2)
-                  WHEN 0 THEN 'erato'
-                  ELSE 'thalia'
-                END
-            END,
-          'bottomCaricatureId',
-            CASE (symposium_items_design_fnv1a_32(id || ':bottom:v1') % 7)
-              WHEN 0 THEN 'resting-warrior'
-              WHEN 1 THEN 'flute-girl'
-              WHEN 2 THEN 'discus-thrower'
-              WHEN 3 THEN 'harp-girl'
-              WHEN 4 THEN 'wanderer'
-              WHEN 5 THEN 'lovers'
-              ELSE 'chariot'
-            END
-        )
-        WHERE post_type IN ('paper', 'thought')
-          AND design_assignment IS NULL;
-        DROP FUNCTION symposium_items_design_fnv1a_32(TEXT);
-        UPDATE items
-        SET design_assignment = NULL
-        WHERE post_type IS NULL OR post_type NOT IN ('paper', 'thought');
-        ALTER TABLE items DROP CONSTRAINT IF EXISTS items_design_assignment_check;
-        ALTER TABLE items ADD CONSTRAINT items_design_assignment_check CHECK (
-          (
-            post_type = 'paper'
-            AND design_assignment IS NOT NULL
-            AND jsonb_typeof(design_assignment) = 'object'
-            AND design_assignment ?& ARRAY['schemaVersion', 'museId', 'bottomCaricatureId']
-            AND (design_assignment - 'schemaVersion' - 'museId' - 'bottomCaricatureId') = '{}'::jsonb
-            AND design_assignment->'schemaVersion' = '1'::jsonb
-            AND design_assignment->>'museId' IN ('calliope', 'urania')
-            AND design_assignment->>'bottomCaricatureId' IN (
-              'resting-warrior', 'flute-girl', 'discus-thrower', 'harp-girl',
-              'wanderer', 'lovers', 'chariot'
-            )
-          )
-          OR (
-            post_type = 'thought'
-            AND design_assignment IS NOT NULL
-            AND jsonb_typeof(design_assignment) = 'object'
-            AND design_assignment ?& ARRAY['schemaVersion', 'museId', 'bottomCaricatureId']
-            AND (design_assignment - 'schemaVersion' - 'museId' - 'bottomCaricatureId') = '{}'::jsonb
-            AND design_assignment->'schemaVersion' = '1'::jsonb
-            AND design_assignment->>'museId' IN ('erato', 'thalia')
-            AND design_assignment->>'bottomCaricatureId' IN (
-              'resting-warrior', 'flute-girl', 'discus-thrower', 'harp-girl',
-              'wanderer', 'lovers', 'chariot'
-            )
-          )
-          OR (
-            (post_type IS NULL OR post_type NOT IN ('paper', 'thought'))
-            AND design_assignment IS NULL
-          )
-        );
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
-        ALTER TABLE items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
-        ALTER TABLE comments ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{"signal":"0","forks":"0","saves":"0","reads":"0"}'::jsonb;
-        ALTER TABLE comments ADD COLUMN IF NOT EXISTS saved_by JSONB NOT NULL DEFAULT '[]'::jsonb;
-        ALTER TABLE comments ADD COLUMN IF NOT EXISTS signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb;
-        ALTER TABLE comments ADD COLUMN IF NOT EXISTS forked_by JSONB NOT NULL DEFAULT '[]'::jsonb;
-        ALTER TABLE comments ADD COLUMN IF NOT EXISTS quote JSONB;
-        ALTER TABLE comments ADD COLUMN IF NOT EXISTS content_document JSONB;
-        ALTER TABLE comments ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
-        ALTER TABLE comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
-        ALTER TABLE comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
-        CREATE INDEX IF NOT EXISTS content_views_target_idx ON content_views (target_type, target_id);
-        CREATE INDEX IF NOT EXISTS content_views_actor_idx ON content_views (actor_handle);
-        CREATE INDEX IF NOT EXISTS action_ledger_actor_activity_idx
-          ON action_ledger (actor_handle, occurred_at DESC, subject_type, subject_id, action);
-        CREATE INDEX IF NOT EXISTS items_quote_source_post_idx
-          ON items ((quote->>'sourcePostId')) WHERE quote IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS comments_quote_source_post_idx
-          ON comments ((quote->>'sourcePostId')) WHERE quote IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS items_quote_comment_source_idx
-          ON items ((quote->>'sourceId')) WHERE quote->>'sourceType' = 'comment';
-        CREATE INDEX IF NOT EXISTS items_post_type_created_at_idx
-          ON items (post_type, created_at DESC);
-        CREATE INDEX IF NOT EXISTS comments_quote_comment_source_idx
-          ON comments ((quote->>'sourceId')) WHERE quote->>'sourceType' = 'comment';
-      `);
-
-      const { rows } = await db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM items");
-      if (Number(rows[0]?.count ?? 0) === 0) {
-        await syncSeedPostgres();
-      }
-
-      await db.query(`
-        INSERT INTO action_ledger (
-          subject_type, subject_id, post_id, actor_handle, action, active, count, revision, occurred_at
-        )
-        SELECT DISTINCT
-          'post', source.id, source.id, membership.actor_handle, membership.action, true, 1, 1, source.created_at
-        FROM items source
-        CROSS JOIN LATERAL (
-          SELECT jsonb_array_elements_text(COALESCE(source.saved_by, '[]'::jsonb)) AS actor_handle, 'save'::text AS action
-          UNION ALL
-          SELECT jsonb_array_elements_text(COALESCE(source.signaled_by, '[]'::jsonb)), 'signal'::text
-          UNION ALL
-          SELECT jsonb_array_elements_text(COALESCE(source.forked_by, '[]'::jsonb)), 'fork'::text
-        ) membership
-        WHERE source.deleted_at IS NULL
-        ON CONFLICT (subject_type, subject_id, actor_handle, action) DO NOTHING;
-
-        INSERT INTO action_ledger (
-          subject_type, subject_id, post_id, actor_handle, action, active, count, revision, occurred_at
-        )
-        SELECT DISTINCT
-          'comment', source.id, source.item_id, membership.actor_handle, membership.action, true, 1, 1, source.created_at
-        FROM comments source
-        CROSS JOIN LATERAL (
-          SELECT jsonb_array_elements_text(COALESCE(source.saved_by, '[]'::jsonb)) AS actor_handle, 'save'::text AS action
-          UNION ALL
-          SELECT jsonb_array_elements_text(COALESCE(source.signaled_by, '[]'::jsonb)), 'signal'::text
-          UNION ALL
-          SELECT jsonb_array_elements_text(COALESCE(source.forked_by, '[]'::jsonb)), 'fork'::text
-        ) membership
-        WHERE source.deleted_at IS NULL
-        ON CONFLICT (subject_type, subject_id, actor_handle, action) DO NOTHING;
-      `);
-    })();
-  }
-  await schemaReady;
-};
-
-const seedPostgres = async () => {
-  const db = getPool();
-  const seed = seedData();
-
-  for (const person of Object.values(seed.profiles)) {
-    await db.query(
-      `INSERT INTO profiles (handle, name, role, location, bio, fields)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (handle) DO NOTHING`,
-      [person.handle, person.name, person.role, person.location, person.bio, JSON.stringify(person.fields)]
-    );
-  }
-
-  for (const item of seed.items) {
-    const itemPostType = postTypeForItem(item);
-    const designAssignment = postTypeHasAuthoredArtifact(itemPostType)
-      ? deterministicPostDesignAssignment(itemPostType, item.id)
-      : null;
-    await db.query(
-      `INSERT INTO items (
-        id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, status,
-        metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity,
-        design_assignment, created_at
-      )
-      VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
-      )
-      ON CONFLICT (id) DO NOTHING`,
-      [
-        item.id,
-        item.kind,
-        itemPostType,
-        item.room,
-        item.communityId ?? null,
-        item.title,
-        item.authorHandle ?? handleFromName(item.author),
-        item.author,
-        item.affiliation,
-        item.date,
-        item.status,
-        JSON.stringify(item.metrics),
-        item.gatheringReason,
-        item.excerpt,
-        item.body,
-        JSON.stringify(item.tags),
-        JSON.stringify(item.signals),
-        JSON.stringify(item.claims),
-        JSON.stringify(item.objections),
-        JSON.stringify(item.evidence),
-        JSON.stringify(item.tests),
-        JSON.stringify(item.forks),
-        Boolean(item.saved),
-        JSON.stringify(item.savedBy ?? []),
-        JSON.stringify(item.signaledBy ?? []),
-        JSON.stringify(item.forkedBy ?? []),
-        item.quote ? JSON.stringify(item.quote) : null,
-        item.patronage ? JSON.stringify(item.patronage) : null,
-        item.opportunity ? JSON.stringify(item.opportunity) : null,
-        designAssignment ? JSON.stringify(designAssignment) : null,
-        item.createdAt ?? null
-      ]
-    );
-    if (item.createdAt) {
-      await db.query(
-        "UPDATE items SET created_at = $2 WHERE id = $1 AND author_handle = $3",
-        [item.id, item.createdAt, item.authorHandle ?? handleFromName(item.author)]
-      );
-    }
-    await insertCommentTree(item.id, item.comments);
-  }
-};
-
-const syncSeedPostgres = async () => {
-  if (!usePostgres) return;
-  if (!seedReady) seedReady = seedPostgres();
-  await seedReady;
-};
-
-const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => {
-  const db = getPool();
-
-  for (const comment of comments) {
-    await db.query(
-      `INSERT INTO comments (
-        id, item_id, parent_id, author_handle, author_name, stance, body,
-        metrics, saved_by, signaled_by, forked_by, quote, created_at
-      )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       ON CONFLICT (id) DO NOTHING`,
-      [
-        comment.id ?? newId("comment"),
-        itemId,
-        comment.parentId ?? null,
-        comment.authorHandle ?? handleFromName(comment.author),
-        comment.author,
-        comment.stance,
-        comment.body,
-        JSON.stringify({ ...commentMetricsFallback, ...(comment.metrics ?? {}) }),
-        JSON.stringify(comment.savedBy ?? []),
-        JSON.stringify(comment.signaledBy ?? []),
-        JSON.stringify(comment.forkedBy ?? []),
-        comment.quote ? JSON.stringify(comment.quote) : null,
-        stableSeedCreatedAt(comment.createdAt, legacyLiveSeedCreatedAt(comment.id, 1)) ?? new Date().toISOString()
-      ]
-    );
-    await insertCommentTree(itemId, comment.replies ?? []);
-  }
-};
-
 const readLocal = async (): Promise<AppData> => {
+  assertLocalPreviewMode();
   try {
     const raw = await readFile(localDataPath, "utf8");
     const parsed = JSON.parse(raw) as AppData;
@@ -951,271 +474,10 @@ const readLocal = async (): Promise<AppData> => {
 
 const writeLocal = (data: AppData) => writeJsonFileAtomically(localDataPath, data);
 
-type CommentRow = {
-  id: string;
-  item_id: string;
-  parent_id: string | null;
-  author_handle: string;
-  author_name: string;
-  stance: string;
-  body: string;
-  content_document: VersionedDocumentContract | null;
-  metrics: Pick<InquiryItem["metrics"], "signal" | "forks" | "saves" | "reads"> | null;
-  saved_by: string[] | null;
-  signaled_by: string[] | null;
-  forked_by: string[] | null;
-  quote: ContentQuoteContract | null;
-  edited_at: string | null;
-  deleted_at: string | null;
-  created_at: string | null;
-};
+export const getSnapshot = async (): Promise<AppData> => withLocalMutation(readLocal);
 
-type ActionLedgerRow = {
-  subject_type: CanonicalActionActivityContract["subjectType"];
-  subject_id: string;
-  post_id: string;
-  actor_handle: string;
-  action: ToggleActionContract;
-  active: boolean;
-  count: number;
-  revision: number;
-  occurred_at: string;
-};
-
-const commentTreesFromRows = (rows: CommentRow[]) => {
-  const byItemAndParent = new Map<string, Map<string, CommentRow[]>>();
-
-  for (const row of rows) {
-    const parentKey = row.parent_id ?? "root";
-    const byParent = byItemAndParent.get(row.item_id) ?? new Map<string, CommentRow[]>();
-    byParent.set(parentKey, [...(byParent.get(parentKey) ?? []), row]);
-    byItemAndParent.set(row.item_id, byParent);
-  }
-
-  const buildTree = (byParent: Map<string, CommentRow[]>, parentId: string | null = null): InquiryComment[] =>
-    (byParent.get(parentId ?? "root") ?? []).map((row) => ({
-      id: row.id,
-      parentId: row.parent_id,
-      author: row.author_name,
-      authorHandle: row.author_handle,
-      stance: row.stance,
-      body: row.body,
-      document: row.content_document ?? undefined,
-      metrics: { ...commentMetricsFallback, ...(row.metrics ?? {}) },
-      savedBy: row.saved_by ?? [],
-      signaledBy: row.signaled_by ?? [],
-      forkedBy: row.forked_by ?? [],
-      quote: row.quote ?? undefined,
-      editedAt: row.edited_at ?? undefined,
-      deletedAt: row.deleted_at ?? undefined,
-      createdAt: row.created_at ?? undefined,
-      replies: buildTree(byParent, row.id)
-    }));
-
-  return new Map(
-    [...byItemAndParent.entries()].map(([itemId, byParent]) => [itemId, buildTree(byParent)])
-  );
-};
-
-const loadPostgres = async (): Promise<AppData> => {
-  await ensureSchema();
-  await syncSeedPostgres();
-  const db = getPool();
-  const [profileResult, itemResult, commentResult, actionResult] = await Promise.all([
-    db.query<{
-      handle: string;
-      email: string | null;
-      avatar_url: string | null;
-      likes_public: boolean;
-      reshares_public: boolean;
-      name: string;
-      role: string;
-      location: string;
-      bio: string;
-      fields: string[];
-    }>(
-      `SELECT
-        handle,
-        email,
-        avatar_url,
-        likes_public,
-        reshares_public,
-        name,
-        role,
-        location,
-        bio,
-        fields
-       FROM profiles
-       ORDER BY created_at ASC`
-    ),
-    db.query<{
-      id: string;
-      kind: ContentKind;
-      post_type: PostTypeContract | null;
-      room: Exclude<RoomId, "hall">;
-      community_id: string | null;
-      title: string;
-      author_handle: string;
-      author_name: string;
-      affiliation: string;
-      date_label: string;
-      created_at: string;
-      edited_at: string | null;
-      deleted_at: string | null;
-      status: string;
-      metrics: InquiryItem["metrics"];
-      gathering_reason: string;
-      excerpt: string;
-      body: string;
-      content_document: VersionedDocumentContract | null;
-      tags: string[];
-      signals: InquiryItem["signals"];
-      claims: string[];
-      objections: string[];
-      evidence: string[];
-      tests: string[];
-      forks: string[];
-      attachments: InquiryAttachment[] | null;
-      saved: boolean;
-      saved_by: string[];
-      signaled_by: string[];
-      forked_by: string[];
-      quote: ContentQuoteContract | null;
-      patronage: InquiryItem["patronage"] | null;
-      opportunity: InquiryItem["opportunity"] | null;
-      design_assignment: InquiryItem["designAssignment"] | null;
-    }>("SELECT * FROM items ORDER BY created_at DESC"),
-    db.query<CommentRow>("SELECT * FROM comments ORDER BY created_at ASC"),
-    db.query<ActionLedgerRow>(
-      `SELECT subject_type, subject_id, post_id, actor_handle, action, active, count, revision, occurred_at
-       FROM action_ledger
-       ORDER BY occurred_at DESC, subject_type DESC, subject_id DESC, action DESC`
-    )
-  ]);
-  const commentsByItem = commentTreesFromRows(commentResult.rows);
-
-  const profiles = Object.fromEntries(
-    profileResult.rows.map((person) => [
-      person.handle,
-      {
-        name: person.name,
-        handle: person.handle,
-        email: person.email ?? undefined,
-        avatarUrl: person.avatar_url ?? undefined,
-        likesPublic: person.likes_public ?? true,
-        resharesPublic: person.reshares_public ?? true,
-        role: person.role,
-        location: person.location,
-        bio: person.bio,
-        fields: person.fields
-      }
-    ])
-  );
-  const items = itemResult.rows.map((item) => ({
-    id: item.id,
-    kind: item.kind,
-    postType: item.post_type ?? undefined,
-    designAssignment: resolvePostDesignAssignment({
-      postType: item.post_type,
-      assignment: item.design_assignment,
-      identity: item.id
-    }),
-    room: item.room,
-    communityId: item.community_id ?? undefined,
-    title: item.title,
-    author: item.author_name,
-    authorHandle: item.author_handle || undefined,
-    affiliation: item.affiliation,
-    date: item.date_label,
-    createdAt: item.created_at ? new Date(item.created_at).toISOString() : undefined,
-    editedAt: item.edited_at ? new Date(item.edited_at).toISOString() : undefined,
-    deletedAt: item.deleted_at ? new Date(item.deleted_at).toISOString() : undefined,
-    status: item.status,
-    metrics: item.metrics,
-    gatheringReason: item.gathering_reason,
-    excerpt: item.excerpt,
-    body: item.body,
-    document: item.content_document ?? undefined,
-    tags: item.tags,
-    signals: item.signals,
-    claims: item.claims,
-    objections: item.objections,
-    evidence: item.evidence,
-    tests: item.tests,
-    forks: item.forks,
-    attachments: item.attachments ?? [],
-    quote: item.quote ?? undefined,
-    patronage: item.patronage ?? undefined,
-    opportunity: item.opportunity ?? undefined,
-    comments: commentsByItem.get(item.id) ?? [],
-    saved: item.saved,
-    savedBy: item.saved_by?.length ? item.saved_by : item.saved ? [defaultProfile.handle] : [],
-    signaledBy: item.signaled_by ?? [],
-    forkedBy: item.forked_by ?? []
-  }));
-  const ledger = mergeCanonicalActivities(
-    buildLegacyActionLedger(items),
-    actionResult.rows.map((row) => ({
-      subjectType: row.subject_type,
-      subjectId: row.subject_id,
-      postId: row.post_id,
-      actorHandle: row.actor_handle,
-      action: row.action,
-      active: row.active,
-      count: row.count,
-      revision: Number(row.revision),
-      occurredAt: new Date(row.occurred_at).toISOString()
-    }))
-  );
-
-  return {
-    viewDedupe: {},
-    profiles,
-    items: projectCanonicalActionLedger(items, ledger),
-    actionLedger: activityRecord(ledger)
-  };
-};
-
-export const getSnapshot = async () => (
-  usePostgres ? loadPostgres() : withLocalMutation(readLocal)
-);
-
-export const upsertProfile = async (input: CreateProfileInput) => {
+export const upsertProfile = async (input: CreateProfileInput): Promise<ResearchProfile> => {
   const person = normalizeProfile(input);
-
-  if (usePostgres) {
-    await ensureSchema();
-    await getPool().query(
-      `INSERT INTO profiles (handle, email, avatar_url, likes_public, reshares_public, name, role, location, bio, fields)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       ON CONFLICT (handle) DO UPDATE SET
-         email = EXCLUDED.email,
-         avatar_url = EXCLUDED.avatar_url,
-         likes_public = EXCLUDED.likes_public,
-         reshares_public = EXCLUDED.reshares_public,
-         name = EXCLUDED.name,
-         role = EXCLUDED.role,
-         location = EXCLUDED.location,
-         bio = EXCLUDED.bio,
-         fields = EXCLUDED.fields,
-         updated_at = now()`,
-      [
-        person.handle,
-        person.email ?? null,
-        person.avatarUrl ?? null,
-        person.likesPublic ?? true,
-        person.resharesPublic ?? true,
-        person.name,
-        person.role,
-        person.location,
-        person.bio,
-        JSON.stringify(person.fields)
-      ]
-    );
-    await getPool().query("UPDATE items SET author_name = $2 WHERE author_handle = $1", [person.handle, person.name]);
-    await getPool().query("UPDATE comments SET author_name = $2 WHERE author_handle = $1", [person.handle, person.name]);
-    return person;
-  }
 
   return withLocalMutation(async () => {
     const data = await readLocal();
@@ -1253,7 +515,10 @@ export const upsertProfile = async (input: CreateProfileInput) => {
   });
 };
 
-export const createPost = async (input: CreatePostInput, authorHandle: string) => {
+export const createPost = async (
+  input: CreatePostInput,
+  authorHandle: string
+): Promise<InquiryItem> => {
   const data = await getSnapshot();
   const author = data.profiles[authorHandle] ?? defaultProfile;
   const isPaper = input.kind === "paper";
@@ -1310,75 +575,6 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     forkedBy: []
   };
 
-  if (usePostgres) {
-    await ensureSchema();
-    await getPool().query(
-      `INSERT INTO items (
-        id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, created_at, status,
-        metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, attachments, saved, saved_by, signaled_by, forked_by, quote, patronage,
-        opportunity, design_assignment
-      )
-      VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
-      )`,
-      [
-        item.id,
-        item.kind,
-        item.postType,
-        item.room,
-        item.communityId ?? null,
-        item.title,
-        item.authorHandle,
-        item.author,
-        item.affiliation,
-        item.date,
-        item.createdAt,
-        item.status,
-        JSON.stringify(item.metrics),
-        item.gatheringReason,
-        item.excerpt,
-        item.body,
-        JSON.stringify(item.tags),
-        JSON.stringify(item.signals),
-        JSON.stringify(item.claims),
-        JSON.stringify(item.objections),
-        JSON.stringify(item.evidence),
-        JSON.stringify(item.tests),
-        JSON.stringify(item.forks),
-        JSON.stringify(item.attachments ?? []),
-        item.saved,
-        JSON.stringify(item.savedBy),
-        JSON.stringify(item.signaledBy),
-        JSON.stringify(item.forkedBy),
-        item.quote ? JSON.stringify(item.quote) : null,
-        item.patronage ? JSON.stringify(item.patronage) : null,
-        item.opportunity ? JSON.stringify(item.opportunity) : null,
-        item.designAssignment ? JSON.stringify(item.designAssignment) : null
-      ]
-    );
-    if (item.document) {
-      await getPool().query("UPDATE items SET content_document = $2 WHERE id = $1", [item.id, JSON.stringify(item.document)]);
-    }
-    if (item.savedBy?.includes(author.handle)) {
-      await persistPostgresActivity({
-        ...createLocalCanonicalActivity({
-          subjectType: "post",
-          subjectId: item.id,
-          postId: item.id,
-          actorHandle: author.handle,
-          action: "save",
-          active: true,
-          occurredAt: item.createdAt
-        }),
-        revision: 1
-      });
-    }
-    return item;
-  }
-
   return withLocalMutation(async () => {
     const local = await readLocal();
     local.items = [item, ...local.items];
@@ -1402,7 +598,11 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
   });
 };
 
-export const addComment = async (itemId: string, input: CreateCommentInput, authorHandle: string) => {
+export const addComment = async (
+  itemId: string,
+  input: CreateCommentInput,
+  authorHandle: string
+): Promise<{ comment: InquiryComment; item: InquiryItem } | null> => {
   const data = await getSnapshot();
   const existing = data.items.find((item) => item.id === itemId);
   if (!existing || isDeletedPost(existing)) return null;
@@ -1428,54 +628,8 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     quote: input.quote,
     replies: []
   };
-  const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
-  const nextSignals = updateSignalValue(existing.signals, "Critiques", nextCritiques);
   const appended = appendCommentToTree(existing.comments, comment);
   if (!appended.inserted) return null;
-  const updatedItem: InquiryItem = {
-    ...existing,
-    revision: (existing.revision ?? 1) + 1,
-    metrics: { ...existing.metrics, critiques: nextCritiques },
-    signals: nextSignals,
-    comments: appended.comments
-  };
-
-  if (usePostgres) {
-    await ensureSchema();
-    await getPool().query(
-      `INSERT INTO comments (
-        id, item_id, parent_id, author_handle, author_name, stance, body,
-        metrics, saved_by, signaled_by, forked_by, quote, created_at
-      )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-      [
-        comment.id,
-        itemId,
-        comment.parentId,
-        comment.authorHandle,
-        comment.author,
-        comment.stance,
-        comment.body,
-        JSON.stringify(comment.metrics),
-        JSON.stringify(comment.savedBy),
-        JSON.stringify(comment.signaledBy),
-        JSON.stringify(comment.forkedBy),
-        comment.quote ? JSON.stringify(comment.quote) : null,
-        comment.createdAt
-      ]
-    );
-    await getPool().query(
-      `UPDATE items
-       SET metrics = jsonb_set(metrics, '{critiques}', to_jsonb(($2)::text)),
-           signals = $3
-       WHERE id = $1`,
-      [itemId, nextCritiques, JSON.stringify(nextSignals)]
-    );
-    if (comment.document) {
-      await getPool().query("UPDATE comments SET content_document = $2 WHERE id = $1", [comment.id, JSON.stringify(comment.document)]);
-    }
-    return { comment, item: updatedItem };
-  }
 
   return withLocalMutation(async () => {
     const local = await readLocal();
@@ -1509,73 +663,6 @@ export const applyPostAction = async (
   trigger?: string,
   surface?: string
 ): Promise<ActionMutationResult | null> => {
-  if (usePostgres) {
-    const data = await getSnapshot();
-    const existing = data.items.find((item) => item.id === itemId);
-    if (!existing) return null;
-    if (isDeletedPost(existing)) return { item: existing };
-    if (action === "read" && !(await recordPostgresContentView("post", itemId, actorHandle, trigger, surface))) {
-      return { item: existing };
-    }
-    let activity: CanonicalActionActivityContract | undefined;
-    let base = existing;
-    if (action !== "read") {
-      const fallbackActive =
-        action === "save"
-          ? isSavedBy(existing, actorHandle, defaultProfile.handle)
-          : action === "signal"
-            ? hasHandle(existing.signaledBy, actorHandle)
-            : hasHandle(existing.forkedBy, actorHandle);
-      const transition = transitionLocalActivity({
-        ledger: data.actionLedger,
-        subjectType: "post",
-        subjectId: itemId,
-        postId: itemId,
-        actorHandle,
-        action,
-        active,
-        fallbackActive
-      });
-      activity = await persistPostgresActivity(transition.activity);
-      base = setItemActionMembership(
-        existing,
-        action,
-        actorHandle,
-        transition.previousActive,
-        defaultProfile.handle
-      );
-    }
-    const updated = {
-      ...mutateItemForActor(
-      base,
-      action,
-      actorHandle,
-      defaultProfile.handle,
-      activity?.active ?? active
-      ),
-      revision: (existing.revision ?? 1) + 1
-    };
-    await getPool().query(
-      `UPDATE items
-       SET metrics = $2,
-           saved = $3,
-           saved_by = $4,
-           signaled_by = $5,
-           forked_by = $6,
-           signals = $7
-       WHERE id = $1`,
-      [
-        itemId,
-        JSON.stringify(updated.metrics),
-        Boolean(updated.saved),
-        JSON.stringify(updated.savedBy ?? []),
-        JSON.stringify(updated.signaledBy ?? []),
-        JSON.stringify(updated.forkedBy ?? []),
-        JSON.stringify(updated.signals)
-      ]
-    );
-    return { item: updated, activity };
-  }
 
   return withLocalMutation(async () => {
     const local = await readLocal();
@@ -1643,29 +730,6 @@ export const applyPostAction = async (
 const canManagePost = (item: InquiryItem, actorHandle: string) =>
   cleanHandle(item.authorHandle ?? item.author) === cleanHandle(actorHandle);
 
-const sanitizePostgresQuotedSource = async (sourceType: "post" | "comment", sourceId: string) => {
-  const predicate = sourceType === "post"
-    ? "quote->>'sourcePostId' = $1"
-    : "quote->>'sourceType' = 'comment' AND quote->>'sourceId' = $1";
-  const unavailableQuote = `jsonb_build_object(
-    'sourceType', quote->>'sourceType',
-    'sourceId', quote->>'sourceId',
-    'sourcePostId', quote->>'sourcePostId',
-    'available', false,
-    'attachmentCount', 0
-  )`;
-  await Promise.all([
-    getPool().query(
-      `UPDATE items SET quote = ${unavailableQuote} WHERE quote->>'available' = 'true' AND ${predicate}`,
-      [sourceId]
-    ),
-    getPool().query(
-      `UPDATE comments SET quote = ${unavailableQuote}, updated_at = now() WHERE quote->>'available' = 'true' AND ${predicate}`,
-      [sourceId]
-    )
-  ]);
-};
-
 const updatePostShape = (item: InquiryItem, input: UpdatePostInput, editedAt = new Date().toISOString()): InquiryItem => {
   const patronage = input.patronage
     ? {
@@ -1697,7 +761,11 @@ const updatePostShape = (item: InquiryItem, input: UpdatePostInput, editedAt = n
   };
 };
 
-export const updatePost = async (itemId: string, input: UpdatePostInput, actorHandle = defaultProfile.handle) => {
+export const updatePost = async (
+  itemId: string,
+  input: UpdatePostInput,
+  actorHandle = defaultProfile.handle
+): Promise<InquiryItem | null> => {
   const cleanInput = {
     title: input.title.trim(),
     body: input.body.trim(),
@@ -1708,43 +776,6 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
     opportunity: input.opportunity
   };
   if (!cleanInput.body) return null;
-
-  if (usePostgres) {
-    const data = await getSnapshot();
-    const existing = data.items.find((item) => item.id === itemId);
-    if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
-    if (postTitlePolicyError(existing, cleanInput.title)) return null;
-    if (input.attachments?.length && (existing.room === "office" || existing.kind === "draft")) return null;
-
-    const updated = updatePostShape(existing, cleanInput);
-    await getPool().query(
-      `UPDATE items
-       SET title = $2,
-           body = $3,
-           content_document = $7,
-           excerpt = $3,
-           claims = $4,
-           edited_at = $5,
-           quote = $6,
-           patronage = $8,
-           opportunity = $9,
-           status = $10
-       WHERE id = $1`,
-      [
-        itemId,
-        updated.title,
-        updated.body,
-        JSON.stringify(updated.claims),
-        updated.editedAt,
-        updated.quote ? JSON.stringify(updated.quote) : null,
-        updated.document ? JSON.stringify(updated.document) : null,
-        updated.patronage ? JSON.stringify(updated.patronage) : null,
-        updated.opportunity ? JSON.stringify(updated.opportunity) : null,
-        updated.status
-      ]
-    );
-    return updated;
-  }
 
   return withLocalMutation(async () => {
     const local = await readLocal();
@@ -1762,68 +793,11 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
   });
 };
 
-export const deletePost = async (itemId: string, actorHandle = defaultProfile.handle, allowCommunityModerator = false) => {
-  if (usePostgres) {
-    const data = await getSnapshot();
-    const existing = data.items.find((item) => item.id === itemId);
-    if (!existing || isDeletedPost(existing) || (!canManagePost(existing, actorHandle) && !(allowCommunityModerator && existing.communityId && existing.postType !== "paper"))) return null;
-
-    const deleted = { ...tombstonePost(existing), revision: (existing.revision ?? 1) + 1 };
-    await getPool().query(
-      `UPDATE items
-       SET title = $2,
-           author_handle = $3,
-           author_name = $4,
-           affiliation = $5,
-           status = $6,
-           gathering_reason = $7,
-           excerpt = $8,
-           body = $9,
-           tags = $10,
-           signals = $11,
-           claims = $12,
-           objections = $13,
-           evidence = $14,
-           tests = $15,
-           forks = $16,
-           quote = NULL,
-           patronage = NULL,
-           opportunity = NULL,
-           edited_at = NULL,
-           deleted_at = $17
-       WHERE id = $1`,
-      [
-        itemId,
-        deleted.title,
-        deleted.authorHandle ?? "",
-        deleted.author,
-        deleted.affiliation,
-        deleted.status,
-        deleted.gatheringReason,
-        deleted.excerpt,
-        deleted.body,
-        JSON.stringify(deleted.tags),
-        JSON.stringify(deleted.signals),
-        JSON.stringify(deleted.claims),
-        JSON.stringify(deleted.objections),
-        JSON.stringify(deleted.evidence),
-        JSON.stringify(deleted.tests),
-        JSON.stringify(deleted.forks),
-        deleted.deletedAt
-      ]
-    );
-    await getPool().query(
-      `UPDATE action_ledger
-       SET active = false,
-           count = 0,
-           revision = revision + 1,
-           occurred_at = now()
-       WHERE post_id = $1 AND active = true`,
-      [itemId]
-    );
-    await sanitizePostgresQuotedSource("post", itemId);
-    return deleted;
-  }
+export const deletePost = async (
+  itemId: string,
+  actorHandle = defaultProfile.handle,
+  allowCommunityModerator = false
+): Promise<InquiryItem | null> => {
 
   return withLocalMutation(async () => {
     const local = await readLocal();
@@ -1861,42 +835,9 @@ export const updateComment = async (
   commentId: string,
   input: UpdateCommentInput,
   actorHandle = defaultProfile.handle
-) => {
+): Promise<InquiryItem | null> => {
   const cleanInput = { body: input.body.trim(), document: input.document, attachments: input.attachments, quote: input.quote };
   if (!cleanInput.body) return null;
-
-  if (usePostgres) {
-    const data = await getSnapshot();
-    const existing = data.items.find((item) => item.id === itemId);
-    if (!existing) return null;
-    if (input.attachments?.length && (existing.room === "office" || existing.kind === "draft")) return null;
-    const mapped = mapCommentTree(existing.comments, commentId, (comment) => {
-      if (isDeletedComment(comment) || !canManageComment(comment, actorHandle)) return comment;
-      return updateCommentShape(comment, cleanInput);
-    });
-    if (!mapped.updated || isDeletedComment(mapped.updated) || !canManageComment(mapped.updated, actorHandle)) {
-      return null;
-    }
-
-    await getPool().query(
-      `UPDATE comments
-       SET body = $3,
-           content_document = $6,
-           edited_at = $4,
-           quote = $5,
-           updated_at = now()
-       WHERE item_id = $1 AND id = $2`,
-      [
-        itemId,
-        commentId,
-        mapped.updated.body,
-        mapped.updated.editedAt,
-        mapped.updated.quote ? JSON.stringify(mapped.updated.quote) : null,
-        mapped.updated.document ? JSON.stringify(mapped.updated.document) : null
-      ]
-    );
-    return { ...existing, comments: mapped.comments, revision: (existing.revision ?? 1) + 1 };
-  }
 
   return withLocalMutation(async () => {
     const local = await readLocal();
@@ -1925,67 +866,7 @@ export const deleteComment = async (
   commentId: string,
   actorHandle = defaultProfile.handle,
   allowCommunityModerator = false
-) => {
-  if (usePostgres) {
-    const data = await getSnapshot();
-    const existing = data.items.find((item) => item.id === itemId);
-    if (!existing) return null;
-    const original = findCommentInTree(existing.comments, commentId);
-    if (!original || isDeletedComment(original) || (!canManageComment(original, actorHandle) && !(allowCommunityModerator && existing.communityId))) return null;
-    const deletion = tombstoneCommentInItem(existing, commentId);
-    if (!deletion.deletedComment) return null;
-
-    await getPool().query(
-      `UPDATE comments
-       SET author_handle = $3,
-           author_name = $4,
-           stance = $5,
-           body = $6,
-           metrics = $7,
-           saved_by = $8,
-           signaled_by = $9,
-           forked_by = $10,
-           quote = NULL,
-           edited_at = NULL,
-           deleted_at = $11,
-           updated_at = now()
-       WHERE item_id = $1 AND id = $2`,
-      [
-        itemId,
-        commentId,
-        "",
-        deletion.deletedComment.author,
-        deletion.deletedComment.stance,
-        deletion.deletedComment.body,
-        JSON.stringify(deletion.deletedComment.metrics ?? commentMetricsFallback),
-        JSON.stringify([]),
-        JSON.stringify([]),
-        JSON.stringify([]),
-        deletion.deletedComment.deletedAt
-      ]
-    );
-    await getPool().query(
-      `UPDATE action_ledger
-       SET active = false,
-           count = 0,
-           revision = revision + 1,
-           occurred_at = now()
-       WHERE subject_type = 'comment' AND subject_id = $1 AND active = true`,
-      [commentId]
-    );
-
-    await getPool().query(
-      `UPDATE items
-       SET metrics = $2,
-           signals = $3
-       WHERE id = $1`,
-      [itemId, JSON.stringify(deletion.item.metrics), JSON.stringify(deletion.item.signals)]
-    );
-
-    await sanitizePostgresQuotedSource("comment", commentId);
-
-    return { ...deletion.item, revision: (existing.revision ?? 1) + 1 };
-  }
+): Promise<InquiryItem | null> => {
 
   return withLocalMutation(async () => {
     const local = await readLocal();
@@ -2023,69 +904,6 @@ export const applyCommentAction = async (
   trigger?: string,
   surface?: string
 ): Promise<ActionMutationResult | null> => {
-  if (usePostgres) {
-    const data = await getSnapshot();
-    const existing = data.items.find((item) => item.id === itemId);
-    if (!existing) return null;
-
-    const original = findCommentInTree(existing.comments, commentId);
-    if (!original) return null;
-    if (isDeletedComment(original)) return { item: existing };
-    if (action === "read" && !(await recordPostgresContentView("comment", commentId, actorHandle, trigger, surface))) {
-      return { item: existing };
-    }
-
-    let activity: CanonicalActionActivityContract | undefined;
-    let previousActive = false;
-    if (action !== "read") {
-      const transition = transitionLocalActivity({
-        ledger: data.actionLedger,
-        subjectType: "comment",
-        subjectId: commentId,
-        postId: itemId,
-        actorHandle,
-        action,
-        active,
-        fallbackActive: Boolean(commentActionActive(original, action, actorHandle))
-      });
-      previousActive = transition.previousActive;
-      activity = await persistPostgresActivity(transition.activity);
-    }
-
-    const mapped = mapCommentTree(existing.comments, commentId, (comment) => {
-      const base = action === "read"
-        ? comment
-        : setCommentActionMembership(comment, action, actorHandle, previousActive);
-      return {
-        ...mutateCommentForActor(base, action, actorHandle, activity?.active ?? active),
-        revision: (comment.revision ?? 1) + 1
-      };
-    });
-    if (!mapped.updated) return null;
-
-    await getPool().query(
-      `UPDATE comments
-       SET metrics = $3,
-           saved_by = $4,
-           signaled_by = $5,
-           forked_by = $6,
-           updated_at = now()
-       WHERE item_id = $1 AND id = $2`,
-      [
-        itemId,
-        commentId,
-        JSON.stringify(mapped.updated.metrics ?? commentMetricsFallback),
-        JSON.stringify(mapped.updated.savedBy ?? []),
-        JSON.stringify(mapped.updated.signaledBy ?? []),
-        JSON.stringify(mapped.updated.forkedBy ?? [])
-      ]
-    );
-
-    return {
-      item: { ...existing, comments: mapped.comments, revision: (existing.revision ?? 1) + 1 },
-      activity
-    };
-  }
 
   return withLocalMutation(async () => {
     const local = await readLocal();
