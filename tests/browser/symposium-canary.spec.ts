@@ -38,6 +38,35 @@ test("first session enters the isolated local preview", async ({ page }) => {
   clean();
 });
 
+test("serializes simultaneous local preview writes without loss", async ({ request }) => {
+  const bodies = Array.from(
+    { length: 12 },
+    (_, index) => `Browser concurrency proof ${index + 1}: every write persists.`
+  );
+  const responses = await Promise.all(bodies.map((body) => request.post("/api/posts", {
+    data: {
+      title: "",
+      body,
+      kind: "thought",
+      postType: "thought",
+      room: "amphitheater",
+      authorHandle: "@udayan",
+      attachmentIds: []
+    }
+  })));
+  responses.forEach((response) => expect(response.ok()).toBe(true));
+  const ids = await Promise.all(responses.map(async (response) =>
+    ((await response.json()) as { item: { id: string } }).item.id
+  ));
+  expect(new Set(ids).size).toBe(bodies.length);
+
+  const persisted = await request.get(`/api/posts?actorHandle=%40udayan&ids=${ids.join(",")}`);
+  expect(persisted.ok()).toBe(true);
+  const snapshot = await persisted.json() as { items: Array<{ body: string; id: string }> };
+  expect(new Set(snapshot.items.map((item) => item.id))).toEqual(new Set(ids));
+  expect(new Set(snapshot.items.map((item) => item.body))).toEqual(new Set(bodies));
+});
+
 test.describe("returning browser session", () => {
   test.beforeEach(async ({ context }) => context.addCookies([sessionCookie]));
 

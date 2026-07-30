@@ -1,5 +1,4 @@
 import { getPool, hasDatabase } from "../db/client";
-import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { publishLocalLiveEvent } from "./liveBus";
 
@@ -165,28 +164,4 @@ export const listEventsSince = async (
   );
 
   return result.rows.map(rowToEvent);
-};
-
-export const emitEvent = async (event: LiveEvent) => {
-  let stored: StoredLiveEvent;
-
-  if (hasDatabase()) {
-    stored = await insertStoredEvent(getPool(), event);
-  } else {
-    const createdAt = new Date().toISOString();
-    const id = randomUUID();
-    stored = {
-      ...event,
-      id,
-      audienceHandles:
-        event.audienceHandles ??
-        ((event.visibility ?? "public") === "private" && event.actorHandle ? [event.actorHandle] : []),
-      visibility: event.visibility ?? "public",
-      payload: event.payload ?? {},
-      createdAt,
-      cursor: eventCursor(createdAt, id)
-    };
-  }
-
-  return publishStoredEvent(stored);
 };

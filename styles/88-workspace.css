@@ -270,8 +270,7 @@
 }
 
 .workspace-notebook-rail,
-.workspace-search-groups,
-.workspace-quick-empty {
+.workspace-search-groups {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: color-mix(in srgb, var(--panel-strong) 88%, transparent);
@@ -876,38 +875,6 @@
 .workspace-card-actions button:last-child {
   margin-left: auto;
   color: var(--workspace-accent);
-}
-
-.workspace-quick-empty {
-  display: grid;
-  justify-items: center;
-  width: 100%;
-  margin: 0 0 90px;
-  padding: clamp(40px, 8vw, 76px) 24px;
-  text-align: center;
-}
-
-.workspace-main-column > .workspace-quick-empty {
-  border-color: rgba(255, 253, 245, 0.32);
-  background: var(--document-surface-solid);
-  color: var(--ink);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.workspace-quick-empty svg {
-  color: var(--bronze);
-}
-
-.workspace-quick-empty h2 {
-  margin: 14px 0 7px;
-}
-
-.workspace-quick-empty p {
-  max-width: 580px;
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.6;
 }
 
 .workspace-detail {

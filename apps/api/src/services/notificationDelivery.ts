@@ -250,9 +250,6 @@ export const createNotifications = async (
   return { notifications, events };
 };
 
-export const createNotification = async (client: PoolClient, input: CreateNotificationInput) =>
-  createNotifications(client, [input]);
-
 export const resolveNotifications = async (
   client: PoolClient,
   input: ResolveNotificationsInput

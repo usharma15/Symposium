@@ -51,16 +51,6 @@ export const patronageInputForDraft = (
   };
 };
 
-export const patronageProjectionForInput = (
-  input: PatronageProposalInputContract,
-  current?: PatronageProposalContract
-): PatronageProposalContract => ({
-  ...input,
-  raisedMinorUnits: current?.raisedMinorUnits ?? 0,
-  supporterCount: current?.supporterCount ?? 0,
-  topSupporters: current?.topSupporters ?? []
-});
-
 export const patronageProgressPercent = (proposal: PatronageProposalContract) =>
   Math.min(100, Math.max(0, (proposal.raisedMinorUnits / proposal.goalMinorUnits) * 100));
 

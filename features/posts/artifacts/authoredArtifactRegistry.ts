@@ -1,7 +1,6 @@
 import type {
   BottomCaricatureIdContract,
   PaperMuseIdContract,
-  PostDesignAssignmentContract,
   ThoughtMuseIdContract
 } from "@/packages/contracts/src";
 
@@ -480,11 +479,3 @@ export const AUTHORED_ARTIFACT_ASSET_MANIFEST: readonly AuthoredArtifactAsset[] 
     ...themedAssetEntries(bottom.thoughtSurfaceAssets)
   ])
 ];
-
-export const authoredArtifactConfig = (assignment: PostDesignAssignmentContract) => {
-  const bottom = BOTTOM_CARICATURE_REGISTRY[assignment.bottomCaricatureId];
-  if (assignment.museId === "calliope" || assignment.museId === "urania") {
-    return { postType: "paper" as const, muse: PAPER_MUSE_REGISTRY[assignment.museId], bottom };
-  }
-  return { postType: "thought" as const, muse: THOUGHT_MUSE_REGISTRY[assignment.museId], bottom };
-};

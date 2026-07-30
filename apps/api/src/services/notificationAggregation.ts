@@ -53,11 +53,6 @@ export const importantNotificationKinds = [
   "workspace_access_updated"
 ] as const;
 
-export const attentionNotificationKinds = [
-  ...actionRequiredNotificationKinds,
-  ...importantNotificationKinds
-] as const;
-
 const actionRequiredKinds = new Set<string>(actionRequiredNotificationKinds);
 const importantKinds = new Set<string>(importantNotificationKinds);
 

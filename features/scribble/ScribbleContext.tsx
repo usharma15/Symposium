@@ -738,33 +738,6 @@ export function ScribbleLauncher() {
   );
 }
 
-export function ScribbleActionButton({
-  source,
-  disabled = false,
-  label = "source"
-}: {
-  source: DocumentSourceSnapshotContract;
-  disabled?: boolean;
-  label?: string;
-}) {
-  const scribble = useScribble();
-  return (
-    <button
-      type="button"
-      className="scribble-source-action"
-      title={`Add ${label} to Scribble`}
-      aria-label={`Add ${label} to Scribble`}
-      disabled={disabled}
-      onClick={(event) => {
-        event.stopPropagation();
-        scribble.addReference(source);
-      }}
-    >
-      <PenLine size={15} />
-    </button>
-  );
-}
-
 const textOffsetWithin = (element: Element, node: Node, offset: number) => {
   try {
     const range = document.createRange();

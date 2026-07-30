@@ -99,28 +99,6 @@ const findOwnedBlock = async (client: PoolClient, handle: string, blockId: strin
 };
 
 
-export const getWorkspace = async (actor: Actor) => {
-  const handle = actorHandle(actor);
-  if (!hasDatabase()) return { workspace: null, notes: [], blocks: [] };
-  await ensureLiveData();
-  return runAtomic(async (client) => {
-    const workspaceRow = await ensureOwnedWorkspace(client, handle);
-    const notes = await client.query(
-      "SELECT id, title, visibility, revision, created_at AS \"createdAt\", updated_at AS \"updatedAt\" FROM notes WHERE workspace_id = $1 AND deleted_at IS NULL ORDER BY created_at ASC",
-      [workspaceRow.id]
-    );
-    const blocks = await client.query(
-      `SELECT nb.id, nb.note_id AS "noteId", nb.kind, nb.body, nb.sort_order AS "sortOrder", nb.revision, nb.updated_at AS "updatedAt"
-       FROM note_blocks nb
-       JOIN notes n ON n.id = nb.note_id
-       WHERE n.workspace_id = $1 AND n.deleted_at IS NULL
-       ORDER BY nb.sort_order ASC, nb.created_at ASC`,
-      [workspaceRow.id]
-    );
-    return { value: { workspace: workspaceRow, notes: notes.rows, blocks: blocks.rows } };
-  });
-};
-
 export const saveNoteBlock = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = saveNoteBlockInputSchema.parse(rawInput);
   const handle = actorHandle(actor);

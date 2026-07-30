@@ -1,8 +1,7 @@
 import type {
   ContentKindContract,
   PostDesignAssignmentContract,
-  PostTypeContract,
-  WorkspacePublicationTargetContract
+  PostTypeContract
 } from "@/packages/contracts/src";
 
 type PostSemanticSource = {
@@ -30,25 +29,6 @@ export const postTypeForItem = (item: PostSemanticSource): PostTypeContract | nu
   if (item.kind === "thought" || item.kind === "note") return "thought";
   return null;
 };
-
-export const editorKindForPostType = (postType: PostTypeContract): "paper" | "thought" =>
-  postType === "paper" || postType === "proposal" ? "paper" : "thought";
-
-export const roomForPostType = (postType: PostTypeContract) =>
-  postType === "proposal"
-    ? "funding" as const
-    : postType === "opportunity"
-      ? "opportunities" as const
-      : postType === "paper"
-        ? "library" as const
-        : "amphitheater" as const;
-
-export const postTypeForWorkspaceTarget = (
-  target: WorkspacePublicationTargetContract
-): PostTypeContract | null =>
-  target === "paper" || target === "thought" || target === "proposal" || target === "opportunity"
-    ? target
-    : null;
 
 export const itemHasPostType = (item: PostSemanticSource, postType: PostTypeContract) =>
   postTypeForItem(item) === postType;

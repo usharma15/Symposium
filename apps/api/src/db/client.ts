@@ -82,10 +82,3 @@ export const getDatabaseActivityStatus = () => ({
   lastConnectionOpenedAt,
   lastQueryAt
 });
-
-export const closeDb = async () => {
-  if (pool) {
-    await pool.end();
-    pool = null;
-  }
-};

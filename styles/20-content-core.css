@@ -15,8 +15,7 @@
   border-radius: var(--radius);
 }
 
-.segmented,
-.tag-row {
+.segmented {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -1176,10 +1175,6 @@
   min-height: auto;
 }
 
-.attachment-docx-derived {
-  min-height: 100%;
-}
-
 .attachment-document pre.attachment-text-parallel-page {
   background: var(--attachment-paper-surface);
   color: var(--attachment-paper-ink);
@@ -1316,18 +1311,6 @@
 .attachment-modal-fullscreen footer {
   align-self: end;
   padding-bottom: 0;
-}
-
-.tag-row span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 27px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: 720;
 }
 
 .social-actions {

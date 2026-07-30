@@ -171,9 +171,6 @@ export const resourceTypeSchema = z.enum([
   "contribution",
   "attachment"
 ]);
-export const resourceVisibilitySchema = z.enum(["private", "restricted", "community", "public"]);
-export const resourceLifecycleSchema = z.enum(["draft", "active", "archived", "deleted"]);
-
 export const isSafeExternalUrl = (value: string) => {
   try {
     const url = new URL(value);
@@ -1087,12 +1084,6 @@ export const createCommunityInputSchema = z.object({
   keywords: z.array(z.string().trim().min(1).max(50)).max(20).default([])
 });
 
-export const updateCommunityVisibilityInputSchema = z.object({
-  communityId: z.string().trim().min(1).max(120),
-  visibility: communityVisibilitySchema,
-  expectedRevision: z.number().int().positive()
-});
-
 export const updateCommunitySettingsInputSchema = z.object({
   communityId: z.string().trim().min(1).max(120),
   name: z.string().trim().min(2).max(120).optional(),
@@ -1140,11 +1131,6 @@ export const deleteCommunityAnnouncementInputSchema = z.object({
   communityId: z.string().trim().min(1).max(120),
   announcementId: z.string().trim().min(1).max(120),
   expectedRevision: z.number().int().positive()
-});
-
-export const communityMembershipActionInputSchema = z.object({
-  communityId: z.string().trim().min(1).max(120),
-  action: z.enum(["join", "leave", "access"])
 });
 
 export const followProfileInputSchema = z.object({
@@ -1440,11 +1426,6 @@ export const assistantSurfaceSchema = z.enum([
 ]);
 export const assistantTranslationLanguageSchema = z.enum(assistantTranslationLanguages);
 export const assistantRequestIntentSchema = z.enum(["answer", "translate"]);
-export const assistantConversationKindSchema = z.enum([
-  "research_thread",
-  "document_translation",
-  "content_translation"
-]);
 
 export const assistantActionSourceSchema = z.object({
   surface: assistantSurfaceSchema,
@@ -2753,41 +2734,25 @@ export const bootstrapResponseSchema = z.object({
 export type RoomIdContract = z.infer<typeof roomIdSchema>;
 export type ContentKindContract = z.infer<typeof contentKindSchema>;
 export type PostTypeContract = z.infer<typeof postTypeSchema>;
-export type PostActionContract = z.infer<typeof postActionSchema>;
 export type ToggleActionContract = z.infer<typeof toggleActionSchema>;
-export type ActionSubjectTypeContract = z.infer<typeof actionSubjectTypeSchema>;
-export type ResourceTypeContract = z.infer<typeof resourceTypeSchema>;
-export type ResourceVisibilityContract = z.infer<typeof resourceVisibilitySchema>;
-export type ResourceLifecycleContract = z.infer<typeof resourceLifecycleSchema>;
-export type ResourceReferenceContract = z.infer<typeof resourceReferenceSchema>;
 export type VersionedDocumentContract = z.infer<typeof versionedDocumentSchema>;
 export type ResearchProfileContract = z.infer<typeof researchProfileSchema>;
 export type CreateProfileInputContract = z.infer<typeof createProfileInputSchema>;
 export type InquiryItemContract = z.infer<typeof inquiryItemSchema>;
 export type OpportunityPostInputContract = z.infer<typeof opportunityPostInputSchema>;
-export type OpportunityPostContract = z.infer<typeof opportunityPostSchema>;
 export type OpportunityKindContract = z.infer<typeof opportunityKindSchema>;
 export type OpportunityApplicationContract = z.infer<typeof opportunityApplicationSchema>;
 export type OpportunityApplicationCommentContract = z.infer<typeof opportunityApplicationCommentSchema>;
-export type CreateOpportunityApplicationInputContract = z.infer<typeof createOpportunityApplicationInputSchema>;
-export type UpdateOpportunityApplicationInputContract = z.infer<typeof updateOpportunityApplicationInputSchema>;
-export type CreateOpportunityApplicationCommentInputContract = z.infer<typeof createOpportunityApplicationCommentInputSchema>;
 export type PatronageProposalInputContract = z.infer<typeof patronageProposalInputSchema>;
 export type PatronageProposalContract = z.infer<typeof patronageProposalSchema>;
-export type PatronageSupporterContract = z.infer<typeof patronageSupporterSchema>;
-export type PatronageContributionContract = z.infer<typeof patronageContributionSchema>;
 export type InquiryAttachmentContract = z.infer<typeof inquiryAttachmentSchema>;
 export type ResearchCommunityContract = z.infer<typeof researchCommunitySchema>;
 export type PaperMuseIdContract = z.infer<typeof paperMuseIdSchema>;
 export type ThoughtMuseIdContract = z.infer<typeof thoughtMuseIdSchema>;
 export type BottomCaricatureIdContract = z.infer<typeof bottomCaricatureIdSchema>;
-export type PaperPostDesignAssignmentContract = z.infer<typeof paperPostDesignAssignmentSchema>;
-export type ThoughtPostDesignAssignmentContract = z.infer<typeof thoughtPostDesignAssignmentSchema>;
 export type PostDesignAssignmentContract = z.infer<typeof postDesignAssignmentSchema>;
 export type CommunityMembershipStatusContract = z.infer<typeof communityMembershipStatusSchema>;
-export type CommunityContentAccessContract = z.infer<typeof communityContentAccessSchema>;
 export type CreateCommunityInputContract = z.infer<typeof createCommunityInputSchema>;
-export type UpdateCommunityVisibilityInputContract = z.infer<typeof updateCommunityVisibilityInputSchema>;
 export type UpdateCommunitySettingsInputContract = z.infer<typeof updateCommunitySettingsInputSchema>;
 export type UpdateCommunityMemberInputContract = z.infer<typeof updateCommunityMemberInputSchema>;
 export type RemoveCommunityMemberInputContract = z.infer<typeof removeCommunityMemberInputSchema>;
@@ -2795,65 +2760,34 @@ export type ResolveCommunityRequestInputContract = z.infer<typeof resolveCommuni
 export type CreateCommunityAnnouncementInputContract = z.infer<typeof createCommunityAnnouncementInputSchema>;
 export type UpdateCommunityAnnouncementInputContract = z.infer<typeof updateCommunityAnnouncementInputSchema>;
 export type DeleteCommunityAnnouncementInputContract = z.infer<typeof deleteCommunityAnnouncementInputSchema>;
-export type CommunityMembershipActionInputContract = z.infer<typeof communityMembershipActionInputSchema>;
-export type CreatePostInputContract = z.infer<typeof createPostInputSchema>;
-export type CreateCommentInputContract = z.infer<typeof createCommentInputSchema>;
-export type UpdateCommentInputContract = z.infer<typeof updateCommentInputSchema>;
 export type PostActionInputContract = z.infer<typeof postActionInputSchema>;
 export type CanonicalActionActivityContract = z.infer<typeof canonicalActionActivitySchema>;
 export type ProfileAuthoredCommentActivityContract = z.infer<typeof profileAuthoredCommentActivitySchema>;
 export type ProfileActivityQueryContract = z.infer<typeof profileActivityQuerySchema>;
 export type ProfileActivityCountsContract = z.infer<typeof profileActivityCountsSchema>;
 export type ProfileActivityResponseContract = z.infer<typeof profileActivityResponseSchema>;
-export type AttachmentStatusContract = z.infer<typeof attachmentStatusSchema>;
 export type AttachmentKindContract = z.infer<typeof attachmentKindSchema>;
 export type BootstrapResponseContract = z.infer<typeof bootstrapResponseSchema>;
 export type PostPageQueryContract = z.infer<typeof postPageQuerySchema>;
 export type PostPageResponseContract = z.infer<typeof postPageResponseSchema>;
 export type SearchResponseContract = z.infer<typeof searchResponseSchema>;
-export type ConversationKindContract = z.infer<typeof conversationKindSchema>;
-export type ConversationParticipantRoleContract = z.infer<typeof conversationParticipantRoleSchema>;
-export type ConversationParticipantStatusContract = z.infer<typeof conversationParticipantStatusSchema>;
 export type ConversationParticipantContract = z.infer<typeof conversationParticipantSchema>;
 export type MessageContract = z.infer<typeof messageSchema>;
 export type ConversationSummaryContract = z.infer<typeof conversationSummarySchema>;
-export type ConversationListQueryContract = z.infer<typeof conversationListQuerySchema>;
 export type ConversationPageContract = z.infer<typeof conversationPageSchema>;
 export type MessageUnreadCountContract = z.infer<typeof messageUnreadCountSchema>;
-export type MessageListQueryContract = z.infer<typeof messageListQuerySchema>;
 export type MessagePageContract = z.infer<typeof messagePageSchema>;
-export type SendMessageInputContract = z.infer<typeof sendMessageInputSchema>;
-export type CreateGroupConversationInputContract = z.infer<typeof createGroupConversationInputSchema>;
-export type InviteConversationParticipantsInputContract = z.infer<typeof inviteConversationParticipantsInputSchema>;
-export type UpdateConversationParticipantInputContract = z.infer<typeof updateConversationParticipantInputSchema>;
-export type ResolveConversationInviteInputContract = z.infer<typeof resolveConversationInviteInputSchema>;
-export type UpdateConversationPreferencesInputContract = z.infer<typeof updateConversationPreferencesInputSchema>;
-export type SaveConversationDraftInputContract = z.infer<typeof saveConversationDraftInputSchema>;
-export type MarkConversationReadInputContract = z.infer<typeof markConversationReadInputSchema>;
-export type StarMessageInputContract = z.infer<typeof starMessageInputSchema>;
-export type EditMessageInputContract = z.infer<typeof editMessageInputSchema>;
-export type DeleteMessageInputContract = z.infer<typeof deleteMessageInputSchema>;
-export type BlockProfileInputContract = z.infer<typeof blockProfileInputSchema>;
-export type ConversationSearchInputContract = z.infer<typeof conversationSearchInputSchema>;
 export type NotificationContract = z.infer<typeof notificationSchema>;
-export type NotificationListQueryContract = z.infer<typeof notificationListQuerySchema>;
 export type NotificationPageContract = z.infer<typeof notificationPageSchema>;
 export type NotificationUnreadCountContract = z.infer<typeof notificationUnreadCountSchema>;
 export type NotificationPreferenceCategoryContract = z.infer<typeof notificationPreferenceCategorySchema>;
 export type NotificationPreferencesContract = z.infer<typeof notificationPreferencesSchema>;
 export type UpdateNotificationPreferencesInputContract = z.infer<typeof updateNotificationPreferencesInputSchema>;
-export type ArchiveNotificationInputContract = z.infer<typeof archiveNotificationInputSchema>;
-export type ContentAnalyticsSubjectTypeContract = z.infer<typeof contentAnalyticsSubjectTypeSchema>;
 export type ContentAnalyticsViewContract = z.infer<typeof contentAnalyticsViewSchema>;
-export type ContentAnalyticsQueryContract = z.infer<typeof contentAnalyticsQuerySchema>;
 export type ContentAnalyticsActorContract = z.infer<typeof contentAnalyticsActorSchema>;
 export type ContentAnalyticsQuoteContract = z.infer<typeof contentAnalyticsQuoteSchema>;
-export type ContentAnalyticsOverviewContract = z.infer<typeof contentAnalyticsOverviewSchema>;
 export type ContentAnalyticsPageContract = z.infer<typeof contentAnalyticsPageSchema>;
-export type FollowProfileInputContract = z.infer<typeof followProfileInputSchema>;
-export type ProfileFollowContract = z.infer<typeof profileFollowSchema>;
 export type CommunityCallContract = z.infer<typeof communityCallSchema>;
-export type CommunityMemberRoleContract = z.infer<typeof communityMemberRoleSchema>;
 export type CommunityMemberContract = z.infer<typeof communityMemberSchema>;
 export type CommunityMemberQueryContract = z.infer<typeof communityMemberQuerySchema>;
 export type CommunityMemberPageContract = z.infer<typeof communityMemberPageSchema>;
@@ -2868,40 +2802,21 @@ export type WorkspaceAccessResourceContract = z.infer<typeof workspaceAccessReso
 export type WorkspaceLifecycleContract = z.infer<typeof workspaceLifecycleSchema>;
 export type CreateWorkspaceDocumentInputContract = z.infer<typeof createWorkspaceDocumentInputSchema>;
 export type UpdateWorkspaceDocumentInputContract = z.infer<typeof updateWorkspaceDocumentInputSchema>;
-export type CreateWorkspaceCommentInputContract = z.infer<typeof createWorkspaceCommentInputSchema>;
-export type UpdateWorkspaceCommentInputContract = z.infer<typeof updateWorkspaceCommentInputSchema>;
-export type DeleteWorkspaceCommentInputContract = z.infer<typeof deleteWorkspaceCommentInputSchema>;
-export type WorkspaceCommentActionInputContract = z.infer<typeof workspaceCommentActionInputSchema>;
-export type CreateWorkspaceNotebookInputContract = z.infer<typeof createWorkspaceNotebookInputSchema>;
-export type UpdateWorkspaceNotebookInputContract = z.infer<typeof updateWorkspaceNotebookInputSchema>;
-export type CreateWorkspaceGrantInputContract = z.infer<typeof createWorkspaceGrantInputSchema>;
-export type UpdateWorkspaceGrantInputContract = z.infer<typeof updateWorkspaceGrantInputSchema>;
-export type DeleteWorkspaceGrantInputContract = z.infer<typeof deleteWorkspaceGrantInputSchema>;
-export type WorkspaceCollaboratorSearchInputContract = z.infer<typeof workspaceCollaboratorSearchInputSchema>;
-export type WorkspaceSearchInputContract = z.infer<typeof workspaceSearchInputSchema>;
 export type PostToneContract = z.infer<typeof postToneSchema>;
 export type DocumentSourceSnapshotContract = z.infer<typeof documentSourceSnapshotSchema>;
 export type DocumentCitationLocatorContract = z.infer<typeof documentCitationLocatorSchema>;
 export type DocumentCitationStyleContract = z.infer<typeof documentCitationStyleSchema>;
 export type DocumentNativeCitationContract = z.infer<typeof documentNativeCitationSchema>;
 export type DocumentDrawingContract = z.infer<typeof documentDrawingSchema>;
-export type UpdateScribbleInputContract = z.infer<typeof updateScribbleInputSchema>;
-export type FileScribbleInputContract = z.infer<typeof fileScribbleInputSchema>;
-export type DiscardScribbleInputContract = z.infer<typeof discardScribbleInputSchema>;
-export type RestoreScribbleInputContract = z.infer<typeof restoreScribbleInputSchema>;
 export type PublishNoteInputContract = z.infer<typeof publishNoteInputSchema>;
-export type AssistantSurfaceContract = z.infer<typeof assistantSurfaceSchema>;
 export type AssistantTranslationLanguageContract = z.infer<typeof assistantTranslationLanguageSchema>;
 export type AssistantRequestIntentContract = z.infer<typeof assistantRequestIntentSchema>;
-export type AssistantConversationKindContract = z.infer<typeof assistantConversationKindSchema>;
 export type AssistantActionSourceContract = z.infer<typeof assistantActionSourceSchema>;
 export type AssistantTranslationDraftContract = z.infer<typeof assistantTranslationDraftSchema>;
 export type AssistantTranslationContract = z.infer<typeof assistantTranslationSchema>;
 export type AssistantQuickNoteDraftContract = z.infer<typeof assistantQuickNoteDraftSchema>;
 export type AssistantQuickNoteContract = z.infer<typeof assistantQuickNoteSchema>;
-export type AssistantAnswerDraftContract = z.infer<typeof assistantAnswerDraftSchema>;
 export type AssistantActionToolContract = z.infer<typeof assistantActionToolSchema>;
-export type AssistantPostDraftKindContract = z.infer<typeof assistantPostDraftKindSchema>;
 export type AssistantDraftEditModeContract = z.infer<typeof assistantDraftEditModeSchema>;
 export type AssistantDraftEditSessionContract = z.infer<typeof assistantDraftEditSessionSchema>;
 export type AssistantDraftEditOperationContract = z.infer<typeof assistantDraftEditOperationSchema>;
@@ -2911,19 +2826,9 @@ export type AssistantActionReceiptContract = z.infer<typeof assistantActionRecei
 export type ConfirmAssistantOfficeNoteDraftInputContract = z.infer<typeof confirmAssistantOfficeNoteDraftInputSchema>;
 export type ConfirmAssistantOfficePostDraftInputContract = z.infer<typeof confirmAssistantOfficePostDraftInputSchema>;
 export type ConfirmAssistantOfficeDraftEditInputContract = z.infer<typeof confirmAssistantOfficeDraftEditInputSchema>;
-export type UndoAssistantOfficeDraftEditInputContract = z.infer<typeof undoAssistantOfficeDraftEditInputSchema>;
 export type AssistantEvidenceClaimDraftContract = z.infer<typeof assistantEvidenceClaimDraftSchema>;
-export type AssistantEvidenceClaimKindContract = z.infer<typeof assistantEvidenceClaimKindSchema>;
 export type AssistantContextContract = z.infer<typeof assistantContextSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
-export type AssistantConversationListQueryContract = z.infer<typeof assistantConversationListQuerySchema>;
-export type CreateAssistantProjectInputContract = z.infer<typeof createAssistantProjectInputSchema>;
-export type UpdateAssistantProjectInputContract = z.infer<typeof updateAssistantProjectInputSchema>;
-export type DeleteAssistantProjectInputContract = z.infer<typeof deleteAssistantProjectInputSchema>;
-export type AssistantContextUpdateInputContract = z.infer<typeof assistantContextUpdateInputSchema>;
-export type AssistantSourceUpdateInputContract = z.infer<typeof assistantSourceUpdateInputSchema>;
-export type AssistantThreadUpdateInputContract = z.infer<typeof assistantThreadUpdateInputSchema>;
-export type AssistantThreadDeleteInputContract = z.infer<typeof assistantThreadDeleteInputSchema>;
 export type AssistantMessageContract = z.infer<typeof assistantMessageSchema>;
 export type AssistantThreadSourceContract = z.infer<typeof assistantThreadSourceSchema>;
 export type AssistantThreadSummaryContract = z.infer<typeof assistantThreadSummarySchema>;
@@ -2940,89 +2845,16 @@ export type AssistantThreadUpdateResultContract = z.infer<typeof assistantThread
 export type AssistantThreadDeleteResultContract = z.infer<typeof assistantThreadDeleteResultSchema>;
 export type AssistantQuotaStatusContract = z.infer<typeof assistantQuotaStatusSchema>;
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;
-export type SaveAssistantQuickNoteInputContract = z.infer<typeof saveAssistantQuickNoteInputSchema>;
 export type AssistantQuickNoteResultContract = z.infer<typeof assistantQuickNoteResultSchema>;
 export type TranslationSourceSegmentContract = z.infer<typeof translationSourceSegmentSchema>;
 export type TranslationResultSegmentContract = z.infer<typeof translationResultSegmentSchema>;
-export type DocumentTranslationLayoutRoleContract = z.infer<typeof documentTranslationLayoutRoleSchema>;
 export type DocumentTranslationLayoutBlockContract = z.infer<typeof documentTranslationLayoutBlockSchema>;
 export type DocumentTranslationArtifactBlockContract = z.infer<typeof documentTranslationArtifactBlockSchema>;
 export type DocumentTranslationSourcePageContract = z.infer<typeof documentTranslationSourcePageSchema>;
 export type DocumentTranslationInputContract = z.infer<typeof documentTranslationInputSchema>;
 export type DocumentTranslationPageContract = z.infer<typeof documentTranslationPageSchema>;
-export type DocumentTranslationModelPageContract = z.infer<typeof documentTranslationModelPageSchema>;
 export type DocumentTranslationModelOutputContract = z.infer<typeof documentTranslationModelOutputSchema>;
 export type DocumentTranslationResultContract = z.infer<typeof documentTranslationResultSchema>;
-export type ContentTranslationInputContract = z.infer<typeof contentTranslationInputSchema>;
 export type ContentTranslationModelInputContract = z.infer<typeof contentTranslationModelInputSchema>;
 export type ContentTranslationModelOutputContract = z.infer<typeof contentTranslationModelOutputSchema>;
 export type ContentTranslationResultContract = z.infer<typeof contentTranslationResultSchema>;
-
-export const procedureNames = [
-  "auth.syncUser",
-  "bootstrap.getInitialState",
-  "profiles.getMe",
-  "profiles.update",
-  "profiles.follow",
-  "profiles.unfollow",
-  "profiles.following",
-  "posts.create",
-  "posts.getFeed",
-  "posts.getDetail",
-  "posts.react",
-  "posts.save",
-  "comments.create",
-  "comments.list",
-  "communities.list",
-  "communities.get",
-  "communities.create",
-  "communities.joinOrRequest",
-  "communities.leave",
-  "communities.recordAccess",
-  "communities.listCalls",
-  "communities.createCall",
-  "communities.joinCall",
-  "communities.endCall",
-  "attachments.createUpload",
-  "attachments.confirmUpload",
-  "opportunities.list",
-  "opportunities.create",
-  "search.query",
-  "notifications.list",
-  "notifications.markRead",
-  "notifications.getPreferences",
-  "notifications.updatePreferences",
-  "messages.listConversations",
-  "messages.getConversation",
-  "messages.listMessages",
-  "messages.send",
-  "messages.createGroup",
-  "messages.inviteParticipants",
-  "messages.resolveInvite",
-  "messages.updateParticipant",
-  "messages.removeParticipant",
-  "messages.updatePreferences",
-  "messages.saveDraft",
-  "messages.markRead",
-  "messages.clear",
-  "messages.deleteConversation",
-  "messages.search",
-  "messages.listStarred",
-  "messages.star",
-  "messages.edit",
-  "messages.delete",
-  "messages.blockProfile",
-  "notes.getWorkspace",
-  "notes.createDocument",
-  "notes.updateDocument",
-  "notes.deleteDocument",
-  "notes.createNotebook",
-  "notes.updateNotebook",
-  "notes.deleteNotebook",
-  "notes.searchWorkspace",
-  "notes.saveBlock",
-  "notes.publish",
-  "assistant.ask"
-] as const;
-
-export type ProcedureNameContract = (typeof procedureNames)[number];

@@ -1,8 +1,6 @@
 import {
   Amphora,
   Archive,
-  BookOpen,
-  BrainCircuit,
   Columns3,
   LibraryBig,
   MessagesSquare,
@@ -17,7 +15,6 @@ import type {
   InquiryAttachmentContract,
   InquiryCommentContract,
   InquiryItemContract,
-  InquiryMetricsContract,
   ResearchCommunityContract,
   ResearchProfileContract,
   RoomIdContract
@@ -30,7 +27,6 @@ export type RoomId = RoomIdContract;
 export type FeedScope = "suggested" | "following";
 export type ContentKind = ContentKindContract;
 export type InquiryComment = InquiryCommentContract;
-export type InquiryMetrics = InquiryMetricsContract;
 export type InquiryAttachment = InquiryAttachmentContract;
 export type ContentQuote = ContentQuoteContract;
 export type ContentQuoteSource = ContentQuoteSourceContract;
@@ -107,13 +103,6 @@ export const rooms: Room[] = [
 export const feedScopes: { id: FeedScope; label: string }[] = [
   { id: "suggested", label: "For you" },
   { id: "following", label: "Following" }
-];
-
-export const libraryFolders = [
-  { label: "All saved", count: 15, icon: BookOpen },
-  { label: "Foundational physics", count: 5, icon: BrainCircuit },
-  { label: "Mind, memory, and life", count: 5, icon: ScrollText },
-  { label: "Dialogue and institutions", count: 5, icon: Sparkles }
 ];
 
 export const profile = {

@@ -155,11 +155,11 @@ const usePostgres = Boolean(databaseUrl);
 let pool: Pool | null = null;
 let schemaReady: Promise<void> | null = null;
 let seedReady: Promise<void> | null = null;
-let localActionQueue: Promise<void> = Promise.resolve();
+let localMutationQueue: Promise<void> = Promise.resolve();
 
-const withLocalActionLock = <T>(operation: () => Promise<T>) => {
-  const result = localActionQueue.then(operation, operation);
-  localActionQueue = result.then(
+const withLocalMutation = <T>(operation: () => Promise<T>) => {
+  const result = localMutationQueue.then(operation, operation);
+  localMutationQueue = result.then(
     () => undefined,
     () => undefined
   );
@@ -941,7 +941,8 @@ const readLocal = async (): Promise<AppData> => {
       return migrated;
     }
     return mergeSeedData(normalizeData(parsed));
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     const seed = seedData();
     await writeLocal(seed);
     return seed;
@@ -1214,38 +1215,40 @@ export const upsertProfile = async (input: CreateProfileInput) => {
     return person;
   }
 
-  const data = await readLocal();
-  const previousPerson = data.profiles[person.handle];
-  const revisionedPerson = { ...person, revision: (previousPerson?.revision ?? 0) + 1 };
-  data.profiles[person.handle] = revisionedPerson;
-  const updateCommentAuthors = (comments: InquiryComment[]): InquiryComment[] =>
-    comments.map((comment) => {
-      const replies = updateCommentAuthors(comment.replies ?? []);
-      const authorChanged =
-        !isDeletedComment(comment) &&
-        comment.authorHandle === revisionedPerson.handle &&
-        comment.author !== revisionedPerson.name;
-      if (!authorChanged && replies.every((reply, index) => reply === comment.replies?.[index])) return comment;
+  return withLocalMutation(async () => {
+    const data = await readLocal();
+    const previousPerson = data.profiles[person.handle];
+    const revisionedPerson = { ...person, revision: (previousPerson?.revision ?? 0) + 1 };
+    data.profiles[person.handle] = revisionedPerson;
+    const updateCommentAuthors = (comments: InquiryComment[]): InquiryComment[] =>
+      comments.map((comment) => {
+        const replies = updateCommentAuthors(comment.replies ?? []);
+        const authorChanged =
+          !isDeletedComment(comment) &&
+          comment.authorHandle === revisionedPerson.handle &&
+          comment.author !== revisionedPerson.name;
+        if (!authorChanged && replies.every((reply, index) => reply === comment.replies?.[index])) return comment;
+        return {
+          ...comment,
+          author: authorChanged ? revisionedPerson.name : comment.author,
+          revision: authorChanged ? (comment.revision ?? 1) + 1 : comment.revision,
+          replies
+        };
+      });
+    data.items = data.items.map((item) => {
+      const comments = updateCommentAuthors(item.comments);
+      const authorChanged = item.authorHandle === revisionedPerson.handle && item.author !== revisionedPerson.name;
+      const commentsChanged = comments.some((comment, index) => comment !== item.comments[index]);
       return {
-        ...comment,
-        author: authorChanged ? revisionedPerson.name : comment.author,
-        revision: authorChanged ? (comment.revision ?? 1) + 1 : comment.revision,
-        replies
+        ...item,
+        author: item.authorHandle === revisionedPerson.handle ? revisionedPerson.name : item.author,
+        revision: authorChanged || commentsChanged ? (item.revision ?? 1) + 1 : item.revision,
+        comments
       };
     });
-  data.items = data.items.map((item) => {
-    const comments = updateCommentAuthors(item.comments);
-    const authorChanged = item.authorHandle === revisionedPerson.handle && item.author !== revisionedPerson.name;
-    const commentsChanged = comments.some((comment, index) => comment !== item.comments[index]);
-    return {
-      ...item,
-      author: item.authorHandle === revisionedPerson.handle ? revisionedPerson.name : item.author,
-      revision: authorChanged || commentsChanged ? (item.revision ?? 1) + 1 : item.revision,
-      comments
-    };
+    await writeLocal(data);
+    return revisionedPerson;
   });
-  await writeLocal(data);
-  return revisionedPerson;
 };
 
 export const createPost = async (input: CreatePostInput, authorHandle: string) => {
@@ -1374,25 +1377,27 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     return item;
   }
 
-  const local = await readLocal();
-  local.items = [item, ...local.items];
-  if (item.savedBy?.includes(author.handle)) {
-    const activity: CanonicalActionActivityContract = {
-      ...createLocalCanonicalActivity({
-        subjectType: "post",
-        subjectId: item.id,
-        postId: item.id,
-        actorHandle: author.handle,
-        action: "save",
-        active: true,
-        occurredAt: item.createdAt
-      }),
-      revision: 1
-    };
-    local.actionLedger[canonicalActivityKey(activity)] = activity;
-  }
-  await writeLocal(local);
-  return item;
+  return withLocalMutation(async () => {
+    const local = await readLocal();
+    local.items = [item, ...local.items];
+    if (item.savedBy?.includes(author.handle)) {
+      const activity: CanonicalActionActivityContract = {
+        ...createLocalCanonicalActivity({
+          subjectType: "post",
+          subjectId: item.id,
+          postId: item.id,
+          actorHandle: author.handle,
+          action: "save",
+          active: true,
+          occurredAt: item.createdAt
+        }),
+        revision: 1
+      };
+      local.actionLedger[canonicalActivityKey(activity)] = activity;
+    }
+    await writeLocal(local);
+    return item;
+  });
 };
 
 export const addComment = async (itemId: string, input: CreateCommentInput, authorHandle: string) => {
@@ -1470,29 +1475,28 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     return { comment, item: updatedItem };
   }
 
-  const local = await readLocal();
-  let localUpdatedItem: InquiryItem | null = null;
-  local.items = local.items.map((item) => {
-    if (item.id !== itemId) return item;
-    if (isDeletedPost(item)) return item;
-    if (input.parentId && !findCommentInTree(item.comments, input.parentId)) return item;
-
-    const localAppended = appendCommentToTree(item.comments, comment);
-    if (!localAppended.inserted) return item;
-
-    const localNextCritiques = incrementMetric(item.metrics.critiques, 1);
-    localUpdatedItem = {
-      ...item,
-      revision: (item.revision ?? 1) + 1,
-      metrics: { ...item.metrics, critiques: localNextCritiques },
-      signals: updateSignalValue(item.signals, "Critiques", localNextCritiques),
-      comments: localAppended.comments
-    };
-    return localUpdatedItem;
+  return withLocalMutation(async () => {
+    const local = await readLocal();
+    let localUpdatedItem: InquiryItem | null = null;
+    local.items = local.items.map((item) => {
+      if (item.id !== itemId || isDeletedPost(item)) return item;
+      if (input.parentId && !findCommentInTree(item.comments, input.parentId)) return item;
+      const localAppended = appendCommentToTree(item.comments, comment);
+      if (!localAppended.inserted) return item;
+      const localNextCritiques = incrementMetric(item.metrics.critiques, 1);
+      localUpdatedItem = {
+        ...item,
+        revision: (item.revision ?? 1) + 1,
+        metrics: { ...item.metrics, critiques: localNextCritiques },
+        signals: updateSignalValue(item.signals, "Critiques", localNextCritiques),
+        comments: localAppended.comments
+      };
+      return localUpdatedItem;
+    });
+    if (!localUpdatedItem) return null;
+    await writeLocal(local);
+    return { comment, item: localUpdatedItem };
   });
-  if (!localUpdatedItem) return null;
-  await writeLocal(local);
-  return { comment, item: localUpdatedItem };
 };
 
 export const applyPostAction = async (
@@ -1571,7 +1575,7 @@ export const applyPostAction = async (
     return { item: updated, activity };
   }
 
-  return withLocalActionLock(async () => {
+  return withLocalMutation(async () => {
     const local = await readLocal();
     let result: ActionMutationResult | null = null;
     local.items = local.items.map((item) => {
@@ -1740,18 +1744,20 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
     return updated;
   }
 
-  const local = await readLocal();
-  let updated: InquiryItem | null = null;
-  local.items = local.items.map((item) => {
-    if (item.id !== itemId || isDeletedPost(item) || !canManagePost(item, actorHandle)) return item;
-    if (postTitlePolicyError(item, cleanInput.title)) return item;
-    if (input.attachments?.length && (item.room === "office" || item.kind === "draft")) return item;
-    updated = updatePostShape(item, cleanInput);
+  return withLocalMutation(async () => {
+    const local = await readLocal();
+    let updated: InquiryItem | null = null;
+    local.items = local.items.map((item) => {
+      if (item.id !== itemId || isDeletedPost(item) || !canManagePost(item, actorHandle)) return item;
+      if (postTitlePolicyError(item, cleanInput.title)) return item;
+      if (input.attachments?.length && (item.room === "office" || item.kind === "draft")) return item;
+      updated = updatePostShape(item, cleanInput);
+      return updated;
+    });
+    if (!updated) return null;
+    await writeLocal(local);
     return updated;
   });
-  if (!updated) return null;
-  await writeLocal(local);
-  return updated;
 };
 
 export const deletePost = async (itemId: string, actorHandle = defaultProfile.handle, allowCommunityModerator = false) => {
@@ -1817,19 +1823,21 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
     return deleted;
   }
 
-  const local = await readLocal();
-  const existing = local.items.find((item) => item.id === itemId);
-  if (!existing || isDeletedPost(existing) || (!canManagePost(existing, actorHandle) && !(allowCommunityModerator && existing.communityId && existing.postType !== "paper"))) return null;
-  const deleted = { ...tombstonePost(existing), revision: (existing.revision ?? 1) + 1 };
-  local.items = local.items.map((item) => (item.id === itemId ? deleted : item));
-  local.items = invalidateQuotedSource(local.items, {
-    sourceType: "post",
-    sourceId: itemId,
-    sourcePostId: itemId
+  return withLocalMutation(async () => {
+    const local = await readLocal();
+    const existing = local.items.find((item) => item.id === itemId);
+    if (!existing || isDeletedPost(existing) || (!canManagePost(existing, actorHandle) && !(allowCommunityModerator && existing.communityId && existing.postType !== "paper"))) return null;
+    const deleted = { ...tombstonePost(existing), revision: (existing.revision ?? 1) + 1 };
+    local.items = local.items.map((item) => (item.id === itemId ? deleted : item));
+    local.items = invalidateQuotedSource(local.items, {
+      sourceType: "post",
+      sourceId: itemId,
+      sourcePostId: itemId
+    });
+    deactivateLedgerEntries(local.actionLedger, (activity) => activity.postId === itemId);
+    await writeLocal(local);
+    return deleted;
   });
-  deactivateLedgerEntries(local.actionLedger, (activity) => activity.postId === itemId);
-  await writeLocal(local);
-  return deleted;
 };
 
 const updateCommentShape = (
@@ -1888,24 +1896,26 @@ export const updateComment = async (
     return { ...existing, comments: mapped.comments, revision: (existing.revision ?? 1) + 1 };
   }
 
-  const local = await readLocal();
-  let updated: InquiryItem | null = null;
-  local.items = local.items.map((item) => {
-    if (item.id !== itemId) return item;
-    if (input.attachments?.length && (item.room === "office" || item.kind === "draft")) return item;
-    const mapped = mapCommentTree(item.comments, commentId, (comment) => {
-      if (isDeletedComment(comment) || !canManageComment(comment, actorHandle)) return comment;
-      return updateCommentShape(comment, cleanInput);
+  return withLocalMutation(async () => {
+    const local = await readLocal();
+    let updated: InquiryItem | null = null;
+    local.items = local.items.map((item) => {
+      if (item.id !== itemId) return item;
+      if (input.attachments?.length && (item.room === "office" || item.kind === "draft")) return item;
+      const mapped = mapCommentTree(item.comments, commentId, (comment) => {
+        if (isDeletedComment(comment) || !canManageComment(comment, actorHandle)) return comment;
+        return updateCommentShape(comment, cleanInput);
+      });
+      if (!mapped.updated || isDeletedComment(mapped.updated) || !canManageComment(mapped.updated, actorHandle)) {
+        return item;
+      }
+      updated = { ...item, comments: mapped.comments, revision: (item.revision ?? 1) + 1 };
+      return updated;
     });
-    if (!mapped.updated || isDeletedComment(mapped.updated) || !canManageComment(mapped.updated, actorHandle)) {
-      return item;
-    }
-    updated = { ...item, comments: mapped.comments, revision: (item.revision ?? 1) + 1 };
+    if (!updated) return null;
+    await writeLocal(local);
     return updated;
   });
-  if (!updated) return null;
-  await writeLocal(local);
-  return updated;
 };
 
 export const deleteComment = async (
@@ -1975,29 +1985,31 @@ export const deleteComment = async (
     return { ...deletion.item, revision: (existing.revision ?? 1) + 1 };
   }
 
-  const local = await readLocal();
-  let deleted: InquiryItem | null = null;
-  local.items = local.items.map((item) => {
-    if (item.id !== itemId) return item;
-    const original = findCommentInTree(item.comments, commentId);
-    if (!original || isDeletedComment(original) || (!canManageComment(original, actorHandle) && !(allowCommunityModerator && item.communityId))) return item;
-    const deletion = tombstoneCommentInItem(item, commentId);
-    if (!deletion.deletedComment) return item;
-    deleted = { ...deletion.item, revision: (item.revision ?? 1) + 1 };
+  return withLocalMutation(async () => {
+    const local = await readLocal();
+    let deleted: InquiryItem | null = null;
+    local.items = local.items.map((item) => {
+      if (item.id !== itemId) return item;
+      const original = findCommentInTree(item.comments, commentId);
+      if (!original || isDeletedComment(original) || (!canManageComment(original, actorHandle) && !(allowCommunityModerator && item.communityId))) return item;
+      const deletion = tombstoneCommentInItem(item, commentId);
+      if (!deletion.deletedComment) return item;
+      deleted = { ...deletion.item, revision: (item.revision ?? 1) + 1 };
+      return deleted;
+    });
+    if (!deleted) return null;
+    local.items = invalidateQuotedSource(local.items, {
+      sourceType: "comment",
+      sourceId: commentId,
+      sourcePostId: itemId
+    });
+    deactivateLedgerEntries(
+      local.actionLedger,
+      (activity) => activity.subjectType === "comment" && activity.subjectId === commentId
+    );
+    await writeLocal(local);
     return deleted;
   });
-  if (!deleted) return null;
-  local.items = invalidateQuotedSource(local.items, {
-    sourceType: "comment",
-    sourceId: commentId,
-    sourcePostId: itemId
-  });
-  deactivateLedgerEntries(
-    local.actionLedger,
-    (activity) => activity.subjectType === "comment" && activity.subjectId === commentId
-  );
-  await writeLocal(local);
-  return deleted;
 };
 
 export const applyCommentAction = async (
@@ -2073,7 +2085,7 @@ export const applyCommentAction = async (
     };
   }
 
-  return withLocalActionLock(async () => {
+  return withLocalMutation(async () => {
     const local = await readLocal();
     let result: ActionMutationResult | null = null;
     local.items = local.items.map((item) => {

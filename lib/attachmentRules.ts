@@ -1,9 +1,6 @@
-import { attachmentKindForFile, type AttachmentKindContract } from "@/packages/contracts/src";
-
-export type AttachmentKind = AttachmentKindContract;
+import { attachmentKindForFile } from "@/packages/contracts/src";
 
 export const maxPostAttachments = 10;
-export const maxContentAttachments = 100;
 export const maxPostAttachmentBytes = 50 * 1024 * 1024;
 export const maxAssistantAttachments = 5;
 export const maxAssistantAttachmentBytes = 5 * 1024 * 1024;

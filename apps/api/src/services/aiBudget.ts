@@ -9,7 +9,6 @@ const microsPerToken: Record<SupportedAssistantModel, { input: number; cacheWrit
 };
 
 export const usdToMicros = (usd: number) => Math.floor(usd * 1_000_000);
-export const microsToUsd = (micros: number) => Number((micros / 1_000_000).toFixed(6));
 
 export const conservativeInputTokenCeiling = (text: string) => Buffer.byteLength(text, "utf8");
 

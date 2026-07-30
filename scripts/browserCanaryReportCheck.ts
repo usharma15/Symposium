@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const expectedCanaries = [
   "symposium-canary.spec.ts\0first session enters the isolated local preview",
+  "symposium-canary.spec.ts\0serializes simultaneous local preview writes without loss",
   "symposium-canary.spec.ts\0hydrates canonical routes and preserves in-app history",
   "symposium-canary.spec.ts\0keeps Paper and Thought design identities stable across theme and reload",
   "symposium-canary.spec.ts\0keeps the authored-artifact layouts inside desktop and mobile viewports",
@@ -24,7 +25,7 @@ export const checkBrowserCanaryReport = (report: RecordValue) => {
       unexpected: report.stats?.unexpected,
       flaky: report.stats?.flaky
     },
-    { expected: 5, skipped: 0, unexpected: 0, flaky: 0 }
+    { expected: expectedCanaries.length, skipped: 0, unexpected: 0, flaky: 0 }
   );
   assert.deepEqual(report.errors, [], "report-level browser errors");
   const specs = collectSpecs(report.suites ?? []);
@@ -50,7 +51,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
         results: [{ status: "passed", errors: [] }] }] };
     });
     const fixture = { config: { version: "1.62.0", workers: 1 },
-      stats: { expected: 5, skipped: 0, unexpected: 0, flaky: 0 }, errors: [], suites: [{ specs }] };
+      stats: { expected: expectedCanaries.length, skipped: 0, unexpected: 0, flaky: 0 }, errors: [], suites: [{ specs }] };
     checkBrowserCanaryReport(fixture);
     assert.throws(() => checkBrowserCanaryReport({ ...fixture, suites: [] }));
     assert.throws(() => checkBrowserCanaryReport({ ...fixture, stats: { ...fixture.stats, skipped: 1 } }));

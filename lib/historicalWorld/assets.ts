@@ -100,5 +100,3 @@ export const allHistoricalAssets: HistoricalAsset[] = [
   ...Object.values(historicalPapers),
   ...Object.values(historicalImages)
 ];
-
-export const historicalAssetById = new Map(allHistoricalAssets.map((entry) => [entry.id, entry]));

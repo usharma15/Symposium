@@ -26,21 +26,6 @@ export const quotedContentExcerpt = (body: string, limit = quoteExcerptLength) =
   return `${candidate.slice(0, boundary >= 300 ? boundary : limit).trimEnd()}…`;
 };
 
-export const quoteSourceFromPost = (item: InquiryItemContract): ContentQuoteSourceContract => ({
-  sourceType: "post",
-  sourceId: item.id
-});
-
-export const quoteSourceFromComment = (comment: InquiryCommentContract): ContentQuoteSourceContract => ({
-  sourceType: "comment",
-  sourceId: comment.id as string
-});
-
-export const quoteSourceFromQuote = (quote: ContentQuoteContract): ContentQuoteSourceContract => ({
-  sourceType: quote.sourceType,
-  sourceId: quote.sourceId
-});
-
 export const resolveLocalContentQuote = (
   items: InquiryItemContract[],
   source: ContentQuoteSourceContract | undefined,

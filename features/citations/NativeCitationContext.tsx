@@ -10,7 +10,6 @@ import {
 } from "react";
 import { BookOpen, X } from "lucide-react";
 import {
-  documentCitationMarkerText,
   type DocumentCitationLocatorContract,
   type DocumentNativeCitationContract,
   type DocumentSourceSnapshotContract
@@ -55,11 +54,6 @@ const citationId = () => {
     .slice(0, 32);
   return `${entropy.slice(0, 8)}-${entropy.slice(8, 12)}-4${entropy.slice(13, 16)}-8${entropy.slice(17, 20)}-${entropy.slice(20)}`;
 };
-
-export const nativeCitationMarkerRun = (citation: DocumentNativeCitationContract) => ({
-  text: documentCitationMarkerText,
-  citation
-});
 
 export const useNativeCitation = () => useContext(NativeCitationContext) ?? noopContext;
 
