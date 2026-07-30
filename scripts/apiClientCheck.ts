@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   SymposiumApiError,
   createRetryMutationRegistry,
@@ -8,6 +9,11 @@ import {
 } from "@/features/api/symposiumApiClient";
 import { profileAvatarForPersistence } from "@/features/profiles/profilePersistence";
 import { uploadPreparedAttachmentContent } from "@/features/attachments/attachmentUploadClient";
+import { hashMutationPayload } from "@/apps/api/src/services/mutations";
+import {
+  mapSymposiumApiRoute,
+  normalizeSymposiumBackendUrl
+} from "@/lib/symposiumApiRoute";
 
 const jsonResponse = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), {
@@ -57,7 +63,7 @@ const main = async () => {
       "https://api.example"
     ),
     {
-      body: { expectedRevision: 3, noteId: "note-1" },
+      body: { expectedRevision: 3, noteId: "note-1", visibility: "public" },
       direct: true,
       input: "https://api.example/v1/notes/publish",
       method: "POST"
@@ -72,10 +78,51 @@ const main = async () => {
     "https://api.example/v1/posts/p1/views"
   );
   assert.equal(
+    resolveSymposiumApiRequest(
+      "/api/posts/p1/comments/c1/actions",
+      { method: "POST", body: { action: "read", actorHandle: "@ada" } },
+      "https://api.example"
+    ).input,
+    "https://api.example/v1/posts/p1/comments/c1/views"
+  );
+  assert.equal(
     resolveSymposiumApiRequest("/api/auth/sync", { method: "POST" }, "https://api.example").direct,
     false
   );
+  assert.equal(normalizeSymposiumBackendUrl("https://api.example/root/"), "https://api.example/root");
+  for (const invalidBackend of ["javascript:alert(1)", "https://user:secret@api.example", "not a url"]) {
+    assert.equal(normalizeSymposiumBackendUrl(invalidBackend), null);
+  }
+  assert.equal(mapSymposiumApiRoute("https://untrusted.example/api/posts").boundary, "non-api");
 
+  const boundaries = [
+    ["/api/auth/sync", "auth-sync", "/v1/auth/sync"],
+    ["/api/attachments/local/a/file.pdf", "local-attachment", null],
+    ["/api/assistant-attachments/a", "protected-assistant-attachment", "/v1/assistant-attachments/a/access"],
+    ["/api/message-attachments/a", "protected-message-attachment", "/v1/message-attachments/a/access"],
+    ["/api/opportunity-attachments/a", "protected-opportunity-attachment", "/v1/opportunity-attachments/a/access"],
+    ["/api/workspace/attachments/a", "protected-workspace-attachment", "/v1/workspace/attachments/a/access"]
+  ] as const;
+  for (const [path, boundary, livePath] of boundaries) {
+    const mapping = mapSymposiumApiRoute(path);
+    assert.equal(mapping.boundary, boundary, path);
+    assert.equal(mapping.livePath, livePath, path);
+    assert.equal(resolveSymposiumApiRequest(path, {}, "https://api.example").direct, false, path);
+  }
+
+  const encoded = mapSymposiumApiRoute("/api/posts/paper%2Fencoded?cursor=a%2Fb");
+  assert.equal(encoded.livePath, "/v1/posts/paper%2Fencoded?cursor=a%2Fb");
+  assert.deepEqual(
+    mapSymposiumApiRoute("/api/workspace/documents/n1", {
+      method: "PATCH",
+      body: { title: "Canonical", actorHandle: "@ada" }
+    }).body,
+    { title: "Canonical" }
+  );
+  mapSymposiumApiRoute("/api/workspace/documents/bad%percent/publish", {
+    method: "POST",
+    body: { expectedRevision: 2 }
+  });
   const directRequests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const directClient = createSymposiumApiClient(async (input, init) => {
     directRequests.push({ input, init });
@@ -130,6 +177,43 @@ const main = async () => {
   assert.equal(new Headers(directRequests[2]?.init?.headers).get("Content-Type"), "application/octet-stream");
   assert.equal(directRequests[2]?.init?.body, attachmentBody);
 
+  const developmentRequests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const developmentClient = createSymposiumApiClient(async (input, init) => {
+    developmentRequests.push({ input, init });
+    return jsonResponse({ ok: true });
+  }, {
+    backendUrl: "https://api.example",
+    getAccessToken: async () => null
+  });
+  const thoughtBody = {
+    title: "",
+    body: "A titleless Thought",
+    kind: "thought",
+    postType: "thought",
+    room: "amphitheater",
+    authorHandle: "@hypatia",
+    attachmentIds: []
+  };
+  const commentBody = {
+    body: "A direct comment",
+    stance: "Comment",
+    parentId: null,
+    authorHandle: "@hypatia",
+    attachmentIds: []
+  };
+  const developmentCases: Array<[string, string, string, Record<string, unknown>, string, unknown?]> = [
+    ["/api/communities/research/membership", "membership-1", "@ada", { action: "join", actorHandle: "@ada" }, "https://api.example/v1/communities/research/join", {}],
+    ["/api/posts", "post-create-author-1", "@hypatia", thoughtBody, "https://api.example/v1/posts"],
+    ["/api/posts/post-1/comments", "comment-create-author-1", "@hypatia", commentBody, "https://api.example/v1/posts/post-1/comments"]
+  ];
+  for (const [path, idempotencyKey, actorHandle, body, input, expectedBody = body] of developmentCases) {
+    await developmentClient.request(path, { method: "POST", idempotencyKey, body });
+    const request = developmentRequests.at(-1)!;
+    assert.equal(request.input, input, path);
+    assert.equal(new Headers(request.init?.headers).get("x-symposium-handle"), actorHandle, path);
+    assert.deepEqual(JSON.parse(String(request.init?.body)), expectedBody, path);
+  }
+
   const preparedUploads: Array<{ path: string; body: Blob; actorHandle?: string }> = [];
   await uploadPreparedAttachmentContent({
     actorHandle: "@ada",
@@ -160,46 +244,53 @@ const main = async () => {
   await fallbackClient.request("/api/posts?limit=24");
   assert.deepEqual(fallbackRequests, ["https://api.example/v1/posts?limit=24", "/api/posts?limit=24"]);
 
-  const scopedFallbackRequests: Array<{
-    input: string;
-    body: BodyInit | null | undefined;
-  }> = [];
-  const scopedFallbackClient = createSymposiumApiClient(async (input, init) => {
-    scopedFallbackRequests.push({
-      input: String(input),
-      body: init?.body
-    });
-    if (String(input).startsWith("https://api.example")) {
-      throw new TypeError("cors");
-    }
-    return jsonResponse({ ok: true });
-  }, { backendUrl: "https://api.example", getAccessToken: async () => "token-1" });
-  await scopedFallbackClient.request("/api/assistant/actions/office-post-drafts", {
-    method: "POST",
-    actorHandle: "@ada",
-    idempotencyKey: "assistant-action-fallback-1",
-    body: {
-      assistantMessageId: "00000000-0000-4000-8000-000000000002",
-      postKind: "paper"
-    }
-  });
-  assert.deepEqual(scopedFallbackRequests, [
-    {
-      input: "https://api.example/v1/assistant/actions/office-post-drafts",
-      body: JSON.stringify({
-        assistantMessageId: "00000000-0000-4000-8000-000000000002",
-        postKind: "paper"
-      })
-    },
-    {
-      input: "/api/assistant/actions/office-post-drafts",
-      body: JSON.stringify({
-        assistantMessageId: "00000000-0000-4000-8000-000000000002",
-        postKind: "paper",
-        actorHandle: "@ada"
-      })
-    }
+  const responseLossProbe = async (path: string, idempotencyKey: string, body: Record<string, unknown>, method: "POST" | "DELETE" = "POST") => {
+    const requests: Array<{ actorHandle: string | null; input: string; body: unknown }> = [];
+    const probe = createSymposiumApiClient(async (input, init) => {
+      requests.push({
+        actorHandle: new Headers(init?.headers).get("x-symposium-handle"),
+        input: String(input),
+        body: init?.body === undefined ? undefined : JSON.parse(String(init.body))
+      });
+      if (String(input).startsWith("https://api.example")) throw new TypeError("response lost");
+      return jsonResponse({ ok: true });
+    }, { backendUrl: "https://api.example", getAccessToken: async () => "token-1" });
+    await probe.request(path, { method, actorHandle: "@ada", idempotencyKey, body });
+    const [direct, fallback] = requests;
+    const facadeBody = mapSymposiumApiRoute(fallback!.input, { method, body: fallback!.body }).body;
+    assert.equal(hashMutationPayload(facadeBody), hashMutationPayload(direct!.body), path);
+    return { direct: direct!, fallback: fallback! };
+  };
+  const assistantBody = {
+    assistantMessageId: "00000000-0000-4000-8000-000000000002",
+    postKind: "paper"
+  };
+  const assistantLoss = await responseLossProbe(
+    "/api/assistant/actions/office-post-drafts",
+    "assistant-action-fallback-1",
+    assistantBody
+  );
+  assert.deepEqual([assistantLoss.direct.input, assistantLoss.fallback.input], [
+    "https://api.example/v1/assistant/actions/office-post-drafts",
+    "/api/assistant/actions/office-post-drafts"
   ]);
+  assert.deepEqual([assistantLoss.direct.actorHandle, assistantLoss.fallback.actorHandle], [null, "@ada"]);
+  assert.deepEqual(assistantLoss.fallback.body, { ...assistantBody, actorHandle: "@ada" });
+
+  type ResponseLossCase = [string, string, Record<string, unknown>, ("POST" | "DELETE")?, unknown?, string?];
+  const responseLossCases: ResponseLossCase[] = [
+    ["/api/workspace/documents/note-1/publish", "publication-fallback-1", { expectedRevision: 3, publicationTarget: "thought" }, "POST", { noteId: "note-1", expectedRevision: 3, publicationTarget: "thought", visibility: "public" }],
+    ["/api/posts/post-1/opportunity/application", "opportunity-fallback-1", { statement: "Evidence", attachmentIds: [] }],
+    ["/api/messages", "legacy-message-fallback-1", { actorHandle: "@ada", body: "Hello", recipientHandle: "@grace" }],
+    ["/api/conversations/groups", "legacy-group-fallback-1", { actorHandle: "@ada", title: "Research", inviteeHandles: ["@grace"] }],
+    ["/api/profiles/hypatia/follow", "profile-unfollow-fallback-1", { actorHandle: "@ada" }, "DELETE", { actorHandle: "@ada", targetHandle: "@hypatia" }],
+    ["/api/profiles/hypatia/follow", "profile-follow-fallback-1", { actorHandle: "@ada" }, "POST", { targetHandle: "@hypatia", status: "active" }, "https://api.example/v1/profiles/%40hypatia/follow"]
+  ];
+  for (const [path, key, body, method = "POST", expectedBody = body, expectedInput] of responseLossCases) {
+    const loss = await responseLossProbe(path, key, body, method);
+    assert.deepEqual(loss.direct.body, expectedBody, `${method} ${path} canonical body`);
+    if (expectedInput) assert.equal(loss.direct.input, expectedInput, `${method} ${path} target`);
+  }
 
   const conflictClient = createSymposiumApiClient(async () => jsonResponse({ error: "Still processing" }, 409));
   const conflict = await conflictClient.request("/api/posts", { method: "POST", body: {} }).catch((error) => error);
@@ -233,11 +324,15 @@ const main = async () => {
   assert.equal(profileAvatarForPersistence("blob:http://localhost/avatar"), undefined);
   assert.equal(profileAvatarForPersistence(" https://cdn.example/avatar.webp "), "https://cdn.example/avatar.webp");
 
-  console.log(JSON.stringify({ ok: true, checked: [
+  reportCheck([
     "JSON request normalization",
     "idempotency header propagation",
     "strict action payload authentication separation",
+    "canonical route mapping and protected-delivery boundaries",
+    "pre-transformation development actor capture",
+    "direct create author identity promotion",
     "actor-aware Next-route mutation failover",
+    "cross-transport idempotency hash equivalence after response loss",
     "lifecycle keepalive propagation",
     "authenticated binary upload routing",
     "shared prepared-upload transport for profile photos",
@@ -245,7 +340,7 @@ const main = async () => {
     "retry retention policy",
     "stable retry mutation identities",
     "persistent profile-avatar URL boundary"
-  ] }, null, 2));
+  ]);
 };
 
 void main();

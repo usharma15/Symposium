@@ -6,7 +6,7 @@ import {
   promoteLocalWorkspaceDocumentAttachments
 } from "@/lib/localAttachmentStore";
 import { getLocalWorkspaceComments } from "@/lib/localWorkspaceCommentStore";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { getLocalWorkspaceRevision, markLocalWorkspacePublished } from "@/lib/localWorkspaceStore";
 import type { InquiryComment, InquiryItem } from "@/lib/mockData";
 import { findCommentInTree } from "@/lib/symposiumCore";
@@ -77,11 +77,9 @@ export async function POST(request: Request, context: Context) {
     publicationTarget: body?.publicationTarget,
     visibility: "public" as const
   };
-  const live = await proxyLiveBackend("/v1/notes/publish", {
-    method: "POST",
+  const live = await proxyLiveApiRequest(request, {
     body: payload,
-    actorHandle,
-    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+    actorHandle
   });
   if (live) return live;
 

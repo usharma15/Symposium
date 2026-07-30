@@ -1,6 +1,6 @@
 import { ZodError } from "zod";
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import {
   createLocalOpportunityApplication,
   getOwnLocalOpportunityApplication,
@@ -22,7 +22,10 @@ const failure = (error: unknown) => {
 export async function GET(request: Request, context: Context) {
   const { id } = await context.params;
   const actorHandle = workspaceActorHandle(request);
-  const live = await proxyLiveBackend(`/v1/posts/${encodeURIComponent(id)}/opportunity/application`, { actorHandle });
+  const live = await proxyLiveApiRequest(request, {
+    actorHandle,
+    sourcePath: new URL(request.url).pathname
+  });
   if (live) return live;
   try { return Response.json({ application: await getOwnLocalOpportunityApplication(id, actorHandle) }); }
   catch (error) { return failure(error); }
@@ -32,12 +35,14 @@ export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
   const body = await readJson<Record<string, unknown> & { actorHandle?: string }>(request);
   const actorHandle = workspaceActorHandle(request, body?.actorHandle);
-  const parsed = createOpportunityApplicationInputSchema.parse({ ...body, postId: id, actorHandle });
-  const live = await proxyLiveBackend(`/v1/posts/${encodeURIComponent(id)}/opportunity/application`, {
-    method: "POST", body: { statement: parsed.statement, attachmentIds: parsed.attachmentIds }, actorHandle,
-    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
-  });
-  if (live) return live;
-  try { return Response.json({ application: await createLocalOpportunityApplication({ ...parsed, actorHandle }) }); }
+  try {
+    const parsed = createOpportunityApplicationInputSchema.parse({ ...body, postId: id, actorHandle });
+    const live = await proxyLiveApiRequest(request, {
+      body: { statement: parsed.statement, attachmentIds: parsed.attachmentIds },
+      actorHandle
+    });
+    if (live) return live;
+    return Response.json({ application: await createLocalOpportunityApplication({ ...parsed, actorHandle }) });
+  }
   catch (error) { return failure(error); }
 }

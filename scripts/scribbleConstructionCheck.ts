@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   documentFitsScribbleEditor,
   documentPlainTextProjection,
@@ -213,9 +214,7 @@ try {
   await rm(temporaryRoot, { recursive: true, force: true });
 }
 
-console.log(JSON.stringify({
-  ok: true,
-  checked: [
+reportCheck([
     "Scribble-only document and exact plain-text projection contracts",
     "persistent singleton and bounded revision history",
     "revision-guarded autosave, filing, discard, and restore",
@@ -227,8 +226,7 @@ console.log(JSON.stringify({
     "compact four-corner panel, on-demand filing menu, compact source snapshots, and tone-preserving locator-aware source cards",
     "selection capture without post-level or comment-level Scribble metric actions",
     "non-publishable and non-shareable filed Quick Notes"
-  ]
-}, null, 2));
+]);
 };
 
 void main();

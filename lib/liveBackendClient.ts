@@ -1,17 +1,35 @@
 import { auth } from "@clerk/nextjs/server";
 import { liveBackendUnavailableResponse, localDataFallbackAllowed } from "@/lib/runtimeSafety";
+import {
+  mapSymposiumApiRoute,
+  normalizeSymposiumBackendUrl,
+  type SymposiumApiMethod
+} from "@/lib/symposiumApiRoute";
 
-const backendUrl = process.env.SYMPOSIUM_API_URL?.replace(/\/$/, "");
+const backendUrl = normalizeSymposiumBackendUrl(process.env.SYMPOSIUM_API_URL);
 const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 
 type LiveBackendOptions = {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: SymposiumApiMethod;
   body?: unknown;
   actorHandle?: string;
   idempotencyKey?: string;
 };
 
-export const hasLiveBackend = Boolean(backendUrl);
+type LiveBackendDependencies = {
+  backendUrl?: string | null;
+  fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
+  getToken?: () => Promise<string | null>;
+  localFallbackAllowed?: () => boolean;
+  reportError?: (...values: unknown[]) => void;
+};
+
+type LiveApiForwardOptions = {
+  actorHandle?: string | null;
+  body?: unknown;
+  forwardIdempotency?: boolean;
+  sourcePath?: string;
+};
 
 export const liveBackendPath = (path: string) => (backendUrl ? `${backendUrl}${path}` : null);
 
@@ -45,34 +63,74 @@ export const liveBackendResponseHeaders = (response: Response, fallbackContentTy
   return headers;
 };
 
-export const proxyLiveBackend = async (path: string, options: LiveBackendOptions = {}) => {
-  if (!backendUrl) {
-    if (localDataFallbackAllowed()) return null;
+const responseMustNotHaveBody = (status: number) => [204, 205, 304].includes(status);
 
-    console.error("SYMPOSIUM_API_URL is required when running the Next application in production.");
-    return liveBackendUnavailableResponse();
-  }
+export const createLiveBackendProxy = (dependencies: LiveBackendDependencies = {}) => {
+  const configuredBackendUrl = normalizeSymposiumBackendUrl(dependencies.backendUrl);
+  const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const getToken = dependencies.getToken ?? (async () =>
+    clerkEnabled ? await (await auth()).getToken().catch(() => null) : null);
+  const fallbackAllowed = dependencies.localFallbackAllowed ?? localDataFallbackAllowed;
+  const reportError = dependencies.reportError ?? console.error;
 
-  try {
-    const token = clerkEnabled ? await (await auth()).getToken().catch(() => null) : null;
-    const response = await fetch(`${backendUrl}${path}`, {
-      method: options.method ?? "GET",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(options.actorHandle ? { "x-symposium-handle": options.actorHandle } : {}),
-        ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {})
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined,
-      cache: "no-store"
-    });
-    const text = await response.text();
-    return new Response(text, {
-      status: response.status,
-      headers: liveBackendResponseHeaders(response)
-    });
-  } catch (error) {
-    console.error("SYMPOSIUM live backend unavailable.", error);
-    return liveBackendUnavailableResponse();
-  }
+  return async (path: string, options: LiveBackendOptions = {}) => {
+    if (!configuredBackendUrl) {
+      if (fallbackAllowed()) return null;
+
+      reportError("SYMPOSIUM_API_URL is required when running the Next application in production.");
+      return liveBackendUnavailableResponse();
+    }
+
+    try {
+      const method = options.method ?? "GET";
+      const token = await getToken().catch(() => null);
+      const response = await fetchImpl(`${configuredBackendUrl}${path}`, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(options.actorHandle ? { "x-symposium-handle": options.actorHandle } : {}),
+          ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {})
+        },
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        cache: "no-store"
+      });
+      const text = responseMustNotHaveBody(response.status)
+        ? null
+        : await response.text();
+      return new Response(text, {
+        status: response.status,
+        headers: liveBackendResponseHeaders(response)
+      });
+    } catch (error) {
+      reportError("SYMPOSIUM live backend unavailable.", error);
+      return liveBackendUnavailableResponse();
+    }
+  };
 };
+
+export const createLiveApiForwarder = (dependencies: LiveBackendDependencies = {}) => {
+  const proxy = createLiveBackendProxy(dependencies);
+  return async (request: Request, options: LiveApiForwardOptions = {}) => {
+    const sourceUrl = new URL(request.url);
+    const sourcePath = options.sourcePath ?? `${sourceUrl.pathname}${sourceUrl.search}`;
+    const mapping = mapSymposiumApiRoute(sourcePath, {
+      body: options.body,
+      method: request.method as SymposiumApiMethod
+    });
+    if (!mapping.livePath) return null;
+    return proxy(mapping.livePath, {
+      actorHandle: options.actorHandle ??
+        mapping.actorHandle ??
+        request.headers.get("x-symposium-handle") ??
+        undefined,
+      body: mapping.body,
+      idempotencyKey: options.forwardIdempotency === false
+        ? undefined
+        : request.headers.get("idempotency-key") ?? undefined,
+      method: mapping.method
+    });
+  };
+};
+
+export const proxyLiveApiRequest = createLiveApiForwarder({ backendUrl });

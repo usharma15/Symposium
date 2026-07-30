@@ -1,6 +1,6 @@
 import { ZodError } from "zod";
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import {
   deleteLocalOpportunityApplication,
   LocalOpportunityApplicationError,
@@ -22,13 +22,15 @@ export async function PATCH(request: Request, context: Context) {
   const { id, applicationId } = await context.params;
   const body = await readJson<Record<string, unknown> & { actorHandle?: string }>(request);
   const actorHandle = workspaceActorHandle(request, body?.actorHandle);
-  const parsed = updateOpportunityApplicationInputSchema.parse({ ...body, actorHandle });
-  const live = await proxyLiveBackend(`/v1/posts/${encodeURIComponent(id)}/opportunity/applications/${encodeURIComponent(applicationId)}`, {
-    method: "PATCH", body: { shortlisted: parsed.shortlisted, expectedRevision: parsed.expectedRevision }, actorHandle,
-    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
-  });
-  if (live) return live;
-  try { return Response.json({ application: await updateLocalOpportunityApplication({ postId: id, applicationId, ...parsed, actorHandle }) }); }
+  try {
+    const parsed = updateOpportunityApplicationInputSchema.parse({ ...body, actorHandle });
+    const live = await proxyLiveApiRequest(request, {
+      body: { shortlisted: parsed.shortlisted, expectedRevision: parsed.expectedRevision },
+      actorHandle
+    });
+    if (live) return live;
+    return Response.json({ application: await updateLocalOpportunityApplication({ postId: id, applicationId, ...parsed, actorHandle }) });
+  }
   catch (error) { return failure(error); }
 }
 
@@ -36,9 +38,7 @@ export async function DELETE(request: Request, context: Context) {
   const { id, applicationId } = await context.params;
   const body = await readJson<{ actorHandle?: string }>(request);
   const actorHandle = workspaceActorHandle(request, body?.actorHandle);
-  const live = await proxyLiveBackend(`/v1/posts/${encodeURIComponent(id)}/opportunity/applications/${encodeURIComponent(applicationId)}`, {
-    method: "DELETE", actorHandle, idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
-  });
+  const live = await proxyLiveApiRequest(request, { actorHandle });
   if (live) return live;
   try { return Response.json({ deleted: await deleteLocalOpportunityApplication(id, applicationId, actorHandle) }); }
   catch (error) { return failure(error); }

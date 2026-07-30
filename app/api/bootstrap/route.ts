@@ -1,5 +1,5 @@
 import { getSnapshot } from "@/lib/dataStore";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { profile } from "@/lib/mockData";
 import { listAllLocalCommunityCalls, listLocalCommunities } from "@/lib/localCommunityStore";
 import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
@@ -14,7 +14,9 @@ const commentCount = (comments: Awaited<ReturnType<typeof getSnapshot>>["items"]
 
 export async function GET(request: Request) {
   const actorHandle = new URL(request.url).searchParams.get("actorHandle") ?? undefined;
-  const live = await proxyLiveBackend("/v1/bootstrap", { actorHandle });
+  const live = await proxyLiveApiRequest(request, {
+    actorHandle
+  });
   if (live) return live;
 
   const snapshot = await getSnapshot();

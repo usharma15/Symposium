@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createFollowMutationCoordinator } from "@/features/live-sync/followMutationCoordinator";
+import { reportCheck } from "@/scripts/checkReport";
 
 const main = () => {
   const coordinator = createFollowMutationCoordinator();
@@ -30,14 +31,14 @@ const main = () => {
   assert.equal(coordinator.fail(external), false);
   assert.equal(coordinator.revisionFor("@ada", "@grace"), 6);
 
-  console.log(JSON.stringify({ ok: true, checked: [
+  reportCheck([
     "pending follow protection without timers",
     "pending unfollow protection without timers",
     "authoritative revision commitment",
     "stale follow rejection",
     "superseded rollback rejection",
     "newer external mutation convergence"
-  ] }, null, 2));
+  ]);
 };
 
 main();

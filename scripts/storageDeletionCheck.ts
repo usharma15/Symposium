@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { PoolClient } from "pg";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   attachmentStorageObjectKeys,
   queueAttachmentRowsForStorageDeletion,
@@ -72,29 +73,20 @@ const main = async () => {
   assert.match(migrationSource, /0015_durable_r2_deletion/);
   assert.match(migrationSource, /deleted_post_backfill/);
 
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        checked: [
-          "canonical and staging object-key deduplication",
-          "bounded exponential retry schedule",
-          "race-safe global upload cost ceilings",
-          "atomic attachment unavailability and deletion enqueue",
-          "post tombstone storage cleanup",
-          "comment and reply tombstone storage cleanup",
-          "ownerless public, message, workspace, and application upload cleanup",
-          "failed and abandoned upload cleanup",
-          "legacy promoted staging-object cleanup",
-          "replaced profile image cleanup",
-          "immediate deletion with activity-driven six-hour durable recovery",
-          "legacy deleted-post backfill"
-        ]
-      },
-      null,
-      2
-    )
-  );
+  reportCheck([
+    "canonical and staging object-key deduplication",
+    "bounded exponential retry schedule",
+    "race-safe global upload cost ceilings",
+    "atomic attachment unavailability and deletion enqueue",
+    "post tombstone storage cleanup",
+    "comment and reply tombstone storage cleanup",
+    "ownerless public, message, workspace, and application upload cleanup",
+    "failed and abandoned upload cleanup",
+    "legacy promoted staging-object cleanup",
+    "replaced profile image cleanup",
+    "immediate deletion with activity-driven six-hour durable recovery",
+    "legacy deleted-post backfill"
+  ]);
 };
 
 void main();

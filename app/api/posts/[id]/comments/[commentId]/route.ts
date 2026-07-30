@@ -1,6 +1,6 @@
 import { deleteComment, getSnapshot, updateComment, type UpdateCommentInput } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import {
   deleteLocalOwnerAttachments,
   LocalAttachmentStoreError,
@@ -54,12 +54,10 @@ export async function PATCH(request: Request, context: Context) {
     return jsonError("Choose an available post or comment to quote.", 400);
   }
   const parsedQuoteSource = quoteSource && "success" in quoteSource ? quoteSource.data : quoteSource;
-  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
-  const live = await proxyLiveBackend(`/v1/posts/${id}/comments/${commentId}`, {
-    method: "PATCH",
+  const live = await proxyLiveApiRequest(request, {
     body: { ...input, actorHandle, attachmentIds, quoteSource: parsedQuoteSource, expectedEditedAt: body.expectedEditedAt },
     actorHandle,
-    idempotencyKey
+    sourcePath: `/api/posts/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`
   });
   if (live) return live;
 
@@ -120,13 +118,10 @@ export async function DELETE(request: Request, context: Context) {
   const { id, commentId } = await context.params;
   const body = await readJson<{ actorHandle?: string }>(request);
   const actorHandle = body?.actorHandle ? String(body.actorHandle) : undefined;
-  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
-
-  const live = await proxyLiveBackend(`/v1/posts/${id}/comments/${commentId}`, {
-    method: "DELETE",
+  const live = await proxyLiveApiRequest(request, {
     body: { actorHandle },
     actorHandle,
-    idempotencyKey
+    sourcePath: `/api/posts/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`
   });
   if (live) return live;
 

@@ -396,6 +396,7 @@ const main = async () => {
   const styles = readFileSync("styles/89-messages.css", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
   const messageAttachmentRoute = readFileSync("app/api/message-attachments/[attachmentId]/route.ts", "utf8");
+  const protectedAttachmentRoute = readFileSync("lib/protectedAttachmentRoute.ts", "utf8");
   const discardAttachmentRoute = readFileSync("app/api/attachments/[attachmentId]/route.ts", "utf8");
   const profileRoute = readFileSync("app/api/profiles/route.ts", "utf8");
 
@@ -548,15 +549,18 @@ const main = async () => {
   assert.match(unreadButton, /data-unread-state=\{loadState\}/);
   assert.match(shell, /<MessagesUnreadButton/);
   assert.match(styles, /\.quick-messages-button > b\s*\{[^}]*background:\s*#197f88/);
-  assert.match(messageAttachmentRoute, /record\.ownerType !== "message"/);
-  assert.match(messageAttachmentRoute, /Cache-Control": "private, no-store"/);
+  assert.match(messageAttachmentRoute, /record\.ownerType === "message"/);
+  assert.match(messageAttachmentRoute, /createProtectedAttachmentRoute/);
+  assert.match(protectedAttachmentRoute, /Cache-Control": "private, no-store"/);
   assert.match(attachmentRoutes, /\/v1\/attachments\/:attachmentId\/content/);
   assert.match(attachmentRoutes, /app\.delete<\{ Params: AttachmentParams \}>\("\/v1\/attachments\/:attachmentId"/);
   assert.match(attachmentRoutes, /scope: "attachment-content", limit: 30/);
   assert.match(attachmentClient, /uploadTransport === "authenticated_api"/);
   assert.match(client, /discardPendingAttachment/);
   assert.match(discardAttachmentRoute, /deleteLocalPendingAttachment/);
-  assert.match(discardAttachmentRoute, /method: "DELETE"/);
+  assert.match(discardAttachmentRoute, /export async function DELETE/);
+  assert.match(discardAttachmentRoute, /proxyLiveApiRequest/);
+  assert.match(discardAttachmentRoute, /sourcePath: `\/api\/attachments\//);
   assert.match(profileRoute, /parameters\.get\("q"\)/);
   assert.match(profileRoute, /slice\(0, limit\)/);
   assert.doesNotMatch(events, /pg_notify\('symposium_live_events', id::text\)/);

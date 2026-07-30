@@ -292,7 +292,6 @@ const sources = await Promise.all([
   readFile(new URL("../features/communities/CommunityPeopleModal.tsx", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/communities.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/foundation.ts", import.meta.url), "utf8"),
-  readFile(new URL("../app/api/communities/[id]/membership/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../components/SymposiumV0.tsx", import.meta.url), "utf8"),
   readFile(new URL("../features/posts/PostViews.tsx", import.meta.url), "utf8"),
   readFile(new URL("../features/profiles/ProfileViews.tsx", import.meta.url), "utf8"),
@@ -312,7 +311,7 @@ const sources = await Promise.all([
   readFile(new URL("../app/api/communities/[id]/requests/[handle]/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/communityRequests.ts", import.meta.url), "utf8")
 ]);
-const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization, announcementRepository, announcementRoute, announcementStyles, requestRoute, communityRequestsRepository] = sources;
+const [views, filterModal, peopleModal, repository, foundation, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization, announcementRepository, announcementRoute, announcementStyles, requestRoute, communityRequestsRepository] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
@@ -340,7 +339,6 @@ assert.match(foundation, /fixture_revisions/, "Community activity enrichment mus
 assert.match(foundation, /communityCalls/, "Canonical bootstrap refreshes must reconcile community calls.");
 assert.match(foundation, /communities-content-v1/, "Rich community content must hydrate the durable backend exactly once.");
 assert.match(foundation, /community\.memberHandles\.slice\(0, communityMemberPreviewLimit\)/, "General bootstrap delivery must cap member previews; the directory endpoint owns full pagination.");
-assert.match(membershipRoute, /action === "leave"/, "The single membership control must support leave through the same client route.");
 assert.match(shell, /selectedCommunity && canParticipateInCommunity/, "The global composer must default to the selected community when participation is allowed.");
 assert.match(shell, /<ProfileView[\s\S]+items=\{items\}/, "Profiles must receive the complete viewer-projected item collection rather than a global-feed subset.");
 assert.match(postViews, /Post destination/, "The global composer must allow switching between community and global publication.");

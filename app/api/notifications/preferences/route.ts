@@ -4,14 +4,11 @@ import { defaultNotificationPreferences } from "@/apps/api/src/services/notifica
 export const dynamic = "force-dynamic";
 
 export const GET = (request: Request) =>
-  proxyMessageRequest(request, "/v1/notifications/preferences", {
+  proxyMessageRequest(request, {
     localFallback: defaultNotificationPreferences()
   });
 
 export async function PATCH(request: Request) {
   const body = await messageRequestBody(request);
-  return proxyMessageRequest(request, "/v1/notifications/preferences", {
-    method: "PATCH",
-    body
-  });
+  return proxyMessageRequest(request, { body });
 }

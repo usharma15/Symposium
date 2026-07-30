@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { reportCheck } from "@/scripts/checkReport";
 
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs"]);
 const ignoredDirectories = new Set([".git", ".next", "node_modules"]);
@@ -25,9 +27,34 @@ const imports = async (file: string) => {
   return [...source.matchAll(/(?:from\s+|import\s*\()(["'])([^"']+)\1/g)].map((match) => match[2]);
 };
 
+const apiRouteBaseline = "10fdc8fd2952a61ad3b47a86988926c8825c74b6";
+const routeSignature = (source: string) => {
+  const methods = [...source.matchAll(
+    /export\s+(?:(?:async\s+)?function|const)\s+(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\b/g
+  )].map((match) => match[1]).sort();
+  const config = (name: string) =>
+    source.match(new RegExp(`export\\s+const\\s+${name}\\s*=\\s*["']([^"']+)["']`))?.[1] ?? "";
+  return `${methods.join(",")}|runtime=${config("runtime")}|dynamic=${config("dynamic")}`;
+};
+
 const main = async () => {
   const files = await sourceFiles(root);
   const fileNames = new Set(files.map(relative));
+  const apiRoutes = files
+    .map((file) => ({ file, name: relative(file) }))
+    .filter(({ name }) => name.startsWith("app/api/") && name.endsWith("/route.ts"));
+  let routeMethodCount = 0;
+  for (const { file, name } of apiRoutes) {
+    const signature = routeSignature(await readFile(file, "utf8"));
+    assert.equal(
+      signature,
+      routeSignature(execFileSync("git", ["show", `${apiRouteBaseline}:${name}`], { encoding: "utf8" })),
+      `${name} changed its public method, runtime, or dynamic contract.`
+    );
+    routeMethodCount += signature.split("|")[0]?.split(",").filter(Boolean).length ?? 0;
+  }
+  assert.equal(apiRoutes.length, 85);
+  assert.equal(routeMethodCount, 116);
   const symposiumImporters: string[] = [];
   const featureGraph = new Map<string, string[]>();
   for (const file of files) {
@@ -121,24 +148,16 @@ const main = async () => {
   };
   for (const fileName of featureGraph.keys()) visitFeature(fileName, []);
 
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        checked: [
-          "single legacy shell entrypoint",
-          "backend to frontend dependency isolation",
-          "feature module independence",
-          "shell and feature dependency boundaries",
-          "controller transport and API isolation",
-          "extracted feature ownership",
-          "acyclic feature dependencies"
-        ]
-      },
-      null,
-      2
-    )
-  );
+  reportCheck([
+    "single legacy shell entrypoint",
+    "exact 85-route and 116-method API surface preservation",
+    "backend to frontend dependency isolation",
+    "feature module independence",
+    "shell and feature dependency boundaries",
+    "controller transport and API isolation",
+    "extracted feature ownership",
+    "acyclic feature dependencies"
+  ]);
 };
 
 void main();

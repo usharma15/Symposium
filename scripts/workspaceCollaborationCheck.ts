@@ -56,7 +56,9 @@ const main = async () => {
     publication,
     attachmentPublishing,
     documentAccessRoute,
+    documentGrantRoute,
     notebookAccessRoute,
+    notebookGrantRoute,
     collaboratorRoute,
     styles,
     architecture
@@ -79,7 +81,9 @@ const main = async () => {
     source("apps/api/src/services/notePublishing.ts"),
     source("apps/api/src/services/workspaceAttachmentPublishing.ts"),
     source("app/api/workspace/documents/[noteId]/access/route.ts"),
+    source("app/api/workspace/documents/[noteId]/access/[granteeHandle]/route.ts"),
     source("app/api/workspace/notebooks/[notebookId]/access/route.ts"),
+    source("app/api/workspace/notebooks/[notebookId]/access/[granteeHandle]/route.ts"),
     source("app/api/workspace/collaborators/route.ts"),
     source("styles/89-workspace-sharing.css"),
     source("docs/architecture.md")
@@ -112,9 +116,19 @@ const main = async () => {
   assert.match(workspaceRoutes, /workspace\.notebook\.access\.revoke/);
   assert.match(workspaceRoutes, /\/v1\/workspace\/collaborators/);
   for (const route of [documentAccessRoute, notebookAccessRoute]) {
-    assert.match(route, /proxyLiveBackend/);
-    assert.match(route, /idempotencyKey/);
-    assert.match(route, /privateWorkspaceResponse/);
+    assert.match(route, /workspaceRead/);
+    assert.match(route, /workspaceMutation/);
+    assert.doesNotMatch(route, /proxyLiveBackend/);
+  }
+  assert.match(documentAccessRoute, /getLocalWorkspaceAccess\("document"/);
+  assert.match(documentAccessRoute, /createLocalWorkspaceGrant\("document"/);
+  assert.match(notebookAccessRoute, /getLocalWorkspaceAccess\("notebook"/);
+  assert.match(notebookAccessRoute, /createLocalWorkspaceGrant\("notebook"/);
+  for (const route of [documentGrantRoute, notebookGrantRoute]) {
+    assert.match(route, /workspaceMutation/);
+    assert.match(route, /updateLocalWorkspaceGrant/);
+    assert.match(route, /deleteLocalWorkspaceGrant/);
+    assert.doesNotMatch(route, /proxyLiveBackend/);
   }
   assert.match(collaboratorRoute, /searchLocalWorkspaceCollaborators/);
 

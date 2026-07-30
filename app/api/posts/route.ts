@@ -1,7 +1,7 @@
 import { createPost, getSnapshot, type CreatePostInput } from "@/lib/dataStore";
 import type { ContentKind, RoomId } from "@/lib/mockData";
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { cleanHandle, contentKinds, isSavedBy, postRooms } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, postPageQuerySchema, postTypeSchema, versionedDocumentSchema } from "@/packages/contracts/src";
@@ -41,7 +41,10 @@ export async function GET(request: Request) {
   const actorHandle = parameters.get("actorHandle") ?? undefined;
   parameters.delete("actorHandle");
   const query = parameters.toString();
-  const live = await proxyLiveBackend(`/v1/posts${query ? `?${query}` : ""}`, { actorHandle });
+  const live = await proxyLiveApiRequest(request, {
+    actorHandle,
+    sourcePath: `/api/posts${query ? `?${query}` : ""}`
+  });
   if (live) return live;
 
   const snapshot = await getSnapshot();
@@ -118,9 +121,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const body = await readJson<Partial<CreatePostInput> & {
     attachmentIds?: unknown[];
+    actorHandle?: string;
     authorHandle?: string;
     communityId?: string;
     quoteSource?: unknown;
@@ -189,8 +192,8 @@ export async function POST(request: Request) {
     return jsonError("Community papers publish canonically in the Library.", 400);
   }
 
-  const live = await proxyLiveBackend("/v1/posts", {
-    method: "POST",
+  const liveActorHandle = body.actorHandle ?? body.authorHandle;
+  const live = await proxyLiveApiRequest(request, {
     body: {
       title: input.title,
       body: input.body,
@@ -203,10 +206,10 @@ export async function POST(request: Request) {
       attachmentIds,
       quoteSource: quoteSource?.data,
       patronage: patronage?.data,
-      opportunity: opportunity?.data
+      opportunity: opportunity?.data,
+      ...(Array.isArray(body.attachments) ? { attachments: input.attachments } : {})
     },
-    actorHandle: body.authorHandle ? String(body.authorHandle) : undefined,
-    idempotencyKey
+    actorHandle: liveActorHandle ? String(liveActorHandle) : undefined
   });
   if (live) return live;
 

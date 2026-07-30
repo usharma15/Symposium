@@ -1,4 +1,4 @@
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 
 export const runtime = "nodejs";
@@ -8,10 +8,12 @@ type Context = {
   params: Promise<{ handle: string }>;
 };
 
-export async function GET(_request: Request, context: Context) {
+export async function GET(request: Request, context: Context) {
   const { handle } = await context.params;
   const targetHandle = cleanHandle(decodeURIComponent(handle));
-  const live = await proxyLiveBackend(`/v1/profiles/${encodeURIComponent(targetHandle)}/follows`);
+  const live = await proxyLiveApiRequest(request, {
+    sourcePath: `/api/profiles/${encodeURIComponent(targetHandle)}/follows`
+  });
   if (live) return live;
 
   return Response.json({ following: [], followers: [] });

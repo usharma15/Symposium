@@ -1,3 +1,9 @@
+import {
+  mapSymposiumApiRoute,
+  normalizeSymposiumBackendUrl,
+  symposiumApiActorHandle
+} from "@/lib/symposiumApiRoute";
+
 export type SymposiumApiRequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
@@ -28,89 +34,33 @@ type ResolvedRequest = {
   method: NonNullable<SymposiumApiRequestOptions["method"]>;
 };
 
-const normalizedBackendUrl = (value?: string | null) => {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
-    return url.origin + url.pathname.replace(/\/$/, "");
-  } catch {
-    return null;
-  }
-};
-
-const actorHandleFromRequest = (path: string, body: unknown) => {
-  if (body && typeof body === "object" && "actorHandle" in body) {
-    const handle = (body as { actorHandle?: unknown }).actorHandle;
-    if (typeof handle === "string" && handle) return handle;
-  }
-  try {
-    return new URL(path, "https://symposium.invalid").searchParams.get("actorHandle");
-  } catch {
-    return null;
-  }
-};
-
-const shouldStayOnNext = (pathname: string) =>
-  pathname === "/api/auth/sync" ||
-  pathname.startsWith("/api/attachments/local") ||
-  /^\/api\/(?:workspace|opportunity|message)-attachments\//.test(pathname);
-
 export const resolveSymposiumApiRequest = (
   path: string,
   options: SymposiumApiRequestOptions,
   backendUrl?: string | null
 ): ResolvedRequest => {
   const method = options.method ?? "GET";
-  const directBackendUrl = normalizedBackendUrl(backendUrl);
-  if (!directBackendUrl || !path.startsWith("/api/")) {
+  const directBackendUrl = normalizeSymposiumBackendUrl(backendUrl);
+  const mappingBody =
+    options.actorHandle &&
+    options.body &&
+    typeof options.body === "object" &&
+    !Array.isArray(options.body)
+      ? { ...options.body, actorHandle: options.actorHandle }
+      : options.body;
+  const mapping = mapSymposiumApiRoute(path, { body: mappingBody, method });
+  if (
+    !directBackendUrl ||
+    mapping.boundary !== null ||
+    !mapping.livePath
+  ) {
     return { body: options.body, direct: false, input: path, method };
   }
-
-  const source = new URL(path, "https://symposium.invalid");
-  if (shouldStayOnNext(source.pathname)) {
-    return { body: options.body, direct: false, input: path, method };
-  }
-
-  let pathname = source.pathname.replace(/^\/api\//, "/v1/");
-  let resolvedMethod = method;
-  let body = options.body;
-
-  const membership = source.pathname.match(/^\/api\/communities\/([^/]+)\/membership$/);
-  if (membership && method === "POST" && body && typeof body === "object") {
-    const action = (body as { action?: unknown }).action;
-    if (action === "join") pathname = `/v1/communities/${membership[1]}/join`;
-    if (action === "access") pathname = `/v1/communities/${membership[1]}/access`;
-    if (action === "leave") {
-      pathname = `/v1/communities/${membership[1]}/membership`;
-      resolvedMethod = "DELETE";
-    }
-    body = {};
-  }
-
-  const publication = source.pathname.match(/^\/api\/workspace\/documents\/([^/]+)\/publish$/);
-  if (publication && method === "POST") {
-    pathname = "/v1/notes/publish";
-    body = {
-      ...(body && typeof body === "object" ? body : {}),
-      noteId: decodeURIComponent(publication[1])
-    };
-  }
-
-  const postView = source.pathname.match(/^\/api\/posts\/([^/]+)\/actions$/);
-  if (postView && method === "POST" && body && typeof body === "object" && (body as { action?: unknown }).action === "read") {
-    pathname = `/v1/posts/${postView[1]}/views`;
-  }
-  const commentView = source.pathname.match(/^\/api\/posts\/([^/]+)\/comments\/([^/]+)\/actions$/);
-  if (commentView && method === "POST" && body && typeof body === "object" && (body as { action?: unknown }).action === "read") {
-    pathname = `/v1/posts/${commentView[1]}/comments/${commentView[2]}/views`;
-  }
-
   return {
-    body,
+    body: mapping.body,
     direct: true,
-    input: `${directBackendUrl}${pathname}${source.search}`,
-    method: resolvedMethod
+    input: `${directBackendUrl}${mapping.livePath}`,
+    method: mapping.method
   };
 };
 
@@ -151,6 +101,8 @@ export const createSymposiumApiClient = (
   };
 
   const request = async <T>(path: string, options: SymposiumApiRequestOptions = {}): Promise<T> => {
+    const sourceActorHandle =
+      options.actorHandle ?? symposiumApiActorHandle(path, options.body);
     const resolved = resolveSymposiumApiRequest(path, options, runtime.backendUrl);
     const headers = new Headers(options.headers);
     const hasBody = resolved.body !== undefined;
@@ -160,11 +112,11 @@ export const createSymposiumApiClient = (
     if (resolved.direct) {
       const token = await runtime.getAccessToken?.().catch(() => null);
       if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
-      const actorHandle =
-        options.actorHandle ?? actorHandleFromRequest(path, resolved.body);
-      if (!token && actorHandle && !headers.has("x-symposium-handle")) {
-        headers.set("x-symposium-handle", actorHandle);
+      if (!token && sourceActorHandle && !headers.has("x-symposium-handle")) {
+        headers.set("x-symposium-handle", sourceActorHandle);
       }
+    } else if (sourceActorHandle && !headers.has("x-symposium-handle")) {
+      headers.set("x-symposium-handle", sourceActorHandle);
     }
 
     const fetchRequest = (input: string, direct: boolean) => {
@@ -181,7 +133,9 @@ export const createSymposiumApiClient = (
         headers: direct ? headers : (() => {
           const fallbackHeaders = new Headers(headers);
           fallbackHeaders.delete("Authorization");
-          fallbackHeaders.delete("x-symposium-handle");
+          if (sourceActorHandle && !fallbackHeaders.has("x-symposium-handle")) {
+            fallbackHeaders.set("x-symposium-handle", sourceActorHandle);
+          }
           return fallbackHeaders;
         })(),
         body: hasBody ? JSON.stringify(transportBody) : undefined,

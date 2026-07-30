@@ -1,6 +1,6 @@
 import { ZodError } from "zod";
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { addLocalOpportunityApplicationComment, LocalOpportunityApplicationError } from "@/lib/localOpportunityApplicationStore";
 import { workspaceActorHandle } from "@/lib/workspaceRouteSupport";
 import { createOpportunityApplicationCommentInputSchema } from "@/packages/contracts/src";
@@ -15,9 +15,9 @@ export async function POST(request: Request, context: Context) {
   const actorHandle = workspaceActorHandle(request, body?.actorHandle);
   try {
     const parsed = createOpportunityApplicationCommentInputSchema.parse({ ...body, actorHandle });
-    const live = await proxyLiveBackend(`/v1/posts/${encodeURIComponent(id)}/opportunity/applications/${encodeURIComponent(applicationId)}/comments`, {
-      method: "POST", body: { body: parsed.body }, actorHandle,
-      idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+    const live = await proxyLiveApiRequest(request, {
+      body: { body: parsed.body },
+      actorHandle
     });
     if (live) return live;
     return Response.json({ application: await addLocalOpportunityApplicationComment({ postId: id, applicationId, body: parsed.body, actorHandle }) });

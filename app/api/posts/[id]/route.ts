@@ -1,6 +1,6 @@
 import { deletePost, getSnapshot, updatePost, type UpdatePostInput } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { deleteLocalOpportunityApplicationsForPost } from "@/lib/localOpportunityApplicationStore";
 import {
   deleteLocalOwnerAttachments,
@@ -24,7 +24,10 @@ export async function GET(request: Request, context: Context) {
   const { id } = await context.params;
   const actorHandle = new URL(request.url).searchParams.get("actorHandle") ?? undefined;
   const viewerHandle = actorHandle ? cleanHandle(actorHandle) : null;
-  const live = await proxyLiveBackend(`/v1/posts/${encodeURIComponent(id)}`, { actorHandle });
+  const live = await proxyLiveApiRequest(request, {
+    actorHandle,
+    sourcePath: `/api/posts/${encodeURIComponent(id)}`
+  });
   if (live) return live;
 
   const snapshot = await getSnapshot();
@@ -113,12 +116,10 @@ export async function PATCH(request: Request, context: Context) {
   if (patronage && !patronage.success) return jsonError("Add a valid funding goal and proposal status.", 400);
   const opportunity = body.opportunity === undefined ? undefined : opportunityPostInputSchema.safeParse(body.opportunity);
   if (opportunity && !opportunity.success) return jsonError("Add valid opportunity details.", 400);
-  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
-  const live = await proxyLiveBackend(`/v1/posts/${id}`, {
-    method: "PATCH",
+  const live = await proxyLiveApiRequest(request, {
     body: { ...input, actorHandle, attachmentIds, quoteSource: parsedQuoteSource, patronage: patronage?.data, opportunity: opportunity?.data, expectedEditedAt: body.expectedEditedAt },
     actorHandle,
-    idempotencyKey
+    sourcePath: `/api/posts/${encodeURIComponent(id)}`
   });
   if (live) return live;
 
@@ -174,13 +175,10 @@ export async function DELETE(request: Request, context: Context) {
   const { id } = await context.params;
   const body = await readJson<{ actorHandle?: string }>(request);
   const actorHandle = body?.actorHandle ? String(body.actorHandle) : undefined;
-  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
-
-  const live = await proxyLiveBackend(`/v1/posts/${id}`, {
-    method: "DELETE",
+  const live = await proxyLiveApiRequest(request, {
     body: { actorHandle },
     actorHandle,
-    idempotencyKey
+    sourcePath: `/api/posts/${encodeURIComponent(id)}`
   });
   if (live) return live;
 

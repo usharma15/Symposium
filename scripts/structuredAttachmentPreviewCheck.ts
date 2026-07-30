@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import JSZip from "jszip";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   buildStructuredAttachmentMetadata,
   parseCsvPreview,
@@ -76,16 +77,13 @@ for (const extension of codeExtensions) {
 assert.ok(new TextEncoder().encode(JSON.stringify(xlsxMetadata)).byteLength < 64 * 1024);
 assert.ok(new TextEncoder().encode(JSON.stringify(pptxMetadata)).byteLength < 64 * 1024);
 
-console.log(JSON.stringify({
-  ok: true,
-  checked: [
+reportCheck([
     "comma, semicolon, tab, BOM, and quoted CSV parsing",
     "XLSX shared-string and worksheet extraction",
     "PPTX slide extraction",
     `${codeExtensions.length} source-code extension viewers and metadata`,
     "bounded structured metadata"
-  ]
-}, null, 2));
+]);
 };
 
 void main();

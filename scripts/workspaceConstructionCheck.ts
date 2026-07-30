@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   createWorkspaceCommentInputSchema,
   createWorkspaceDocumentInputSchema,
@@ -192,6 +193,7 @@ const main = async () => {
     workspaceHook,
     workspaceView,
     workspaceRoute,
+    workspaceRouteSupport,
     postViews,
     symposiumView,
     workspaceStyles,
@@ -222,6 +224,7 @@ const main = async () => {
     readFile(path.join(root, "features/workspace/useWorkspaceDocuments.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/WorkspaceView.tsx"), "utf8"),
     readFile(path.join(root, "app/api/workspace/route.ts"), "utf8"),
+    readFile(path.join(root, "lib/workspaceRouteSupport.ts"), "utf8"),
     readFile(path.join(root, "features/posts/PostViews.tsx"), "utf8"),
     readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8"),
     readFile(path.join(root, "styles/88-workspace.css"), "utf8"),
@@ -361,7 +364,7 @@ const main = async () => {
   assert.match(workspaceRoutes, /\/v1\/workspace\/notebooks\/:notebookId\/with-contents/);
   assert.match(workspaceRoutes, /workspace\.notebook\.delete_with_contents/);
   assert.match(cascadeNotebookRoute, /deleteLocalWorkspaceNotebookWithContents/);
-  assert.match(cascadeNotebookRoute, /\/with-contents/);
+  assert.match(cascadeNotebookRoute, /workspaceMutation/);
   assert.match(legacyWorkspaceRepository, /workspace\.owner_handle = \$2 AND note\.deleted_at IS NULL/);
   assert.match(legacyWorkspaceRepository, /block\.id = \$1 AND workspace\.owner_handle = \$2 AND note\.deleted_at IS NULL/);
   assert.match(legacyWorkspaceRepository, /WHERE id = \$1 AND revision = \$2 AND deleted_at IS NULL/);
@@ -374,7 +377,9 @@ const main = async () => {
   assert.doesNotMatch(workspaceView, /Workspace current/);
   assert.doesNotMatch(workspaceView, /All notebooks/);
   assert.doesNotMatch(workspaceView, /Choose a notebook or create one to give a line of research its own working space/);
-  assert.match(workspaceRoute, /privateWorkspaceResponse/);
+  assert.match(workspaceRoute, /workspaceRead\(request, getLocalWorkspace\)/);
+  assert.match(workspaceRouteSupport, /proxyLiveApiRequest\(request, \{ actorHandle, sourcePath \}\)/);
+  assert.match(workspaceRouteSupport, /workspaceRouteError\(error\)/);
   assert.match(postViews, /onSaveDraft/);
   assert.match(postViews, /title\.trim\(\) \|\| `Untitled \$\{kind\}`/);
   assert.match(symposiumView, /workspace-document-create/);
@@ -638,9 +643,7 @@ const main = async () => {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 
-  console.log(JSON.stringify({
-    ok: true,
-    checked: [
+  reportCheck([
       "generic and destination-specific editor capability contracts",
     "filed Scribbles in the Quick Notes destination",
       "revision-required workspace saves",
@@ -672,8 +675,7 @@ const main = async () => {
       "Note, Thought, and Paper-only draft creation",
       "canonical centered feed-width Notes composition",
       "New Post to private draft creation"
-    ]
-  }, null, 2));
+  ]);
 };
 
 void main();

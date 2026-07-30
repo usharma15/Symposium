@@ -76,6 +76,10 @@ import {
   assistantContextTypeForSurface
 } from "@/lib/assistantContext";
 import {
+  DELETE as deleteAssistantConversationRoute,
+  PATCH as updateAssistantConversationRoute
+} from "@/app/api/assistant/conversations/[...segments]/route";
+import {
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
 } from "@/features/attachments/pdfAttachmentClient";
@@ -1946,7 +1950,7 @@ const attachmentRepository = readFileSync("apps/api/src/repository/attachments.t
 const attachmentOwnership = readFileSync("apps/api/src/services/attachmentOwnership.ts", "utf8");
 const attachmentUploadClient = readFileSync("features/attachments/attachmentUploadClient.ts", "utf8");
 const attachmentRules = readFileSync("lib/attachmentRules.ts", "utf8");
-const assistantConversationRoute = readFileSync("app/api/assistant/conversations/[...segments]/route.ts", "utf8");
+const assistantRouteSupport = readFileSync("lib/assistantRouteSupport.ts", "utf8");
 const assistantShell = readFileSync("features/assistant/AssistantExperience.tsx", "utf8");
 const assistantContextDock = readFileSync("features/assistant/AssistantContextDock.tsx", "utf8");
 const assistantEvidenceMap = readFileSync("features/assistant/AssistantEvidenceMap.tsx", "utf8");
@@ -2184,15 +2188,20 @@ assert.match(route, /\/v1\/assistant\/conversations\/:id\/context/);
 assert.match(route, /\/v1\/assistant\/conversations\/:id\/sources/);
 assert.match(route, /app\.patch<\{ Params: RouteParams \}>\("\/v1\/assistant\/conversations\/:id"/);
 assert.match(route, /app\.delete<\{ Params: RouteParams \}>\("\/v1\/assistant\/conversations\/:id"/);
-assert.match(assistantConversationRoute, /export async function PATCH/);
-assert.match(assistantConversationRoute, /export async function DELETE/);
+assert.equal(typeof updateAssistantConversationRoute, "function");
+assert.equal(typeof deleteAssistantConversationRoute, "function");
+assert.match(assistantRouteSupport, /proxyLiveApiRequest/);
+assert.match(assistantRouteSupport, /readJson<AssistantRequestBody>/);
+assert.match(assistantRouteSupport, /workspaceActorHandle\(request, body\?\.actorHandle\)/);
+assert.match(assistantRouteSupport, /status: 503/);
+assert.match(assistantRouteSupport, /"Cache-Control": "no-store"/);
+assert.doesNotMatch(assistantRouteSupport, /localStorage|fallback/i);
 assert.match(route, /\/v1\/assistant\/document-translations/);
 assert.match(route, /\/v1\/assistant\/content-translations/);
 assert.match(route, /\/v1\/assistant\/quick-notes/);
 assert.match(route, /\/v1\/assistant-attachments\/:attachmentId\/access/);
 assert.match(route, /assertAssistantAttachmentAccess/);
-assert.match(assistantAttachmentRoute, /\/v1\/assistant-attachments\/\$\{encodeURIComponent\(attachmentId\)\}\/access/);
-assert.match(assistantAttachmentRoute, /Cache-Control": "private, no-store"/);
+assert.match(assistantAttachmentRoute, /createProtectedAttachmentRoute/);
 assert.match(repository, /attachment\.owner_type = 'assistant_message'/);
 assert.match(repository, /conversation\.owner_handle = \$2/);
 assert.match(repository, /replaceOwnerAttachments\(client/);

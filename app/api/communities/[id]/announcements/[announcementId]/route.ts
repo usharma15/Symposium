@@ -1,5 +1,5 @@
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { deleteLocalCommunityAnnouncement, updateLocalCommunityAnnouncement } from "@/lib/localCommunityStore";
 import { deleteCommunityAnnouncementInputSchema, updateCommunityAnnouncementInputSchema } from "@/packages/contracts/src";
 
@@ -15,11 +15,9 @@ export async function PATCH(request: Request, context: Context) {
   const parsed = updateCommunityAnnouncementInputSchema.safeParse({ ...body, communityId: id, announcementId });
   if (!parsed.success) return jsonError("Add an announcement title, message, and current community revision.", 400);
   const actorHandle = typeof body.actorHandle === "string" ? body.actorHandle : "";
-  const live = await proxyLiveBackend(`/v1/communities/${encodeURIComponent(id)}/announcements/${encodeURIComponent(announcementId)}`, {
-    method: "PATCH",
+  const live = await proxyLiveApiRequest(request, {
     body: parsed.data,
-    actorHandle,
-    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+    actorHandle
   });
   if (live) return live;
   if (!actorHandle) return jsonError("Choose a profile before editing an announcement.", 401);
@@ -38,11 +36,9 @@ export async function DELETE(request: Request, context: Context) {
   const parsed = deleteCommunityAnnouncementInputSchema.safeParse({ ...body, communityId: id, announcementId });
   if (!parsed.success) return jsonError("Include the current community revision.", 400);
   const actorHandle = typeof body.actorHandle === "string" ? body.actorHandle : "";
-  const live = await proxyLiveBackend(`/v1/communities/${encodeURIComponent(id)}/announcements/${encodeURIComponent(announcementId)}`, {
-    method: "DELETE",
+  const live = await proxyLiveApiRequest(request, {
     body: parsed.data,
-    actorHandle,
-    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+    actorHandle
   });
   if (live) return live;
   if (!actorHandle) return jsonError("Choose a profile before deleting an announcement.", 401);

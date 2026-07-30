@@ -74,7 +74,7 @@ assert.doesNotMatch(events, /getRedis|redis\.publish|symposium:events/);
 assert.doesNotMatch(server, /fastifyTRPCPlugin|attachRealtime|\/trpc\//);
 assert.match(server, /methods: \["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"\]/);
 assert.doesNotMatch(packageJson, /"socket\.io"/);
-assert.match(apiClient, /source\.pathname\.replace/);
+assert.match(apiClient, /mapSymposiumApiRoute\(path/);
 assert.match(apiClient, /Authorization", `Bearer \$\{token\}`/);
 assert.match(apiClient, /mutationCanReplay/);
 assert.match(inquiryViews, /recordContentView/);

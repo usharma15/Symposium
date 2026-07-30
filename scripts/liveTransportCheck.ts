@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   consumeLiveEventStream,
   createServerSentEventParser,
@@ -119,7 +120,7 @@ assert.doesNotMatch(controller, /if \(synced\) scheduleLiveRefresh\(\)/);
 assert.match(postRepository, /metrics: updated\.metrics,[\s\S]*revision: updated\.revision/);
 assert.match(commentRepository, /metrics: updatedComment\.metrics,[\s\S]*commentRevision: updatedComment\.revision/);
 
-console.log(JSON.stringify({ ok: true, checked: [
+reportCheck([
   "empty live-event cursor",
   "encoded polling cursor",
   "encoded streaming cursor",
@@ -144,7 +145,7 @@ console.log(JSON.stringify({ ok: true, checked: [
   "BroadcastChannel-first delivery",
   "1000-event messaging burst retention",
   "non-fatal storage quota exhaustion"
-] }, null, 2));
+]);
 };
 
 void main();

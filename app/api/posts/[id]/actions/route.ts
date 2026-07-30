@@ -1,6 +1,6 @@
 import { applyPostAction, getSnapshot, type PostAction } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { localCommunityReadAllowed } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
@@ -14,7 +14,6 @@ const actions: PostAction[] = ["signal", "save", "fork", "read"];
 
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
-  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const body = await readJson<{ action?: string; actorHandle?: string; active?: boolean; trigger?: string; surface?: string }>(request);
 
   if (!body) {
@@ -28,11 +27,10 @@ export async function POST(request: Request, context: Context) {
   }
   const typedAction = action as PostAction;
 
-  const live = await proxyLiveBackend(`/v1/posts/${id}/actions`, {
-    method: "POST",
+  const live = await proxyLiveApiRequest(request, {
     body,
     actorHandle: body.actorHandle ? String(body.actorHandle) : undefined,
-    idempotencyKey
+    sourcePath: `/api/posts/${encodeURIComponent(id)}/actions`
   });
   if (live) return live;
 

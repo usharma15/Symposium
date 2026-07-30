@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { reportCheck } from "@/scripts/checkReport";
 import { buildApp } from "@/apps/api/src/server";
 import { latestMigrationId, migrationIds } from "@/apps/api/src/db/migrate";
 import {
@@ -136,30 +137,21 @@ const main = async () => {
     await app.close();
   }
 
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        checked: [
-          "migration manifest visibility",
-          "Clerk provider mode visibility",
-          "event audience schema placement",
-          "authoritative entity revision schema",
-          "note and note-block revision schema",
-          "canonical Opportunity and private application schema",
-          "durable storage-deletion queue schema",
-          "durable storage-deletion worker readiness",
-          "strict event cursor parsing",
-          "request correlation headers",
-          "no-store API policy",
-          "structured validation errors",
-          "one-megabyte API body ceiling"
-        ]
-      },
-      null,
-      2
-    )
-  );
+  reportCheck([
+    "migration manifest visibility",
+    "Clerk provider mode visibility",
+    "event audience schema placement",
+    "authoritative entity revision schema",
+    "note and note-block revision schema",
+    "canonical Opportunity and private application schema",
+    "durable storage-deletion queue schema",
+    "durable storage-deletion worker readiness",
+    "strict event cursor parsing",
+    "request correlation headers",
+    "no-store API policy",
+    "structured validation errors",
+    "one-megabyte API body ceiling"
+  ]);
 };
 
 void main();

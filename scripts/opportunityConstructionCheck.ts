@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   createOpportunityApplicationInputSchema,
   createPostInputSchema,
@@ -153,9 +154,7 @@ assert.match(styles, /\.opportunity-applicant-feed > article \{[^}]*grid-templat
 assert.match(styles, /\.opportunity-attach \{ order: -1;/);
 assert.match(styles, /\.symposium-shell\.night/);
 
-console.log(JSON.stringify({
-  ok: true,
-  checked: [
+reportCheck([
     "thought-grade canonical Opportunity post invariant",
     "exact Office opportunity drafts and publication",
     "private application, shortlist, and reviewer-note contracts",
@@ -171,8 +170,7 @@ console.log(JSON.stringify({
     "fixed-first document attachment selector",
     "day and night maroon semantic treatment",
     "legacy API compatibility without legacy storage writes"
-  ]
-}, null, 2));
+]);
 };
 
 void main();

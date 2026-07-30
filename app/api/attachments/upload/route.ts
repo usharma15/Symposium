@@ -6,7 +6,7 @@ import {
   validatePostAttachmentDetails
 } from "@/lib/attachmentRules";
 import { createLocalAttachmentUpload } from "@/lib/localAttachmentStore";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +23,6 @@ type UploadBody = {
 const allowedImageTypes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/avif"]);
 
 export async function POST(request: Request) {
-  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const body = await readJson<UploadBody>(request);
 
   if (!body) {
@@ -55,8 +54,7 @@ export async function POST(request: Request) {
     if (validationError) return jsonError(validationError, 400);
   }
 
-  const live = await proxyLiveBackend("/v1/attachments/upload", {
-    method: "POST",
+  const live = await proxyLiveApiRequest(request, {
     body: {
       fileName: body.fileName,
       contentType,
@@ -64,8 +62,7 @@ export async function POST(request: Request) {
       ownerType,
       ownerId: body.ownerId
     },
-    actorHandle: body.actorHandle,
-    idempotencyKey
+    actorHandle: body.actorHandle
   });
   if (live) return live;
 

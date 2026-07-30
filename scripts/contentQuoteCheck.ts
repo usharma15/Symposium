@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   contentQuoteSchema,
   createCommentInputSchema,
@@ -153,9 +154,7 @@ const main = async () => {
   assert.match(controller, /invalidateLiveQuotedSource/);
   assert.match(controller, /selection\.sourceType === "comment" \? selection\.sourceId : null/);
 
-  console.log(JSON.stringify({
-    ok: true,
-    checked: [
+  reportCheck([
       "post and comment quote snapshots",
       "320-character exact-source excerpt",
       "preserved source whitespace",
@@ -168,8 +167,7 @@ const main = async () => {
       "quote and attachment coexistence contracts",
       "exact post and comment source navigation",
       "shared quote UI and live invalidation"
-    ]
-  }, null, 2));
+  ]);
 };
 
 void main();

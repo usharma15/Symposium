@@ -1,6 +1,6 @@
 import { jsonError, readJson } from "@/lib/api";
 import { confirmLocalAttachment, LocalAttachmentStoreError } from "@/lib/localAttachmentStore";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { confirmAttachmentInputSchema } from "@/packages/contracts/src";
 
 export const runtime = "nodejs";
@@ -19,14 +19,14 @@ export async function POST(request: Request) {
   const parsed = confirmAttachmentInputSchema.safeParse(body);
   if (!parsed.success) return jsonError(parsed.error.issues[0]?.message ?? "Invalid attachment confirmation.", 400);
 
-  const live = await proxyLiveBackend("/v1/attachments/confirm", {
-    method: "POST",
+  const live = await proxyLiveApiRequest(request, {
     body: {
       attachmentId: parsed.data.attachmentId,
       byteSize: parsed.data.byteSize,
       metadata: parsed.data.metadata
     },
-    actorHandle: body?.actorHandle
+    actorHandle: body?.actorHandle,
+    forwardIdempotency: false
   });
   if (live) return live;
 

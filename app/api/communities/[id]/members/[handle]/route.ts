@@ -1,5 +1,5 @@
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { removeLocalCommunityMember, updateLocalCommunityMember } from "@/lib/localCommunityStore";
 import { removeCommunityMemberInputSchema, updateCommunityMemberInputSchema } from "@/packages/contracts/src";
 
@@ -15,11 +15,9 @@ export async function PATCH(request: Request, context: Context) {
   const parsed = updateCommunityMemberInputSchema.safeParse({ ...body, communityId: id, memberHandle: handle });
   if (!parsed.success) return jsonError("Choose member or moderator and include the current community revision.", 400);
   const actorHandle = typeof body.actorHandle === "string" ? body.actorHandle : "";
-  const live = await proxyLiveBackend(`/v1/communities/${encodeURIComponent(id)}/members/${encodeURIComponent(handle)}`, {
-    method: "PATCH",
+  const live = await proxyLiveApiRequest(request, {
     body: parsed.data,
-    actorHandle,
-    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+    actorHandle
   });
   if (live) return live;
   if (!actorHandle) return jsonError("Choose a profile before managing members.", 401);
@@ -38,11 +36,9 @@ export async function DELETE(request: Request, context: Context) {
   const parsed = removeCommunityMemberInputSchema.safeParse({ ...body, communityId: id, memberHandle: handle });
   if (!parsed.success) return jsonError("Include the current community revision.", 400);
   const actorHandle = typeof body.actorHandle === "string" ? body.actorHandle : "";
-  const live = await proxyLiveBackend(`/v1/communities/${encodeURIComponent(id)}/members/${encodeURIComponent(handle)}`, {
-    method: "DELETE",
+  const live = await proxyLiveApiRequest(request, {
     body: parsed.data,
-    actorHandle,
-    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+    actorHandle
   });
   if (live) return live;
   if (!actorHandle) return jsonError("Choose a profile before managing members.", 401);

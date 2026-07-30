@@ -1,5 +1,5 @@
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { mutateLocalCommunityMembership } from "@/lib/localCommunityStore";
 
 export const runtime = "nodejs";
@@ -14,16 +14,9 @@ export async function POST(request: Request, context: Context) {
   const actorHandle = body?.actorHandle ?? "";
   if (action !== "join" && action !== "leave" && action !== "access") return jsonError("Choose a valid membership action.", 400);
   if (!actorHandle) return jsonError("Choose a profile before changing membership.", 401);
-  const livePath = action === "join"
-    ? `/v1/communities/${encodeURIComponent(id)}/join`
-    : action === "leave"
-      ? `/v1/communities/${encodeURIComponent(id)}/membership`
-      : `/v1/communities/${encodeURIComponent(id)}/access`;
-  const live = await proxyLiveBackend(livePath, {
-    method: action === "leave" ? "DELETE" : "POST",
-    body: {},
-    actorHandle,
-    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+  const live = await proxyLiveApiRequest(request, {
+    body: { action, actorHandle },
+    actorHandle
   });
   if (live) return live;
   try {

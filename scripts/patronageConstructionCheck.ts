@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   createPostInputSchema,
   createWorkspaceDocumentInputSchema,
@@ -161,9 +162,7 @@ assert.match(patronageStyles, /@media \(max-width: 1439px\)/);
 assert.doesNotMatch(shell, /PatronageLobbyView|matchesPatronageMode|patronageMode/);
 assert.doesNotMatch(routeModel, /PatronageMode/);
 
-console.log(JSON.stringify({
-  ok: true,
-  checked: [
+reportCheck([
     "proposal and contribution contracts",
     "paper-grade Patronage post invariant",
     "exact Workspace proposal revisions",
@@ -177,8 +176,7 @@ console.log(JSON.stringify({
     "centered clicked proposal with right-margin funding rail",
     "honest payment and private-capital feature gates",
     "removed civic/private Patronage modes"
-  ]
-}, null, 2));
+]);
 };
 
 void main();

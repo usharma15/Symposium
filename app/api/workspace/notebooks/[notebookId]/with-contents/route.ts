@@ -1,7 +1,5 @@
-import { readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { deleteLocalWorkspaceNotebookWithContents } from "@/lib/localWorkspaceStore";
-import { privateWorkspaceResponse, workspaceActorHandle, workspaceRouteError } from "@/lib/workspaceRouteSupport";
+import { workspaceMutation } from "@/lib/workspaceRouteSupport";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,25 +8,7 @@ type Context = { params: Promise<{ notebookId: string }> };
 
 export const DELETE = async (request: Request, context: Context) => {
   const { notebookId } = await context.params;
-  const body = await readJson<Record<string, unknown> & { actorHandle?: string }>(request);
-  const actorHandle = workspaceActorHandle(request, body?.actorHandle);
-  const payload = { ...body };
-  delete payload.actorHandle;
-  const live = await proxyLiveBackend(
-    `/v1/workspace/notebooks/${encodeURIComponent(notebookId)}/with-contents`,
-    {
-      method: "DELETE",
-      body: payload,
-      actorHandle,
-      idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
-    }
+  return workspaceMutation(request, (payload, actorHandle) =>
+    deleteLocalWorkspaceNotebookWithContents(notebookId, payload, actorHandle)
   );
-  if (live) return live;
-  try {
-    return privateWorkspaceResponse(
-      await deleteLocalWorkspaceNotebookWithContents(notebookId, payload, actorHandle)
-    );
-  } catch (error) {
-    return workspaceRouteError(error);
-  }
 };

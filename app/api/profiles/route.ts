@@ -1,6 +1,6 @@
 import { getSnapshot, upsertProfile, type CreateProfileInput } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { publicResearchProfile } from "@/lib/publicProfile";
 import { cleanHandle } from "@/lib/symposiumCore";
 
@@ -25,7 +25,9 @@ export async function GET(request: Request) {
   const limit = Math.max(1, Math.min(Number(parameters.get("limit")) || 50, 50));
   const liveQuery = new URLSearchParams({ limit: String(limit) });
   if (query) liveQuery.set("q", query);
-  const live = await proxyLiveBackend(`/v1/profiles?${liveQuery.toString()}`);
+  const live = await proxyLiveApiRequest(request, {
+    sourcePath: `/api/profiles?${liveQuery.toString()}`
+  });
   if (live) return live;
 
   const snapshot = await getSnapshot();
@@ -56,7 +58,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const body = await readJson<Partial<CreateProfileInput>>(request);
 
   if (!body) {
@@ -80,11 +81,9 @@ export async function POST(request: Request) {
     return jsonError("Name and handle are required.", 400);
   }
 
-  const live = await proxyLiveBackend("/v1/profiles", {
-    method: "POST",
+  const live = await proxyLiveApiRequest(request, {
     body: input,
-    actorHandle: input.handle,
-    idempotencyKey
+    actorHandle: input.handle
   });
   if (live) return live;
 

@@ -1,4 +1,4 @@
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { getSnapshot } from "@/lib/dataStore";
 import { listLocalCommunities } from "@/lib/localCommunityStore";
 import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
@@ -18,7 +18,10 @@ export async function GET(request: Request) {
   const actorHandle = parameters.get("actorHandle") ?? undefined;
   parameters.delete("actorHandle");
   const query = parameters.toString();
-  const live = await proxyLiveBackend(`/v1/search${query ? `?${query}` : ""}`, { actorHandle });
+  const live = await proxyLiveApiRequest(request, {
+    actorHandle,
+    sourcePath: `/api/search${query ? `?${query}` : ""}`
+  });
   if (live) return live;
   const term = normalizeSearchPhrase(parameters.get("q") ?? "");
   if (!term) return Response.json({ posts: [], profiles: [], communities: [], nextCursor: null });

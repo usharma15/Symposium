@@ -100,4 +100,74 @@ test.describe("returning browser session", () => {
     }
     clean();
   });
+
+  test("creates, edits, and durably reloads a titleless Thought", async ({ page, browser }) => {
+    const clean = watchDiagnostics(page);
+    const initial = "Browser proof: titleless Thought creation persists.";
+    const edited = "Browser proof: titleless Thought editing persists.";
+    await page.goto("/");
+    await page.getByRole("button", { name: "New post" }).click();
+    const composer = page.locator("form.post-composer-modal");
+    await expect(composer.locator('input[placeholder="Title"]')).toHaveCount(0);
+    await composer.locator(".ProseMirror").fill(initial);
+    const createResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST" && new URL(response.url()).pathname === "/api/posts"
+    );
+    await composer.getByRole("button", { name: "Post", exact: true }).click();
+    expect((await createResponse).ok()).toBe(true);
+    await expect(page).toHaveURL(/\/posts\/post-/);
+    await expect(page.getByText(initial, { exact: true })).toBeVisible();
+    await expect(page.locator(".post-detail-title")).toHaveCount(0);
+    const canonicalUrl = page.url();
+    const postId = new URL(canonicalUrl).pathname.split("/").at(-1)!;
+    const apiPostPath = `/api/posts/${postId}`;
+    const thoughtMuse = await page.locator(".authored-thought-opening-muse").getAttribute("data-thought-muse");
+    const bottomCaricature = await page.locator(".authored-bottom-caricature").getAttribute("data-bottom-caricature-id");
+    expect(thoughtMuse).toBeTruthy();
+    expect(bottomCaricature).toBeTruthy();
+
+    await page.getByTitle("Edit post").click();
+    const edit = page.locator("form.post-edit-modal");
+    await expect(edit.locator('input[placeholder="Title"]')).toHaveCount(0);
+    await edit.locator(".ProseMirror").fill(edited);
+    const updateResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH" && new URL(response.url()).pathname === apiPostPath
+    );
+    await edit.getByRole("button", { name: "Save", exact: true }).click();
+    expect((await updateResponse).ok()).toBe(true);
+    await expect(edit).toHaveCount(0);
+    await expect(page.getByText(edited, { exact: true })).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByText(edited, { exact: true })).toBeVisible();
+    await expect(page.locator(".post-detail-title")).toHaveCount(0);
+    await expect(page.locator(".authored-thought-opening-muse")).toHaveAttribute("data-thought-muse", thoughtMuse!);
+    await expect(page.locator(".authored-bottom-caricature")).toHaveAttribute("data-bottom-caricature-id", bottomCaricature!);
+
+    const freshContext = await browser.newContext();
+    try {
+      await freshContext.addCookies([sessionCookie]);
+      const freshPage = await freshContext.newPage();
+      const cleanFreshPage = watchDiagnostics(freshPage);
+      const detailResponse = freshPage.waitForResponse((response) =>
+        response.request().method() === "GET" && new URL(response.url()).pathname === apiPostPath
+      );
+      await freshPage.goto(canonicalUrl);
+      const canonicalDetail = await detailResponse;
+      expect(canonicalDetail.ok()).toBe(true);
+      const detail = await canonicalDetail.json() as {
+        item?: { designAssignment?: { bottomCaricatureId?: string; museId?: string } };
+      };
+      expect(detail.item?.designAssignment?.museId).toBe(thoughtMuse);
+      expect(detail.item?.designAssignment?.bottomCaricatureId).toBe(bottomCaricature);
+      await expect(freshPage.getByText(edited, { exact: true })).toBeVisible();
+      await expect(freshPage.locator(".post-detail-title")).toHaveCount(0);
+      await expect(freshPage.locator(".authored-thought-opening-muse")).toHaveAttribute("data-thought-muse", thoughtMuse!);
+      await expect(freshPage.locator(".authored-bottom-caricature")).toHaveAttribute("data-bottom-caricature-id", bottomCaricature!);
+      cleanFreshPage();
+    } finally {
+      await freshContext.close();
+    }
+    clean();
+  });
 });

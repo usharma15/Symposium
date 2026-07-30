@@ -1,7 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { jsonError } from "@/lib/api";
 import { getSnapshot, upsertProfile, type CreateProfileInput } from "@/lib/dataStore";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 
 export const runtime = "nodejs";
@@ -12,7 +12,7 @@ const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && pr
 const handleFromIdentity = (name: string, email?: string | null, username?: string | null) =>
   cleanHandle(username || email?.split("@")[0] || name || "symposium_member");
 
-export async function POST() {
+export async function POST(request: Request) {
   if (!clerkEnabled) {
     return jsonError("Clerk is not configured for this environment.", 503);
   }
@@ -46,8 +46,7 @@ export async function POST() {
     fields: existingProfile?.fields ?? ["Inquiry"]
   };
 
-  const live = await proxyLiveBackend("/v1/auth/sync", {
-    method: "POST",
+  const live = await proxyLiveApiRequest(request, {
     body: {
       clerkUserId: clerkAuth.userId,
       email,

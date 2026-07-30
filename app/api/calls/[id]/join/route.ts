@@ -1,5 +1,5 @@
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { joinLocalCommunityCall } from "@/lib/localCommunityStore";
 
 export const runtime = "nodejs";
@@ -12,11 +12,9 @@ export async function POST(request: Request, context: Context) {
   const body = await readJson<{ actorHandle?: string }>(request);
   const actorHandle = body?.actorHandle ?? "";
   if (!actorHandle) return jsonError("Choose a profile before joining a call.", 401);
-  const live = await proxyLiveBackend(`/v1/calls/${encodeURIComponent(id)}/join`, {
-    method: "POST",
+  const live = await proxyLiveApiRequest(request, {
     body: {},
-    actorHandle,
-    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+    actorHandle
   });
   if (live) return live;
   try {

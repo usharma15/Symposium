@@ -1,5 +1,5 @@
 import { getSnapshot } from "@/lib/dataStore";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 import type { ToggleActionContract } from "@/packages/contracts/src";
 import { buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsInActivityScope, profileItemIsPubliclyListable, universalProfileActivityActions } from "@/lib/profileActivity";
@@ -20,10 +20,10 @@ export async function GET(request: Request, context: Context) {
   const liveQuery = new URLSearchParams(url.searchParams);
   liveQuery.delete("actorHandle");
   const query = liveQuery.toString();
-  const live = await proxyLiveBackend(
-    `/v1/profiles/${encodeURIComponent(targetHandle)}/activity${query ? `?${query}` : ""}`,
-    { actorHandle: actorHandle === "@" ? undefined : actorHandle }
-  );
+  const live = await proxyLiveApiRequest(request, {
+    actorHandle: actorHandle === "@" ? undefined : actorHandle,
+    sourcePath: `/api/profiles/${encodeURIComponent(targetHandle)}/activity${query ? `?${query}` : ""}`
+  });
   if (live) return live;
 
   const snapshot = await getSnapshot();

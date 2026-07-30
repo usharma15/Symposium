@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   itemHasPostType,
   postTitlePolicyError,
@@ -73,16 +74,13 @@ assert.match(createBridge, /postTitlePolicyError\(input, input\.title\)/);
 assert.doesNotMatch(createBridge, /!input\.title \|\| !input\.body/);
 assert.doesNotMatch(updateBridge, /!input\.title \|\| !input\.body/);
 
-console.log(JSON.stringify({
-  ok: true,
-  checked: [
+reportCheck([
     "exclusive public publication identities",
     "semantic public labels independent of legacy content kind",
     "private drafts remain untyped",
     "partial live payload semantic preservation",
     "feed, profile, discovery, quote, Workspace, and database integration"
-  ]
-}, null, 2));
+]);
 };
 
 void main();

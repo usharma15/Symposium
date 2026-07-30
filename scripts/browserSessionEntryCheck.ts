@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   entryModeForBrowserSession,
   resolvePresentedEntryMode,
@@ -175,34 +176,25 @@ const main = async () => {
   assert.match(entryViews, /className={`entry-image \$\{playApproach \? "approaching" : "stationary"\}`}/);
   assert.doesNotMatch(entryViews, /\{playApproach \? <Image/);
 
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        checked: [
-          "first browser-session entrance",
-          "zero-frame repeat-session entry",
-          "server-side browser-session decision",
-          "cached bootstrap selection",
-          "non-fatal cached-bootstrap quota pressure",
-          "canonical route hydration",
-          "late authentication route preservation",
-          "first-session authentication completion",
-          "logout entrance replay",
-          "stationary authentication background",
-          "authenticated identity-only visibility gate",
-          "non-blocking bootstrap and profile activity",
-          "bounded inline profile activity loading",
-          "single authenticated bootstrap request",
-          "persisted-viewer read hydration gate",
-          "exact-Clerk-user cached identity isolation",
-          "bounded viewer-scoped profile read projections"
-        ]
-      },
-      null,
-      2
-    )
-  );
+  reportCheck([
+    "first browser-session entrance",
+    "zero-frame repeat-session entry",
+    "server-side browser-session decision",
+    "cached bootstrap selection",
+    "non-fatal cached-bootstrap quota pressure",
+    "canonical route hydration",
+    "late authentication route preservation",
+    "first-session authentication completion",
+    "logout entrance replay",
+    "stationary authentication background",
+    "authenticated identity-only visibility gate",
+    "non-blocking bootstrap and profile activity",
+    "bounded inline profile activity loading",
+    "single authenticated bootstrap request",
+    "persisted-viewer read hydration gate",
+    "exact-Clerk-user cached identity isolation",
+    "bounded viewer-scoped profile read projections"
+  ]);
 };
 
 void main();

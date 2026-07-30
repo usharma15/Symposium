@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   beginItemMutation,
   captureItemMutationSnapshot,
@@ -61,21 +62,12 @@ assert.deepEqual(
   committed
 );
 
-console.log(
-  JSON.stringify(
-    {
-      ok: true,
-      checked: [
-        "pending mutation protection",
-        "late bootstrap request protection",
-        "fresh canonical convergence",
-        "optimistic entity preservation",
-        "cross-tab epoch invalidation"
-      ]
-    },
-    null,
-    2
-  )
-);
+reportCheck([
+  "pending mutation protection",
+  "late bootstrap request protection",
+  "fresh canonical convergence",
+  "optimistic entity preservation",
+  "cross-tab epoch invalidation"
+]);
 
 export {};

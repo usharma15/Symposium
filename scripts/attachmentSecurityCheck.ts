@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import JSZip from "jszip";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   AttachmentUploadSizeError,
   createBoundedAttachmentUploadStream
@@ -262,34 +263,25 @@ assert.equal(
   false
 );
 
-console.log(
-  JSON.stringify(
-    {
-      ok: true,
-      checked: [
-        "extension and MIME agreement",
-        "browser MIME alias canonicalization",
-        "AI chat 5 MB client and contract boundary",
-        "code, spreadsheet, and presentation classification",
-        "image signatures",
-        "document signatures",
-        "video signatures",
-        "text binary rejection",
-        "attachment identifier validation",
-        "metadata size bounds",
-        "exact, oversized, and undersized upload stream bounds",
-        "DOCX active-content and unsafe-relationship rejection",
-        "spreadsheet and presentation archive validation",
-        "defense-in-depth DOCX render sanitization",
-        "authenticated API upload ownership, rate, and body-size binding",
-        "failed prepared-upload cleanup",
-        "durable and retry-safe R2 object cleanup"
-      ]
-    },
-    null,
-    2
-  )
-);
+reportCheck([
+  "extension and MIME agreement",
+  "browser MIME alias canonicalization",
+  "AI chat 5 MB client and contract boundary",
+  "code, spreadsheet, and presentation classification",
+  "image signatures",
+  "document signatures",
+  "video signatures",
+  "text binary rejection",
+  "attachment identifier validation",
+  "metadata size bounds",
+  "exact, oversized, and undersized upload stream bounds",
+  "DOCX active-content and unsafe-relationship rejection",
+  "spreadsheet and presentation archive validation",
+  "defense-in-depth DOCX render sanitization",
+  "authenticated API upload ownership, rate, and body-size binding",
+  "failed prepared-upload cleanup",
+  "durable and retry-safe R2 object cleanup"
+]);
 };
 
 void main();

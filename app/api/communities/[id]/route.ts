@@ -1,5 +1,5 @@
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { listLocalCommunities, updateLocalCommunitySettings } from "@/lib/localCommunityStore";
 import { updateCommunitySettingsInputSchema } from "@/packages/contracts/src";
 
@@ -11,7 +11,10 @@ type Context = { params: Promise<{ id: string }> };
 export async function GET(request: Request, context: Context) {
   const { id } = await context.params;
   const actorHandle = new URL(request.url).searchParams.get("actorHandle") ?? undefined;
-  const live = await proxyLiveBackend(`/v1/communities/${encodeURIComponent(id)}`, { actorHandle });
+  const live = await proxyLiveApiRequest(request, {
+    actorHandle,
+    sourcePath: new URL(request.url).pathname
+  });
   if (live) return live;
   const community = (await listLocalCommunities(actorHandle)).find((candidate) => candidate.id === id);
   return community ? Response.json({ community }) : jsonError("Community not found.", 404);
@@ -24,11 +27,9 @@ export async function PATCH(request: Request, context: Context) {
   const parsed = updateCommunitySettingsInputSchema.safeParse({ ...body, communityId: id });
   if (!parsed.success) return jsonError("Choose valid community settings and include the current revision.", 400);
   const actorHandle = typeof body.actorHandle === "string" ? body.actorHandle : "";
-  const live = await proxyLiveBackend(`/v1/communities/${encodeURIComponent(id)}`, {
-    method: "PATCH",
+  const live = await proxyLiveApiRequest(request, {
     body: parsed.data,
-    actorHandle,
-    idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+    actorHandle
   });
   if (live) return live;
   if (!actorHandle) return jsonError("Choose a profile before changing community settings.", 401);

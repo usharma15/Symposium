@@ -16,6 +16,7 @@ import { search } from "@/apps/api/src/repository/search";
 import { getPublicInitialState, publicCommunity } from "@/apps/api/src/repository/foundation";
 import { readJson } from "@/lib/api";
 import { isCrossSiteMutation } from "@/lib/requestSecurity";
+import { reportCheck } from "@/scripts/checkReport";
 
 const main = async () => {
   assert.equal(localDataFallbackAllowed("development"), true);
@@ -165,27 +166,131 @@ const main = async () => {
     delete mutableEnv.SYMPOSIUM_API_URL;
     console.error = () => undefined;
 
-    const { liveBackendResponseHeaders, proxyLiveBackend } = await import("@/lib/liveBackendClient");
-    const forwardedHeaders = liveBackendResponseHeaders(
-      new Response(null, {
-        headers: {
-          "cache-control": "public, max-age=3600",
-          "content-type": "application/json",
-          vary: "Origin, authorization",
-          "x-request-id": "req-live-boundary"
-        }
-      })
+    const {
+      createLiveApiForwarder,
+      createLiveBackendProxy
+    } = await import("@/lib/liveBackendClient");
+    const missingDevelopment = await createLiveBackendProxy({
+      localFallbackAllowed: () => true,
+      reportError: () => assert.fail("development fallback must not report an error")
+    })("/v1/bootstrap");
+    assert.equal(missingDevelopment, null);
+
+    const reported: unknown[][] = [];
+    const missingProduction = await createLiveBackendProxy({
+      localFallbackAllowed: () => false,
+      reportError: (...values) => reported.push(values)
+    })("/v1/bootstrap");
+    assert.equal(missingProduction?.status, 503);
+    assert.equal(reported.length, 1);
+
+    const forwardedRequests: Array<{ input: string; init: RequestInit }> = [];
+    const configuredProxy = createLiveBackendProxy({
+      backendUrl: "https://api.example/",
+      getToken: async () => "server-token",
+      localFallbackAllowed: () => true,
+      reportError: (...values) => assert.fail(`unexpected proxy error: ${String(values[0])}`),
+      fetchImpl: async (input, init) => {
+        forwardedRequests.push({ input, init });
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 202,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": "5",
+            "Set-Cookie": "private=1",
+            "X-Request-Id": "req-forwarded",
+            Vary: "Origin, authorization"
+          }
+        });
+      }
+    });
+    const configuredResponse = await configuredProxy("/v1/contract?cursor=a%2Fb", {
+      method: "POST",
+      body: false,
+      actorHandle: "@ada",
+      idempotencyKey: "mutation-forwarded"
+    });
+    assert.equal(forwardedRequests[0]?.input, "https://api.example/v1/contract?cursor=a%2Fb");
+    assert.deepEqual(
+      Object.fromEntries(new Headers(forwardedRequests[0]?.init.headers).entries()),
+      {
+        authorization: "Bearer server-token",
+        "content-type": "application/json",
+        "idempotency-key": "mutation-forwarded",
+        "x-symposium-handle": "@ada"
+      }
     );
-    assert.equal(forwardedHeaders.get("cache-control"), "no-store");
-    assert.equal(forwardedHeaders.get("x-request-id"), "req-live-boundary");
-    assert.equal(forwardedHeaders.get("vary"), "Origin, authorization, Cookie");
+    assert.equal(forwardedRequests[0]?.init.body, "false");
+    assert.equal(forwardedRequests[0]?.init.cache, "no-store");
+    assert.equal(configuredResponse?.status, 202);
+    assert.deepEqual(await configuredResponse?.json(), { ok: true });
+    assert.equal(configuredResponse?.headers.get("cache-control"), "no-store");
+    assert.equal(configuredResponse?.headers.get("retry-after"), "5");
+    assert.equal(configuredResponse?.headers.get("x-request-id"), "req-forwarded");
+    assert.equal(configuredResponse?.headers.get("vary"), "Origin, authorization, Cookie");
+    assert.equal(configuredResponse?.headers.get("set-cookie"), null);
+
+    const noContentProxy = createLiveBackendProxy({
+      backendUrl: "https://api.example",
+      getToken: async () => null,
+      fetchImpl: async () => new Response(null, { status: 204 })
+    });
+    const noContent = await noContentProxy("/v1/no-content", { method: "DELETE" });
+    assert.equal(noContent?.status, 204);
+    assert.equal(await noContent?.text(), "");
+
+    let unreachableReports = 0;
+    const unreachable = await createLiveBackendProxy({
+      backendUrl: "https://api.example",
+      fetchImpl: async () => {
+        throw new TypeError("unreachable");
+      },
+      localFallbackAllowed: () => true,
+      reportError: () => {
+        unreachableReports += 1;
+      }
+    })("/v1/bootstrap");
+    assert.equal(unreachable?.status, 503);
+    assert.equal(unreachableReports, 1);
+
+    const apiForwardRequests: Array<{ input: string; init: RequestInit }> = [];
+    const apiForwarder = createLiveApiForwarder({
+      backendUrl: "https://api.example",
+      getToken: async () => null,
+      fetchImpl: async (input, init) => {
+        apiForwardRequests.push({ input, init });
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    });
+    await apiForwarder(
+      new Request("https://symposium.example/api/posts/p1/actions", {
+        method: "POST",
+        headers: { "Idempotency-Key": "view-1" }
+      }),
+      {
+        actorHandle: "@ada",
+        body: { action: "read", actorHandle: "@ada", surface: "detail" }
+      }
+    );
+    assert.equal(apiForwardRequests[0]?.input, "https://api.example/v1/posts/p1/views");
     assert.equal(
-      liveBackendResponseHeaders(new Response(null)).get("cache-control"),
-      "no-store"
+      apiForwardRequests[0]?.init.body,
+      JSON.stringify({ action: "read", actorHandle: "@ada", surface: "detail" })
     );
-    const proxied = await proxyLiveBackend("/v1/bootstrap");
-    assert.ok(proxied);
-    assert.equal(proxied.status, 503);
+    assert.equal(
+      new Headers(apiForwardRequests[0]?.init.headers).get("idempotency-key"),
+      "view-1"
+    );
+    await apiForwarder(
+      new Request("https://symposium.example/api/attachments/confirm", {
+        method: "POST",
+        headers: { "Idempotency-Key": "legacy-confirm-key" }
+      }),
+      { body: { attachmentId: "a" }, forwardIdempotency: false }
+    );
+    assert.equal(new Headers(apiForwardRequests[1]?.init.headers).get("idempotency-key"), null);
 
     const { GET: readLocalAttachment } = await import(
       "../app/api/attachments/local/[attachmentId]/[fileName]/route"
@@ -211,30 +316,23 @@ const main = async () => {
     console.error = originalConsoleError;
   }
 
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        checked: [
-          "production fallback policy",
-          "503 response contract",
-          "local-only route contract",
-          "production route enforcement",
-          "bounded JSON request parsing",
-          "public bootstrap, search, and private-community projection",
-          "server-derived mutation identity",
-          "profile ownership enforcement",
-          "live bridge cache isolation",
-          "browser security headers",
-          "static-compatible script policy",
-          "strict production origin validation",
-          "cross-site mutation rejection"
-        ]
-      },
-      null,
-      2
-    )
-  );
+  reportCheck([
+    "production fallback policy",
+    "503 response contract",
+    "local-only route contract",
+    "production route enforcement",
+    "canonical live proxy request, response, and failure contracts",
+    "request-aware route mapping and protected delivery forwarding",
+    "bounded JSON request parsing",
+    "public bootstrap, search, and private-community projection",
+    "server-derived mutation identity",
+    "profile ownership enforcement",
+    "live bridge cache isolation",
+    "browser security headers",
+    "static-compatible script policy",
+    "strict production origin validation",
+    "cross-site mutation rejection"
+  ]);
 };
 
 void main();

@@ -1,5 +1,5 @@
 import { jsonError } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { listLocalCommunityMembers } from "@/lib/localCommunityStore";
 import { communityMemberQuerySchema } from "@/packages/contracts/src";
 
@@ -22,7 +22,10 @@ export async function GET(request: Request, context: Context) {
   const actorHandle = url.searchParams.get("actorHandle") ?? undefined;
   const search = new URLSearchParams({ q: parsed.data.q, limit: String(parsed.data.limit), role: parsed.data.role, status: parsed.data.status });
   if (parsed.data.cursor) search.set("cursor", parsed.data.cursor);
-  const live = await proxyLiveBackend(`/v1/communities/${encodeURIComponent(id)}/members?${search}`, { actorHandle });
+  const live = await proxyLiveApiRequest(request, {
+    actorHandle,
+    sourcePath: `${url.pathname}?${search}`
+  });
   if (live) return live;
   try {
     return Response.json(await listLocalCommunityMembers(id, actorHandle, parsed.data));

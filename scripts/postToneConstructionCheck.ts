@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   postToneClassName,
   postToneForItem,
@@ -130,9 +131,7 @@ assert.doesNotMatch(feedStyles, /\.post-kind-(?:paper|draft|code|thought|note)/)
 assert.doesNotMatch(nightStyles, /\.post-kind-(?:paper|draft|code|thought|note)/);
 assert.doesNotMatch(`${posts}\n${patronageStyles}`, /post-patronage-proposal/);
 
-console.log(JSON.stringify({
-  ok: true,
-  checked: [
+reportCheck([
     "semantic precedence for thoughts, papers, Patronage proposals, and opportunities",
     "neutral treatment for unpublished general notes",
     "shared feed and detail post classes",
@@ -142,8 +141,7 @@ console.log(JSON.stringify({
     "subtle Notes tint and label without type-coloured edge tabs",
     "central day and night palettes",
     "removal of scattered kind-specific background rules"
-  ]
-}, null, 2));
+]);
 };
 
 void main();

@@ -1,5 +1,5 @@
 import { jsonError } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { listLocalOpportunityApplications, LocalOpportunityApplicationError } from "@/lib/localOpportunityApplicationStore";
 import { workspaceActorHandle } from "@/lib/workspaceRouteSupport";
 
@@ -10,7 +10,10 @@ type Context = { params: Promise<{ id: string }> };
 export async function GET(request: Request, context: Context) {
   const { id } = await context.params;
   const actorHandle = workspaceActorHandle(request);
-  const live = await proxyLiveBackend(`/v1/posts/${encodeURIComponent(id)}/opportunity/applications`, { actorHandle });
+  const live = await proxyLiveApiRequest(request, {
+    actorHandle,
+    sourcePath: new URL(request.url).pathname
+  });
   if (live) return live;
   try { return Response.json({ applications: await listLocalOpportunityApplications(id, actorHandle) }); }
   catch (error) {

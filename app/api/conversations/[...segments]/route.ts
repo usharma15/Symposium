@@ -4,27 +4,21 @@ export const dynamic = "force-dynamic";
 
 type Context = { params: Promise<{ segments: string[] }> };
 
-const livePath = async (request: Request, context: Context) => {
-  const { segments } = await context.params;
-  const path = segments.map(encodeURIComponent).join("/");
-  return `/v1/conversations/${path}${new URL(request.url).search}`;
-};
-
-export async function GET(request: Request, context: Context) {
-  return proxyMessageRequest(request, await livePath(request, context));
+export async function GET(request: Request, _context: Context) {
+  return proxyMessageRequest(request);
 }
 
-export async function POST(request: Request, context: Context) {
+export async function POST(request: Request, _context: Context) {
   const body = await messageRequestBody(request);
-  return proxyMessageRequest(request, await livePath(request, context), { method: "POST", body });
+  return proxyMessageRequest(request, { body });
 }
 
-export async function PATCH(request: Request, context: Context) {
+export async function PATCH(request: Request, _context: Context) {
   const body = await messageRequestBody(request);
-  return proxyMessageRequest(request, await livePath(request, context), { method: "PATCH", body });
+  return proxyMessageRequest(request, { body });
 }
 
-export async function DELETE(request: Request, context: Context) {
+export async function DELETE(request: Request, _context: Context) {
   const body = await messageRequestBody(request);
-  return proxyMessageRequest(request, await livePath(request, context), { method: "DELETE", body });
+  return proxyMessageRequest(request, { body });
 }

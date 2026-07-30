@@ -1,6 +1,6 @@
 import { addComment, getSnapshot, type CreateCommentInput } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
-import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { randomUUID } from "node:crypto";
 import {
   deleteLocalOwnerAttachments,
@@ -21,9 +21,9 @@ type Context = {
 
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
-  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const body = await readJson<Partial<CreateCommentInput> & {
     attachmentIds?: unknown[];
+    actorHandle?: string;
     authorHandle?: string;
     quoteSource?: unknown;
   }>(request);
@@ -51,11 +51,11 @@ export async function POST(request: Request, context: Context) {
     return jsonError("The comment document is invalid or unsupported.", 400);
   }
 
-  const live = await proxyLiveBackend(`/v1/posts/${id}/comments`, {
-    method: "POST",
+  const liveActorHandle = body.actorHandle ?? body.authorHandle;
+  const live = await proxyLiveApiRequest(request, {
     body: { ...input, attachmentIds, quoteSource: quoteSource?.data, authorHandle: body.authorHandle },
-    actorHandle: body.authorHandle ? String(body.authorHandle) : undefined,
-    idempotencyKey
+    actorHandle: liveActorHandle ? String(liveActorHandle) : undefined,
+    sourcePath: `/api/posts/${encodeURIComponent(id)}/comments`
   });
   if (live) return live;
 

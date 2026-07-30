@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { PoolClient } from "pg";
+import { reportCheck } from "@/scripts/checkReport";
 import {
   createCommentInputSchema,
   createPostInputSchema,
@@ -833,9 +834,7 @@ const main = async () => {
   assert.match(source.shell, /NativeCitationProvider/);
   assert.match(source.styles, /\.document-bibliography/);
 
-  console.log(JSON.stringify({
-    ok: true,
-    checked: [
+  reportCheck([
       "strict native marker and duplicate-ID contracts",
       "hard 100-marker document ceiling",
       "TipTap round-trip and deterministic ordinal ordering",
@@ -850,8 +849,7 @@ const main = async () => {
       "post, comment, Office document, Office discussion, attachment, Scribble, and Evidence Map integration",
       "Evidence Map post, embedded-comment, selected-comment, attachment, and private-source classification",
       "hover previews, editor citation tray, bibliography style control, and responsive UI"
-    ]
-  }, null, 2));
+  ]);
 };
 
 void main().catch((error) => {
