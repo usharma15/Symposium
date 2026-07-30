@@ -176,6 +176,41 @@ This creates verification posts, comments, post actions, community calls, opport
 
 `/healthz` is a cheap process liveness check. `/readyz` is also database-silent: it reports the database and migration state verified during startup, current pool activity, the maintenance worker, release identifier, and provider boundaries without waking a suspended Neon compute or returning secret values. Use `/readyz?probe=database` only for an explicit deployment or incident check; it performs a live connection probe and refreshes migration state. Neither endpoint spends an Upstash command. In strict live mode readiness expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash for shared mutation limits, R2, a public R2 delivery URL, and the reserved owner handle binding. The AI tablet provider is reported separately because fallback mode remains a valid degraded state.
 
+Startup migrations run inside one transaction after taking the shared
+`symposium:database-migrations:v1` advisory lock. The migration ledger stores
+each immutable ID with its one-based manifest position and SHA-256 SQL
+checksum. The first hardened startup backfills those two fields for existing
+ID-only rows without replaying their SQL; later startup and deep-readiness
+checks fail closed if known SQL or order drifts. A failed pending migration
+rolls back its schema work and ledger insert together. Historical migration
+SQL, IDs, and order must never be edited after release.
+
+Recovery-drill safety and attachment-coherence logic is exercised in every
+release run:
+
+```bash
+npm run recovery:check
+```
+
+The credentialed runner accepts `all`, `preflight`, `fresh`, `backfill`,
+`concurrency`, `rollback`, or `restore-audit` as its first argument:
+
+```bash
+SYMPOSIUM_DRILL_ACK=isolated-disposable-database \
+SYMPOSIUM_DRILL_ID=generated_drill_id \
+SYMPOSIUM_DRILL_DATABASE_URL=postgresql://symposium_drill_generated_drill_id@drill-host/symposium_drill_generated_drill_id \
+SYMPOSIUM_DRILL_EXPECTED_DATABASE=symposium_drill_generated_drill_id \
+SYMPOSIUM_DRILL_EXPECTED_ROLE=symposium_drill_generated_drill_id \
+DATABASE_APPLICATION_NAME=symposium-recovery-drill-generated_drill_id \
+npm run recovery:drill -- all
+```
+
+The expected database and role must contain the exact drill ID. Remote targets
+also require `SYMPOSIUM_PRODUCTION_DATABASE_FINGERPRINT` and must not match it.
+`restore-audit` additionally requires read-only R2 credentials. Never point the
+runner at production, and never place credentials or raw object identities in
+checked-in evidence.
+
 The Render blueprint restricts API rebuilds to backend, shared-library, contract, dependency, and API configuration paths. Design-only frontend commits therefore do not restart the API or reopen Neon. Database connections identify themselves as `symposium-api-render` in `pg_stat_activity`. Six-hour housekeeping is activity-driven: it runs after startup while migrations have already activated the database, then only after genuine database traffic when due. It does not use a timer that wakes an idle compute.
 
 ## Integrity Architecture
@@ -215,7 +250,10 @@ The current guarantees are:
 - Migration `0018_comment_quote_kind` backfills the source post kind into existing comment quote snapshots so paper/thought presentation remains consistent without exposing parent-post content.
 - Migration `0042_notification_delivery_indexes` adds recipient-scoped page and unread indexes for the notification center without introducing any timer or idle database work.
 
-`npm run verify` is the local release gate. It runs security, infrastructure, domain, attachment, mutation, profile, TypeScript, and production-build checks. `npm audit --audit-level=high` is the dependency vulnerability gate.
+`npm run verify` is the local release gate. It runs security, infrastructure,
+migration concurrency/drift, local persistence races, domain, attachment,
+mutation, profile, TypeScript, and production-build checks. `npm audit
+--audit-level=high` is the dependency vulnerability gate.
 
 ## Database
 
@@ -285,7 +323,8 @@ Still intentionally next:
 
 Current provider-plan boundaries:
 
-- The public site currently uses Clerk development keys. Readiness reports this as a warning until the Clerk application and Vercel/Render environment variables are migrated to production keys.
+- The public site uses Clerk production keys; strict readiness treats any return
+  to development keys as a warning.
 - Neon Free provides a six-hour point-in-time restore window. One manual production snapshot is retained without expiry; scheduled snapshots require a paid plan.
 - Upstash Redis is used only for distributed authenticated-mutation rate limits, never for ordinary reads, health checks, streaming, or event publication. It is not a source of truth. Durable Postgres cursors plus the active-process event bus recover live events when a client initially connects or reconnects.
 - R2 currently delivers public attachment objects through Cloudflare's rate-limited `r2.dev` URL. Moving to a production custom domain requires choosing a domain on a Cloudflare-managed zone.

@@ -1176,7 +1176,9 @@ const loadPostgres = async (): Promise<AppData> => {
   };
 };
 
-export const getSnapshot = async () => (usePostgres ? loadPostgres() : readLocal());
+export const getSnapshot = async () => (
+  usePostgres ? loadPostgres() : withLocalMutation(readLocal)
+);
 
 export const upsertProfile = async (input: CreateProfileInput) => {
   const person = normalizeProfile(input);

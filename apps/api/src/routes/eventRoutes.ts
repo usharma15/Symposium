@@ -7,7 +7,10 @@ import {
   parseEventCursor,
   type StoredLiveEvent
 } from "../services/events";
-import { subscribeLocalLiveEvents } from "../services/liveBus";
+import {
+  maxLiveStreamsPerProcess,
+  subscribeLocalLiveEvents
+} from "../services/liveBus";
 import { getActorFromRequest } from "../services/auth";
 import { cleanHandle } from "@/lib/symposiumCore";
 
@@ -24,13 +27,12 @@ const limitFromQuery = (value?: string) => {
 const activeStreamsByClient = new Map<string, number>();
 let activeStreamCount = 0;
 const maxStreamsPerClient = 12;
-const maxStreamsPerProcess = 500;
 const replayPageSize = 100;
 const maxReplayEventsPerConnection = 1000;
 
 const acquireStream = (clientKey: string) => {
   const clientCount = activeStreamsByClient.get(clientKey) ?? 0;
-  if (clientCount >= maxStreamsPerClient || activeStreamCount >= maxStreamsPerProcess) return false;
+  if (clientCount >= maxStreamsPerClient || activeStreamCount >= maxLiveStreamsPerProcess) return false;
   activeStreamsByClient.set(clientKey, clientCount + 1);
   activeStreamCount += 1;
   return true;

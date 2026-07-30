@@ -154,10 +154,10 @@ export const saveNoteBlock = async (rawInput: unknown, actor: Actor, mutation?: 
     workspace ??= await ensureOwnedWorkspace(client, handle);
     if (!noteId) {
       const note = await client.query<{ id: string }>(
-        `INSERT INTO notes (workspace_id, title, visibility)
-         VALUES ($1, 'Notebook', 'private')
+        `INSERT INTO notes (workspace_id, owner_handle, title, visibility)
+         VALUES ($1, $2, 'Notebook', 'private')
          RETURNING id`,
-        [workspace.id]
+        [workspace.id, handle]
       );
       noteId = note.rows[0]!.id;
       currentNoteRevision = 1;

@@ -21,7 +21,7 @@
 | Design impact | Only selectors proved absent were removed; no rendered design was intentionally changed |
 | Product capability impact | None intended or accepted |
 | Release authorization | User explicitly waived the Pass 04 LOC gate for this checkpoint on July 30, 2026 |
-| Release state at evidence capture | Commit and direct push to `main` pending; no deployment or migration performed |
+| Released commit | `1a571beb2a5c51ac53641522e5a7a1d7f9cf5f43`; committed and pushed directly to `main` |
 | Unrelated material preserved | `output/`; `scripts/browserCanaryServer 2.ts` |
 
 Documentation is excluded from the source inventory. The source delta is not

@@ -4,15 +4,16 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Active program; Pass 02 is released with shared transport, persistence, conversation, and presentation ownership, but the program remains incomplete above 99,999 lines |
+| Status | Active program; Pass 04 checkpoint 01 is released, checkpoint 03 has passed local and Neon relational recovery but still lacks the live R2 object audit, and the program remains incomplete above 99,999 lines |
 | Prepared | July 29, 2026 |
 | Execution gate | **Satisfied July 29, 2026.** “Local design lab integration” completed at the exact baseline below and the user explicitly authorized the first Ultra pass |
 | Repository | `/Users/udayansharma/Documents/Science Rebirth` |
 | Exact post-integration baseline | `8e900d0fa675b311a67029b8d2f109b4da97301e`; migration `0064_authored_artifact_design_assignments`; 127,151 canonical tracked source lines / 119,000 nonblank |
 | Pass 01 local candidate | 128,351 canonical physical / 120,123 nonblank lines across 461 files; +1,200 physical, entirely in proof/check tooling; no product or style source changed |
-| Latest current-main baseline | `59fe7dc4bc992f0f38c556a2cf16b5f33d53b73a`; 468 files / 126,778 canonical physical / 118,710 nonblank lines |
-| Pass 02 cumulative result | -1,571 physical / -1,411 nonblank versus `10fdc8f`; production -676, styles -1,332, checks/tools +437 |
-| Remaining completion distance | 26,779 physical lines; 21.1% of the complete counted repository, or about 25.0% of production plus styles if proof code remains flat |
+| Latest current-main baseline | `1a571beb2a5c51ac53641522e5a7a1d7f9cf5f43`; 469 files / 125,849 canonical physical / 117,856 nonblank lines |
+| Current local candidate | 475 files / 127,637 canonical physical / 119,540 nonblank lines; +1,788 physical versus current main, split into +185 production and +1,603 checks/tools |
+| Cumulative candidate result | +486 physical / +540 nonblank versus the exact post-integration baseline; production 90,034, styles 16,200, checks/tools 21,403 |
+| Remaining completion distance | 27,638 physical lines; 21.7% of the complete counted repository, or about 26.0% of production plus styles if proof code remains flat |
 | Sub-100k feasibility status | **Possible but unproven.** The threshold remains the program test, but no future saving is pre-credited and the code may not be contorted, weakened, or stripped to satisfy it |
 | Governing priority | Build a beautiful, sublime, ultra-capable, ultra-lean engineering system while permitting zero loss of site usage, functionality, persistence, live synchronization, design, privacy, security, accessibility, or recoverability |
 | Meaning of the LOC target | A forcing function and absolute falsifiable test of whether conceptual and implementation waste was actually removed—not the highest-order objective and never a substitute for engineering quality |
@@ -567,17 +568,25 @@ Current source evidence shows:
 
 The current migration runner:
 
-- stores applied migration IDs in `symposium_migrations`;
+- stores applied migration IDs, exact SQL checksums, and canonical positions in
+  `symposium_migrations`;
 - executes pending migrations in order;
 - wraps the entire startup migration run in one transaction;
+- takes a transaction-scoped cross-process advisory lock before inspecting or
+  changing migration history;
+- backfills metadata for the pre-checksum history without replaying SQL;
+- fails closed when a known migration's SQL or order drifts;
 - caches migration status for readiness;
-- does not currently acquire a cross-process advisory migration lock;
 - embeds migration SQL in the TypeScript runner rather than immutable
   per-migration files.
 
-That runner is an operational hardening candidate. Historical IDs, order, SQL
-meaning, and production compatibility are immutable constraints; changing file
-layout must not cause any migration to rerun or disappear.
+The concurrency, checksum, order, backfill, rollback, retry, and partial-failure
+boundaries now have deterministic fault-injection coverage. Historical SQL is
+still embedded in the TypeScript manifest rather than immutable per-migration
+files, and a real isolated Postgres recreate/current-database exercise remains
+a release proof obligation. Historical IDs, order, SQL meaning, and production
+compatibility are immutable constraints; changing file layout must not cause
+any migration to rerun or disappear.
 
 ### 4.6 Live synchronization topology
 
@@ -593,18 +602,13 @@ Current live behavior is:
    transport to reject stale state.
 
 Current limits include 12 streams per client, 500 per API process, bounded
-replay pages, and slow-client termination. The local process bus is correct
-for the current single-instance Render deployment. A distributed fanout layer
-must not be introduced until horizontal API scaling is real; when that day
-comes, durable cursor replay remains the recovery authority.
-
-One capacity detail needs explicit reconciliation: `eventRoutes.ts` permits up
-to 500 streams per process, while `liveBus.ts` currently sets the underlying
-`EventEmitter` warning threshold to 200 listeners. That is not proof of lost
-events, but it can produce listener warnings before the route-level ceiling is
-reached. Pass 2 must align or deliberately justify those limits and test the
-chosen bound; it must not “fix” the mismatch by introducing a new distributed
-transport.
+replay pages, and slow-client termination. The route and its local
+`EventEmitter` now share the same 500-listener capacity authority; the complete
+capacity is exercised with exact delivery and leak-free unsubscribe coverage.
+The local process bus is correct for the current single-instance Render
+deployment. A distributed fanout layer must not be introduced until horizontal
+API scaling is real; when that day comes, durable cursor replay remains the
+recovery authority.
 
 ### 4.7 Verification and delivery topology
 
@@ -1315,6 +1319,44 @@ proof leverage that makes later deletion governable.
 **Purpose:** ensure a refactor can be deployed, rolled back, and recovered
 without data loss.
 
+**Current local implementation and proof (July 30, 2026):** the migration runner now
+serializes concurrent startups through a transaction-scoped advisory lock,
+records and verifies SHA-256 SQL checksums and canonical positions, backfills
+the existing ID-only ledger without replaying historical SQL, and fails closed
+on checksum or order drift. Deterministic checks prove duplicate/malformed
+plan rejection, two-process exactly-once application, partial-failure rollback,
+retry, legacy metadata backfill, and pre-execution drift rejection. Readiness
+deep probes revalidate this metadata. The live-bus warning limit is aligned
+with the 500-stream process limit, and local first-access reads now share the
+mutation queue so seed initialization cannot erase a concurrent successful
+write.
+
+Two independent disposable PostgreSQL 17.10 databases proved the original 64
+migrations from zero, exact legacy-ledger metadata backfill, stable normalized
+schema and row-count digests, two-session exactly-once concurrency, complete
+transaction rollback, and corrected retry. A real API write/restart matrix
+also exposed and fixed the missing note owner on legacy note-block creation.
+An authenticated Neon point-in-time restore then proved a true ID-only ledger,
+PostgreSQL 18 fresh reconstruction, 65-row candidate convergence, real
+concurrency, rollback, and exact restored/fresh semantic manifests. It exposed
+and fixed a false legacy-ledger setup assumption, a path-only evidence digest,
+non-semantic column-order hashing, and a production-only legacy
+`comments.deleted` column. Forward migration
+`0065_comment_deletion_reconciliation` preserves any legacy tombstone in
+`deleted_at` before removing the redundant flag. The restored and fresh
+manifests now match at 1,752 entries.
+
+This is still not Pass 2 completion. Read-only R2 credentials are unavailable
+locally and the browser is logged out of Render, so object existence, byte-size,
+content-type, and failed-upload cleanup coherence remain unverified. No
+production branch or object store was mutated.
+
+The exact isolation sentinels, real-Postgres cases, Neon restore measurements,
+read-only Postgres/R2 coherence rules, stop conditions, and the following
+provider-free attachment-adapter gate are prepared in
+`docs/refactor-pass-04-checkpoint-03-plan.md`. Preparation does not authorize or
+claim execution of any provider operation.
+
 Work:
 
 - document and perform a Neon restore drill into an isolated database;
@@ -1359,13 +1401,15 @@ reduction, not a fake consolidation claim.
 **Purpose:** identify which transitional paths remain required and converge
 them behind explicit adapters.
 
-**Current disposition after released Pass 02:** substantially advanced, not
-complete. `c603bbe` established the canonical request mapper, live forwarder,
-private attachment boundaries, and explicit local/live route adapters.
-`59fe7dc` established shared atomic JSON writes, shared seed normalization, and
-additional local-store consolidation. The remaining `dataStore` authority
-split, duplicated backend read/mutation projections, proof-fixture overlap,
-and conditional client/presentation retirements are chartered in
+**Current disposition after released Pass 04 checkpoint 01:** substantially
+advanced, not complete. `c603bbe` established the canonical request mapper,
+live forwarder, private attachment boundaries, and explicit local/live route
+adapters. `59fe7dc` established shared atomic JSON writes and seed
+normalization; `5d89ead` consolidated transaction, Workspace-access, and
+inquiry-projection authorities; `1a571be` hardened local persistence and
+retired proven-dead source. The remaining `dataStore` authority split,
+duplicated backend read/mutation projections, proof-fixture overlap, and
+conditional client/presentation retirements are chartered in
 `docs/refactor-pass-03-plan.md`. This revised plan supersedes any assumption
 that the original candidate list is still untouched.
 

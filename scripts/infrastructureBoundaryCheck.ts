@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { reportCheck } from "@/scripts/checkReport";
 import { buildApp } from "@/apps/api/src/server";
-import { latestMigrationId, migrationIds } from "@/apps/api/src/db/migrate";
+import {
+  latestMigrationId,
+  migrationIds,
+  migrations
+} from "@/apps/api/src/db/migrate";
 import {
   aiUsage,
   aiConversations,
@@ -39,7 +43,13 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0064_authored_artifact_design_assignments");
+  assert.equal(latestMigrationId, "0065_comment_deletion_reconciliation");
+  const commentDeletionMigration = migrations.find(
+    ({ id }) => id === "0065_comment_deletion_reconciliation"
+  );
+  assert.ok(commentDeletionMigration);
+  assert.match(commentDeletionMigration.sql, /WHERE deleted IS TRUE[\s\S]*deleted_at IS NULL/);
+  assert.match(commentDeletionMigration.sql, /DROP COLUMN IF EXISTS deleted/);
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");

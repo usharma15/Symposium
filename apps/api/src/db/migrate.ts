@@ -1,12 +1,14 @@
 import { getPool, hasDatabase } from "./client";
 import { fileURLToPath } from "node:url";
+import {
+  inspectMigrationHistory,
+  runMigrationTransaction,
+  validateMigrationPlan,
+  type AppliedMigrationRow,
+  type Migration
+} from "./migrationRunner";
 
-type Migration = {
-  id: string;
-  sql: string;
-};
-
-const migrations: Migration[] = [
+export const migrations: Migration[] = [
   {
     id: "0001_live_foundation",
     sql: `
@@ -3268,9 +3270,25 @@ const migrations: Migration[] = [
       COMMENT ON COLUMN posts.design_assignment IS
         'Immutable schema-versioned authored-artifact identity. Interface theme is derived and never persisted.';
     `
+  },
+  {
+    id: "0065_comment_deletion_reconciliation",
+    sql: `
+      ALTER TABLE comments
+        ADD COLUMN IF NOT EXISTS deleted BOOLEAN;
+
+      UPDATE comments
+      SET deleted_at = COALESCE(deleted_at, updated_at, created_at, now())
+      WHERE deleted IS TRUE
+        AND deleted_at IS NULL;
+
+      ALTER TABLE comments
+        DROP COLUMN IF EXISTS deleted;
+    `
   }
 ];
 
+validateMigrationPlan(migrations);
 export const migrationIds = migrations.map((migration) => migration.id);
 export const latestMigrationId = migrationIds.at(-1) ?? null;
 
@@ -3312,11 +3330,13 @@ export const getMigrationStatus = async (): Promise<MigrationStatus> => {
     };
   }
 
-  const result = await getPool().query<{ id: string }>(
-    `SELECT id FROM symposium_migrations WHERE id = ANY($1::text[]) ORDER BY applied_at ASC`,
+  const result = await getPool().query<AppliedMigrationRow>(
+    `SELECT id, checksum, position
+     FROM symposium_migrations
+     WHERE id = ANY($1::text[])`,
     [migrationIds]
   );
-  const applied = new Set(result.rows.map((row) => row.id));
+  const { applied } = inspectMigrationHistory(migrations, result.rows);
   const appliedIds = migrationIds.filter((id) => applied.has(id));
   cachedMigrationStatus = {
     appliedCount: appliedIds.length,
@@ -3336,30 +3356,8 @@ export const runMigrations = async () => {
   const client = await pool.connect();
 
   try {
-    await client.query("BEGIN");
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS symposium_migrations (
-        id TEXT PRIMARY KEY,
-        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )
-    `);
-
-    for (const migration of migrations) {
-      const existing = await client.query<{ id: string }>(
-        "SELECT id FROM symposium_migrations WHERE id = $1",
-        [migration.id]
-      );
-
-      if (existing.rowCount) continue;
-      await client.query(migration.sql);
-      await client.query("INSERT INTO symposium_migrations (id) VALUES ($1)", [migration.id]);
-    }
-
-    await client.query("COMMIT");
+    await runMigrationTransaction(client, migrations);
     cachedMigrationStatus = completeMigrationStatus();
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
   } finally {
     client.release();
   }

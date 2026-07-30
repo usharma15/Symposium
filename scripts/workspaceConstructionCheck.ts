@@ -367,6 +367,10 @@ const main = async () => {
   assert.match(cascadeNotebookRoute, /workspaceMutation/);
   assert.match(legacyWorkspaceRepository, /workspace\.owner_handle = \$2 AND note\.deleted_at IS NULL/);
   assert.match(legacyWorkspaceRepository, /block\.id = \$1 AND workspace\.owner_handle = \$2 AND note\.deleted_at IS NULL/);
+  assert.match(
+    legacyWorkspaceRepository,
+    /INSERT INTO notes \(workspace_id, owner_handle, title, visibility\)\s+VALUES \(\$1, \$2, 'Notebook', 'private'\)/
+  );
   assert.match(legacyWorkspaceRepository, /WHERE id = \$1 AND revision = \$2 AND deleted_at IS NULL/);
   assert.match(workspaceNavigator, /workspaceDocumentMetadataUpdate/);
   assert.match(workspaceNavigator, /runAfterWorkspaceSave/);

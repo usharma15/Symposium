@@ -10,6 +10,12 @@ import {
 } from "@/features/live-sync/liveEventTransport";
 import { liveEventsPath } from "@/features/live-sync/useLiveEventStream";
 import { publishCrossTabMessage } from "@/features/live-sync/useCrossTabItemTransport";
+import {
+  getLocalLiveBusStatus,
+  maxLiveStreamsPerProcess,
+  publishLocalLiveEvent,
+  subscribeLocalLiveEvents
+} from "@/apps/api/src/services/liveBus";
 
 const main = async () => {
 assert.equal(liveEventsPath("/api/events", ""), "/api/events");
@@ -77,6 +83,26 @@ assert.equal(
 );
 assert.equal(attempts, 2);
 
+assert.equal(maxLiveStreamsPerProcess, 500);
+assert.deepEqual(getLocalLiveBusStatus(), { listenerCount: 0, maxListeners: 500 });
+let capacityDeliveries = 0;
+const capacitySubscriptions = Array.from(
+  { length: maxLiveStreamsPerProcess },
+  () => subscribeLocalLiveEvents(() => { capacityDeliveries += 1; })
+);
+assert.deepEqual(getLocalLiveBusStatus(), { listenerCount: 500, maxListeners: 500 });
+publishLocalLiveEvent({
+  id: "00000000-0000-4000-8000-000000000001",
+  kind: "capacity.test",
+  subjectType: "system",
+  subjectId: "live-bus",
+  createdAt: "2026-07-30T00:00:00.000Z",
+  cursor: "2026-07-30T00:00:00.000Z::00000000-0000-4000-8000-000000000001"
+});
+assert.equal(capacityDeliveries, maxLiveStreamsPerProcess);
+for (const unsubscribe of capacitySubscriptions) unsubscribe();
+assert.deepEqual(getLocalLiveBusStatus(), { listenerCount: 0, maxListeners: 500 });
+
 const root = process.cwd();
 const [clientTransport, apiStreamRoute, nextStreamRoute, maintenance, controller, postRepository, commentRepository] = await Promise.all([
   readFile(path.join(root, "features/live-sync/useLiveEventStream.ts"), "utf8"),
@@ -139,6 +165,7 @@ reportCheck([
   "serialized fallback polling",
   "immediate online and offline recovery",
   "database-idle-safe single-process event stream",
+  "route-aligned 500-listener live-bus capacity without leaks",
   "idle-safe database maintenance",
   "metric-only live action convergence",
   "passive views without full-bootstrap refresh",
