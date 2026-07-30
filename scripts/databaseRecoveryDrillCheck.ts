@@ -170,6 +170,8 @@ const main = async () => {
   assert.equal(healthy.active, 1);
   assert.equal(healthy.inspectedObjects, 2);
   assert.equal(healthy.missingAllowedByDeletionState, 1);
+  assert.equal(healthy.r2Active, 1);
+  assert.equal(healthy.staticActive, 0);
 
   const missing = await auditAttachmentCoherence(
     [attachment()],
@@ -191,6 +193,7 @@ const main = async () => {
       attachment({ uploadObjectKey: "post/a.pdf" }),
       attachment({
         attachmentId: "00000000-0000-4000-8000-000000000002",
+        metadata: { storageState: "deleted" },
         objectKey: "post/a.pdf",
         status: "failed",
         uploadObjectKey: "post/a.pdf"
@@ -206,7 +209,50 @@ const main = async () => {
       "active-object-content-type-mismatch",
       "active-object-size-mismatch",
       "duplicate-canonical-object-owner",
-      "failed-object-without-deletion-state"
+      "failed-canonical-object-present-after-deletion"
+    ]
+  );
+  const staticAttachment = await auditAttachmentCoherence(
+    [attachment({
+      bucket: "static",
+      metadata: { staticPublicPath: "/historical-world/papers/a.pdf" },
+      objectKey: "historical-world/papers/a.pdf",
+      status: "previewed",
+      uploadObjectKey: "historical-world/papers/a.pdf"
+    })],
+    [],
+    async () => ({ byteSize: 4, contentType: "application/pdf" }),
+    drillId
+  );
+  assert.deepEqual(staticAttachment.issues, []);
+  assert.equal(staticAttachment.r2Active, 0);
+  assert.equal(staticAttachment.staticActive, 1);
+  const failedDeleted = await auditAttachmentCoherence(
+    [attachment({
+      metadata: { storageState: "deleted" },
+      status: "failed"
+    })],
+    [],
+    async () => null,
+    drillId
+  );
+  assert.deepEqual(failedDeleted.issues, []);
+  assert.equal(failedDeleted.inspectedObjects, 2);
+  assert.equal(failedDeleted.missingAllowedByDeletionState, 2);
+  const failedResidue = await auditAttachmentCoherence(
+    [attachment({
+      metadata: { stagingStorageState: "deleted", storageState: "deleted" },
+      status: "failed"
+    })],
+    [],
+    async () => ({ byteSize: 4, contentType: "application/pdf" }),
+    drillId
+  );
+  assert.deepEqual(
+    failedResidue.issues.map((issue) => issue.code).sort(),
+    [
+      "failed-canonical-object-present-after-deletion",
+      "staging-object-present-after-deletion"
     ]
   );
   const differentlySalted = await auditAttachmentCoherence(
@@ -227,9 +273,9 @@ const main = async () => {
     "remote production-fingerprint exclusion",
     "secret-free database fingerprinting",
     "exact migration ledger count, order, checksum, and position validation",
-    "active attachment object size and content-type coherence",
-    "staging deletion-state reconciliation",
-    "missing, duplicate-owner, and failed-object detection",
+    "R2 and static attachment object size and content-type coherence",
+    "staging and failed-object deletion-state reconciliation",
+    "missing, duplicate-owner, residual-object, and failed-object detection",
     "privacy-safe hashed attachment evidence",
     "true legacy-ledger setup and content-sensitive candidate identity"
   ]);

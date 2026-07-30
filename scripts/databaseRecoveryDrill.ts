@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -503,17 +503,50 @@ const runRollbackProof = async (client: PoolClient) => {
 const r2Client = () => {
   const accountId = process.env.R2_ACCOUNT_ID?.trim();
   const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
+  const bucket = process.env.R2_BUCKET?.trim();
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
-  if (!accountId || !accessKeyId || !secretAccessKey) {
+  if (!accountId || !accessKeyId || !bucket || !secretAccessKey) {
     throw new Error(
-      "Read-only R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY are required."
+      "Read-only R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY are required."
     );
   }
-  return new S3Client({
-    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
-    region: "auto",
-    credentials: { accessKeyId, secretAccessKey }
-  });
+  return {
+    bucket,
+    client: new S3Client({
+      endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+      region: "auto",
+      credentials: { accessKeyId, secretAccessKey }
+    })
+  };
+};
+
+const staticContentType = (objectKey: string) => {
+  const extension = path.extname(objectKey).toLowerCase();
+  return ({
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".pdf": "application/pdf",
+    ".png": "image/png"
+  } as Record<string, string>)[extension] ?? null;
+};
+
+const inspectStaticObject = async (objectKey: string): Promise<ObjectMetadata | null> => {
+  const publicRoot = path.resolve("public");
+  const absolute = path.resolve(publicRoot, objectKey.replace(/^\/+/, ""));
+  if (!absolute.startsWith(`${publicRoot}${path.sep}`)) {
+    throw new Error("A static attachment object key escaped the public asset root.");
+  }
+  try {
+    const file = await stat(absolute);
+    if (!file.isFile()) return null;
+    return {
+      byteSize: file.size,
+      contentType: staticContentType(objectKey)
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 };
 
 const runRestoreAudit = async (
@@ -546,22 +579,26 @@ const runRestoreAudit = async (
      FROM storage_deletion_jobs
      ORDER BY id`
   );
-  const s3 = r2Client();
+  const r2 = r2Client();
   const cache = new Map<string, Promise<ObjectMetadata | null>>();
   const inspectObject = (bucket: string, objectKey: string) => {
     const key = `${bucket}\u0000${objectKey}`;
     const existing = cache.get(key);
     if (existing) return existing;
-    const request = s3.send(new HeadObjectCommand({ Bucket: bucket, Key: objectKey }))
-      .then((head) => ({
-        byteSize: Number(head.ContentLength ?? 0),
-        contentType: head.ContentType ?? null
-      }))
-      .catch((error: unknown) => {
-        const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
-        if (status === 404) return null;
-        throw error;
-      });
+    const request = bucket === "static"
+      ? inspectStaticObject(objectKey)
+      : bucket !== r2.bucket
+        ? Promise.reject(new Error("An attachment references an unexpected provider bucket."))
+        : r2.client.send(new HeadObjectCommand({ Bucket: bucket, Key: objectKey }))
+          .then((head) => ({
+            byteSize: Number(head.ContentLength ?? 0),
+            contentType: head.ContentType ?? null
+          }))
+          .catch((error: unknown) => {
+            const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+            if (status === 404) return null;
+            throw error;
+          });
     cache.set(key, request);
     return request;
   };
@@ -578,7 +615,9 @@ const runRestoreAudit = async (
     coherenceDigest: coherence.coherenceDigest,
     deletionJobCount: coherence.deletionJobCount,
     inspectedObjects: coherence.inspectedObjects,
-    missingAllowedByDeletionState: coherence.missingAllowedByDeletionState
+    missingAllowedByDeletionState: coherence.missingAllowedByDeletionState,
+    r2ActiveAttachments: coherence.r2Active,
+    staticActiveAttachments: coherence.staticActive
   };
 };
 

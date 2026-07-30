@@ -212,6 +212,8 @@ export const auditAttachmentCoherence = async (
   let active = 0;
   let inspectedObjects = 0;
   let missingAllowedByDeletionState = 0;
+  let r2Active = 0;
+  let staticActive = 0;
 
   for (const attachment of attachments) {
     const attachmentHash = sha256(`${evidenceSalt}\u0000${attachment.attachmentId}`).slice(0, 16);
@@ -224,21 +226,58 @@ export const auditAttachmentCoherence = async (
     }
 
     const isActive = attachment.status === "uploaded" || attachment.status === "previewed";
+    const isFailed = attachment.status === "failed";
+    const canonicalDeleted =
+      storageState(attachment.metadata, "storageState") === "deleted";
+    const canonicalDeletionPending =
+      storageState(attachment.metadata, "storageState") === "deletion_pending";
+    const canonicalJob = jobs.has(canonicalKey);
+    let canonicalObject: ObjectMetadata | null | undefined;
+    if (isActive || isFailed) {
+      canonicalObject = await inspectObject(attachment.bucket, attachment.objectKey);
+      inspectedObjects += 1;
+    }
     if (isActive) {
       active += 1;
-      const object = await inspectObject(attachment.bucket, attachment.objectKey);
-      inspectedObjects += 1;
-      if (!object) {
+      if (attachment.bucket === "static") {
+        staticActive += 1;
+        const staticPublicPath = storageState(attachment.metadata, "staticPublicPath");
+        if (staticPublicPath.replace(/^\/+/, "") !== attachment.objectKey.replace(/^\/+/, "")) {
+          issues.push({ attachmentHash, code: "static-public-path-mismatch" });
+        }
+      } else {
+        r2Active += 1;
+      }
+      if (!canonicalObject) {
         issues.push({ attachmentHash, code: "active-canonical-object-missing" });
       } else {
-        if (object.byteSize !== attachment.byteSize) {
+        if (canonicalObject.byteSize !== attachment.byteSize) {
           issues.push({ attachmentHash, code: "active-object-size-mismatch" });
         }
-        const storedType = normalizedContentType(object.contentType);
+        const storedType = normalizedContentType(canonicalObject.contentType);
         const rowType = normalizedContentType(attachment.contentType);
         if (rowType && storedType !== rowType) {
           issues.push({ attachmentHash, code: "active-object-content-type-mismatch" });
         }
+      }
+    }
+    if (isFailed) {
+      if (canonicalObject) {
+        if (canonicalDeleted) {
+          issues.push({ attachmentHash, code: "failed-canonical-object-present-after-deletion" });
+        } else if (!canonicalJob && !canonicalDeletionPending) {
+          issues.push({
+            attachmentHash,
+            code: "failed-canonical-object-present-without-deletion-state"
+          });
+        }
+      } else if (canonicalDeleted || canonicalJob || canonicalDeletionPending) {
+        missingAllowedByDeletionState += 1;
+      } else {
+        issues.push({
+          attachmentHash,
+          code: "failed-canonical-object-missing-without-deletion-state"
+        });
       }
     }
 
@@ -248,23 +287,28 @@ export const auditAttachmentCoherence = async (
     ) {
       const staging = await inspectObject(attachment.bucket, attachment.uploadObjectKey);
       inspectedObjects += 1;
+      const stagingKey = `${attachment.bucket}\u0000${attachment.uploadObjectKey}`;
+      const stagingDeleted =
+        storageState(attachment.metadata, "stagingStorageState") === "deleted";
+      const stagingDeletionPending =
+        storageState(attachment.metadata, "stagingStorageState") === "deletion_pending";
+      const stagingJob = jobs.has(stagingKey);
       if (!staging) {
-        const stagingKey = `${attachment.bucket}\u0000${attachment.uploadObjectKey}`;
-        const deleted =
-          storageState(attachment.metadata, "stagingStorageState") === "deleted";
-        if (jobs.has(stagingKey) || deleted) {
+        if (
+          stagingJob ||
+          stagingDeleted ||
+          stagingDeletionPending ||
+          (isFailed && (canonicalDeleted || canonicalJob || canonicalDeletionPending))
+        ) {
           missingAllowedByDeletionState += 1;
         } else {
           issues.push({ attachmentHash, code: "staging-object-missing-without-deletion-state" });
         }
-      }
-    }
-
-    if (attachment.status === "failed") {
-      const canonicalDeleted =
-        storageState(attachment.metadata, "storageState") === "deleted";
-      if (!canonicalDeleted && !jobs.has(canonicalKey)) {
-        issues.push({ attachmentHash, code: "failed-object-without-deletion-state" });
+      } else if (
+        stagingDeleted ||
+        (isFailed && canonicalDeleted)
+      ) {
+        issues.push({ attachmentHash, code: "staging-object-present-after-deletion" });
       }
     }
   }
@@ -293,6 +337,8 @@ export const auditAttachmentCoherence = async (
     deletionJobCount: deletionJobs.length,
     inspectedObjects,
     issues,
-    missingAllowedByDeletionState
+    missingAllowedByDeletionState,
+    r2Active,
+    staticActive
   };
 };

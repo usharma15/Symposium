@@ -4,26 +4,24 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Local and Neon relational recovery passed; live R2 object audit remains blocked by missing read-only credentials; no deployment performed |
-| Exact baseline | `1a571beb2a5c51ac53641522e5a7a1d7f9cf5f43` |
-| Candidate inventory | 475 files / 127,637 physical / 119,540 nonblank |
-| Candidate delta versus exact post-integration baseline | +23 files / +486 physical / +540 nonblank |
-| Candidate delta versus current main | +6 files / +1,788 physical / +1,684 nonblank |
-| Candidate categories | 90,034 production / 16,200 styles / 21,403 checks and tools |
+| Status | Gate A passed: local, Neon relational, and live R2/static coherence recovery proof complete; authority replacement has not started |
+| Exact released baseline | `2b28a88d9adc83750d6f553a58c82e537566f2f5` |
+| Candidate inventory | 475 files / 127,768 physical / 119,670 nonblank |
+| Candidate delta versus exact post-integration baseline | +23 files / +617 physical / +670 nonblank |
+| Candidate delta versus current main | 0 files / +131 physical / +130 nonblank |
+| Candidate categories | 90,034 production / 16,200 styles / 21,534 checks and tools |
 | Program ceiling | 99,999 physical |
-| Remaining distance to program ceiling | 27,638 physical |
-| Product/schema impact | Fixes note ownership and adds forward-only migration `0065` to reconcile a production-only legacy comment deletion flag without losing tombstones |
-| Production mutation | None |
-| Provider mutation | New point-in-time recovery branch, derived audit child, and disposable child databases only; production branch untouched |
-| Commit, push, deploy | Checkpoint source committed and pushed after final verification; no deployment |
+| Remaining distance to program ceiling | 27,769 physical |
+| Product/schema impact | No new product or schema change in the R2 follow-up; the released checkpoint includes note ownership and forward-only migration `0065` |
+| Production mutation | The user-authorized push auto-deployed `2b28a88`; the R2 continuation performed read-only provider requests only |
+| Provider mutation | Previously created recovery branch, derived audit child, and disposable child databases retained; this continuation made no provider mutation |
+| Commit, push, deploy | Checkpoint source is committed and pushed only after final verification; Render auto-deploy is enabled and independently verified |
 | Design Lab and AI Tablet | Untouched; the disabled Assistant boundary remained disabled during smoke |
 | Preserved unrelated paths | `output/`; `scripts/browserCanaryServer 2.ts` |
 
-Documentation is excluded from the source inventory. The six intended new
-source files were added to the index so the canonical inventory measured the
-actual candidate. The unrelated untracked canary copy was moved out only for
-the LOC policy invocation, restored immediately, and verified against its
-original SHA-256
+Documentation is excluded from the source inventory. The unrelated untracked
+canary copy was moved out only for the LOC policy invocation, restored
+immediately, and verified against its original SHA-256
 `9ca3d8239ffb43186453d70feb5b5d8e4f023d9dc3ec411abc82c687197e2b4a`.
 
 This checkpoint does not satisfy the program LOC exit gate and is not a
@@ -48,7 +46,11 @@ The candidate adds a fail-closed recovery runner with:
   raw object keys, filenames, user content, or identities.
 
 `npm run recovery:check` contributes ten deterministic safety and coherence
-cases to the canonical 59-stage release runner.
+cases to the canonical 59-stage release runner. The credentialed path now
+separates repository-owned `static` fixtures from the configured R2 bucket,
+rejects unexpected provider buckets, checks failed canonical objects for
+residue, and treats missing staging objects as coherent only when a durable
+deletion state or job explains the absence.
 
 ## Real PostgreSQL drill
 
@@ -187,7 +189,7 @@ contract without enabling the paused capability or making a provider call.
 
 ## Complete verification
 
-Final candidate evidence:
+Final candidate evidence after the R2 harness correction:
 
 - `npm run recovery:check` — passed ten safety/coherence cases;
 - `npm run migration:check` — passed ten migration cases;
@@ -196,10 +198,10 @@ Final candidate evidence:
 - `npm run proof:check` — passed;
 - `npm run typecheck:all` — passed;
 - `npm run build` — optimized production build and hydration passed;
-- `npm run verify` — passed 59/59 stages in 66.317 seconds;
-- `npm run loc:check` — passed at 475 / 127,637 / 119,540;
+- `npm run verify` — passed 59/59 stages in 70.491 seconds;
+- `npm run loc:check` — passed at 475 / 127,768 / 119,670;
 - `npm audit --audit-level=high` — zero vulnerabilities;
-- `npm run browser:canary` — passed 6/6 in 43.5 seconds;
+- `npm run browser:canary` — passed 6/6 in 41.9 seconds;
 - exact browser report validation — passed.
 
 The first production build attempt exposed a stricter Next typecheck boundary:
@@ -211,41 +213,70 @@ The first browser launch was denied before page creation by the macOS sandbox's
 Mach port policy. The same candidate was rerun outside only that restriction
 and passed all six browser cases.
 
-Read-only production verification on July 30, 2026 found:
+Read-only production verification after Render auto-deployed the
+user-authorized push found:
 
 - `https://www.symposiumsci.com` returned `200` with the expected security
   headers;
 - public API smoke passed;
 - strict deep readiness passed with every required provider configured;
-- release remained
-  `1a571beb2a5c51ac53641522e5a7a1d7f9cf5f43`;
-- all 64 migrations remained applied through
-  `0064_authored_artifact_design_assignments`;
+- release was exactly
+  `2b28a88d9adc83750d6f553a58c82e537566f2f5`;
+- all 65 migrations were applied through
+  `0065_comment_deletion_reconciliation`;
 - no pending migration was reported.
 
-These checks establish a healthy baseline. They do not imply that this local
-candidate was deployed.
+The deep probe reported every required provider healthy, no issues or
+warnings, and the durable R2 deletion worker active. The public API smoke
+returned 22 profiles, 24 items, 12 communities, and one opportunity.
 
-## Remaining live R2 proof
+## Live R2 and static-object recovery proof
 
-The restored relational audit found:
+The final `restore-audit` ran against the derived Neon audit child, whose safe
+database fingerprint differs from the production fingerprint. It imported
+only `HeadObjectCommand`, rejected any provider bucket other than the exact
+configured R2 bucket, and made no R2 write, copy, lifecycle, list, or delete
+request. Repository-owned historical assets under the sentinel bucket
+`static` were verified against `public/` with path-containment, byte-size, and
+content-type checks.
+
+The first live attempt exposed two proof-harness assumptions:
+
+1. The 25 historical preview assets use the deliberate `static` bucket and
+   must not be sent to R2, where they correctly returned `403`.
+2. Failed uploads need their canonical object checked for residue. A missing
+   failed object is coherent only when a deletion job, pending marker, or
+   deleted marker explains it; a present object after a deleted marker is now
+   a hard failure.
+
+After correction, the final live audit passed in 39.409 seconds:
 
 - 190 attachment rows with 190 distinct canonical `(bucket, object_key)`
   identities;
 - 89 `uploaded`, 25 `previewed`, and 76 `failed` rows;
-- 114 active objects requiring metadata inspection;
+- 114 active attachments: 89 R2 objects and 25 bundled static assets;
 - 129 distinct staging keys;
-- 114 confirmed `stagingStorageState=deleted` markers; and
-- zero durable storage-deletion jobs.
+- 319 total inspections: 294 R2 `HeadObject` requests and 25 local static-file
+  checks;
+- all 89 active R2 objects present with exact byte size and normalized content
+  type;
+- all 76 failed canonical objects absent with `storageState=deleted`;
+- all 129 distinct staging objects absent and reconciled through staging or
+  failed-object deletion state;
+- 205 missing references allowed by deletion state;
+- zero durable deletion jobs and zero coherence issues; and
+- salted coherence SHA-256
+  `28564965f95478524e2dcb1bb0d4357bad1c7d507042d40ed4bc7611f6896e7b`.
 
-The local `.env.live` intentionally contains blank R2 account and credential
-values, and the available browser session is logged out of Render. Therefore
-no R2 `HeadObject` request was issued and no object existence, byte size, or
-content type is claimed. The 76 failed rows also lack relational deletion
-state, so their actual object absence or required cleanup cannot be decided
-without the read-only object audit.
+Machine evidence is
+`.artifacts/refactor/recovery/neon-r2-restore-audit-20260730-a1.json`, mode
+`0600`. It contains no credentials, raw keys, filenames, signed URLs, bodies,
+or user identities.
 
-Gate A remains partially open only at this R2 boundary. The preserved restore
-branch and derived audit child remain available for completion after
-read-only R2 credentials are supplied. Gate B authority replacement must not
-open to bypass this missing evidence.
+The existing Render application credential was used solely through the
+read-only audit code path; its provider-side permission scope was not changed
+or independently narrowed. This is a documented least-privilege caveat, not a
+claim that the credential itself is read-only.
+
+Gate A is complete. Gate B may now begin only as a separately bounded
+authority-replacement pass; none of that work is included here.

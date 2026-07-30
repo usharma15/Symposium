@@ -207,9 +207,16 @@ npm run recovery:drill -- all
 
 The expected database and role must contain the exact drill ID. Remote targets
 also require `SYMPOSIUM_PRODUCTION_DATABASE_FINGERPRINT` and must not match it.
-`restore-audit` additionally requires read-only R2 credentials. Never point the
-runner at production, and never place credentials or raw object identities in
-checked-in evidence.
+`restore-audit` additionally requires R2 credentials and imports only the
+metadata-only `HeadObject` operation. It verifies the exact configured R2
+bucket, rejects unexpected provider buckets, and checks `static` historical
+assets against the repository's contained `public/` paths instead of sending
+them to R2. Never point the runner at production, and never place credentials
+or raw object identities in checked-in evidence. The July 30 Gate A execution
+inspected 294 R2 references and 25 static assets with zero coherence issues;
+the existing Render application credential was used only through the
+read-only audit path, but its provider permission scope was not independently
+narrowed.
 
 The Render blueprint restricts API rebuilds to backend, shared-library, contract, dependency, and API configuration paths. Design-only frontend commits therefore do not restart the API or reopen Neon. Database connections identify themselves as `symposium-api-render` in `pg_stat_activity`. Six-hour housekeeping is activity-driven: it runs after startup while migrations have already activated the database, then only after genuine database traffic when due. It does not use a timer that wakes an idle compute.
 

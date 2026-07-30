@@ -4,16 +4,16 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Active program; Pass 04 checkpoint 01 is released, checkpoint 03 has passed local and Neon relational recovery but still lacks the live R2 object audit, and the program remains incomplete above 99,999 lines |
+| Status | Active program; Pass 04 checkpoint 03 Gate A has passed local, Neon, R2, and static-object recovery proof, while the program remains incomplete above 99,999 lines |
 | Prepared | July 29, 2026 |
 | Execution gate | **Satisfied July 29, 2026.** “Local design lab integration” completed at the exact baseline below and the user explicitly authorized the first Ultra pass |
 | Repository | `/Users/udayansharma/Documents/Science Rebirth` |
 | Exact post-integration baseline | `8e900d0fa675b311a67029b8d2f109b4da97301e`; migration `0064_authored_artifact_design_assignments`; 127,151 canonical tracked source lines / 119,000 nonblank |
 | Pass 01 local candidate | 128,351 canonical physical / 120,123 nonblank lines across 461 files; +1,200 physical, entirely in proof/check tooling; no product or style source changed |
-| Latest current-main baseline | `1a571beb2a5c51ac53641522e5a7a1d7f9cf5f43`; 469 files / 125,849 canonical physical / 117,856 nonblank lines |
-| Current local candidate | 475 files / 127,637 canonical physical / 119,540 nonblank lines; +1,788 physical versus current main, split into +185 production and +1,603 checks/tools |
-| Cumulative candidate result | +486 physical / +540 nonblank versus the exact post-integration baseline; production 90,034, styles 16,200, checks/tools 21,403 |
-| Remaining completion distance | 27,638 physical lines; 21.7% of the complete counted repository, or about 26.0% of production plus styles if proof code remains flat |
+| Latest current-main baseline | `2b28a88d9adc83750d6f553a58c82e537566f2f5`; 475 files / 127,637 canonical physical / 119,540 nonblank lines |
+| Current local candidate | 475 files / 127,768 canonical physical / 119,670 nonblank lines; +131 physical / +130 nonblank versus current main, entirely in checks/tools |
+| Cumulative candidate result | +617 physical / +670 nonblank versus the exact post-integration baseline; production 90,034, styles 16,200, checks/tools 21,534 |
+| Remaining completion distance | 27,769 physical lines; 21.7% of the complete counted repository, or about 26.1% of production plus styles if proof code remains flat |
 | Sub-100k feasibility status | **Possible but unproven.** The threshold remains the program test, but no future saving is pre-credited and the code may not be contorted, weakened, or stripped to satisfy it |
 | Governing priority | Build a beautiful, sublime, ultra-capable, ultra-lean engineering system while permitting zero loss of site usage, functionality, persistence, live synchronization, design, privacy, security, accessibility, or recoverability |
 | Meaning of the LOC target | A forcing function and absolute falsifiable test of whether conceptual and implementation waste was actually removed—not the highest-order objective and never a substitute for engineering quality |
@@ -1346,16 +1346,22 @@ non-semantic column-order hashing, and a production-only legacy
 `deleted_at` before removing the redundant flag. The restored and fresh
 manifests now match at 1,752 entries.
 
-This is still not Pass 2 completion. Read-only R2 credentials are unavailable
-locally and the browser is logged out of Render, so object existence, byte-size,
-content-type, and failed-upload cleanup coherence remain unverified. No
-production branch or object store was mutated.
+The credentialed R2/static follow-up is now complete. Against the isolated
+Neon audit child, 294 R2 `HeadObject` requests and 25 repository static-file
+checks verified all 89 active R2 objects, every historical static asset, all
+76 failed-object deletion states, and all 129 distinct staging paths with
+zero coherence issues. The harness now rejects unexpected provider buckets,
+verifies failed objects are absent rather than trusting status alone, and
+fails if an object remains after a deleted marker. The existing Render
+application credential was used only through this read-only code path; its
+provider-side IAM scope was not independently narrowed. No object-store
+mutation occurred.
 
 The exact isolation sentinels, real-Postgres cases, Neon restore measurements,
-read-only Postgres/R2 coherence rules, stop conditions, and the following
-provider-free attachment-adapter gate are prepared in
-`docs/refactor-pass-04-checkpoint-03-plan.md`. Preparation does not authorize or
-claim execution of any provider operation.
+read-only Postgres/R2 coherence evidence, stop conditions, and the following
+provider-free attachment-adapter gate are recorded in
+`docs/refactor-pass-04-checkpoint-03-plan.md`. Gate B remains a separate
+authorization and implementation boundary.
 
 Work:
 

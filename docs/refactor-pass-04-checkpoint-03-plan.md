@@ -4,12 +4,12 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Local and Neon relational recovery executed; live R2 object audit remains blocked on read-only credentials; authority retirement has not started |
+| Status | Gate A executed and passed across local PostgreSQL, Neon recovery, R2, and static-object coherence; authority retirement has not started |
 | Prepared | July 30, 2026 |
-| Exact released baseline | `1a571beb2a5c51ac53641522e5a7a1d7f9cf5f43` |
+| Exact released baseline | `2b28a88d9adc83750d6f553a58c82e537566f2f5` |
 | Incoming local candidate | Pass 04 checkpoint 02; 472 files / 126,350 physical / 118,325 nonblank |
-| Current local candidate | 475 files / 127,637 physical / 119,540 nonblank |
-| Immediate objective | Provider-restored Postgres proof passed and reconciled drift through migration `0065`; read-only R2 proof remains pending |
+| Current local candidate | 475 files / 127,768 physical / 119,670 nonblank |
+| Immediate objective | Complete: provider-restored Postgres and R2/static coherence passed after migration `0065` reconciliation |
 | Following objective | Characterize and add the provider-free attachment adapter required before the direct-Postgres `dataStore` authority can be retired |
 | Product/schema/design change | None authorized by this preparation |
 | Production mutation | Prohibited |
@@ -359,8 +359,11 @@ changes stop the pass for re-scoping.
 9. Decide checkpoint 02/03 commit and release separately.
 10. Open Gate B only after that decision.
 
-The local portion of this order is recorded in
+The complete Gate A order is recorded in
 `docs/refactor-evidence/pass-04/checkpoint-03.md`. The isolated Neon restore,
 derived-child backfill, PostgreSQL 18 reconstruction, migration `0065`
-reconciliation, and normalized manifest comparison have now run. The live R2
-object audit and authority replacement have not.
+reconciliation, normalized manifest comparison, and live read-only R2/static
+coherence audit have run and passed. The audit used the existing Render
+application credential exclusively through `HeadObject`; its provider-side
+permission scope was not independently narrowed. Authority replacement has not
+started.
