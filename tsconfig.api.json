@@ -15,8 +15,7 @@
     "apps/api/**/*.ts",
     "packages/**/*.ts",
     "lib/mockData.ts",
-    "lib/symposiumCore.ts",
-    "drizzle.config.ts"
+    "lib/symposiumCore.ts"
   ],
   "exclude": ["node_modules", ".next"]
 }

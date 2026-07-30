@@ -61,7 +61,6 @@ import {
 } from "@/lib/seedItemNormalization";
 import { postTitlePolicyError, postTypeForItem } from "@/lib/postSemantics";
 import {
-  deterministicPostDesignAssignment,
   postTypeHasAuthoredArtifact,
   randomPostDesignAssignment,
   resolvePostDesignAssignment
@@ -660,8 +659,8 @@ export const applyPostAction = async (
   action: PostAction,
   actorHandle = defaultProfile.handle,
   active?: boolean,
-  trigger?: string,
-  surface?: string
+  _trigger?: string,
+  _surface?: string
 ): Promise<ActionMutationResult | null> => {
 
   return withLocalMutation(async () => {
@@ -901,8 +900,8 @@ export const applyCommentAction = async (
   action: CommentAction,
   actorHandle = defaultProfile.handle,
   active?: boolean,
-  trigger?: string,
-  surface?: string
+  _trigger?: string,
+  _surface?: string
 ): Promise<ActionMutationResult | null> => {
 
   return withLocalMutation(async () => {

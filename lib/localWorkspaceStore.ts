@@ -20,8 +20,6 @@ import {
   workspaceGrantCeiling,
   workspaceRoleWithinCeiling,
   workspaceSearchInputSchema,
-  type CreateWorkspaceDocumentInputContract,
-  type UpdateWorkspaceDocumentInputContract,
   type WorkspaceAccessResourceContract,
   type WorkspaceAccessRoleContract,
   type WorkspaceGrantRoleContract

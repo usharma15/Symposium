@@ -60,8 +60,7 @@ import {
   ContentQuoteCard,
   QuoteActionButton,
   QuoteLinkField,
-  type QuoteActionHandler,
-  type QuoteSelection
+  type QuoteActionHandler
 } from "@/features/quotes/QuoteViews";
 import {
   attachedQuoteFromSnapshot,
@@ -75,7 +74,6 @@ import {
   type CommentAttachmentPreviewHandler,
   type CommentSegmentStacks
 } from "@/features/comments/CommentThread";
-import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
 import { SymposiumDocumentEditor, SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
 import { appendedContentAttachments, documentForContent, emptySymposiumDocument, editorCapabilityForKind } from "@/lib/documentModel";
 import type { VersionedDocumentContract } from "@/packages/contracts/src";

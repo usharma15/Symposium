@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,

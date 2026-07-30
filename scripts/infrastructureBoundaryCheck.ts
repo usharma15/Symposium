@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import { reportCheck } from "@/scripts/checkReport";
 import { buildApp } from "@/apps/api/src/server";
 import {
@@ -6,44 +7,25 @@ import {
   migrationIds,
   migrations
 } from "@/apps/api/src/db/migrate";
-import {
-  aiUsage,
-  aiConversations,
-  comments,
-  communities,
-  conversations,
-  conversationParticipants,
-  contentTranslations,
-  documentTranslations,
-  communityMemberships,
-  events,
-  maintenanceLeases,
-  messages,
-  messageStars,
-  notifications,
-  notificationPreferences,
-  noteBlocks,
-  notes,
-  opportunityApplicationComments,
-  opportunityApplications,
-  patronageContributions,
-  patronageProposals,
-  posts,
-  profileFollows,
-  profiles,
-  storageDeletionJobs,
-  workspaceNotebooks,
-  workspaceNoteComments,
-  workspaceNoteCommentActions,
-  workspaceNoteRevisions,
-  workspaceNotebookGrants,
-  workspaceNoteGrants
-} from "@/apps/api/src/db/schema";
 import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
+  const packageManifest = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8")
+  ) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    scripts?: Record<string, string>;
+  };
+  assert.equal(existsSync(new URL("../apps/api/src/db/schema.ts", import.meta.url)), false);
+  assert.equal(packageManifest.scripts?.["db:generate"], undefined);
+  assert.equal(packageManifest.scripts?.["db:push"], undefined);
+  assert.equal(packageManifest.dependencies?.["drizzle-orm"], undefined);
+  assert.equal(packageManifest.devDependencies?.["drizzle-kit"], undefined);
   assert.equal(latestMigrationId, "0065_comment_deletion_reconciliation");
+  assert.equal(migrationIds.length, 65);
+  const migrationSql = migrations.map((migration) => migration.sql).join("\n");
   const commentDeletionMigration = migrations.find(
     ({ id }) => id === "0065_comment_deletion_reconciliation"
   );
@@ -54,55 +36,55 @@ const main = async () => {
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
   assert.equal(migrationIds.at(-1), latestMigrationId);
-  assert.ok(migrationIds.length >= 18);
-  assert.ok("audienceHandles" in events);
-  assert.ok("leaseExpiresAt" in maintenanceLeases);
-  assert.equal("audienceHandles" in posts, false);
-  assert.ok("revision" in posts);
-  assert.ok("revision" in comments);
-  assert.ok("revision" in profiles);
-  assert.ok("revision" in profileFollows);
-  assert.ok("revision" in notes);
-  assert.ok("patronage" in posts);
-  assert.ok("opportunity" in posts);
-  assert.ok("communityId" in posts);
-  assert.ok("moderatorHandles" in communities);
-  assert.ok("lastAccessedAt" in communityMemberships);
-  assert.ok("revision" in conversations);
-  assert.ok("nextMessageSequence" in conversations);
-  assert.ok("status" in conversationParticipants);
-  assert.ok("clearedThroughSequence" in conversationParticipants);
-  assert.ok("sequence" in messages);
-  assert.ok("revision" in messages);
-  assert.ok("profileHandle" in messageStars);
-  assert.ok("resolvedAt" in notifications);
-  assert.ok("activityEnabled" in notificationPreferences);
-  assert.ok("revision" in notificationPreferences);
-  assert.ok("reservedCostMicros" in aiUsage);
-  assert.ok("actualCostMicros" in aiUsage);
-  assert.ok("visionInputCount" in aiUsage);
-  assert.ok("lastMessageAt" in aiConversations);
-  assert.ok("sourceFingerprint" in documentTranslations);
-  assert.ok("sourceFingerprint" in contentTranslations);
-  assert.ok("sourceRevision" in contentTranslations);
-  assert.ok("translatedDocument" in contentTranslations);
-  assert.ok("targetLanguage" in documentTranslations);
-  assert.ok("shortlisted" in opportunityApplications);
-  assert.ok("revision" in opportunityApplications);
-  assert.ok("applicationId" in opportunityApplicationComments);
-  assert.ok("goalMinorUnits" in patronageProposals);
-  assert.ok("providerReference" in patronageContributions);
-  assert.ok("revision" in noteBlocks);
-  assert.ok("revision" in workspaceNotebooks);
-  assert.ok("parentId" in workspaceNoteComments);
-  assert.ok("action" in workspaceNoteCommentActions);
-  assert.ok("revision" in workspaceNoteRevisions);
-  assert.ok("role" in workspaceNotebookGrants);
-  assert.ok("role" in workspaceNoteGrants);
-  assert.ok("revision" in workspaceNotebookGrants);
-  assert.ok("revision" in workspaceNoteGrants);
-  assert.ok("objectKey" in storageDeletionJobs);
-  assert.ok("leaseExpiresAt" in storageDeletionJobs);
+  for (const invariant of [
+    /ALTER TABLE events ADD COLUMN IF NOT EXISTS audience_handles/,
+    /CREATE TABLE IF NOT EXISTS maintenance_leases[\s\S]*lease_expires_at/,
+    /ALTER TABLE posts ADD COLUMN IF NOT EXISTS revision/,
+    /ALTER TABLE comments ADD COLUMN IF NOT EXISTS revision/,
+    /ALTER TABLE profiles ADD COLUMN IF NOT EXISTS revision/,
+    /ALTER TABLE profile_follows ADD COLUMN IF NOT EXISTS revision/,
+    /ALTER TABLE notes ADD COLUMN IF NOT EXISTS revision/,
+    /ALTER TABLE posts ADD COLUMN IF NOT EXISTS patronage/,
+    /ALTER TABLE posts ADD COLUMN IF NOT EXISTS opportunity/,
+    /community_id TEXT REFERENCES communities/,
+    /ALTER TABLE communities ADD COLUMN IF NOT EXISTS moderator_handles/,
+    /ALTER TABLE community_memberships ADD COLUMN IF NOT EXISTS last_accessed_at/,
+    /ALTER TABLE conversations ADD COLUMN IF NOT EXISTS revision/,
+    /next_message_sequence BIGINT/,
+    /ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS status/,
+    /cleared_through_sequence BIGINT/,
+    /sequence BIGINT/,
+    /ALTER TABLE messages ADD COLUMN IF NOT EXISTS revision/,
+    /CREATE TABLE IF NOT EXISTS message_stars[\s\S]*profile_handle/,
+    /ALTER TABLE notifications\s+ADD COLUMN IF NOT EXISTS resolved_at/,
+    /CREATE TABLE IF NOT EXISTS notification_preferences[\s\S]*activity_enabled BOOLEAN/,
+    /notification_preferences[\s\S]*revision INTEGER NOT NULL DEFAULT 1/,
+    /reserved_cost_micros BIGINT/,
+    /actual_cost_micros BIGINT/,
+    /vision_input_count INTEGER/,
+    /ALTER TABLE ai_conversations\s+ADD COLUMN IF NOT EXISTS last_message_at/,
+    /CREATE TABLE IF NOT EXISTS document_translations[\s\S]*source_fingerprint/,
+    /CREATE TABLE IF NOT EXISTS content_translations[\s\S]*source_fingerprint/,
+    /CREATE TABLE IF NOT EXISTS content_translations[\s\S]*source_revision INTEGER/,
+    /ALTER TABLE content_translations\s+ADD COLUMN IF NOT EXISTS translated_document/,
+    /target_language TEXT/,
+    /CREATE TABLE IF NOT EXISTS opportunity_applications[\s\S]*shortlisted BOOLEAN/,
+    /CREATE TABLE IF NOT EXISTS opportunity_applications[\s\S]*revision INTEGER/,
+    /CREATE TABLE IF NOT EXISTS opportunity_application_comments[\s\S]*application_id/,
+    /CREATE TABLE IF NOT EXISTS patronage_proposals[\s\S]*goal_minor_units/,
+    /CREATE TABLE IF NOT EXISTS patronage_contributions[\s\S]*provider_reference/,
+    /ALTER TABLE note_blocks\s+ADD COLUMN IF NOT EXISTS revision/,
+    /CREATE TABLE IF NOT EXISTS workspace_note_comments[\s\S]*parent_id/,
+    /CREATE TABLE IF NOT EXISTS workspace_note_comment_actions[\s\S]*action/,
+    /CREATE TABLE IF NOT EXISTS workspace_note_revisions[\s\S]*revision/,
+    /CREATE TABLE IF NOT EXISTS workspace_notebook_grants[\s\S]*role/,
+    /CREATE TABLE IF NOT EXISTS workspace_note_grants[\s\S]*role/,
+    /workspace_notebook_grants ADD COLUMN IF NOT EXISTS revision/,
+    /workspace_note_grants ADD COLUMN IF NOT EXISTS revision/,
+    /CREATE TABLE IF NOT EXISTS storage_deletion_jobs[\s\S]*object_key/,
+    /CREATE TABLE IF NOT EXISTS storage_deletion_jobs[\s\S]*lease_expires_at/
+  ]) assert.match(migrationSql, invariant);
+  assert.doesNotMatch(migrationSql, /ALTER TABLE posts ADD COLUMN IF NOT EXISTS audience_handles/);
 
   const validCursor = "2026-07-10T12:00:00.000Z::00000000-0000-4000-8000-000000000001";
   assert.deepEqual(parseEventCursor(validCursor), {
@@ -148,7 +130,7 @@ const main = async () => {
   }
 
   reportCheck([
-    "migration manifest visibility",
+    "single executable migration authority",
     "Clerk provider mode visibility",
     "event audience schema placement",
     "authoritative entity revision schema",

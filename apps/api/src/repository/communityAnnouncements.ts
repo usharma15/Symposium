@@ -7,7 +7,7 @@ import {
   type ResearchCommunityContract
 } from "../../../../packages/contracts/src";
 import { activeCommunityAnnouncements, type CommunityAnnouncement } from "@/lib/communityAnnouncements";
-import { getPool, hasDatabase } from "../db/client";
+import { hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { stageEvent } from "../services/events";

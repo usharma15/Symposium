@@ -14,10 +14,8 @@ import {
   type QueryResultRow
 } from "pg";
 import {
-  inspectMigrationHistory,
   migrationChecksum,
   runMigrationTransaction,
-  type AppliedMigrationRow,
   type Migration
 } from "@/apps/api/src/db/migrationRunner";
 import { migrations } from "@/apps/api/src/db/migrate";

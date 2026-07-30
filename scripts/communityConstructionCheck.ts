@@ -26,7 +26,6 @@ import { getCommunityItems } from "../features/discovery/discoveryPolicy";
 import { communityViewerProjectionChanged, projectCommunityItemsForViewer } from "../lib/communityContentProjection";
 import { communityActivityItems, researchCommunities } from "../lib/mockData";
 import { listLocalCommunityMembers } from "../lib/localCommunityStore";
-import { hiddenCommunityActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "../lib/profileActivity";
 import { activeCommunityAnnouncements, communityAnnouncementRetentionMs } from "../lib/communityAnnouncements";
 
 const profile = { handle: "@viewer" };
@@ -292,6 +291,7 @@ const sources = await Promise.all([
   readFile(new URL("../features/communities/CommunityPeopleModal.tsx", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/communities.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/foundation.ts", import.meta.url), "utf8"),
+  readFile(new URL("../apps/api/src/repository/historicalWorldFixtures.ts", import.meta.url), "utf8"),
   readFile(new URL("../components/SymposiumV0.tsx", import.meta.url), "utf8"),
   readFile(new URL("../features/posts/PostViews.tsx", import.meta.url), "utf8"),
   readFile(new URL("../features/profiles/ProfileViews.tsx", import.meta.url), "utf8"),
@@ -311,7 +311,7 @@ const sources = await Promise.all([
   readFile(new URL("../app/api/communities/[id]/requests/[handle]/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/communityRequests.ts", import.meta.url), "utf8")
 ]);
-const [views, filterModal, peopleModal, repository, foundation, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization, announcementRepository, announcementRoute, announcementStyles, requestRoute, communityRequestsRepository] = sources;
+const [views, filterModal, peopleModal, repository, foundation, historicalFixtures, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization, announcementRepository, announcementRoute, announcementStyles, requestRoute, communityRequestsRepository] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
@@ -334,10 +334,11 @@ assert.match(filterModal, /Hot right now/, "Community feed filtering must expose
 assert.match(repository, /assertCommunityParticipation/, "Community writes must enforce active participation.");
 assert.match(communityMembersRepository, /last_accessed_at/, "Recent community access must persist server-side.");
 assert.match(foundation, /projectCommunityItemsForViewer/, "Bootstrap delivery must use the canonical current-state community projection.");
-assert.match(foundation, /syncCommunityActivityFixtures/, "Community activity fixtures must hydrate the durable live backend.");
-assert.match(foundation, /fixture_revisions/, "Community activity enrichment must not rerun on every backend cold start.");
+assert.match(foundation, /syncHistoricalWorldFixtures/, "Community activity fixtures must hydrate through the canonical historical-world authority.");
+assert.match(historicalFixtures, /insertCommunities[\s\S]*insertPosts/, "The canonical historical-world transaction must hydrate community identity and activity.");
+assert.match(historicalFixtures, /fixture_revisions/, "Historical community fixtures must not rerun on every backend cold start.");
 assert.match(foundation, /communityCalls/, "Canonical bootstrap refreshes must reconcile community calls.");
-assert.match(foundation, /communities-content-v1/, "Rich community content must hydrate the durable backend exactly once.");
+assert.match(historicalFixtures, /historical-world-v2-casual-activity/, "Rich community content must hydrate the durable backend exactly once.");
 assert.match(foundation, /community\.memberHandles\.slice\(0, communityMemberPreviewLimit\)/, "General bootstrap delivery must cap member previews; the directory endpoint owns full pagination.");
 assert.match(shell, /selectedCommunity && canParticipateInCommunity/, "The global composer must default to the selected community when participation is allowed.");
 assert.match(shell, /<ProfileView[\s\S]+items=\{items\}/, "Profiles must receive the complete viewer-projected item collection rather than a global-feed subset.");

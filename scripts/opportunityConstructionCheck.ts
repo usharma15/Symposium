@@ -76,9 +76,8 @@ assert.equal(roomForCanonicalRoute({ kind: "opportunityApplications", postId: "p
 
 const root = process.cwd();
 const read = (file: string) => readFile(path.join(root, file), "utf8");
-const [migration, schema, postRepository, applicationRepository, compatibilityRepository, routes, applicationPage, attachmentRepository, localStore, views, experience, composer, workspacePublishing, shell, styles] = await Promise.all([
+const [migration, postRepository, applicationRepository, compatibilityRepository, routes, applicationPage, attachmentRepository, localStore, views, experience, composer, workspacePublishing, shell, styles] = await Promise.all([
   read("apps/api/src/db/migrate.ts"),
-  read("apps/api/src/db/schema.ts"),
   read("apps/api/src/repository/posts.ts"),
   read("apps/api/src/repository/opportunityApplications.ts"),
   read("apps/api/src/repository/opportunities.ts"),
@@ -98,7 +97,7 @@ assert.match(migration, /0026_opportunities_foundation/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS opportunity_applications/);
 assert.match(migration, /opportunity_application_comments/);
 assert.match(migration, /UNIQUE \(post_id, applicant_handle\)/);
-assert.match(schema, /opportunityApplications/);
+assert.match(migration, /CREATE TABLE IF NOT EXISTS opportunity_applications/);
 assert.match(postRepository, /opportunity = \$11/);
 assert.match(applicationRepository, /DELETE FROM opportunity_applications WHERE id = \$1/);
 assert.doesNotMatch(applicationRepository, /UPDATE opportunity_applications[\s\S]{0,240}(deleted_at|archived_at|tombstone)/i);

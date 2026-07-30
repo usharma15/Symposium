@@ -19,7 +19,6 @@ const root = process.cwd();
 const source = {
   contracts: await readFile(path.join(root, "packages/contracts/src/index.ts"), "utf8"),
   migration: await readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8"),
-  schema: await readFile(path.join(root, "apps/api/src/db/schema.ts"), "utf8"),
   repository: await readFile(path.join(root, "apps/api/src/repository/workspaceScribbles.ts"), "utf8"),
   routes: await readFile(path.join(root, "apps/api/src/routes/workspaceRoutes.ts"), "utf8"),
   localStore: await readFile(path.join(root, "lib/localWorkspaceStore.ts"), "utf8"),
@@ -100,7 +99,7 @@ assert.equal(decideScribbleSnapshot({ dirty: true, knownServerRevision: 4, local
 
 assert.match(source.migration, /0024_workspace_scribbles/);
 assert.match(source.migration, /UNIQUE \(owner_handle\)/);
-assert.match(source.schema, /workspaceScribbleRevisions/);
+assert.match(source.migration, /CREATE TABLE IF NOT EXISTS workspace_scribble_revisions/);
 assert.match(source.repository, /FOR UPDATE/);
 assert.match(source.repository, /assertExpectedRevision\("scribble"/);
 assert.match(source.repository, /ORDER BY revision DESC OFFSET 500/);

@@ -20,7 +20,7 @@ import {
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import { useCrossTabItemTransport } from "@/features/live-sync/useCrossTabItemTransport";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
-import { documentPlainText, emptySymposiumDocument, newDocumentBlockId, type SymposiumDocumentNode } from "@/lib/documentModel";
+import { emptySymposiumDocument, newDocumentBlockId, type SymposiumDocumentNode } from "@/lib/documentModel";
 import type { InquiryAttachment, InquiryComment, InquiryItem, ResearchProfile } from "@/lib/mockData";
 import type {
   DocumentCitationLocatorContract,

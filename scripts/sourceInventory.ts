@@ -28,7 +28,7 @@ export const sourcePolicy = {
   baselineRef: "8e900d0fa675b311a67029b8d2f109b4da97301e",
   baselinePhysical: 127_151,
   baselineNonblank: 119_000,
-  passMaximum: 127_805,
+  passMaximum: 125_725,
   programMaximum: 99_999
 } as const;
 

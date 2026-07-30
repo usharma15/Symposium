@@ -171,8 +171,6 @@ const attachmentMediaSize = (attachment: InquiryAttachment): MediaIntrinsicSize 
 
 const minAttachmentZoom = 0.1;
 const maxAttachmentZoom = 5;
-const zoomInStep = 0.2;
-const zoomOutStep = 0.1;
 
 export const clampAttachmentZoom = (value: number) =>
   Math.min(maxAttachmentZoom, Math.max(minAttachmentZoom, Math.round(value * 100) / 100));

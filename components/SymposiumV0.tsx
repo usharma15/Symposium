@@ -173,7 +173,6 @@ import {
   DetailView,
   PostComposerModal,
   PostEditModal,
-  commentsSectionTargetId,
   type PostDraft
 } from "@/features/posts/PostViews";
 import {
@@ -194,7 +193,6 @@ import {
   ProfileSettingsModal,
   ProfileView,
   commentTimestampScore,
-  itemAuthoredByProfile,
   updateCommentsForProfile,
   type ProfileActivityKind,
   type ProfileCommentActivityKind,

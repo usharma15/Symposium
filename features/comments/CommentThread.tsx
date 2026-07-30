@@ -40,7 +40,6 @@ import { appendedContentAttachments, emptySymposiumDocument } from "@/lib/docume
 import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
-import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import {
   AttachmentCarousel,
   type AttachmentUploadHandler

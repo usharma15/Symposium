@@ -209,7 +209,6 @@ const main = async () => {
   const navigation = readFileSync("features/analytics/contentAnalyticsNavigation.ts", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
   const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
-  const schema = readFileSync("apps/api/src/db/schema.ts", "utf8");
 
   assert.match(repository, /Only the author can view private content analytics/);
   assert.match(repository, /activity\.active = true/);
@@ -243,8 +242,8 @@ const main = async () => {
   assert.match(migration, /0047_content_analytics_live/);
   assert.match(migration, /post_actions_content_analytics_idx/);
   assert.match(migration, /comments_quote_analytics_idx/);
-  assert.match(schema, /post_actions_content_analytics_idx/);
-  assert.match(schema, /comments_quote_analytics_idx/);
+  assert.match(migration, /post_actions_content_analytics_idx/);
+  assert.match(migration, /comments_quote_analytics_idx/);
   assert.match(renderer, /hierarchyOffset/);
   assert.match(settings, /Authors can still see when you like their work/);
 

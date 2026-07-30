@@ -309,7 +309,7 @@ const main = async () => {
         translatedTitle: "Comentarios formateados",
         pages: [{
           pageNumber: 4,
-          segments: structuredDocumentRequest.sourcePages[0].segments.map((segment, index) => ({
+          segments: structuredDocumentRequest.sourcePages[0].segments.map((_segment, index) => ({
             id: `provider-returned-line-${index}`,
             text: `El párrafo de origen ${index + 1} conserva la geometría determinista del PDF.`
           })),

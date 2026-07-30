@@ -205,6 +205,12 @@ checks fail closed if known SQL or order drifts. A failed pending migration
 rolls back its schema work and ledger insert together. Historical migration
 SQL, IDs, and order must never be edited after release.
 
+The ordered migration manifest in `apps/api/src/db/migrate.ts` is the sole
+schema authority. The former hand-maintained Drizzle schema, generator/push
+commands, configuration, and runtime/tooling dependencies have been retired;
+schema changes must be expressed as immutable additive migrations and proved
+through the migration and recovery checks.
+
 Recovery-drill safety and attachment-coherence logic is exercised in every
 release run:
 

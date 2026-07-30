@@ -842,7 +842,6 @@ const main = async () => {
   const panel = readFileSync("features/notifications/NotificationsPanel.tsx", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
   const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
-  const schema = readFileSync("apps/api/src/db/schema.ts", "utf8");
   const workspaceAccess = readFileSync("apps/api/src/repository/workspaceAccess.ts", "utf8");
   const conversations = readFileSync("apps/api/src/repository/conversations.ts", "utf8");
   const comments = readFileSync("apps/api/src/repository/comments.ts", "utf8");
@@ -976,14 +975,12 @@ const main = async () => {
   assert.match(migration, /CREATE TABLE IF NOT EXISTS notification_preferences/);
   assert.match(migration, /notifications_profile_page_idx/);
   assert.match(migration, /notifications_profile_unread_idx/);
-  assert.match(schema, /notifications_profile_page_idx/);
-  assert.match(schema, /notifications_profile_unread_idx/);
-  assert.match(schema, /notifications_profile_aggregation_idx/);
-  assert.match(schema, /notifications_profile_open_action_idx/);
-  assert.match(schema, /resolvedAt: timestamp\("resolved_at"/);
-  assert.match(schema, /archivedAt: timestamp\("archived_at"/);
-  assert.match(schema, /notifications_archived_retention_idx/);
-  assert.match(schema, /export const notificationPreferences/);
+  assert.match(migration, /notifications_profile_aggregation_idx/);
+  assert.match(migration, /notifications_profile_open_action_idx/);
+  assert.match(migration, /resolved_at TIMESTAMPTZ/);
+  assert.match(migration, /archived_at TIMESTAMPTZ/);
+  assert.match(migration, /notifications_archived_retention_idx/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS notification_preferences/);
   assert.match(maintenance, /archived_at < now\(\) - interval '30 days'/);
   assert.match(maintenance, /kind IN \('community_join_request', 'opportunity_application_received'\)/);
   assert.match(messageRoutes, /\/v1\/notifications\/archive/);

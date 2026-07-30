@@ -98,7 +98,6 @@ const read = (file: string) => readFile(path.join(root, file), "utf8");
 const [
   contracts,
   migration,
-  schema,
   postRepository,
   patronageService,
   notePublishing,
@@ -114,7 +113,6 @@ const [
 ] = await Promise.all([
   read("packages/contracts/src/index.ts"),
   read("apps/api/src/db/migrate.ts"),
-  read("apps/api/src/db/schema.ts"),
   read("apps/api/src/repository/posts.ts"),
   read("apps/api/src/services/patronage.ts"),
   read("apps/api/src/services/notePublishing.ts"),
@@ -134,7 +132,7 @@ assert.match(migration, /0025_patronage_foundation/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS patronage_proposals/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS patronage_contributions/);
 assert.match(migration, /UNIQUE \(provider, provider_reference\)/);
-assert.match(schema, /patronageContributions/);
+assert.match(migration, /CREATE TABLE IF NOT EXISTS patronage_contributions/);
 assert.match(postRepository, /insertPatronageProposal/);
 assert.match(patronageService, /INSERT INTO patronage_proposals/);
 assert.match(patronageService, /raisedMinorUnits: 0/);

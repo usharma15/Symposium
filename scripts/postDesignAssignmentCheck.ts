@@ -138,7 +138,7 @@ const main = async () => {
   assert.match(projection, /design_assignment AS "designAssignment"/);
   assert.match(localStore, /designAssignment:/);
   assert.doesNotMatch(localStore, /design_assignment|symposium_items_design_fnv1a_32/);
-  assert.match(localStore, /deterministicPostDesignAssignment/);
+  assert.doesNotMatch(localStore, /deterministicPostDesignAssignment/);
   assert.match(localStore, /randomPostDesignAssignment/);
   assert.match(localStore, /resolvePostDesignAssignment/);
   assert.doesNotMatch([migration, posts, foundation, projection, localStore].join("\n"), /design_assignment[^\\n]*(day|night)|theme[^\\n]*design_assignment/i);

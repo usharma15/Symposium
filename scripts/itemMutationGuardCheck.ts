@@ -13,7 +13,6 @@ import {
 type Item = { id: string; body: string };
 
 const guard = createItemMutationGuard();
-const initial: Item[] = [{ id: "post-1", body: "before" }];
 const beforeMutation = captureItemMutationSnapshot(guard);
 
 beginItemMutation(guard, "post-1");

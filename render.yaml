@@ -17,7 +17,6 @@ services:
         - render.yaml
         - tsconfig.json
         - tsconfig.api.json
-        - drizzle.config.ts
     envVars:
       - key: NODE_ENV
         value: production

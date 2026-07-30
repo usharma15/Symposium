@@ -38,7 +38,6 @@
   "exclude": [
     "node_modules",
     "apps/api",
-    "packages",
-    "drizzle.config.ts"
+    "packages"
   ]
 }

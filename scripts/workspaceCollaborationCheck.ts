@@ -39,7 +39,6 @@ const main = async () => {
 
   const [
     migration,
-    schema,
     accessRepository,
     documentRepository,
     commentRepository,
@@ -67,7 +66,6 @@ const main = async () => {
     architecture
   ] = await Promise.all([
     source("apps/api/src/db/migrate.ts"),
-    source("apps/api/src/db/schema.ts"),
     source("apps/api/src/repository/workspaceAccess.ts"),
     source("apps/api/src/repository/workspaceDocuments.ts"),
     source("apps/api/src/repository/workspaceComments.ts"),
@@ -98,8 +96,8 @@ const main = async () => {
   assert.match(migration, /0022_workspace_collaboration/);
   assert.match(migration, /workspace_note_grants ADD COLUMN IF NOT EXISTS revision/);
   assert.match(migration, /workspace_notebook_grants_revision_check/);
-  assert.match(schema, /workspace_note_grants_revision_check/);
-  assert.match(schema, /workspace_notebook_grants_revision_check/);
+  assert.match(migration, /workspace_note_grants_revision_check/);
+  assert.match(migration, /workspace_notebook_grants_revision_check/);
 
   assert.match(accessRepository, /workspaceAccessRoleRank/);
   assert.match(accessRepository, /workspaceGrantCeiling/);

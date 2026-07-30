@@ -1943,7 +1943,6 @@ const contentRepository = readFileSync("apps/api/src/repository/contentTranslati
 const scribbles = readFileSync("apps/api/src/repository/workspaceScribbles.ts", "utf8");
 const provider = readFileSync("apps/api/src/services/openaiResponses.ts", "utf8");
 const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
-const databaseSchema = readFileSync("apps/api/src/db/schema.ts", "utf8");
 const route = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
 const assistantAttachmentRoute = readFileSync("app/api/assistant-attachments/[attachmentId]/route.ts", "utf8");
 const attachmentRepository = readFileSync("apps/api/src/repository/attachments.ts", "utf8");
@@ -2085,11 +2084,7 @@ assert.match(migration, /ai_conversations_active_library_idx/);
 assert.match(migration, /ai_conversations_archived_library_idx/);
 assert.match(migration, /ai_conversations_title_trgm_idx/);
 assert.match(migration, /ai_messages_body_trgm_idx/);
-assert.match(databaseSchema, /pinnedAt: timestamp\("pinned_at"/);
-assert.match(databaseSchema, /archivedAt: timestamp\("archived_at"/);
-assert.match(databaseSchema, /deletedAt: timestamp\("deleted_at"/);
-assert.match(databaseSchema, /metadataRevision: integer\("metadata_revision"\)\.default\(1\)\.notNull\(\)/);
-assert.match(databaseSchema, /ai_conversations_metadata_revision_check/);
+assert.match(migration, /ai_conversations_metadata_revision_check/);
 assert.match(assistantController, /orderAssistantThreadsByLatestMessage/);
 assert.doesNotMatch(assistantController, /findActiveThreadForContext/);
 assert.doesNotMatch(

@@ -357,7 +357,7 @@ export const applyPostAction = async (
     let actionChanged = false;
     const claim = await claimMutation<ActionMutationResult>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
-    const { row, item: existing } = await loadLockedPostConversation(client, postId, handle);
+    const { item: existing } = await loadLockedPostConversation(client, postId, handle);
     if (isDeletedPost(existing)) {
       updated = existing;
       await completeMutation(client, handle, mutation, { item: updated });
