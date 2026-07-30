@@ -8,6 +8,7 @@ import {
   deleteWorkspaceNotebookInputSchema,
   updateWorkspaceDocumentInputSchema,
   updateWorkspaceNotebookInputSchema,
+  workspaceAccessRoleRank,
   workspaceSearchInputSchema,
   type AssistantDraftEditModeContract,
   type AssistantDraftEditOperationContract,
@@ -29,6 +30,11 @@ import { assertExpectedRevision } from "./workspace";
 import { resolveNativeDocumentCitations } from "../services/nativeCitations";
 import { applyAssistantDraftEditOperations } from "../services/assistantDraftEdits";
 import { resolveNotifications } from "../services/notificationDelivery";
+import {
+  lockWorkspaceDocument,
+  workspaceDocumentAudienceHandles,
+  workspaceDocumentRoleSql
+} from "./workspaceDocumentAccess";
 
 type WorkspaceRow = { id: string; name: string; ownerHandle: string };
 type AccessRow = {
@@ -40,14 +46,6 @@ type AccessRow = {
   workspaceId: string;
   notebookId: string | null;
   document: VersionedDocumentContract | null;
-};
-
-const roleRank: Record<WorkspaceAccessRoleContract, number> = {
-  viewer: 1,
-  commenter: 2,
-  editor: 3,
-  publisher: 4,
-  owner: 5
 };
 
 const defaultDocument = {
@@ -69,19 +67,6 @@ const ensureWorkspace = async (client: PoolClient, handle: string) => {
   return result.rows[0]!;
 };
 
-const roleSql = `
-  CASE GREATEST(
-    CASE WHEN note.owner_handle = $2 THEN 5 ELSE 0 END,
-    CASE direct.role WHEN 'publisher' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END,
-    CASE inherited.role WHEN 'publisher' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END
-  )
-    WHEN 5 THEN 'owner'
-    WHEN 4 THEN 'publisher'
-    WHEN 3 THEN 'editor'
-    WHEN 2 THEN 'commenter'
-    ELSE 'viewer'
-  END`;
-
 const findDocumentAccess = async (client: PoolClient, noteId: string, handle: string, lock = false) => {
   const result = await client.query<AccessRow>(
     `SELECT
@@ -92,7 +77,7 @@ const findDocumentAccess = async (client: PoolClient, noteId: string, handle: st
        note.kind,
        note.notebook_id::text AS "notebookId",
        note.content_document AS document,
-       ${roleSql} AS role
+       ${workspaceDocumentRoleSql("$2")} AS role
      FROM notes note
      LEFT JOIN workspace_note_grants direct
        ON direct.note_id = note.id AND direct.grantee_handle = $2
@@ -109,7 +94,8 @@ const findDocumentAccess = async (client: PoolClient, noteId: string, handle: st
 
 const assertCanEdit = (access: AccessRow) => {
   const owner = access.role === "owner";
-  if (!owner && (!["note", "paper"].includes(access.kind) || roleRank[access.role] < roleRank.editor)) {
+  if (!owner && (!["note", "paper"].includes(access.kind)
+    || workspaceAccessRoleRank[access.role] < workspaceAccessRoleRank.editor)) {
     throw new TRPCError({ code: "FORBIDDEN", message: "This draft is not editable with your current access." });
   }
 };
@@ -130,21 +116,6 @@ const ensureNotebookForOwner = async (
   if (!notebook.rowCount) throw new TRPCError({ code: "NOT_FOUND", message: "Notebook not found." });
 };
 
-const documentAudienceHandles = async (client: PoolClient, noteId: string) => {
-  const result = await client.query<{ handle: string }>(
-    `SELECT owner_handle AS handle FROM notes WHERE id = $1
-     UNION
-     SELECT grantee_handle AS handle FROM workspace_note_grants WHERE note_id = $1
-     UNION
-     SELECT notebook_grant.grantee_handle AS handle
-     FROM notes note
-     JOIN workspace_notebook_grants notebook_grant ON notebook_grant.notebook_id = note.notebook_id
-     WHERE note.id = $1`,
-    [noteId]
-  );
-  return result.rows.map((row) => row.handle);
-};
-
 const notebookAudienceHandles = async (client: PoolClient, notebookId: string) => {
   const result = await client.query<{ handle: string }>(
     `SELECT owner_handle AS handle FROM workspace_notebooks WHERE id = $1
@@ -159,12 +130,6 @@ const notebookAudienceHandles = async (client: PoolClient, notebookId: string) =
   );
   return result.rows.map((row) => row.handle);
 };
-
-const lockWorkspaceDocument = (client: PoolClient, noteId: string) =>
-  client.query(
-    "SELECT pg_advisory_xact_lock(hashtextextended('symposium:workspace-note:' || $1, 0))",
-    [noteId]
-  );
 
 const attachmentSelect = `
   COALESCE((
@@ -219,7 +184,7 @@ const documentSelect = `
     UNION
     SELECT grantee_handle AS handle FROM workspace_notebook_grants WHERE notebook_id = note.notebook_id
   ) audience) AS "collaboratorCount",
-  ${roleSql} AS role,
+  ${workspaceDocumentRoleSql("$2")} AS role,
   (inherited.id IS NOT NULL) AS "inheritedFromNotebook",
   ${attachmentSelect}`;
 
@@ -227,7 +192,7 @@ const mapDocument = (row: Record<string, unknown>) => {
   const kind = String(row.kind ?? "note") as WorkspaceDocumentKindContract;
   const projectedRole = String(row.role ?? "viewer") as WorkspaceAccessRoleContract;
   const role = projectedRole !== "owner" && !["note", "paper"].includes(kind)
-    && roleRank[projectedRole] > roleRank.commenter
+    && workspaceAccessRoleRank[projectedRole] > workspaceAccessRoleRank.commenter
     ? "commenter"
     : projectedRole;
   const owner = role === "owner";
@@ -248,10 +213,10 @@ const mapDocument = (row: Record<string, unknown>) => {
     access: {
       role,
       inheritedFromNotebook: Boolean(row.inheritedFromNotebook),
-      canComment: roleRank[role] >= roleRank.commenter || owner,
-      canEdit: owner || (collaborative && roleRank[role] >= roleRank.editor),
-      canPublish: kind !== "quick" && (owner || (collaborative && roleRank[role] >= roleRank.publisher)),
-      canShare: kind !== "quick" && (owner || (collaborative && roleRank[role] >= roleRank.editor)),
+      canComment: workspaceAccessRoleRank[role] >= workspaceAccessRoleRank.commenter || owner,
+      canEdit: owner || (collaborative && workspaceAccessRoleRank[role] >= workspaceAccessRoleRank.editor),
+      canPublish: kind !== "quick" && (owner || (collaborative && workspaceAccessRoleRank[role] >= workspaceAccessRoleRank.publisher)),
+      canShare: kind !== "quick" && (owner || (collaborative && workspaceAccessRoleRank[role] >= workspaceAccessRoleRank.editor)),
       canDelete: owner
     }
   };
@@ -365,7 +330,7 @@ export const getWorkspaceDocuments = async (actor: Actor) => {
         notebooks: notebooks.rows.map((notebook) => ({
           ...notebook,
           collaboratorCount: Number(notebook.collaboratorCount ?? 0),
-          canShare: roleRank[String(notebook.role) as WorkspaceAccessRoleContract] >= roleRank.editor,
+          canShare: workspaceAccessRoleRank[String(notebook.role) as WorkspaceAccessRoleContract] >= workspaceAccessRoleRank.editor,
           createdAt: iso(notebook.createdAt as Date | string),
           updatedAt: iso(notebook.updatedAt as Date | string)
         })),
@@ -439,7 +404,7 @@ export const createWorkspaceDocumentInTransaction = async (
       ...auditMetadata
     })
   });
-  const audienceHandles = await documentAudienceHandles(client, note.id);
+  const audienceHandles = await workspaceDocumentAudienceHandles(client, note.id);
   const event = await stageEvent(client, {
     kind: "note.document.created",
     actorHandle: handle,
@@ -591,7 +556,7 @@ export const applyAssistantWorkspaceDraftEditInTransaction = async (
   const event = await stageEvent(client, {
     kind: "note.document.updated",
     actorHandle: handle,
-    audienceHandles: await documentAudienceHandles(client, input.noteId),
+    audienceHandles: await workspaceDocumentAudienceHandles(client, input.noteId),
     subjectType: "note",
     subjectId: input.noteId,
     visibility: "private",
@@ -729,7 +694,7 @@ export const undoAssistantWorkspaceDraftEditInTransaction = async (
   const event = await stageEvent(client, {
     kind: "note.document.updated",
     actorHandle: handle,
-    audienceHandles: await documentAudienceHandles(client, input.noteId),
+    audienceHandles: await workspaceDocumentAudienceHandles(client, input.noteId),
     subjectType: "note",
     subjectId: input.noteId,
     visibility: "private",
@@ -840,7 +805,7 @@ export const updateWorkspaceDocument = async (
       })
     });
     await completeMutation(client, handle, mutation, value);
-    const audienceHandles = await documentAudienceHandles(client, noteId);
+    const audienceHandles = await workspaceDocumentAudienceHandles(client, noteId);
     const event = await stageEvent(client, {
       kind: input.checkpoint ? "note.document.checkpointed" : "note.document.updated",
       actorHandle: handle,
@@ -910,7 +875,7 @@ export const deleteWorkspaceDocument = async (
       metadata: mutationAuditMetadata(mutation)
     });
     await completeMutation(client, handle, mutation, value);
-    const audienceHandles = await documentAudienceHandles(client, noteId);
+    const audienceHandles = await workspaceDocumentAudienceHandles(client, noteId);
     const event = await stageEvent(client, {
       kind: "note.document.deleted",
       actorHandle: handle,

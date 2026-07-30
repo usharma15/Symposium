@@ -1,12 +1,13 @@
 import { TRPCError } from "@trpc/server";
 import type { PoolClient } from "pg";
-import type {
-  InquiryCommentContract,
-  InquiryItemContract,
-  OpportunityPostInputContract,
-  PatronageProposalInputContract,
-  WorkspaceAccessRoleContract,
-  WorkspaceDocumentKindContract
+import {
+  workspaceAccessRoleRank,
+  type InquiryCommentContract,
+  type InquiryItemContract,
+  type OpportunityPostInputContract,
+  type PatronageProposalInputContract,
+  type WorkspaceAccessRoleContract,
+  type WorkspaceDocumentKindContract
 } from "../../../../packages/contracts/src";
 import {
   appendCommentToTree,
@@ -25,6 +26,7 @@ import {
   publishPreparedWorkspaceDiscussion,
   type PreparedWorkspaceDiscussion
 } from "./workspaceDiscussionPublishing";
+import { workspaceDocumentRoleSql } from "../repository/workspaceDocumentAccess";
 
 export type PublishableWorkspaceRevision = {
   checkpointId: string;
@@ -41,14 +43,6 @@ export type PublishableWorkspaceRevision = {
   opportunity: OpportunityPostInputContract | null;
   targetId: string | null;
   attachmentIds: string[];
-};
-
-const roleRank: Record<WorkspaceAccessRoleContract, number> = {
-  viewer: 1,
-  commenter: 2,
-  editor: 3,
-  publisher: 4,
-  owner: 5
 };
 
 export const loadPublishableWorkspaceRevision = async (
@@ -78,17 +72,7 @@ export const loadPublishableWorkspaceRevision = async (
        revision_row.opportunity,
        revision_row.target_id AS "targetId",
        revision_row.attachment_ids::text[] AS "attachmentIds",
-       CASE GREATEST(
-         CASE WHEN note.owner_handle = $3 THEN 5 ELSE 0 END,
-         CASE direct.role WHEN 'publisher' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END,
-         CASE inherited.role WHEN 'publisher' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END
-       )
-         WHEN 5 THEN 'owner'
-         WHEN 4 THEN 'publisher'
-         WHEN 3 THEN 'editor'
-         WHEN 2 THEN 'commenter'
-         ELSE 'viewer'
-       END AS role
+       ${workspaceDocumentRoleSql("$3")} AS role
      FROM notes note
      JOIN workspace_note_revisions revision_row
        ON revision_row.note_id = note.id AND revision_row.revision = $2
@@ -112,7 +96,8 @@ export const loadPublishableWorkspaceRevision = async (
     throw new TRPCError({ code: "NOT_FOUND", message: "Draft not found." });
   }
   const ownerOnly = ["thought", "comment", "reply"].includes(revision.kind);
-  if ((ownerOnly && revision.role !== "owner") || (!ownerOnly && roleRank[revision.role] < roleRank.publisher)) {
+  if ((ownerOnly && revision.role !== "owner")
+    || (!ownerOnly && workspaceAccessRoleRank[revision.role] < workspaceAccessRoleRank.publisher)) {
     throw new TRPCError({ code: "FORBIDDEN", message: "This draft cannot be published with your current access." });
   }
   return revision;

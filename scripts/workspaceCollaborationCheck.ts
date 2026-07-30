@@ -42,6 +42,9 @@ const main = async () => {
     schema,
     accessRepository,
     documentRepository,
+    commentRepository,
+    publicationState,
+    documentAccessPolicy,
     workspaceRoutes,
     localStore,
     localComments,
@@ -67,6 +70,9 @@ const main = async () => {
     source("apps/api/src/db/schema.ts"),
     source("apps/api/src/repository/workspaceAccess.ts"),
     source("apps/api/src/repository/workspaceDocuments.ts"),
+    source("apps/api/src/repository/workspaceComments.ts"),
+    source("apps/api/src/services/workspacePublicationState.ts"),
+    source("apps/api/src/repository/workspaceDocumentAccess.ts"),
     source("apps/api/src/routes/workspaceRoutes.ts"),
     source("lib/localWorkspaceStore.ts"),
     source("lib/localWorkspaceCommentStore.ts"),
@@ -111,6 +117,16 @@ const main = async () => {
   assert.match(documentRepository, /collaboratorCount/);
   assert.match(documentRepository, /commentCount/);
   assert.match(documentRepository, /projectedRole/);
+  for (const repository of [accessRepository, documentRepository, commentRepository, publicationState]) {
+    assert.match(repository, /workspaceDocumentRoleSql/);
+    assert.doesNotMatch(repository, /const roleRank/);
+  }
+  for (const repository of [documentRepository, commentRepository, publicationState]) {
+    assert.match(repository, /workspaceAccessRoleRank/);
+  }
+  assert.match(documentAccessPolicy, /type ActorParameter = "\$2" \| "\$3"/);
+  assert.match(documentAccessPolicy, /workspaceDocumentAudienceHandles/);
+  assert.match(documentAccessPolicy, /lockWorkspaceDocument/);
 
   assert.match(workspaceRoutes, /workspace\.document\.access\.grant/);
   assert.match(workspaceRoutes, /workspace\.notebook\.access\.revoke/);

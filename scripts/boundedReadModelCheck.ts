@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildApp } from "@/apps/api/src/server";
+import {
+  commentSelectColumns,
+  postSelectColumns
+} from "@/apps/api/src/repository/inquiryProjection";
+import { searchPublicProfileEntries } from "@/lib/publicProfile";
 
 const contracts = readFileSync("packages/contracts/src/index.ts", "utf8");
 const systemRoutes = readFileSync("apps/api/src/routes/systemRoutes.ts", "utf8");
@@ -8,10 +13,13 @@ const postRoutes = readFileSync("apps/api/src/routes/postRoutes.ts", "utf8");
 const profileRoutes = readFileSync("apps/api/src/routes/profileRoutes.ts", "utf8");
 const opportunities = readFileSync("apps/api/src/repository/opportunities.ts", "utf8");
 const reads = readFileSync("apps/api/src/repository/inquiryReads.ts", "utf8");
+const foundation = readFileSync("apps/api/src/repository/foundation.ts", "utf8");
+const conversation = readFileSync("apps/api/src/repository/postConversation.ts", "utf8");
 const search = readFileSync("apps/api/src/repository/search.ts", "utf8");
 const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
 const cachedBootstrap = readFileSync("features/bootstrap/cachedBootstrap.ts", "utf8");
 const localBootstrap = readFileSync("app/api/bootstrap/route.ts", "utf8");
+const profileProxy = readFileSync("app/api/profiles/route.ts", "utf8");
 const infiniteFeed = readFileSync("features/feeds/InfiniteFeedBoundary.tsx", "utf8");
 
 assert.match(contracts, /postPageQuerySchema[\s\S]*max\(50\)/);
@@ -35,6 +43,32 @@ assert.match(reads, /detailLoaded: true/);
 assert.match(reads, /selectCommentsById/);
 assert.match(reads, /viewerActionsForComments/);
 assert.match(reads, /getActiveAttachmentsByOwner\(getPool\(\), "comment", selectedCommentIds\)/);
+assert.match(postSelectColumns(), /design_assignment AS "designAssignment"/);
+assert.match(postSelectColumns("post"), /post\.post_type AS "postType"/);
+assert.match(commentSelectColumns(), /content_document AS "document"/);
+assert.match(reads, /postSelectColumns\("post"\)/);
+assert.doesNotMatch(reads, /const postColumns/);
+for (const repository of [reads, foundation, conversation]) {
+  assert.match(repository, /commentSelectColumns/);
+  assert.match(repository, /postSelectColumns|rowToComment/);
+}
+const searchableProfiles = {
+  "@aristotle": { name: "Aristotle" },
+  "@plutarch": { name: "Plutarch" },
+  "@plato": { name: "Plato" }
+};
+assert.deepEqual(
+  searchPublicProfileEntries(searchableProfiles, "pla", 2).map(([handle]) => handle),
+  ["@plato"]
+);
+assert.deepEqual(
+  searchPublicProfileEntries(searchableProfiles, "", 2).map(([handle]) => handle),
+  ["@aristotle", "@plutarch"]
+);
+for (const source of [reads, profileProxy]) {
+  assert.match(source, /searchPublicProfileEntries/);
+  assert.doesNotMatch(source, /const score = \(handle/);
+}
 assert.match(search, /websearch_to_tsquery/);
 assert.match(search, /to_tsvector\('english', post\.search_text\)/);
 assert.match(search, /to_tsquery\('simple', \$2\)/);

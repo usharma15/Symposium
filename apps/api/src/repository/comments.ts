@@ -24,11 +24,11 @@ import {
   tombstoneCommentInItem,
   updateSignalValue
 } from "@/lib/symposiumCore";
-import { getPool, hasDatabase } from "../db/client";
+import { hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { assertUniqueAttachmentIds, canonicalAttachmentIds, replaceOwnerAttachments } from "../services/attachmentOwnership";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
-import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
+import { stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { markQuotedCommentUnavailable, resolveContentQuote, resolveUpdatedContentQuote } from "../services/contentQuotes";
 import {
@@ -38,6 +38,7 @@ import {
   sameQuoteSource
 } from "../services/contentNotifications";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
+import { runAtomic } from "../services/transactions";
 import {
   createNotifications,
   notificationActorName,
@@ -116,20 +117,14 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
   }
 
   await ensureLiveData();
-  const client = await getPool().connect();
-  let updatedItem: InquiryItemContract | null = null;
-  const stagedEvents: StoredLiveEvent[] = [];
-
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
+    let updatedItem: InquiryItemContract | null = null;
+    const stagedEvents: StoredLiveEvent[] = [];
     const claim = await claimMutation<{
       comment: InquiryCommentContract;
       item: InquiryItemContract;
     }>(client, handle, mutation);
-    if (claim.replayed) {
-      await client.query("COMMIT");
-      return claim.response;
-    }
+    if (claim.replayed) return { value: claim.response };
     const {
       row,
       comments: existingComments,
@@ -342,17 +337,8 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
             }
     }));
     await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-
-  for (const event of stagedEvents) await publishStoredEvent(event);
-
-  return { comment, item: updatedItem };
+    return { value: { comment, item: updatedItem }, events: stagedEvents };
+  });
 };
 
 export const updateComment = async (
@@ -390,17 +376,12 @@ export const updateComment = async (
   }
 
   await ensureLiveData();
-  const client = await getPool().connect();
-  let updatedItem: InquiryItemContract;
-  let removedAttachmentIds: string[] = [];
-  const stagedEvents: StoredLiveEvent[] = [];
-
-  try {
-    await client.query("BEGIN");
+  const result = await runAtomic(async (client) => {
+    let updatedItem: InquiryItemContract;
+    const stagedEvents: StoredLiveEvent[] = [];
     const claim = await claimMutation<InquiryItemContract>(client, handle, mutation);
     if (claim.replayed) {
-      await client.query("COMMIT");
-      return claim.response;
+      return { value: { item: claim.response, removedAttachmentIds: [] } };
     }
     const { row, comments: existingComments, postAttachments } =
       await loadLockedPostConversation(client, postId, handle);
@@ -442,7 +423,7 @@ export const updateComment = async (
       ownerType: "comment",
       uploaderHandle: handle
     });
-    removedAttachmentIds = attachmentChange.removedAttachmentIds;
+    const removedAttachmentIds = attachmentChange.removedAttachmentIds;
     const quote = await resolveUpdatedContentQuote(client, original.quote, input.quoteSource, {
       ownerId: commentId, ownerType: "comment", actorHandle: handle,
       targetCommunityId: row.communityId, targetPostType: row.postType
@@ -576,18 +557,11 @@ export const updateComment = async (
       stagedEvents.push(...createdNotifications.events);
     }
     await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { value: { item: updatedItem, removedAttachmentIds }, events: stagedEvents };
+  });
 
-  for (const event of stagedEvents) await publishStoredEvent(event);
-  if (removedAttachmentIds.length) await triggerStorageDeletion(removedAttachmentIds);
-
-  return updatedItem;
+  if (result.removedAttachmentIds.length) await triggerStorageDeletion(result.removedAttachmentIds);
+  return result.item;
 };
 
 export const deleteComment = async (
@@ -622,18 +596,14 @@ export const deleteComment = async (
   }
 
   await ensureLiveData();
-  const client = await getPool().connect();
-  let updatedItem: InquiryItemContract;
-  let didDelete = false;
-  let storageAttachmentIds: string[] = [];
-  const stagedEvents: StoredLiveEvent[] = [];
-
-  try {
-    await client.query("BEGIN");
+  const result = await runAtomic(async (client) => {
+    let updatedItem: InquiryItemContract;
+    let didDelete = false;
+    let storageAttachmentIds: string[] = [];
+    const stagedEvents: StoredLiveEvent[] = [];
     const claim = await claimMutation<InquiryItemContract>(client, handle, mutation);
     if (claim.replayed) {
-      await client.query("COMMIT");
-      return claim.response;
+      return { value: { item: claim.response, storageAttachmentIds: [] } };
     }
     const { row, comments: existingComments, postAttachments } =
       await loadLockedPostConversation(client, postId, handle);
@@ -649,7 +619,6 @@ export const deleteComment = async (
         "comment_deleted"
       );
       await completeMutation(client, handle, mutation, updatedItem);
-      await client.query("COMMIT");
     } else {
       if (!canManageComment(original, handle)) {
         await assertCommunityCommentDeletion(row, handle, client);
@@ -771,19 +740,15 @@ export const deleteComment = async (
       }));
       await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
       await completeMutation(client, handle, mutation, updatedItem);
-      await client.query("COMMIT");
     }
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    return {
+      value: { item: updatedItem, storageAttachmentIds },
+      events: didDelete ? stagedEvents : []
+    };
+  });
 
-  if (didDelete) for (const event of stagedEvents) await publishStoredEvent(event);
-  if (storageAttachmentIds.length) await triggerStorageDeletion(storageAttachmentIds);
-
-  return updatedItem;
+  if (result.storageAttachmentIds.length) await triggerStorageDeletion(result.storageAttachmentIds);
+  return result.item;
 };
 
 export const applyCommentAction = async (
@@ -818,20 +783,14 @@ export const applyCommentAction = async (
   }
 
   await ensureLiveData();
-  const client = await getPool().connect();
-  let updatedItem: InquiryItemContract;
-  let updatedComment: InquiryCommentContract | undefined;
-  let activity: CanonicalActionActivityContract | undefined;
-  let actionChanged = false;
-  const stagedEvents: StoredLiveEvent[] = [];
-
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
+    let updatedItem: InquiryItemContract;
+    let updatedComment: InquiryCommentContract | undefined;
+    let activity: CanonicalActionActivityContract | undefined;
+    let actionChanged = false;
+    const stagedEvents: StoredLiveEvent[] = [];
     const claim = await claimMutation<ActionMutationResult>(client, handle, mutation);
-    if (claim.replayed) {
-      await client.query("COMMIT");
-      return claim.response;
-    }
+    if (claim.replayed) return { value: claim.response };
     const { row, comments: existingComments, postAttachments } =
       await loadLockedPostConversation(client, postId, handle);
     const original = findCommentInTree(existingComments, commentId);
@@ -839,8 +798,7 @@ export const applyCommentAction = async (
     if (isDeletedComment(original)) {
       updatedItem = rowToItem(row, existingComments, postAttachments.get(postId) ?? []);
       await completeMutation(client, handle, mutation, { item: updatedItem });
-      await client.query("COMMIT");
-      return { item: updatedItem };
+      return { value: { item: updatedItem } };
     }
 
     if (
@@ -849,8 +807,7 @@ export const applyCommentAction = async (
     ) {
       updatedItem = rowToItem(row, existingComments, postAttachments.get(postId) ?? []);
       await completeMutation(client, handle, mutation, { item: updatedItem });
-      await client.query("COMMIT");
-      return { item: updatedItem };
+      return { value: { item: updatedItem } };
     }
 
     let canonicalOriginal = original;
@@ -995,15 +952,6 @@ export const applyCommentAction = async (
         payload: { action: input.action, active: activity?.active, activity, item: updatedItem, commentId }
       })
     );
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-
-  for (const event of stagedEvents) await publishStoredEvent(event);
-
-  return { item: updatedItem, activity };
+    return { value: { item: updatedItem, activity }, events: stagedEvents };
+  });
 };

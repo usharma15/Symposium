@@ -1,8 +1,7 @@
 import { getSnapshot, upsertProfile, type CreateProfileInput } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
-import { publicResearchProfile } from "@/lib/publicProfile";
-import { cleanHandle } from "@/lib/symposiumCore";
+import { publicResearchProfile, searchPublicProfileEntries } from "@/lib/publicProfile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,28 +30,8 @@ export async function GET(request: Request) {
   if (live) return live;
 
   const snapshot = await getSnapshot();
-  const normalizedQuery = query.toLocaleLowerCase().replace(/^@/, "");
   return Response.json({
-    profiles: Object.fromEntries(Object.entries(snapshot.profiles)
-      .filter(([handle, person]) => !normalizedQuery
-        || cleanHandle(handle).toLocaleLowerCase().includes(normalizedQuery)
-        || person.name.toLocaleLowerCase().includes(normalizedQuery))
-      .sort(([leftHandle, left], [rightHandle, right]) => {
-        if (!normalizedQuery) return 0;
-        const leftCleanHandle = cleanHandle(leftHandle).toLocaleLowerCase();
-        const rightCleanHandle = cleanHandle(rightHandle).toLocaleLowerCase();
-        const leftName = left.name.toLocaleLowerCase();
-        const rightName = right.name.toLocaleLowerCase();
-        const score = (handle: string, name: string) => handle === normalizedQuery ? 0
-          : name === normalizedQuery ? 1
-            : handle.startsWith(normalizedQuery) ? 2
-              : name.startsWith(normalizedQuery) ? 3
-                : 4;
-        return score(leftCleanHandle, leftName) - score(rightCleanHandle, rightName)
-          || left.name.localeCompare(right.name)
-          || leftCleanHandle.localeCompare(rightCleanHandle);
-      })
-      .slice(0, limit)
+    profiles: Object.fromEntries(searchPublicProfileEntries(snapshot.profiles, query, limit)
       .map(([handle, person]) => [handle, publicResearchProfile(person)]))
   });
 }

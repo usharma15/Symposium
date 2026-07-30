@@ -37,6 +37,7 @@ import { env, webOrigins } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { ensureDatabase } from "../db/migrate";
 import type { Actor } from "../services/auth";
+import { commentSelectColumns, postSelectColumns } from "./inquiryProjection";
 
 export const defaultProfile = profile;
 
@@ -979,28 +980,36 @@ export const commentTreesFromRows = (
 
   const buildTree = (byParent: Map<string, CommentRow[]>, parentId: string | null = null): InquiryCommentContract[] =>
     (byParent.get(parentId ?? "root") ?? []).map((row) => ({
-      id: row.id,
-      parentId: row.parentId,
-      author: row.authorName,
-      authorHandle: row.authorHandle ?? undefined,
-      stance: row.stance,
-      body: row.body,
-      document: row.document ?? undefined,
-      createdAt: new Date(row.createdAt).toISOString(),
-      editedAt: row.editedAt ? new Date(row.editedAt).toISOString() : undefined,
-      deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : undefined,
-      revision: row.revision,
-      metrics: json(row.metrics, { signal: "0", forks: "0", saves: "0", reads: "0" }),
-      savedBy: json(row.savedBy, []),
-      signaledBy: json(row.signaledBy, []),
-      forkedBy: json(row.forkedBy, []),
-      attachments: attachmentsByComment.get(row.id),
-      quote: json(row.quote, undefined),
+      ...rowToComment(row, attachmentsByComment.get(row.id)),
       replies: buildTree(byParent, row.id)
     }));
 
   return new Map([...byPostAndParent.entries()].map(([postId, byParent]) => [postId, buildTree(byParent)]));
 };
+
+export const rowToComment = (
+  row: CommentRow,
+  attachments?: InquiryAttachmentContract[]
+): InquiryCommentContract => ({
+  id: row.id,
+  parentId: row.parentId,
+  author: row.authorName,
+  authorHandle: row.authorHandle ?? undefined,
+  stance: row.stance,
+  body: row.body,
+  document: row.document ?? undefined,
+  createdAt: new Date(row.createdAt).toISOString(),
+  editedAt: row.editedAt ? new Date(row.editedAt).toISOString() : undefined,
+  deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : undefined,
+  revision: row.revision,
+  metrics: json(row.metrics, { signal: "0", forks: "0", saves: "0", reads: "0" }),
+  savedBy: json(row.savedBy, []),
+  signaledBy: json(row.signaledBy, []),
+  forkedBy: json(row.forkedBy, []),
+  attachments,
+  quote: json(row.quote, undefined),
+  replies: []
+});
 
 const attachmentPublicUrl = (row: Pick<AttachmentRow, "objectKey" | "metadata">) => {
   const metadata = json<Record<string, unknown>>(row.metadata, {});
@@ -1210,63 +1219,13 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
       ),
       client.query<SnapshotRow>(
         `SELECT
-          id,
-          revision,
-          kind,
-          post_type AS "postType",
-          room,
-          community_id AS "communityId",
-          title,
-          author_handle AS "authorHandle",
-          author_name AS "authorName",
-          affiliation,
-          date_label AS "dateLabel",
-          created_at AS "createdAt",
-          edited_at AS "editedAt",
-          deleted_at AS "deletedAt",
-          status,
-          metrics,
-          gathering_reason AS "gatheringReason",
-          excerpt,
-          body,
-          content_document AS "document",
-          tags,
-          signals,
-          claims,
-          objections,
-          evidence,
-          tests,
-          forks,
-          saved,
-          saved_by AS "savedBy",
-          signaled_by AS "signaledBy",
-          forked_by AS "forkedBy",
-          quote,
-          patronage,
-          opportunity,
-          design_assignment AS "designAssignment"
+          ${postSelectColumns()}
          FROM posts
          ORDER BY created_at DESC`
       ),
       client.query<CommentRow>(
         `SELECT
-          id,
-          revision,
-          post_id AS "postId",
-          parent_id AS "parentId",
-          author_handle AS "authorHandle",
-          author_name AS "authorName",
-          stance,
-          body,
-          content_document AS "document",
-          metrics,
-          saved_by AS "savedBy",
-          signaled_by AS "signaledBy",
-          forked_by AS "forkedBy",
-          quote,
-          edited_at AS "editedAt",
-          deleted_at AS "deletedAt",
-          created_at AS "createdAt"
+          ${commentSelectColumns()}
          FROM comments
          ORDER BY created_at ASC`
       ),

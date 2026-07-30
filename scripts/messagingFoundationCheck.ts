@@ -399,6 +399,7 @@ const main = async () => {
   const protectedAttachmentRoute = readFileSync("lib/protectedAttachmentRoute.ts", "utf8");
   const discardAttachmentRoute = readFileSync("app/api/attachments/[attachmentId]/route.ts", "utf8");
   const profileRoute = readFileSync("app/api/profiles/route.ts", "utf8");
+  const publicProfile = readFileSync("lib/publicProfile.ts", "utf8");
 
   assert.match(server, /registerMessageRoutes\(app\)/);
   assert.match(server, /methods: \["GET", "HEAD", "POST", "PUT"/);
@@ -562,7 +563,8 @@ const main = async () => {
   assert.match(discardAttachmentRoute, /proxyLiveApiRequest/);
   assert.match(discardAttachmentRoute, /sourcePath: `\/api\/attachments\//);
   assert.match(profileRoute, /parameters\.get\("q"\)/);
-  assert.match(profileRoute, /slice\(0, limit\)/);
+  assert.match(profileRoute, /searchPublicProfileEntries\(snapshot\.profiles, query, limit\)/);
+  assert.match(publicProfile, /searchPublicProfileEntries[\s\S]*slice\(0, limit\)/);
   assert.doesNotMatch(events, /pg_notify\('symposium_live_events', id::text\)/);
   assert.match(events, /publishLocalLiveEvent\(stored\)/);
   assert.doesNotMatch(eventRoutes, /LISTEN|databaseBridge|getPool\(\)\.connect\(\)/);

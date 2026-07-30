@@ -7,16 +7,26 @@ export type AtomicResult<T> = {
   value: T;
 };
 
+export const runTransaction = async <T>(
+  client: PoolClient,
+  operation: (client: PoolClient) => Promise<AtomicResult<T>>
+) => {
+  try {
+    await client.query("BEGIN");
+    const result = await operation(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+};
+
 export const runAtomic = async <T>(operation: (client: PoolClient) => Promise<AtomicResult<T>>) => {
   const client = await getPool().connect();
   let result: AtomicResult<T>;
   try {
-    await client.query("BEGIN");
-    result = await operation(client);
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
+    result = await runTransaction(client, operation);
   } finally {
     client.release();
   }

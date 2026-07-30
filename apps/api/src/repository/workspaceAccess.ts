@@ -22,6 +22,7 @@ import { claimMutation, completeMutation, type MutationContext } from "../servic
 import { runAtomic } from "../services/transactions";
 import { createNotifications, resolveNotifications } from "../services/notificationDelivery";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
+import { workspaceDocumentRoleSql } from "./workspaceDocumentAccess";
 
 type ResourceAccess = {
   type: WorkspaceAccessResourceContract;
@@ -67,19 +68,6 @@ const resourceColumn = (type: WorkspaceAccessResourceContract) =>
 const subjectType = (type: WorkspaceAccessResourceContract) =>
   type === "document" ? "note" : "notebook";
 
-const documentRoleSql = `
-  CASE GREATEST(
-    CASE WHEN note.owner_handle = $2 THEN 5 ELSE 0 END,
-    CASE direct.role WHEN 'publisher' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END,
-    CASE inherited.role WHEN 'publisher' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END
-  )
-    WHEN 5 THEN 'owner'
-    WHEN 4 THEN 'publisher'
-    WHEN 3 THEN 'editor'
-    WHEN 2 THEN 'commenter'
-    ELSE 'viewer'
-  END`;
-
 const loadResourceAccess = async (
   client: PoolClient,
   type: WorkspaceAccessResourceContract,
@@ -98,7 +86,7 @@ const loadResourceAccess = async (
          note.kind,
          note.notebook_id::text AS "notebookId",
          notebook.name AS "notebookName",
-         ${documentRoleSql} AS "actorRole"
+         ${workspaceDocumentRoleSql("$2")} AS "actorRole"
        FROM notes note
        JOIN profiles owner ON owner.handle = note.owner_handle
        LEFT JOIN workspace_notebooks notebook ON notebook.id = note.notebook_id AND notebook.deleted_at IS NULL

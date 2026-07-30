@@ -7,15 +7,16 @@ import {
 } from "../../../../packages/contracts/src";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { env } from "../config/env";
-import { getPool, hasDatabase } from "../db/client";
+import { hasDatabase } from "../db/client";
 import { cacheSyncedUserHandle, type Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
-import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
+import { stageEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import {
   queueUnreferencedProfileStorageDeletion,
   triggerStorageDeletion
 } from "../services/storageDeletion";
+import { runAtomic } from "../services/transactions";
 import {
   actorHandle,
   ensureLiveData,
@@ -26,6 +27,11 @@ import {
 
 const suffixedHandle = (baseHandle: string, index: number) =>
   index === 0 ? baseHandle : cleanHandle(`${baseHandle}_${index + 1}`);
+
+type ProfileMutationResult = {
+  profile: ResearchProfileContract;
+  storageAttachmentIds: string[];
+};
 
 const resolveSyncedHandle = async (client: PoolClient, desiredHandle: string, clerkSubject: string) => {
   const existingUser = await client.query<{ handle: string | null }>(
@@ -82,20 +88,13 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor, mutation?: 
   if (!hasDatabase()) return { ...person, revision: (person.revision ?? 1) + 1 };
   await ensureLiveData();
 
-  const client = await getPool().connect();
-  let stagedEvent: StoredLiveEvent | undefined;
-  let storedProfile: ResearchProfileContract | undefined;
-  let storageAttachmentIds: string[] = [];
-  try {
-    await client.query("BEGIN");
+  const result = await runAtomic<ProfileMutationResult>(async (client) => {
     const claim = await claimMutation<ResearchProfileContract>(client, writerHandle, mutation);
     if (claim.replayed) {
-      await client.query("COMMIT");
-      return claim.response;
+      return { value: { profile: claim.response, storageAttachmentIds: [] } };
     }
     const storedPerson = await insertProfile(client, person);
-    storedProfile = storedPerson;
-    storageAttachmentIds = await queueUnreferencedProfileStorageDeletion(
+    const storageAttachmentIds = await queueUnreferencedProfileStorageDeletion(
       client,
       writerHandle,
       storedPerson.avatarUrl
@@ -131,25 +130,21 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor, mutation?: 
       })
     });
     await completeMutation(client, writerHandle, mutation, storedPerson);
-    stagedEvent = await stageEvent(client, {
+    const stagedEvent = await stageEvent(client, {
       kind: "profile.updated",
       actorHandle: writerHandle,
       subjectType: "profile",
       subjectId: person.handle,
       payload: { profile: publicProfile(storedPerson) }
     });
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    return {
+      value: { profile: storedPerson, storageAttachmentIds },
+      events: [stagedEvent]
+    };
+  });
 
-  if (stagedEvent) await publishStoredEvent(stagedEvent);
-  if (storageAttachmentIds.length) await triggerStorageDeletion(storageAttachmentIds);
-
-  return storedProfile ?? person;
+  if (result.storageAttachmentIds.length) await triggerStorageDeletion(result.storageAttachmentIds);
+  return result.profile;
 };
 
 export const syncUser = async (rawInput: unknown, actor: Actor) => {
@@ -177,12 +172,7 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
   }
 
   await ensureLiveData();
-  const client = await getPool().connect();
-  let syncedProfile: ResearchProfileContract | undefined;
-  let stagedEvent: StoredLiveEvent | undefined;
-
-  try {
-    await client.query("BEGIN");
+  const syncedProfile = await runAtomic(async (client) => {
     const handle = await resolveSyncedHandle(client, requestedHandle, clerkSubject);
     const user = await client.query<{ id: string; changed: boolean }>(
       `WITH changed_user AS (
@@ -251,7 +241,6 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
         [handle]
       );
     }
-    syncedProfile = storedPerson;
     if (user.rows[0]?.changed || profileNeedsWrite) {
       await stageAuditLog(client, {
         actorHandle: handle,
@@ -261,27 +250,18 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
         metadata: { source: actor.source }
       });
     }
-    if (profileNeedsWrite) {
-      stagedEvent = await stageEvent(client, {
+    const stagedEvent = profileNeedsWrite
+      ? await stageEvent(client, {
         kind: "profile.updated",
         actorHandle: handle,
         subjectType: "profile",
         subjectId: handle,
         payload: { profile: publicProfile(storedPerson) }
-      });
-    }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+      })
+      : undefined;
+    return { value: storedPerson, events: stagedEvent ? [stagedEvent] : [] };
+  });
 
-  if (stagedEvent) await publishStoredEvent(stagedEvent);
-  if (!syncedProfile) {
-    throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The synchronized profile was not returned." });
-  }
   cacheSyncedUserHandle(clerkSubject, syncedProfile.handle);
   return syncedProfile;
 };

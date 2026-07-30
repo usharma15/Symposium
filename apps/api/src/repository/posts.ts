@@ -22,10 +22,10 @@ import {
   randomPostDesignAssignment
 } from "@/lib/postDesign";
 import { postTitlePolicyError } from "@/lib/postSemantics";
-import { getPool, hasDatabase } from "../db/client";
+import { hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
-import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
+import { stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { markQuotedPostUnavailable, resolveContentQuote } from "../services/contentQuotes";
 import {
@@ -47,6 +47,7 @@ import {
   replaceOwnerAttachments
 } from "../services/attachmentOwnership";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
+import { runAtomic } from "../services/transactions";
 import {
   createNotifications,
   notificationActorName,
@@ -78,6 +79,7 @@ import {
   loadLockedPost,
   loadLockedPostConversation
 } from "./postConversation";
+import { commentSelectColumns } from "./inquiryProjection";
 type ActionMutationResult = {
   item: InquiryItemContract;
   activity?: CanonicalActionActivityContract;
@@ -158,17 +160,10 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
   }
   await ensureLiveData();
 
-  const client = await getPool().connect();
-  let attachedRows: AttachmentRow[] = [];
-  const stagedEvents: StoredLiveEvent[] = [];
-
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
+    const stagedEvents: StoredLiveEvent[] = [];
     const claim = await claimMutation<InquiryItemContract>(client, handle, mutation);
-    if (claim.replayed) {
-      await client.query("COMMIT");
-      return claim.response;
-    }
+    if (claim.replayed) return { value: claim.response };
     if (postTypeHasAuthoredArtifact(item.postType)) {
       item.designAssignment = randomPostDesignAssignment(item.postType, randomInt);
     }
@@ -253,8 +248,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       ownerType: "post",
       uploaderHandle: handle
     });
-    attachedRows = attachmentChange.attachments;
-
+    const attachedRows: AttachmentRow[] = attachmentChange.attachments;
     item.attachments = attachedRows.map(rowToAttachment);
     await stageAuditLog(client, {
       actorHandle: handle,
@@ -324,17 +318,8 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       stagedEvents.push(...createdNotifications.events);
     }
     await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-
-  for (const event of stagedEvents) await publishStoredEvent(event);
-
-  return item;
+    return { value: item, events: stagedEvents };
+  });
 };
 
 export const applyPostAction = async (
@@ -365,25 +350,18 @@ export const applyPostAction = async (
 
   await ensureLiveData();
 
-  const client = await getPool().connect();
-  let updated: InquiryItemContract;
-  const stagedEvents: StoredLiveEvent[] = [];
-  let activity: CanonicalActionActivityContract | undefined;
-  let actionChanged = false;
-
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
+    let updated: InquiryItemContract;
+    const stagedEvents: StoredLiveEvent[] = [];
+    let activity: CanonicalActionActivityContract | undefined;
+    let actionChanged = false;
     const claim = await claimMutation<ActionMutationResult>(client, handle, mutation);
-    if (claim.replayed) {
-      await client.query("COMMIT");
-      return claim.response;
-    }
+    if (claim.replayed) return { value: claim.response };
     const { row, item: existing } = await loadLockedPostConversation(client, postId, handle);
     if (isDeletedPost(existing)) {
       updated = existing;
       await completeMutation(client, handle, mutation, { item: updated });
-      await client.query("COMMIT");
-      return { item: updated };
+      return { value: { item: updated } };
     }
 
     if (
@@ -392,8 +370,7 @@ export const applyPostAction = async (
     ) {
       updated = existing;
       await completeMutation(client, handle, mutation, { item: updated });
-      await client.query("COMMIT");
-      return { item: updated };
+      return { value: { item: updated } };
     }
 
     if (input.action === "read") {
@@ -539,17 +516,8 @@ export const applyPostAction = async (
         payload: { action: input.action, active: activity?.active, activity, item: updated }
       })
     );
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-
-  for (const event of stagedEvents) await publishStoredEvent(event);
-
-  return { item: updated, activity };
+    return { value: { item: updated, activity }, events: stagedEvents };
+  });
 };
 
 export const updatePost = async (
@@ -594,17 +562,12 @@ export const updatePost = async (
   }
 
   await ensureLiveData();
-  const client = await getPool().connect();
-  let updated: InquiryItemContract;
-  let removedAttachmentIds: string[] = [];
-  const stagedEvents: StoredLiveEvent[] = [];
-
-  try {
-    await client.query("BEGIN");
+  const result = await runAtomic(async (client) => {
+    let updated: InquiryItemContract;
+    const stagedEvents: StoredLiveEvent[] = [];
     const claim = await claimMutation<InquiryItemContract>(client, handle, mutation);
     if (claim.replayed) {
-      await client.query("COMMIT");
-      return claim.response;
+      return { value: { item: claim.response, removedAttachmentIds: [] } };
     }
     const row = await loadLockedPost(client, postId, handle);
     if (row.deletedAt) {
@@ -649,7 +612,7 @@ export const updatePost = async (
       ownerType: "post",
       uploaderHandle: handle
     });
-    removedAttachmentIds = attachmentChange.removedAttachmentIds;
+    const removedAttachmentIds = attachmentChange.removedAttachmentIds;
     const quote = input.quoteSource === undefined
       ? row.quote
       : input.quoteSource === null
@@ -702,10 +665,7 @@ export const updatePost = async (
     await updatePatronageProposal(client, postId, input.patronage);
 
     const commentsResult = await client.query<CommentRow>(
-      `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
-        author_name AS "authorName", stance, body, content_document AS "document", metrics, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
-        deleted_at AS "deletedAt", created_at AS "createdAt"
+      `SELECT ${commentSelectColumns()}
        FROM comments
        WHERE post_id = $1
        ORDER BY created_at ASC`,
@@ -828,18 +788,11 @@ export const updatePost = async (
       stagedEvents.push(...createdNotifications.events);
     }
     await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { value: { item: updated, removedAttachmentIds }, events: stagedEvents };
+  });
 
-  for (const event of stagedEvents) await publishStoredEvent(event);
-  if (removedAttachmentIds.length) await triggerStorageDeletion(removedAttachmentIds);
-
-  return updated;
+  if (result.removedAttachmentIds.length) await triggerStorageDeletion(result.removedAttachmentIds);
+  return result.item;
 };
 
 export const deletePost = async (postId: string, actor: Actor, mutation?: MutationContext) => {
@@ -857,18 +810,14 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
   }
 
   await ensureLiveData();
-  const client = await getPool().connect();
-  let deleted: InquiryItemContract | null = null;
-  let didDelete = false;
-  let storageAttachmentIds: string[] = [];
-  const stagedEvents: StoredLiveEvent[] = [];
-
-  try {
-    await client.query("BEGIN");
+  const result = await runAtomic(async (client) => {
+    let deleted: InquiryItemContract | null = null;
+    let didDelete = false;
+    let storageAttachmentIds: string[] = [];
+    const stagedEvents: StoredLiveEvent[] = [];
     const claim = await claimMutation<InquiryItemContract>(client, handle, mutation);
     if (claim.replayed) {
-      await client.query("COMMIT");
-      return claim.response;
+      return { value: { item: claim.response, storageAttachmentIds: [] } };
     }
     const { row, commentRows, item: existing } =
       await loadLockedPostConversation(client, postId, handle);
@@ -898,7 +847,6 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
       storageAttachmentIds.push(...await queueAttachmentsForOwnerStorageDeletion(client, "opportunity_application", applicationIds, "opportunity_post_deleted"));
       if (applicationIds.length) await client.query(`DELETE FROM opportunity_applications WHERE post_id = $1`, [postId]);
       await completeMutation(client, handle, mutation, deleted);
-      await client.query("COMMIT");
     } else {
       if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
         await assertCommunityPostDeletion(row, handle, client);
@@ -1054,19 +1002,14 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
       }));
       await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
       await completeMutation(client, handle, mutation, deleted);
-      await client.query("COMMIT");
     }
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    if (!deleted) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    return {
+      value: { item: deleted, storageAttachmentIds },
+      events: didDelete ? stagedEvents : []
+    };
+  });
 
-  if (!deleted) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-
-  if (didDelete) for (const event of stagedEvents) await publishStoredEvent(event);
-  if (storageAttachmentIds.length) await triggerStorageDeletion(storageAttachmentIds);
-
-  return deleted;
+  if (result.storageAttachmentIds.length) await triggerStorageDeletion(result.storageAttachmentIds);
+  return result.item;
 };

@@ -312,7 +312,7 @@ const main = async () => {
   assert.match(workspaceDetail, /workspace-kind-\$\{document\.kind\}/);
   assert.match(workspaceDetail, /allowQuotes: false/);
   assert.match(workspaceDetail, /allowReshares: false/);
-  assert.match(workspaceComments, /roleRank\[access\.role\] < roleRank\.commenter/);
+  assert.match(workspaceComments, /workspaceAccessRoleRank\[access\.role\] < workspaceAccessRoleRank\.commenter/);
   assert.match(workspaceComments, /visibility: "private"/);
   assert.match(workspaceComments, /recordContentView\(client, "note_comment"/);
   assert.match(workspaceComments, /ownerType: "note_comment"/);

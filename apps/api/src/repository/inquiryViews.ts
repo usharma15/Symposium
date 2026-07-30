@@ -2,9 +2,10 @@ import { TRPCError } from "@trpc/server";
 import type { PoolClient } from "pg";
 import { postActionInputSchema, type InquiryItemContract } from "../../../../packages/contracts/src";
 import { cleanHandle, incrementMetric } from "@/lib/symposiumCore";
-import { getPool, hasDatabase } from "../db/client";
+import { hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
-import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
+import { stageEvent } from "../services/events";
+import { runAtomic } from "../services/transactions";
 import { actorHandle, ensureLiveData } from "./foundation";
 import { communityEventScope } from "./communities";
 import { recordContentView } from "./contentViews";
@@ -81,11 +82,7 @@ export const recordPostView = async (postId: string, rawInput: unknown, actor: A
   if (!hasDatabase()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Persistent views require the live database." });
   await ensureLiveData();
 
-  const client = await getPool().connect();
-  let event: StoredLiveEvent | undefined;
-  let receipt: InquiryViewReceipt | undefined;
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
     const result = await client.query<PostViewRow>(
       `SELECT
          author_handle AS "authorHandle", community_id AS "communityId", kind, metrics,
@@ -108,10 +105,13 @@ export const recordPostView = async (postId: string, rawInput: unknown, actor: A
           [postId, JSON.stringify(metrics)]
         )).rows[0].revision
       : row.revision;
-    receipt = { accepted, action: "read", itemId: postId, metrics, revision, targetType: "post" };
+    const receipt: InquiryViewReceipt = {
+      accepted, action: "read", itemId: postId, metrics, revision, targetType: "post"
+    };
+    const events = [];
     if (accepted) {
       const scope = await eventVisibility(client, row, handle);
-      event = await stageEvent(client, {
+      events.push(await stageEvent(client, {
         kind: "post.read",
         actorHandle: handle,
         subjectType: "post",
@@ -119,17 +119,10 @@ export const recordPostView = async (postId: string, rawInput: unknown, actor: A
         visibility: scope.visibility,
         audienceHandles: scope.audienceHandles,
         payload: receipt
-      });
+      }));
     }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-  if (event) await publishStoredEvent(event);
-  return receipt!;
+    return { value: receipt, events };
+  });
 };
 
 export const recordCommentView = async (
@@ -143,11 +136,7 @@ export const recordCommentView = async (
   if (!hasDatabase()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Persistent views require the live database." });
   await ensureLiveData();
 
-  const client = await getPool().connect();
-  let event: StoredLiveEvent | undefined;
-  let receipt: InquiryViewReceipt | undefined;
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
     const result = await client.query<CommentViewRow>(
       `SELECT
          post.author_handle AS "authorHandle", post.community_id AS "communityId", post.kind,
@@ -181,7 +170,7 @@ export const recordCommentView = async (
         [postId]
       )).rows[0].revision;
     }
-    receipt = {
+    const receipt: InquiryViewReceipt = {
       accepted,
       action: "read",
       commentId,
@@ -191,9 +180,10 @@ export const recordCommentView = async (
       revision,
       targetType: "comment"
     };
+    const events = [];
     if (accepted) {
       const scope = await eventVisibility(client, row, handle);
-      event = await stageEvent(client, {
+      events.push(await stageEvent(client, {
         kind: "comment.read",
         actorHandle: handle,
         subjectType: "comment",
@@ -201,15 +191,8 @@ export const recordCommentView = async (
         visibility: scope.visibility,
         audienceHandles: scope.audienceHandles,
         payload: receipt
-      });
+      }));
     }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-  if (event) await publishStoredEvent(event);
-  return receipt!;
+    return { value: receipt, events };
+  });
 };

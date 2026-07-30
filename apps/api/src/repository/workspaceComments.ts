@@ -4,6 +4,7 @@ import {
   createWorkspaceCommentInputSchema,
   deleteWorkspaceCommentInputSchema,
   updateWorkspaceCommentInputSchema,
+  workspaceAccessRoleRank,
   workspaceCommentActionInputSchema,
   type InquiryCommentContract,
   type WorkspaceAccessRoleContract
@@ -27,6 +28,11 @@ import {
 import { resolveActionTransition } from "./actions";
 import { recordContentView } from "./contentViews";
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
+import {
+  lockWorkspaceDocument,
+  workspaceDocumentAudienceHandles,
+  workspaceDocumentRoleSql
+} from "./workspaceDocumentAccess";
 
 type WorkspaceCommentAccessRow = {
   id: string;
@@ -55,30 +61,9 @@ type WorkspaceCommentRow = {
   attachments: InquiryCommentContract["attachments"];
 };
 
-const roleRank: Record<WorkspaceAccessRoleContract, number> = {
-  viewer: 1,
-  commenter: 2,
-  editor: 3,
-  publisher: 4,
-  owner: 5
-};
-
-const roleSql = `
-  CASE GREATEST(
-    CASE WHEN note.owner_handle = $2 THEN 5 ELSE 0 END,
-    CASE direct.role WHEN 'publisher' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END,
-    CASE inherited.role WHEN 'publisher' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END
-  )
-    WHEN 5 THEN 'owner'
-    WHEN 4 THEN 'publisher'
-    WHEN 3 THEN 'editor'
-    WHEN 2 THEN 'commenter'
-    ELSE 'viewer'
-  END`;
-
 const findDocumentAccess = async (client: PoolClient, noteId: string, handle: string, lock = false) => {
   const result = await client.query<WorkspaceCommentAccessRow>(
-    `SELECT note.id::text, note.owner_handle AS "ownerHandle", note.title, ${roleSql} AS role
+    `SELECT note.id::text, note.owner_handle AS "ownerHandle", note.title, ${workspaceDocumentRoleSql("$2")} AS role
      FROM notes note
      LEFT JOIN workspace_note_grants direct
        ON direct.note_id = note.id AND direct.grantee_handle = $2
@@ -94,28 +79,10 @@ const findDocumentAccess = async (client: PoolClient, noteId: string, handle: st
 
 const assertCanComment = (access: WorkspaceCommentAccessRow | undefined) => {
   if (!access) throw new TRPCError({ code: "NOT_FOUND", message: "Draft not found." });
-  if (roleRank[access.role] < roleRank.commenter) {
+  if (workspaceAccessRoleRank[access.role] < workspaceAccessRoleRank.commenter) {
     throw new TRPCError({ code: "FORBIDDEN", message: "This draft cannot be commented on with your current access." });
   }
 };
-
-const documentAudienceHandles = async (client: PoolClient, noteId: string) => {
-  const result = await client.query<{ handle: string }>(
-    `SELECT owner_handle AS handle FROM notes WHERE id = $1
-     UNION
-     SELECT grantee_handle AS handle FROM workspace_note_grants WHERE note_id = $1
-     UNION
-     SELECT notebook_grant.grantee_handle AS handle
-     FROM notes note
-     JOIN workspace_notebook_grants notebook_grant ON notebook_grant.notebook_id = note.notebook_id
-     WHERE note.id = $1`,
-    [noteId]
-  );
-  return result.rows.map((row) => row.handle);
-};
-
-const lockDocument = (client: PoolClient, noteId: string) =>
-  client.query("SELECT pg_advisory_xact_lock(hashtextextended('symposium:workspace-note:' || $1, 0))", [noteId]);
 
 const iso = (value: Date | string | null | undefined) => value ? new Date(value).toISOString() : undefined;
 
@@ -253,7 +220,7 @@ export const createWorkspaceComment = async (
   return runAtomic(async (client) => {
     const claim = await claimMutation<Record<string, unknown>>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
-    await lockDocument(client, noteId);
+    await lockWorkspaceDocument(client, noteId);
     const access = await findDocumentAccess(client, noteId, handle, true);
     assertCanComment(access);
     let parentAuthorHandle: string | null = null;
@@ -324,7 +291,7 @@ export const createWorkspaceComment = async (
         metadata: { noteId, commentId, actorHandle: handle }
       });
     }
-    const audienceHandles = await documentAudienceHandles(client, noteId);
+    const audienceHandles = await workspaceDocumentAudienceHandles(client, noteId);
     const mentionNotifications = await contentMentionNotificationInputs(client, {
       sourceType: "workspace_comment",
       sourceId: commentId,
@@ -366,7 +333,7 @@ export const updateWorkspaceComment = async (
   const result = await runAtomic(async (client) => {
     const claim = await claimMutation<Record<string, unknown>>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
-    await lockDocument(client, noteId);
+    await lockWorkspaceDocument(client, noteId);
     const access = await findDocumentAccess(client, noteId, handle, true);
     if (!access) throw new TRPCError({ code: "NOT_FOUND", message: "Draft not found." });
     const comment = await client.query<{
@@ -418,7 +385,7 @@ export const updateWorkspaceComment = async (
       })
     });
     await completeMutation(client, handle, mutation, value);
-    const audienceHandles = await documentAudienceHandles(client, noteId);
+    const audienceHandles = await workspaceDocumentAudienceHandles(client, noteId);
     const mentionNotifications = await contentMentionNotificationInputs(client, {
       sourceType: "workspace_comment",
       sourceId: commentId,
@@ -477,7 +444,7 @@ export const deleteWorkspaceComment = async (
   const result = await runAtomic(async (client) => {
     const claim = await claimMutation<Record<string, unknown>>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
-    await lockDocument(client, noteId);
+    await lockWorkspaceDocument(client, noteId);
     const access = await findDocumentAccess(client, noteId, handle, true);
     if (!access) throw new TRPCError({ code: "NOT_FOUND", message: "Draft not found." });
     const deleted = await client.query(
@@ -520,7 +487,7 @@ export const deleteWorkspaceComment = async (
     const event = await stageEvent(client, {
       kind: "note.comment.deleted",
       actorHandle: handle,
-      audienceHandles: await documentAudienceHandles(client, noteId),
+      audienceHandles: await workspaceDocumentAudienceHandles(client, noteId),
       subjectType: "note_comment",
       subjectId: commentId,
       visibility: "private",
@@ -546,7 +513,7 @@ export const applyWorkspaceCommentAction = async (
   return runAtomic(async (client) => {
     const claim = await claimMutation<Record<string, unknown>>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
-    await lockDocument(client, noteId);
+    await lockWorkspaceDocument(client, noteId);
     const access = await findDocumentAccess(client, noteId, handle, true);
     if (!access) throw new TRPCError({ code: "NOT_FOUND", message: "Draft not found." });
     const comment = await client.query<{ id: string; authorHandle: string | null }>(
@@ -634,7 +601,7 @@ export const applyWorkspaceCommentAction = async (
     const event = await stageEvent(client, {
       kind: `note.comment.${input.action}`,
       actorHandle: handle,
-      audienceHandles: await documentAudienceHandles(client, noteId),
+      audienceHandles: await workspaceDocumentAudienceHandles(client, noteId),
       subjectType: "note_comment",
       subjectId: commentId,
       visibility: "private",

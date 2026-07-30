@@ -12,10 +12,11 @@ import {
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { stageAuditLog } from "../services/audit";
-import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
+import { stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { replaceOwnerAttachments } from "../services/attachmentOwnership";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
+import { runAtomic } from "../services/transactions";
 import { createNotifications, resolveNotifications } from "../services/notificationDelivery";
 import { actorHandle, ensureLiveData, rowToAttachment, type AttachmentRow } from "./foundation";
 
@@ -139,10 +140,6 @@ const hydrate = async (client: PoolClient, rows: ApplicationRow[], actor: string
   }));
 };
 
-const publish = async (events: StoredLiveEvent[]) => {
-  for (const event of events) await publishStoredEvent(event);
-};
-
 export const listOpportunityApplications = async (postId: string, actor: Actor) => {
   await requireDatabase();
   const handle = actorHandle(actor);
@@ -175,16 +172,10 @@ export const createOpportunityApplication = async (rawInput: unknown, actor: Act
   const input = createOpportunityApplicationInputSchema.parse(rawInput);
   await requireDatabase();
   const handle = actorHandle(actor, input.actorHandle);
-  const client = await getPool().connect();
-  let application: OpportunityApplicationContract;
-  const events: StoredLiveEvent[] = [];
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
+    const events: StoredLiveEvent[] = [];
     const claim = await claimMutation<OpportunityApplicationContract>(client, handle, mutation);
-    if (claim.replayed) {
-      await client.query("COMMIT");
-      return claim.response;
-    }
+    if (claim.replayed) return { value: claim.response };
     const post = await postAccess(client, input.postId, true);
     if (post.authorHandle === handle) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot apply to your own opportunity." });
     if (post.opportunity?.status !== "open") throw new TRPCError({ code: "BAD_REQUEST", message: "This opportunity is closed." });
@@ -214,7 +205,7 @@ export const createOpportunityApplication = async (rawInput: unknown, actor: Act
     if (attachmentChange.attachments.some((attachment) => attachment.contentType.startsWith("image/") || attachment.contentType.startsWith("video/"))) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Opportunity applications accept document attachments only." });
     }
-    application = (await hydrate(client, inserted.rows, handle))[0]!;
+    const application = (await hydrate(client, inserted.rows, handle))[0]!;
     await stageAuditLog(client, { actorHandle: handle, action: "opportunity.application.create", subjectType: "opportunity_application", subjectId: id, metadata: { postId: input.postId, attachmentCount: application.attachments.length } });
     await completeMutation(client, handle, mutation, application);
     const createdNotifications = await createNotifications(client, [{
@@ -231,28 +222,18 @@ export const createOpportunityApplication = async (rawInput: unknown, actor: Act
       kind: "opportunity.application.created", actorHandle: handle, audienceHandles: [handle, post.authorHandle!],
       subjectType: "opportunity_application", subjectId: id, visibility: "private", payload: { postId: input.postId, applicationId: id }
     }));
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-  await publish(events);
-  return application;
+    return { value: application, events };
+  });
 };
 
 export const updateOpportunityApplication = async (postId: string, applicationId: string, rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = updateOpportunityApplicationInputSchema.parse(rawInput);
   await requireDatabase();
   const handle = actorHandle(actor, input.actorHandle);
-  const client = await getPool().connect();
-  let application: OpportunityApplicationContract;
-  const events: StoredLiveEvent[] = [];
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
+    const events: StoredLiveEvent[] = [];
     const claim = await claimMutation<OpportunityApplicationContract>(client, handle, mutation);
-    if (claim.replayed) { await client.query("COMMIT"); return claim.response; }
+    if (claim.replayed) return { value: claim.response };
     const post = await postAccess(client, postId);
     if (post.authorHandle !== handle) throw new TRPCError({ code: "FORBIDDEN", message: "Only the opportunity poster can review applications." });
     const updated = await client.query<ApplicationRow>(
@@ -266,7 +247,7 @@ export const updateOpportunityApplication = async (postId: string, applicationId
       `UPDATE opportunity_applications SET shortlisted = $2, revision = revision + 1, updated_at = now()
        WHERE id = $1 RETURNING revision, updated_at AS "updatedAt"`, [applicationId, input.shortlisted]
     );
-    application = (await hydrate(client, [{ ...current, shortlisted: input.shortlisted, ...revision.rows[0] }], handle))[0]!;
+    const application = (await hydrate(client, [{ ...current, shortlisted: input.shortlisted, ...revision.rows[0] }], handle))[0]!;
     await completeMutation(client, handle, mutation, application);
     const resolvedNotifications = await resolveNotifications(client, {
       kinds: ["opportunity_application_received"],
@@ -288,52 +269,44 @@ export const updateOpportunityApplication = async (postId: string, applicationId
       events.push(...createdNotifications.events);
     }
     events.push(await stageEvent(client, { kind: "opportunity.application.updated", actorHandle: handle, audienceHandles: [handle], subjectType: "opportunity_application", subjectId: applicationId, visibility: "private", payload: { postId, applicationId } }));
-    await client.query("COMMIT");
-  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
-  await publish(events);
-  return application;
+    return { value: application, events };
+  });
 };
 
 export const addOpportunityApplicationComment = async (postId: string, applicationId: string, rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = createOpportunityApplicationCommentInputSchema.parse(rawInput);
   await requireDatabase();
   const handle = actorHandle(actor, input.actorHandle);
-  const client = await getPool().connect();
-  let application: OpportunityApplicationContract;
-  const events: StoredLiveEvent[] = [];
-  try {
-    await client.query("BEGIN");
+  return runAtomic(async (client) => {
+    const events: StoredLiveEvent[] = [];
     const claim = await claimMutation<OpportunityApplicationContract>(client, handle, mutation);
-    if (claim.replayed) { await client.query("COMMIT"); return claim.response; }
+    if (claim.replayed) return { value: claim.response };
     const post = await postAccess(client, postId);
     if (post.authorHandle !== handle) throw new TRPCError({ code: "FORBIDDEN", message: "Only the opportunity poster can add private review notes." });
     const rows = await client.query<ApplicationRow>(`${applicationSelect} WHERE application.id = $1 AND application.post_id = $2 FOR UPDATE`, [applicationId, postId]);
     if (!rows.rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found." });
     await client.query(`INSERT INTO opportunity_application_comments (application_id, author_handle, body) VALUES ($1, $2, $3)`, [applicationId, handle, input.body]);
-    application = (await hydrate(client, rows.rows, handle))[0]!;
+    const application = (await hydrate(client, rows.rows, handle))[0]!;
     await completeMutation(client, handle, mutation, application);
     events.push(await stageEvent(client, { kind: "opportunity.application.comment.created", actorHandle: handle, audienceHandles: [handle], subjectType: "opportunity_application", subjectId: applicationId, visibility: "private", payload: { postId, applicationId } }));
-    await client.query("COMMIT");
-  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
-  await publish(events);
-  return application;
+    return { value: application, events };
+  });
 };
 
 export const deleteOpportunityApplication = async (postId: string, applicationId: string, actor: Actor, mutation?: MutationContext) => {
   await requireDatabase();
   const handle = actorHandle(actor);
-  const client = await getPool().connect();
-  const events: StoredLiveEvent[] = [];
-  let attachmentIds: string[] = [];
-  try {
-    await client.query("BEGIN");
+  const result = await runAtomic(async (client) => {
+    const events: StoredLiveEvent[] = [];
     const claim = await claimMutation<{ id: string; postId: string }>(client, handle, mutation);
-    if (claim.replayed) { await client.query("COMMIT"); return claim.response; }
+    if (claim.replayed) {
+      return { value: { response: claim.response, attachmentIds: [] } };
+    }
     const post = await postAccess(client, postId);
     if (post.authorHandle !== handle) throw new TRPCError({ code: "FORBIDDEN", message: "Only the opportunity poster can delete applications." });
     const existing = await client.query<{ applicantHandle: string }>(`SELECT applicant_handle AS "applicantHandle" FROM opportunity_applications WHERE id = $1 AND post_id = $2 FOR UPDATE`, [applicationId, postId]);
     if (!existing.rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found." });
-    attachmentIds = await queueAttachmentsForOwnerStorageDeletion(client, "opportunity_application", applicationId, "deleted_opportunity_application");
+    const attachmentIds = await queueAttachmentsForOwnerStorageDeletion(client, "opportunity_application", applicationId, "deleted_opportunity_application");
     await client.query(`DELETE FROM opportunity_applications WHERE id = $1`, [applicationId]);
     const response = { id: applicationId, postId };
     await stageAuditLog(client, { actorHandle: handle, action: "opportunity.application.delete", subjectType: "opportunity_application", subjectId: applicationId, metadata: { postId, attachmentCount: attachmentIds.length } });
@@ -356,11 +329,10 @@ export const deleteOpportunityApplication = async (postId: string, applicationId
     }]);
     events.push(...createdNotifications.events);
     events.push(await stageEvent(client, { kind: "opportunity.application.deleted", actorHandle: handle, audienceHandles: [handle, existing.rows[0].applicantHandle], subjectType: "opportunity_application", subjectId: applicationId, visibility: "private", payload: { postId, applicationId } }));
-    await client.query("COMMIT");
-  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
-  await publish(events);
-  if (attachmentIds.length) await triggerStorageDeletion(attachmentIds);
-  return { id: applicationId, postId };
+    return { value: { response, attachmentIds }, events };
+  });
+  if (result.attachmentIds.length) await triggerStorageDeletion(result.attachmentIds);
+  return result.response;
 };
 
 export const assertOpportunityAttachmentAccess = async (attachmentId: string, actor: Actor) => {

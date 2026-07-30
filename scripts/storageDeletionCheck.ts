@@ -41,11 +41,12 @@ const main = async () => {
   assert.match(queries[1].text, /'storageState', 'deletion_pending'/);
 
   const root = process.cwd();
-  const [postSource, commentSource, attachmentSource, identitySource, maintenanceSource, migrationSource] = await Promise.all([
+  const [postSource, commentSource, attachmentSource, identitySource, transactionSource, maintenanceSource, migrationSource] = await Promise.all([
     readFile(path.join(root, "apps/api/src/repository/posts.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/comments.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/attachments.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/identity.ts"), "utf8"),
+    readFile(path.join(root, "apps/api/src/services/transactions.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/services/maintenance.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8")
   ]);
@@ -53,7 +54,8 @@ const main = async () => {
   assert.match(postSource, /queueAttachmentsForOwnerStorageDeletion[\s\S]*"post_deleted"/);
   assert.match(postSource, /"comment",[\s\S]*commentIds,[\s\S]*"post_deleted"/);
   assert.match(commentSource, /"comment",[\s\S]*commentId,[\s\S]*"comment_deleted"/);
-  assert.match(postSource, /publishStoredEvent[\s\S]*triggerStorageDeletion/);
+  assert.match(transactionSource, /publishStoredEvent[\s\S]*return result\.value/);
+  assert.match(postSource, /export const deletePost[\s\S]*runAtomic[\s\S]*triggerStorageDeletion/);
   assert.match(attachmentSource, /queueStagingObjectDeletion\(client, \[attachment\]\)/);
   assert.match(attachmentSource, /pg_advisory_xact_lock/);
   assert.match(attachmentSource, /maxDailyUploadBytesGlobal/);

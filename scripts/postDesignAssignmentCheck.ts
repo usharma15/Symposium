@@ -122,6 +122,7 @@ const main = async () => {
   const migration = await readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8");
   const posts = await readFile(path.join(root, "apps/api/src/repository/posts.ts"), "utf8");
   const foundation = await readFile(path.join(root, "apps/api/src/repository/foundation.ts"), "utf8");
+  const projection = await readFile(path.join(root, "apps/api/src/repository/inquiryProjection.ts"), "utf8");
   const localStore = await readFile(path.join(root, "lib/dataStore.ts"), "utf8");
   assert.match(migration, /0064_authored_artifact_design_assignments/);
   assert.match(migration, /design_assignment JSONB/);
@@ -133,12 +134,13 @@ const main = async () => {
   assert.match(migration, /post_type = 'thought'\s+AND design_assignment IS NOT NULL/);
   assert.match(posts, /randomPostDesignAssignment/);
   assert.match(posts, /design_assignment/);
-  assert.match(foundation, /design_assignment AS "designAssignment"/);
+  assert.match(foundation, /postSelectColumns/);
+  assert.match(projection, /design_assignment AS "designAssignment"/);
   assert.match(localStore, /design_assignment/);
   assert.match(localStore, /symposium_items_design_fnv1a_32\(id \|\| ':muse:v1'\) % 2/);
   assert.match(localStore, /symposium_items_design_fnv1a_32\(id \|\| ':bottom:v1'\) % 7/);
   assert.match(localStore, /DROP FUNCTION symposium_items_design_fnv1a_32\(TEXT\)/);
-  assert.doesNotMatch([migration, posts, foundation, localStore].join("\n"), /design_assignment[^\\n]*(day|night)|theme[^\\n]*design_assignment/i);
+  assert.doesNotMatch([migration, posts, foundation, projection, localStore].join("\n"), /design_assignment[^\\n]*(day|night)|theme[^\\n]*design_assignment/i);
 
   console.log("Post design assignment contracts and persistence boundaries verified.");
 };

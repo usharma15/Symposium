@@ -10,6 +10,7 @@ import {
   type MutationContext
 } from "@/apps/api/src/services/mutations";
 import { subscribeLocalLiveEvents } from "@/apps/api/src/services/liveBus";
+import { runTransaction } from "@/apps/api/src/services/transactions";
 import { createSymposiumApiClient } from "@/features/api/symposiumApiClient";
 import { reportCheck } from "@/scripts/checkReport";
 
@@ -114,6 +115,56 @@ const main = async () => {
   });
   assert.deepEqual(privateEvent.audienceHandles, ["@ada"]);
   unsubscribe();
+
+  const transactionCalls: string[] = [];
+  const transactionClient = {
+    query: async (sql: string) => {
+      transactionCalls.push(sql);
+      return { rowCount: 0, rows: [] };
+    }
+  } as unknown as PoolClient;
+  assert.deepEqual(
+    await runTransaction(transactionClient, async () => {
+      transactionCalls.push("operation");
+      return { value: "committed" };
+    }),
+    { value: "committed" }
+  );
+  assert.deepEqual(transactionCalls, ["BEGIN", "operation", "COMMIT"]);
+  transactionCalls.length = 0;
+  await assert.rejects(
+    runTransaction(transactionClient, async () => {
+      transactionCalls.push("operation");
+      throw new Error("abort");
+    }),
+    /abort/
+  );
+  assert.deepEqual(transactionCalls, ["BEGIN", "operation", "ROLLBACK"]);
+
+  for (const [path, atomicCount, allowPool] of [
+    ["apps/api/src/repository/posts.ts", 4, false],
+    ["apps/api/src/repository/comments.ts", 4, false],
+    ["apps/api/src/repository/identity.ts", 2, false],
+    ["apps/api/src/repository/inquiryViews.ts", 2, false],
+    ["apps/api/src/repository/opportunityApplications.ts", 4, true]
+  ] as const) {
+    const source = readFileSync(path, "utf8");
+    assert.equal(
+      source.match(/\brunAtomic(?:<[^\n]+>)?\(/g)?.length,
+      atomicCount,
+      `${path} atomic mutation count`
+    );
+    const forbiddenPatterns = [
+      /\bpublishStoredEvent\(/,
+      /client\.query\("BEGIN"\)/,
+      /client\.query\("COMMIT"\)/,
+      /client\.query\("ROLLBACK"\)/
+    ];
+    if (!allowPool) forbiddenPatterns.push(/\bgetPool\(\)\.connect\(/);
+    for (const forbidden of forbiddenPatterns) {
+      assert.doesNotMatch(source, forbidden, `${path} bypasses canonical transactions`);
+    }
+  }
 
   const postRoutes = readFileSync("apps/api/src/routes/postRoutes.ts", "utf8");
   for (const scope of ["post.update", "post.delete", "comment.update", "comment.delete"]) {
@@ -269,6 +320,8 @@ const main = async () => {
     "payload conflict rejection",
     "transactional event staging",
     "private event audience defaults",
+    "canonical commit and rollback ordering",
+    "canonical mutation transaction authority",
     "edit and delete idempotency coverage",
     "profile and follow idempotency coverage",
     "direct and facade post mutation hash parity"
