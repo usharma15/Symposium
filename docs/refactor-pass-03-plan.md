@@ -24,6 +24,26 @@ deletion merely because a file is large, an implementation is old, or a code
 path is inconvenient. Every retirement must name the semantic authority that
 replaces it and the evidence that proves equivalence.
 
+### Preparation verification record
+
+The first preparation candidate, `236ddc3e05a113eb1f241971a5f027f625e36acd`,
+passed the source ceiling, dependency audit, proof kernel, full verification
+manifest, evidence-integrity checks, and Vercel deployment. GitHub run
+`30513123480` then rejected the candidate because one of five isolated browser
+canaries observed eight identical `AbortError: signal is aborted without
+reason` page errors while rapid in-app navigation cancelled outstanding
+requests. The other four canaries passed. The immediately preceding exact
+runtime release passed the same suite 5/5, and the preparation candidate
+changed no runtime application path.
+
+An unsandboxed local replay of the exact candidate subsequently passed all five
+canaries in 38.1 seconds, including canonical navigation, stable Paper/Thought
+design identities, desktop/mobile authored-artifact containment, and
+create-edit-reload persistence for a titleless Thought. This is evidence of a
+transient cancellation-timing failure, not permission to ignore the required
+remote gate. A fresh exact-commit GitHub run must still pass before preparation
+is called closed.
+
 ## 1. Candid decision
 
 Fewer than 100,000 tracked source lines remains possible, but it is not yet a
