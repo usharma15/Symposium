@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomInt } from "node:crypto";
 import path from "node:path";
 import { Pool } from "pg";
@@ -53,6 +53,13 @@ import {
   projectCanonicalActionLedger
 } from "@/lib/profileActivity";
 import { invalidateQuotedSource } from "@/lib/contentQuotes";
+import { writeJsonFileAtomically } from "@/lib/localJsonStore";
+import {
+  legacyLiveSeedCreatedAt,
+  seedCommentById,
+  seedItemById,
+  stableSeedCreatedAt
+} from "@/lib/seedItemNormalization";
 import { postTitlePolicyError, postTypeForItem } from "@/lib/postSemantics";
 import {
   deterministicPostDesignAssignment,
@@ -163,31 +170,6 @@ const handleFromName = (name: string) => getProfileForName(name).handle;
 
 const newId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-
-const seedItemById = new Map(inquiryItems.map((item) => [item.id, item]));
-const seedCommentById = new Map<string, InquiryComment>();
-for (const item of inquiryItems) {
-  const visit = (comments: InquiryComment[]) => {
-    for (const comment of comments) {
-      if (comment.id) seedCommentById.set(comment.id, comment);
-      visit(comment.replies ?? []);
-    }
-  };
-  visit(item.comments);
-}
-
-const legacyLiveSeedCreatedAt = (id?: string, offsetMinutes = 0) => {
-  const match = id?.match(/^live-(\d+)-/);
-  if (!match) return undefined;
-  const index = Number(match[1]);
-  if (!Number.isFinite(index)) return undefined;
-  return new Date(Date.UTC(2026, 5, 18, 12, 0, 0) - (index * 19 + offsetMinutes) * 60 * 1000).toISOString();
-};
-
-const stableSeedCreatedAt = (createdAt: string | undefined, fallback?: string) => {
-  if (createdAt && !Number.isNaN(Date.parse(createdAt))) return createdAt;
-  return fallback ?? createdAt;
-};
 
 const normalizeViewActorHandle = (handle: string | undefined) => {
   const normalized = cleanHandle(handle || defaultProfile.handle);
@@ -966,12 +948,7 @@ const readLocal = async (): Promise<AppData> => {
   }
 };
 
-const writeLocal = async (data: AppData) => {
-  await mkdir(path.dirname(localDataPath), { recursive: true });
-  const temporaryPath = `${localDataPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-  await rename(temporaryPath, localDataPath);
-};
+const writeLocal = (data: AppData) => writeJsonFileAtomically(localDataPath, data);
 
 type CommentRow = {
   id: string;

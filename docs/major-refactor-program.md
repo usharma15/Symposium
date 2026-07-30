@@ -4,12 +4,14 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Pass 01 proof/control-plane implementation complete in the local candidate; final local gates and remote enforcement/provider readback remain |
+| Status | Active program; the latest major implementation candidate has shared persistence/conversation kernels and audited presentation ownership, but the program remains incomplete above 99,999 lines |
 | Prepared | July 29, 2026 |
 | Execution gate | **Satisfied July 29, 2026.** “Local design lab integration” completed at the exact baseline below and the user explicitly authorized the first Ultra pass |
 | Repository | `/Users/udayansharma/Documents/Science Rebirth` |
 | Exact post-integration baseline | `8e900d0fa675b311a67029b8d2f109b4da97301e`; migration `0064_authored_artifact_design_assignments`; 127,151 canonical tracked source lines / 119,000 nonblank |
 | Pass 01 local candidate | 128,351 canonical physical / 120,123 nonblank lines across 461 files; +1,200 physical, entirely in proof/check tooling; no product or style source changed |
+| Latest current-main baseline | `c603bbec2ac83841ad5535725dabb34fdb633bdd`; 128,331 canonical physical / 120,078 nonblank lines |
+| Latest major candidate | 126,778 canonical physical / 118,710 nonblank lines; -1,553 physical / -1,368 nonblank versus current main; still 26,779 lines above the absolute completion gate |
 | Governing priority | Build a beautiful, sublime, ultra-capable, ultra-lean engineering system while permitting zero loss of site usage, functionality, persistence, live synchronization, design, privacy, security, accessibility, or recoverability |
 | Meaning of the LOC target | A forcing function and absolute falsifiable test of whether conceptual and implementation waste was actually removed—not the highest-order objective and never a substitute for engineering quality |
 | Required product outcome | The complete site continues to operate perfectly at every known microfeature boundary and becomes measurably faster, smoother, safer, easier to change, or more efficient wherever the refactor creates a legitimate opportunity |
@@ -526,7 +528,7 @@ Large files are signals for investigation, not automatic defects:
 | `features/assistant/useAssistantController.ts` | 1,678 | Mounted Assistant state and client action orchestration |
 | `styles/92-ai-tablet.css` | 1,663 | Assistant-specific visual system |
 | `apps/api/src/repository/conversations.ts` | 1,642 | Messaging persistence and authorization |
-| `styles/20-legacy-content.css` | 1,543 | Established content behavior mixed with accumulated legacy selectors |
+| `styles/20-content-core.css` (renamed from `20-legacy-content.css`) | 1,543 | Established content behavior mixed with accumulated legacy selectors |
 | `apps/api/src/db/schema.ts` | 1,473 | Canonical Drizzle schema |
 
 The six tracked local stores total 4,592 lines:

@@ -246,7 +246,6 @@ button.quote-card-opportunity:hover {
 }
 
 .feed-post p,
-.detail-body,
 .comment p,
 .profile-comment-card p,
 .post-author small,
@@ -256,7 +255,6 @@ button.quote-card-opportunity:hover {
   overflow-wrap: anywhere;
 }
 
-.detail-body,
 .expandable-text {
   white-space: pre-wrap;
 }
@@ -629,12 +627,6 @@ button.quote-card-opportunity:hover {
 
 .symposium-shell.night .profile-social-counts span {
   color: rgba(246, 234, 212, 0.72);
-}
-
-.symposium-shell.night .profile-fields span {
-  border-color: rgba(248, 211, 149, 0.3);
-  background: rgba(12, 18, 20, 0.58);
-  color: rgba(246, 234, 212, 0.84);
 }
 
 .symposium-shell.night .profile-metrics :is(button, a) {

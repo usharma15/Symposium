@@ -4,6 +4,7 @@ import path from "node:path";
 import { attachmentKindForContentType, validateAttachmentContentSignature } from "@/lib/attachmentRules";
 import { officeArchiveFormatForContentType, validateOfficeArchive } from "@/lib/docxSecurity";
 import type { InquiryAttachment } from "@/lib/mockData";
+import { createSerializedExecutor, readJsonFile, writeJsonFileAtomically } from "@/lib/localJsonStore";
 
 type LocalAttachmentOwnerType = "post" | "comment" | "message" | "assistant_message" | "note" | "note_comment" | "opportunity_application" | "profile";
 type LocalAttachmentStatus = "pending" | "uploaded";
@@ -57,16 +58,7 @@ const attachmentRoot = path.join(process.cwd(), ".data", "attachments");
 const filesRoot = path.join(attachmentRoot, "files");
 const indexPath = path.join(attachmentRoot, "index.json");
 
-let storeQueue: Promise<void> = Promise.resolve();
-
-const withStoreLock = async <T>(operation: () => Promise<T>) => {
-  const run = storeQueue.then(operation, operation);
-  storeQueue = run.then(
-    () => undefined,
-    () => undefined
-  );
-  return run;
-};
+const withStoreLock = createSerializedExecutor();
 
 const ensureStoreDirectory = async () => {
   await mkdir(filesRoot, { recursive: true });
@@ -87,29 +79,16 @@ const emptyStore = (): LocalAttachmentStore => ({
 
 const loadStore = async () => {
   await ensureStoreDirectory();
-
-  try {
-    const raw = await readFile(indexPath, "utf8");
-    const parsed = JSON.parse(raw) as Partial<LocalAttachmentStore>;
-    return {
-      version: 1,
-      attachments: parsed.attachments ?? {}
-    } satisfies LocalAttachmentStore;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyStore();
-    throw error;
-  }
+  const parsed = await readJsonFile<Partial<LocalAttachmentStore>>(indexPath, emptyStore);
+  return {
+    version: 1,
+    attachments: parsed.attachments ?? {}
+  } satisfies LocalAttachmentStore;
 };
 
 const saveStore = async (store: LocalAttachmentStore) => {
   await ensureStoreDirectory();
-  const temporaryPath = `${indexPath}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporaryPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-    await rename(temporaryPath, indexPath);
-  } finally {
-    await unlink(temporaryPath).catch(() => undefined);
-  }
+  return writeJsonFileAtomically(indexPath, store);
 };
 
 const sanitizeFileName = (fileName: string) => {

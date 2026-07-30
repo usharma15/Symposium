@@ -189,11 +189,7 @@
   transform: translateX(-50%);
 }
 
-.hall-world::after,
-.hall-render-image,
-.hall-vault,
-.hall-floor,
-.library-stair {
+.hall-world::after {
   display: none;
 }
 
@@ -379,8 +375,7 @@
   pointer-events: none;
 }
 
-.room-render::after,
-.room-render .room-seal {
+.room-render::after {
   display: none;
 }
 
@@ -492,118 +487,4 @@
 
 .symposium-shell[data-room="office"] .bottom-action {
   z-index: 45;
-}
-
-.communities-layout {
-  position: relative;
-  z-index: 5;
-  width: min(var(--symposium-feed-width), calc(100vw - 520px));
-  min-height: calc(100vh - 220px);
-  margin: 28px auto 96px;
-}
-
-.selected-community-layout {
-  position: relative;
-  z-index: 5;
-  min-height: calc(100vh - 220px);
-}
-
-.communities-panel,
-.communities-context,
-.selected-community-panel {
-  border: 1px solid rgba(255, 253, 245, 0.28);
-  border-radius: 10px;
-  background: rgba(255, 253, 245, 0.62);
-  color: var(--ink);
-  box-shadow: 0 26px 76px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-}
-
-.communities-panel {
-  display: grid;
-  gap: 16px;
-  padding: 18px;
-}
-
-.communities-context {
-  position: fixed;
-  left: 24px;
-  top: var(--symposium-content-top);
-  z-index: 7;
-  display: grid;
-  gap: 7px;
-  width: 280px;
-  max-height: calc(100vh - 294px);
-  overflow: auto;
-  padding: 16px;
-}
-
-.communities-context .eyebrow,
-.selected-community-header .eyebrow {
-  margin: 0;
-  color: rgba(30, 101, 108, 0.96);
-}
-
-.communities-context .eyebrow {
-  font-size: 0.68rem;
-  letter-spacing: 0.14em;
-}
-
-.communities-context h1,
-.selected-community-header h1 {
-  margin: 0;
-  color: var(--ink);
-  font-size: clamp(2rem, 4vw, 3.8rem);
-  line-height: 0.94;
-  letter-spacing: 0;
-}
-
-.communities-context h1 {
-  font-size: clamp(1.7rem, 2.2vw, 2.45rem);
-  line-height: 1;
-}
-
-.communities-context p,
-.selected-community-header p {
-  max-width: 760px;
-  margin: 0;
-  color: rgba(20, 32, 31, 0.72);
-  font-size: 1rem;
-  line-height: 1.45;
-}
-
-.communities-context p {
-  font-size: 0.88rem;
-  line-height: 1.35;
-}
-
-.communities-search {
-  position: sticky;
-  top: var(--symposium-content-top);
-  z-index: 8;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 48px;
-  border: 1px solid rgba(20, 32, 31, 0.14);
-  border-radius: 8px;
-  padding: 0 13px;
-  background: rgba(255, 253, 245, 0.8);
-  color: rgba(20, 32, 31, 0.72);
-  box-shadow: 0 12px 30px rgba(10, 16, 15, 0.12);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-}
-
-.communities-search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 1rem;
-  font-weight: 760;
-  outline: 0;
 }

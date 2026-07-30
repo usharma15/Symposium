@@ -1,4 +1,3 @@
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -28,6 +27,7 @@ import {
   type WorkspaceGrantRoleContract
 } from "@/packages/contracts/src";
 import { cleanHandle } from "@/lib/symposiumCore";
+import { createSerializedExecutor, readJsonFile, writeJsonFileAtomically } from "@/lib/localJsonStore";
 import { profilesByName } from "@/lib/mockData";
 import {
   deleteLocalOwnerAttachments,
@@ -92,59 +92,38 @@ export class LocalWorkspaceStoreError extends Error {
 
 const storeRoot = path.join(process.cwd(), ".data", "workspace");
 const storePath = path.join(storeRoot, "index.json");
-let storeQueue: Promise<void> = Promise.resolve();
-
-const withStoreLock = async <T>(operation: () => Promise<T>) => {
-  const run = storeQueue.then(operation, operation);
-  storeQueue = run.then(() => undefined, () => undefined);
-  return run;
-};
+const withStoreLock = createSerializedExecutor();
 
 const emptyStore = (): LocalWorkspaceStore => ({ version: 1, workspaces: {} });
 
 const loadStore = async () => {
-  await mkdir(storeRoot, { recursive: true });
-  try {
-    const parsed = JSON.parse(await readFile(storePath, "utf8")) as Partial<LocalWorkspaceStore>;
-    const workspaces = parsed.workspaces ?? {};
-    for (const workspace of Object.values(workspaces)) {
-      workspace.pendingNotebookCleanup ??= {};
-      workspace.notebookGrants ??= {};
-      workspace.documentGrants ??= {};
-      for (const document of workspace.documents) document.proposal ??= null;
-      for (const document of workspace.documents) document.opportunity ??= null;
-      for (const revisions of Object.values(workspace.revisions)) {
-        for (const revision of revisions) revision.proposal ??= null;
-        for (const revision of revisions) revision.opportunity ??= null;
-      }
-      const publishedIds = workspace.documents
-        .filter((document) => document.lifecycle === "published")
-        .map((document) => document.id);
-      if (publishedIds.length) {
-        workspace.documents = workspace.documents.filter((document) => document.lifecycle !== "published");
-        for (const noteId of publishedIds) {
-          delete workspace.revisions[noteId];
-          delete workspace.documentGrants[noteId];
-        }
+  const parsed = await readJsonFile<Partial<LocalWorkspaceStore>>(storePath, emptyStore);
+  const workspaces = parsed.workspaces ?? {};
+  for (const workspace of Object.values(workspaces)) {
+    workspace.pendingNotebookCleanup ??= {};
+    workspace.notebookGrants ??= {};
+    workspace.documentGrants ??= {};
+    for (const document of workspace.documents) document.proposal ??= null;
+    for (const document of workspace.documents) document.opportunity ??= null;
+    for (const revisions of Object.values(workspace.revisions)) {
+      for (const revision of revisions) revision.proposal ??= null;
+      for (const revision of revisions) revision.opportunity ??= null;
+    }
+    const publishedIds = workspace.documents
+      .filter((document) => document.lifecycle === "published")
+      .map((document) => document.id);
+    if (publishedIds.length) {
+      workspace.documents = workspace.documents.filter((document) => document.lifecycle !== "published");
+      for (const noteId of publishedIds) {
+        delete workspace.revisions[noteId];
+        delete workspace.documentGrants[noteId];
       }
     }
-    return { version: 1, workspaces } satisfies LocalWorkspaceStore;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyStore();
-    throw error;
   }
+  return { version: 1, workspaces } satisfies LocalWorkspaceStore;
 };
 
-const saveStore = async (store: LocalWorkspaceStore) => {
-  await mkdir(storeRoot, { recursive: true });
-  const temporaryPath = `${storePath}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporaryPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-    await rename(temporaryPath, storePath);
-  } finally {
-    await unlink(temporaryPath).catch(() => undefined);
-  }
-};
+const saveStore = (store: LocalWorkspaceStore) => writeJsonFileAtomically(storePath, store);
 
 const cleanupLocalNotebookDocuments = async (documentIds: string[]) => {
   const { deleteLocalWorkspaceCommentsForDocument } = await import("@/lib/localWorkspaceCommentStore");

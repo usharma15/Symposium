@@ -1,37 +1,18 @@
-import { inquiryItems, type InquiryComment, type InquiryItem } from "@/lib/mockData";
+import type { InquiryComment, InquiryItem } from "@/lib/mockData";
 import { postTypeForItem } from "@/lib/postSemantics";
 import { resolvePostDesignAssignment } from "@/lib/postDesign";
-
-const clientSeedItemById = new Map(inquiryItems.map((item) => [item.id, item]));
-const clientSeedCommentById = new Map<string, InquiryComment>();
-for (const item of inquiryItems) {
-  const visit = (comments: InquiryComment[]) => {
-    for (const comment of comments) {
-      if (comment.id) clientSeedCommentById.set(comment.id, comment);
-      visit(comment.replies ?? []);
-    }
-  };
-  visit(item.comments);
-}
-
-const legacyLiveSeedCreatedAt = (id?: string, offsetMinutes = 0) => {
-  const match = id?.match(/^live-(\d+)-/);
-  if (!match) return undefined;
-  const index = Number(match[1]);
-  if (!Number.isFinite(index)) return undefined;
-  return new Date(Date.UTC(2026, 5, 18, 12, 0, 0) - (index * 19 + offsetMinutes) * 60 * 1000).toISOString();
-};
-
-const stableSeedCreatedAt = (createdAt: string | undefined, fallback?: string) => {
-  if (createdAt && !Number.isNaN(Date.parse(createdAt))) return createdAt;
-  return fallback ?? createdAt;
-};
+import {
+  legacyLiveSeedCreatedAt,
+  seedCommentById,
+  seedItemById,
+  stableSeedCreatedAt
+} from "@/lib/seedItemNormalization";
 
 const normalizeClientSeedCommentTimes = (comments: InquiryComment[]): InquiryComment[] =>
   comments.map((comment) => ({
     ...comment,
     createdAt: stableSeedCreatedAt(
-      comment.id ? clientSeedCommentById.get(comment.id)?.createdAt ?? comment.createdAt : comment.createdAt,
+      comment.id ? seedCommentById.get(comment.id)?.createdAt ?? comment.createdAt : comment.createdAt,
       legacyLiveSeedCreatedAt(comment.id, 1)
     ),
     replies: normalizeClientSeedCommentTimes(comment.replies ?? [])
@@ -39,7 +20,7 @@ const normalizeClientSeedCommentTimes = (comments: InquiryComment[]): InquiryCom
 
 export const normalizeClientSeedTimes = (items: InquiryItem[]): InquiryItem[] =>
   items.map((item) => {
-    const seedItem = clientSeedItemById.get(item.id);
+    const seedItem = seedItemById.get(item.id);
     const postType = postTypeForItem(item) ?? undefined;
     return {
       ...item,

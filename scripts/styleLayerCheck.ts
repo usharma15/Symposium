@@ -4,10 +4,10 @@ import path from "node:path";
 
 const layers = [
   "00-foundations-entry.css",
-  "10-legacy-shell.css",
-  "20-legacy-content.css",
-  "30-legacy-discussion-profile.css",
-  "40-legacy-responsive.css",
+  "10-shell-core.css",
+  "20-content-core.css",
+  "30-discussion-profile.css",
+  "40-core-responsive.css",
   "50-immersive-shell.css",
   "60-immersive-communities-feed.css",
   "70-immersive-content-profile.css",
@@ -44,11 +44,70 @@ const main = async () => {
     sources.set(layer, source);
     assert.ok(source.trimStart().startsWith("/*"), `${layer} must declare its ownership purpose`);
   }
+  const allStyles = layers.map((layer) => sources.get(layer) ?? "").join("\n");
+  const retiredSelectors = [
+    "brand-glyph",
+    "world-rail",
+    "rail-button",
+    "hall-render-image",
+    "hall-vault",
+    "hall-floor",
+    "library-stair",
+    "door-icon",
+    "room-render-content",
+    "room-header",
+    "room-seal",
+    "search-box",
+    "chip-row",
+    "folder-row",
+    "folder-tile",
+    "gathering-reason",
+    "detail-side",
+    "signal-panel",
+    "side-actions",
+    "movement-pad",
+    "side-panel",
+    "profile-tabs",
+    "profile-heading",
+    "profile-fields",
+    "account-form",
+    "panel-copy",
+    "prompt-suggestions",
+    "tablet-lens",
+    "tablet-input",
+    "messages-modal",
+    "message-list",
+    "message-thread",
+    "communities-layout",
+    "communities-panel",
+    "communities-context",
+    "communities-search",
+    "selected-community-panel",
+    "community-call-panel",
+    "topic-select",
+    "office-folder-select"
+  ];
+  for (const selector of retiredSelectors) {
+    assert.doesNotMatch(
+      allStyles,
+      new RegExp(`\\.${selector}(?![-\\w])`),
+      `Retired selector .${selector} must not regain presentation ownership`
+    );
+  }
+  const shellViews = await readFile(path.join(root, "features/shell/SymposiumShellViews.tsx"), "utf8");
+  assert.match(
+    shellViews,
+    /hall-door-\$\{room\.id\}/,
+    "Dynamic hall-door classes must remain part of the rendered room contract"
+  );
+  for (const room of ["office", "amphitheater", "funding", "library", "symposium", "communities", "opportunities"]) {
+    assert.match(allStyles, new RegExp(`\\.hall-door-${room}(?![-\\w])`), `Hall geometry is missing for ${room}`);
+  }
 
   const composerStyles = [
-    sources.get("20-legacy-content.css") ?? "",
-    sources.get("30-legacy-discussion-profile.css") ?? "",
-    sources.get("40-legacy-responsive.css") ?? ""
+    sources.get("20-content-core.css") ?? "",
+    sources.get("30-discussion-profile.css") ?? "",
+    sources.get("40-core-responsive.css") ?? ""
   ].join("\n");
   assert.doesNotMatch(
     composerStyles,
@@ -65,8 +124,8 @@ const main = async () => {
   );
 
   const quoteStyles = [
-    sources.get("20-legacy-content.css") ?? "",
-    sources.get("30-legacy-discussion-profile.css") ?? "",
+    sources.get("20-content-core.css") ?? "",
+    sources.get("30-discussion-profile.css") ?? "",
     sources.get("60-immersive-communities-feed.css") ?? "",
     sources.get("70-immersive-content-profile.css") ?? ""
   ].join("\n");
@@ -79,7 +138,7 @@ const main = async () => {
   assert.match(quoteStyles, /\.quote-link-input-row/);
 
   const commentActionStyles = [
-    sources.get("30-legacy-discussion-profile.css") ?? "",
+    sources.get("30-discussion-profile.css") ?? "",
     sources.get("70-immersive-content-profile.css") ?? ""
   ].join("\n");
   assert.match(commentActionStyles, /\.comment-actions\s*\{[^}]*gap:\s*4px/);
@@ -92,9 +151,7 @@ const main = async () => {
   const workspaceStyles = sources.get("88-workspace.css") ?? "";
   const immersiveOverlayStyles = sources.get("80-immersive-overlays.css") ?? "";
   const foundationStyles = sources.get("00-foundations-entry.css") ?? "";
-  const legacyContentStyles = sources.get("20-legacy-content.css") ?? "";
-  const legacyDetailStyles = sources.get("30-legacy-discussion-profile.css") ?? "";
-  const legacyResponsiveStyles = sources.get("40-legacy-responsive.css") ?? "";
+  const contentCoreStyles = sources.get("20-content-core.css") ?? "";
   const immersiveShellStyles = sources.get("50-immersive-shell.css") ?? "";
   const communityDirectoryStyles = sources.get("89-communities.css") ?? "";
   const authoredArtifactStyles = sources.get("95-authored-artifacts.css") ?? "";
@@ -106,7 +163,7 @@ const main = async () => {
   assert.match(opportunityStyles, /\.opportunity-side-inline\s*\{[^}]*position:\s*fixed/);
   assert.match(opportunityStyles, /\.opportunity-review-filters\s*\{[^}]*position:\s*fixed/);
   assert.match(opportunityStyles, /\.opportunity-candidate-side\s*\{[^}]*position:\s*fixed/);
-  assert.match(communityStyles, /\.selected-community-panel\s*\{[^}]*position:\s*fixed/);
+  assert.match(communityDirectoryStyles, /\.selected-community-left\s*\{[^}]*position:\s*fixed/);
   assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar\s*\{[^}]*position:\s*fixed/);
   assert.match(immersiveOverlayStyles, /\.paper-detail > \.paper-side\s*\{[^}]*position:\s*fixed/);
   assert.match(foundationStyles, /--symposium-content-top:\s*104px/);
@@ -116,8 +173,7 @@ const main = async () => {
   assert.match(foundationStyles, /--symposium-detail-top:\s*var\(--symposium-content-top\)/);
   assert.match(immersiveShellStyles, /\.stage\s*\{[^}]*padding:\s*var\(--symposium-content-top\) 24px 118px/);
   assert.match(communityStyles, /\.feed-toolbar\s*\{[^}]*top:\s*var\(--symposium-content-top\)/);
-  assert.match(communityStyles, /\.selected-community-panel\s*\{[^}]*top:\s*var\(--symposium-content-top\)/);
-  assert.match(immersiveShellStyles, /\.communities-context\s*\{[^}]*top:\s*var\(--symposium-content-top\)/);
+  assert.match(communityDirectoryStyles, /\.selected-community-left\s*\{[^}]*top:\s*var\(--symposium-content-top\)/);
   assert.match(communityDirectoryStyles, /\.communities-directory-rail,[\s\S]*top:\s*var\(--symposium-content-top\)/);
   assert.match(communityDirectoryStyles, /\.selected-community-right\s*\{[^}]*top:\s*var\(--symposium-content-top\)/);
   assert.match(workspaceStyles, /\.workspace-toolbar\.feed-toolbar\s*\{[^}]*inset:\s*var\(--symposium-content-top\) auto 144px 24px/);
@@ -128,12 +184,10 @@ const main = async () => {
   assert.match(patronageStyles, /\.patronage-side-inline\s*\{[^}]*top:\s*var\(--symposium-detail-top\)/);
   assert.match(opportunityStyles, /\.opportunity-side-inline\s*\{[^}]*top:\s*var\(--symposium-detail-top\)/);
   assert.match(opportunityStyles, /\.opportunity-candidate-side\s*\{[^}]*top:\s*var\(--symposium-detail-top\)/);
-  assert.match(legacyDetailStyles, /\.detail-side\s*\{[^}]*top:\s*var\(--symposium-detail-top\)/);
-  assert.match(legacyResponsiveStyles, /@media \(max-width:\s*1439px\)[\s\S]*\.detail-side\s*\{[^}]*position:\s*static/);
   assert.match(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*pointer-events:\s*none/);
   assert.doesNotMatch(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*opacity:/);
-  const attachmentStyles = [sources.get("20-legacy-content.css") ?? "", sources.get("87-structured-attachments.css") ?? ""].join("\n");
-  const shellStyles = sources.get("10-legacy-shell.css") ?? "";
+  const attachmentStyles = [sources.get("20-content-core.css") ?? "", sources.get("87-structured-attachments.css") ?? ""].join("\n");
+  const shellStyles = sources.get("10-shell-core.css") ?? "";
   const feedStyles = [
     sources.get("60-immersive-communities-feed.css") ?? "",
     sources.get("70-immersive-content-profile.css") ?? "",
@@ -191,7 +245,7 @@ const main = async () => {
   assert.match(documentStyles, /\.comment-composer \.document-editor-toolbar\s*\{[^}]*position:\s*static[^}]*top:\s*auto/);
   assert.match(documentStyles, /\.comment-composer \.symposium-document-editor:focus-within \.document-editor-toolbar\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--document-editor-sticky-top\)/);
   assert.match(documentStyles, /\.comment-composer\.compact \.document-editor-toolbar\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/);
-  const documentToolbarStyles = layers.map((layer) => sources.get(layer) ?? "").join("\n");
+  const documentToolbarStyles = allStyles;
   for (const block of documentToolbarStyles.matchAll(/[^{}]*\.document-editor-toolbar[^{}]*\{([^}]*)\}/g)) {
     for (const declaration of block[1].matchAll(/\btop:\s*([^;\n}]+)/g)) {
       const value = declaration[1].trim();
@@ -210,8 +264,8 @@ const main = async () => {
   assert.match(documentStyles, /\.document-editor-canvas \.tiptap pre\s*\{[^}]*font-family:\s*var\(--document-font-mono\)[^}]*line-height:\s*1\.55/);
   assert.match(documentStyles, /\.document-editor-canvas \.tiptap\.ProseMirror-focused pre\.is-active-code-block\s*\{[^}]*--document-code-visible-lines:\s*18/);
   assert.match(feedStyles, /\.feed-post \.post-card-title\s*\{[^}]*font-family:\s*Georgia[^}]*font-size:\s*var\(--symposium-post-title-size\)[^}]*font-weight:\s*820/);
-  assert.match(legacyContentStyles, /\.detail-main > \.post-detail-title\s*\{[^}]*font-family:\s*Georgia[^}]*font-size:\s*var\(--symposium-post-title-size\)[^}]*font-weight:\s*820[^}]*text-wrap:\s*wrap/);
-  assert.doesNotMatch(legacyContentStyles, /\.detail-main h1\s*\{[^}]*font-size:/);
+  assert.match(contentCoreStyles, /\.detail-main > \.post-detail-title\s*\{[^}]*font-family:\s*Georgia[^}]*font-size:\s*var\(--symposium-post-title-size\)[^}]*font-weight:\s*820[^}]*text-wrap:\s*wrap/);
+  assert.doesNotMatch(contentCoreStyles, /\.detail-main h1\s*\{[^}]*font-size:/);
   assert.match(workspaceStyles, /\.workspace-detail-paper \.post-body > h1\s*\{[^}]*font-size:\s*var\(--symposium-post-title-size\)/);
   assert.match(authoredArtifactStyles, /\.authored-paper-title-ceremony h1\s*\{[^}]*font-size:\s*var\(--symposium-post-title-size\)/);
   assert.match(attachmentStyles, /\.attachment-modal[\s\S]*background:\s*var\(--document-surface-solid\)/);
@@ -239,6 +293,7 @@ const main = async () => {
           "ordered global manifest",
           "declared layer ownership",
           "declared stylesheet ownership",
+          "retired selector ownership and dynamic hall geometry",
           "bounded attachment composer layout",
           "shared quote card and composer layout",
           "one canonical feed and clicked-post width",

@@ -21,22 +21,6 @@
     width: 100%;
   }
 
-  .communities-layout {
-    width: 100%;
-    margin: 0 auto 96px;
-  }
-
-  .communities-context {
-    position: static;
-    width: 100%;
-    max-height: none;
-    margin-bottom: 14px;
-  }
-
-  .communities-search {
-    top: 88px;
-  }
-
   .community-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

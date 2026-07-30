@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   createWorkspaceCommentInputSchema,
@@ -22,41 +21,21 @@ import {
   replaceLocalOwnerAttachments
 } from "@/lib/localAttachmentStore";
 import { LocalWorkspaceStoreError, withLocalWorkspaceDocumentAccess } from "@/lib/localWorkspaceStore";
+import { createSerializedExecutor, readJsonFile, writeJsonFileAtomically } from "@/lib/localJsonStore";
 
 type StoredComment = Omit<InquiryComment, "attachments" | "replies"> & { replies: StoredComment[] };
 type LocalWorkspaceCommentStore = { version: 1; notes: Record<string, StoredComment[]> };
 
 const storeRoot = path.join(process.cwd(), ".data", "workspace-comments");
 const storePath = path.join(storeRoot, "index.json");
-let storeQueue: Promise<void> = Promise.resolve();
-
-const withStoreLock = async <T>(operation: () => Promise<T>) => {
-  const run = storeQueue.then(operation, operation);
-  storeQueue = run.then(() => undefined, () => undefined);
-  return run;
-};
+const withStoreLock = createSerializedExecutor();
 
 const loadStore = async (): Promise<LocalWorkspaceCommentStore> => {
-  await mkdir(storeRoot, { recursive: true });
-  try {
-    const parsed = JSON.parse(await readFile(storePath, "utf8")) as Partial<LocalWorkspaceCommentStore>;
-    return { version: 1, notes: parsed.notes ?? {} };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, notes: {} };
-    throw error;
-  }
+  const parsed = await readJsonFile<Partial<LocalWorkspaceCommentStore>>(storePath, () => ({ version: 1, notes: {} }));
+  return { version: 1, notes: parsed.notes ?? {} };
 };
 
-const saveStore = async (store: LocalWorkspaceCommentStore) => {
-  await mkdir(storeRoot, { recursive: true });
-  const temporaryPath = `${storePath}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporaryPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-    await rename(temporaryPath, storePath);
-  } finally {
-    await unlink(temporaryPath).catch(() => undefined);
-  }
-};
+const saveStore = (store: LocalWorkspaceCommentStore) => writeJsonFileAtomically(storePath, store);
 
 const withDocumentAccess = <T>(
   noteId: string,

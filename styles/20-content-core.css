@@ -16,9 +16,7 @@
 }
 
 .segmented,
-.chip-row,
-.tag-row,
-.profile-fields {
+.tag-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -32,8 +30,7 @@
 }
 
 .segmented button,
-.segmented a,
-.chip-row button {
+.segmented a {
   min-height: 34px;
   border: 0;
   border-radius: 6px;
@@ -51,72 +48,10 @@
 }
 
 .segmented button.active,
-.segmented a.active,
-.chip-row button.active {
+.segmented a.active {
   background: var(--panel-strong);
   color: var(--ink);
   box-shadow: 0 6px 18px rgba(16, 28, 30, 0.09);
-}
-
-.search-box {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: min(320px, 100%);
-  min-height: 42px;
-  padding: 0 11px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-strong);
-  color: var(--muted);
-}
-
-.search-box input,
-.tablet-input input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ink);
-}
-
-.chip-row {
-  max-width: 760px;
-  width: 100%;
-  margin: 0 auto;
-}
-
-.chip-row button {
-  border: 1px solid var(--line);
-  background: var(--panel);
-}
-
-.folder-row {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  max-width: 920px;
-  width: 100%;
-  margin: 0 auto;
-}
-
-.folder-tile {
-  display: grid;
-  gap: 7px;
-  min-height: 118px;
-  padding: 14px;
-  border-radius: var(--radius);
-  text-align: left;
-}
-
-.folder-tile svg {
-  color: var(--aqua);
-}
-
-.folder-tile span {
-  color: var(--muted);
-  font-size: 0.82rem;
 }
 
 .post-composer {
@@ -141,9 +76,7 @@
 .post-composer textarea,
 .post-composer select,
 .comment-composer textarea,
-.comment-composer select,
-.account-form input,
-.account-form textarea {
+.comment-composer select {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--line);
@@ -155,15 +88,13 @@
 
 .post-composer input,
 .post-composer select,
-.comment-composer select,
-.account-form input {
+.comment-composer select {
   min-height: 40px;
   padding: 0 11px;
 }
 
 .post-composer textarea,
-.comment-composer textarea,
-.account-form textarea {
+.comment-composer textarea {
   min-height: 88px;
   resize: vertical;
   padding: 11px;
@@ -404,8 +335,7 @@
   overflow: hidden;
 }
 
-.attachment-frame,
-.attachment-modal-frame {
+.attachment-frame {
   display: grid;
   width: 100%;
   min-width: 0;
@@ -427,13 +357,7 @@
   max-height: 560px;
 }
 
-.attachment-modal-frame {
-  aspect-ratio: 16 / 9;
-  max-height: min(68vh, 640px);
-}
-
-.attachment-frame > *,
-.attachment-modal-frame > * {
+.attachment-frame > * {
   width: 100%;
   min-width: 0;
   max-width: 100%;
@@ -469,13 +393,6 @@
   max-height: 100%;
   object-fit: cover;
   object-position: center;
-}
-
-.attachment-media-modal img,
-.attachment-media-modal video,
-.attachment-media-expanded img,
-.attachment-media-expanded video {
-  object-fit: contain;
 }
 
 .attachment-document {
@@ -1401,17 +1318,7 @@
   padding-bottom: 0;
 }
 
-.attachment-modal-frame .attachment-media,
-.attachment-modal-frame .attachment-document {
-  max-height: min(68vh, 640px);
-}
-
-.attachment-modal-frame .attachment-document pre {
-  max-height: min(58vh, 560px);
-}
-
-.tag-row span,
-.profile-fields span {
+.tag-row span {
   display: inline-flex;
   align-items: center;
   min-height: 27px;
@@ -1483,9 +1390,7 @@
   font-weight: 750;
 }
 
-.detail-main,
-.detail-side,
-.side-panel {
+.detail-main {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-strong);
@@ -1525,22 +1430,6 @@
   padding: 6px 8px 6px 0;
   text-align: left;
   text-decoration: none;
-}
-
-.gathering-reason {
-  margin: 24px 0 0;
-  padding: 16px;
-  border-left: 3px solid var(--bronze);
-  background: color-mix(in srgb, var(--bronze) 10%, transparent);
-  color: var(--ink);
-  line-height: 1.6;
-}
-
-.detail-body {
-  margin: 24px 0 0;
-  color: var(--muted);
-  font-size: 1.02rem;
-  line-height: 1.8;
 }
 
 .detail-main > .social-actions {

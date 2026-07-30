@@ -45,11 +45,12 @@ import {
   type CreateNotificationInput
 } from "../services/notificationDelivery";
 import { transitionCommentAction } from "./actions";
-import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
+import { communityEventScope, stageCommunityProfileInvalidation } from "./communities";
 import { assertCommunityCommentDeletion } from "./communityAuthorization";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import { resolveNativeDocumentCitations } from "../services/nativeCitations";
-import { actorHandle, commentTreesFromRows, ensureLiveData, getInitialState, getPostConversationAttachments, getProfileByHandle, newId, rowToAttachment, rowToItem, type CommentRow, type SnapshotRow } from "./foundation";
+import { actorHandle, ensureLiveData, getInitialState, getProfileByHandle, newId, rowToAttachment, rowToItem } from "./foundation";
+import { assertPostReadableBy, loadLockedPostConversation } from "./postConversation";
 type ActionMutationResult = {
   item: InquiryItemContract;
   activity?: CanonicalActionActivityContract;
@@ -94,13 +95,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         message: "Private comment attachments require protected delivery before they can be published."
       });
     }
-    if (existing.communityId && existing.postType !== "paper") await assertCommunityParticipation(existing.communityId, handle);
-    if (
-      (existing.room === "office" || existing.kind === "draft") &&
-      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
+    await assertPostReadableBy(existing, handle, "participate");
     const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
     const nextMetrics = { ...existing.metrics, critiques: nextCritiques };
     const nextSignals = updateSignalValue(existing.signals, "Critiques", nextCritiques);
@@ -135,85 +130,14 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
       await client.query("COMMIT");
       return claim.response;
     }
-    const postResult = await client.query<SnapshotRow>(
-      `SELECT
-        id, revision, kind, post_type AS "postType", room, community_id AS "communityId",
-        title,
-        author_handle AS "authorHandle",
-        author_name AS "authorName",
-        affiliation,
-        date_label AS "dateLabel",
-        created_at AS "createdAt",
-        edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        status,
-        metrics,
-        gathering_reason AS "gatheringReason",
-        excerpt,
-        body, content_document AS "document",
-        tags,
-        signals,
-        claims,
-        objections,
-        evidence,
-        tests,
-        forks,
-        saved,
-        saved_by AS "savedBy",
-        signaled_by AS "signaledBy",
-        forked_by AS "forkedBy",
-        quote, patronage, opportunity, design_assignment AS "designAssignment"
-       FROM posts
-       WHERE id = $1
-       FOR UPDATE`,
-      [postId]
-    );
-
-    const row = postResult.rows[0];
-    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-
-    const commentsResult = await client.query<CommentRow>(
-      `SELECT
-        id,
-        revision,
-        post_id AS "postId",
-        parent_id AS "parentId",
-        author_handle AS "authorHandle",
-        author_name AS "authorName",
-        stance,
-        body, content_document AS "document",
-        metrics,
-        saved_by AS "savedBy",
-        signaled_by AS "signaledBy",
-        forked_by AS "forkedBy",
-        quote,
-        edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        created_at AS "createdAt"
-       FROM comments
-       WHERE post_id = $1
-       ORDER BY created_at ASC`,
-      [postId]
-    );
-    const [commentAttachments, postAttachments] = await getPostConversationAttachments(
-      client,
-      postId,
-      commentsResult.rows
-    );
-    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
-    const existingComments = commentsByPost.get(postId) ?? [];
-    const lockedItem = rowToItem(row, existingComments);
+    const {
+      row,
+      comments: existingComments,
+      postAttachments,
+      item: lockedItem
+    } = await loadLockedPostConversation(client, postId, handle, "participate");
     if (isDeletedPost(lockedItem)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be commented on." });
-    }
-    if (lockedItem.communityId && lockedItem.postType !== "paper") {
-      await assertCommunityParticipation(lockedItem.communityId, handle);
-    }
-    if (
-      (lockedItem.room === "office" || lockedItem.kind === "draft") &&
-      (!lockedItem.authorHandle || cleanHandle(lockedItem.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
     }
     if (requestedAttachmentIds.length && (lockedItem.room === "office" || lockedItem.kind === "draft")) {
       throw new TRPCError({
@@ -446,13 +370,7 @@ export const updateComment = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
-    if (
-      (existing.room === "office" || existing.kind === "draft") &&
-      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
+    await assertPostReadableBy(existing, handle);
     const original = findCommentInTree(existing.comments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) {
@@ -484,43 +402,8 @@ export const updateComment = async (
       await client.query("COMMIT");
       return claim.response;
     }
-    const postResult = await client.query<SnapshotRow>(
-      `SELECT
-        id, revision, kind, post_type AS "postType", room, community_id AS "communityId", title, author_handle AS "authorHandle", author_name AS "authorName",
-        affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
-        claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity,
-        design_assignment AS "designAssignment"
-       FROM posts
-       WHERE id = $1
-       FOR UPDATE`,
-      [postId]
-    );
-    const row = postResult.rows[0];
-    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
-    if (
-      (row.room === "office" || row.kind === "draft") &&
-      (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
-
-    const commentsResult = await client.query<CommentRow>(
-      `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
-        author_name AS "authorName", stance, body, content_document AS "document", metrics, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
-        deleted_at AS "deletedAt", created_at AS "createdAt"
-       FROM comments
-       WHERE post_id = $1
-       ORDER BY created_at ASC`,
-      [postId]
-    );
-    const [commentAttachments, postAttachments] = await getPostConversationAttachments(client, postId, commentsResult.rows);
-    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
-    const existingComments = commentsByPost.get(postId) ?? [];
+    const { row, comments: existingComments, postAttachments } =
+      await loadLockedPostConversation(client, postId, handle);
     const original = findCommentInTree(existingComments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) {
@@ -722,13 +605,7 @@ export const deleteComment = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
-    if (
-      (existing.room === "office" || existing.kind === "draft") &&
-      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
+    await assertPostReadableBy(existing, handle);
     const original = findCommentInTree(existing.comments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) return existing;
@@ -758,43 +635,8 @@ export const deleteComment = async (
       await client.query("COMMIT");
       return claim.response;
     }
-    const postResult = await client.query<SnapshotRow>(
-      `SELECT
-        id, revision, kind, post_type AS "postType", room, community_id AS "communityId", title, author_handle AS "authorHandle", author_name AS "authorName",
-        affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
-        claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity,
-        design_assignment AS "designAssignment"
-       FROM posts
-       WHERE id = $1
-       FOR UPDATE`,
-      [postId]
-    );
-    const row = postResult.rows[0];
-    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
-    if (
-      (row.room === "office" || row.kind === "draft") &&
-      (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
-
-    const commentsResult = await client.query<CommentRow>(
-      `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
-        author_name AS "authorName", stance, body, content_document AS "document", metrics, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
-        deleted_at AS "deletedAt", created_at AS "createdAt"
-       FROM comments
-       WHERE post_id = $1
-       ORDER BY created_at ASC`,
-      [postId]
-    );
-    const [commentAttachments, postAttachments] = await getPostConversationAttachments(client, postId, commentsResult.rows);
-    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
-    const existingComments = commentsByPost.get(postId) ?? [];
+    const { row, comments: existingComments, postAttachments } =
+      await loadLockedPostConversation(client, postId, handle);
     const original = findCommentInTree(existingComments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) {
@@ -958,13 +800,7 @@ export const applyCommentAction = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
-    if (
-      (existing.room === "office" || existing.kind === "draft") &&
-      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
+    await assertPostReadableBy(existing, handle);
     const original = findCommentInTree(existing.comments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) return { item: existing };
@@ -996,43 +832,8 @@ export const applyCommentAction = async (
       await client.query("COMMIT");
       return claim.response;
     }
-    const postResult = await client.query<SnapshotRow>(
-      `SELECT
-        id, revision, kind, post_type AS "postType", room, community_id AS "communityId", title, author_handle AS "authorHandle", author_name AS "authorName",
-        affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
-        claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity,
-        design_assignment AS "designAssignment"
-       FROM posts
-       WHERE id = $1
-       FOR UPDATE`,
-      [postId]
-    );
-    const row = postResult.rows[0];
-    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
-    if (
-      (row.room === "office" || row.kind === "draft") &&
-      (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
-
-    const commentsResult = await client.query<CommentRow>(
-      `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
-        author_name AS "authorName", stance, body, content_document AS "document", metrics, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
-        deleted_at AS "deletedAt", created_at AS "createdAt"
-       FROM comments
-       WHERE post_id = $1
-       ORDER BY created_at ASC`,
-      [postId]
-    );
-    const [commentAttachments, postAttachments] = await getPostConversationAttachments(client, postId, commentsResult.rows);
-    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
-    const existingComments = commentsByPost.get(postId) ?? [];
+    const { row, comments: existingComments, postAttachments } =
+      await loadLockedPostConversation(client, postId, handle);
     const original = findCommentInTree(existingComments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) {

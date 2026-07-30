@@ -55,7 +55,7 @@ import {
 import { assertCanonicalOpportunityUpdate, createOpportunityProjection, opportunityPostStatus, updateOpportunityProjection } from "../services/opportunityPosts";
 import { resolveNativeDocumentCitations } from "../services/nativeCitations";
 import { transitionPostAction } from "./actions";
-import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
+import { assertCommunityParticipation, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
 import { assertCommunityPostDeletion } from "./communityAuthorization";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import {
@@ -71,26 +71,19 @@ import {
   rowToItem,
   searchablePostText,
   type AttachmentRow,
-  type CommentRow,
-  type SnapshotRow
+  type CommentRow
 } from "./foundation";
+import {
+  assertPostReadableBy,
+  loadLockedPost,
+  loadLockedPostConversation
+} from "./postConversation";
 type ActionMutationResult = {
   item: InquiryItemContract;
   activity?: CanonicalActionActivityContract;
 };
 const postNotificationBody = (item: Pick<InquiryItemContract, "title" | "body">) =>
   item.title || item.body.trim().slice(0, 240);
-
-const lockedPostSelect = `SELECT
-  id, revision, kind, post_type AS "postType", room, community_id AS "communityId", title, author_handle AS "authorHandle", author_name AS "authorName",
-  affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt", deleted_at AS "deletedAt",
-  status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
-  claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-  signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity,
-  design_assignment AS "designAssignment"
- FROM posts
- WHERE id = $1
- FOR UPDATE`;
 
 export const createPost = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = createPostInputSchema.parse(rawInput);
@@ -357,13 +350,7 @@ export const applyPostAction = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
-    if (
-      (existing.room === "office" || existing.kind === "draft") &&
-      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
+    await assertPostReadableBy(existing, handle);
     if (isDeletedPost(existing)) return { item: existing };
     if (input.action === "read" && !recordMemoryContentView("post", postId, handle)) {
       return { item: existing };
@@ -391,52 +378,7 @@ export const applyPostAction = async (
       await client.query("COMMIT");
       return claim.response;
     }
-    const postResult = await client.query<SnapshotRow>(lockedPostSelect, [postId]);
-
-    const row = postResult.rows[0];
-    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
-
-    const commentsResult = await client.query<CommentRow>(
-      `SELECT
-        id,
-        revision,
-        post_id AS "postId",
-        parent_id AS "parentId",
-        author_handle AS "authorHandle",
-        author_name AS "authorName",
-        stance,
-        body,
-        content_document AS "document",
-        metrics,
-        saved_by AS "savedBy",
-        signaled_by AS "signaledBy",
-        forked_by AS "forkedBy",
-        quote,
-        edited_at AS "editedAt",
-        deleted_at AS "deletedAt",
-        created_at AS "createdAt"
-       FROM comments
-       WHERE post_id = $1
-       ORDER BY created_at ASC`,
-      [postId]
-    );
-    const [commentAttachments, postAttachments] = await Promise.all([
-      getActiveAttachmentsByOwner(client, "comment", commentsResult.rows.map((comment) => comment.id)),
-      getActiveAttachmentsByOwner(client, "post", [postId])
-    ]);
-    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
-    const existing = rowToItem(
-      row,
-      commentsByPost.get(postId) ?? [],
-      postAttachments.get(postId) ?? []
-    );
-    if (
-      (existing.room === "office" || existing.kind === "draft") &&
-      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
+    const { row, item: existing } = await loadLockedPostConversation(client, postId, handle);
     if (isDeletedPost(existing)) {
       updated = existing;
       await completeMutation(client, handle, mutation, { item: updated });
@@ -624,13 +566,7 @@ export const updatePost = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
-    if (
-      (existing.room === "office" || existing.kind === "draft") &&
-      (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
+    await assertPostReadableBy(existing, handle);
     if (isDeletedPost(existing)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be edited." });
     }
@@ -670,16 +606,7 @@ export const updatePost = async (
       await client.query("COMMIT");
       return claim.response;
     }
-    const postResult = await client.query<SnapshotRow>(lockedPostSelect, [postId]);
-    const row = postResult.rows[0];
-    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
-    if (
-      (row.room === "office" || row.kind === "draft") &&
-      (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
+    const row = await loadLockedPost(client, postId, handle);
     if (row.deletedAt) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be edited." });
     }
@@ -921,7 +848,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
+    await assertPostReadableBy(existing, handle);
     if (isDeletedPost(existing)) return existing;
     if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
       await assertCommunityPostDeletion(existing, handle);
@@ -943,38 +870,9 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
       await client.query("COMMIT");
       return claim.response;
     }
-    const postResult = await client.query<SnapshotRow>(lockedPostSelect, [postId]);
-    const row = postResult.rows[0];
-    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
-    if (
-      (row.room === "office" || row.kind === "draft") &&
-      (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
-    ) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    }
-
-    const commentsResult = await client.query<CommentRow>(
-      `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
-        author_name AS "authorName", stance, body, content_document AS "document", metrics, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
-        deleted_at AS "deletedAt", created_at AS "createdAt"
-       FROM comments
-       WHERE post_id = $1
-       ORDER BY created_at ASC`,
-      [postId]
-    );
-    const [commentAttachments, postAttachments] = await Promise.all([
-      getActiveAttachmentsByOwner(client, "comment", commentsResult.rows.map((comment) => comment.id)),
-      getActiveAttachmentsByOwner(client, "post", [postId])
-    ]);
-    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
-    const existing = rowToItem(
-      row,
-      commentsByPost.get(postId) ?? [],
-      postAttachments.get(postId) ?? []
-    );
-    const commentIds = commentsResult.rows.map((comment) => comment.id);
+    const { row, commentRows, item: existing } =
+      await loadLockedPostConversation(client, postId, handle);
+    const commentIds = commentRows.map((comment) => comment.id);
     const applicationRows = row.opportunity
       ? await client.query<{ id: string }>(`SELECT id::text FROM opportunity_applications WHERE post_id = $1 FOR UPDATE`, [postId])
       : { rows: [] };

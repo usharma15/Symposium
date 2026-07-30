@@ -1,8 +1,8 @@
 @import "../styles/00-foundations-entry.css";
-@import "../styles/10-legacy-shell.css";
-@import "../styles/20-legacy-content.css";
-@import "../styles/30-legacy-discussion-profile.css";
-@import "../styles/40-legacy-responsive.css";
+@import "../styles/10-shell-core.css";
+@import "../styles/20-content-core.css";
+@import "../styles/30-discussion-profile.css";
+@import "../styles/40-core-responsive.css";
 @import "../styles/50-immersive-shell.css";
 @import "../styles/60-immersive-communities-feed.css";
 @import "../styles/70-immersive-content-profile.css";

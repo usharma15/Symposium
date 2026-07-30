@@ -891,9 +891,7 @@
 
 .symposium-shell[data-view="assistant"] :is(
   .search-launcher,
-  .new-post-launcher,
-  .world-rail,
-  .movement-pad
+  .new-post-launcher
 ) {
   display: none;
 }

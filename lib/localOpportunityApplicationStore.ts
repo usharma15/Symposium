@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { OpportunityApplicationContract } from "@/packages/contracts/src";
 import { getSnapshot } from "@/lib/dataStore";
@@ -8,6 +7,7 @@ import {
   localAttachmentsForOwner,
   replaceLocalOwnerAttachments
 } from "@/lib/localAttachmentStore";
+import { createSerializedExecutor, readJsonFile, writeJsonFileAtomically } from "@/lib/localJsonStore";
 
 type StoredApplication = Omit<OpportunityApplicationContract, "attachments" | "comments"> & {
   comments: OpportunityApplicationContract["comments"];
@@ -16,37 +16,20 @@ type StoredApplication = Omit<OpportunityApplicationContract, "attachments" | "c
 type Store = { version: 1; applications: Record<string, StoredApplication> };
 const root = path.join(process.cwd(), ".data", "opportunity-applications");
 const indexPath = path.join(root, "index.json");
-let queue: Promise<void> = Promise.resolve();
 
 export class LocalOpportunityApplicationError extends Error {
   status: number;
   constructor(message: string, status = 400) { super(message); this.status = status; }
 }
 
-const withLock = async <T>(operation: () => Promise<T>) => {
-  const run = queue.then(operation, operation);
-  queue = run.then(() => undefined, () => undefined);
-  return run;
-};
+const withLock = createSerializedExecutor();
 
 const load = async (): Promise<Store> => {
-  await mkdir(root, { recursive: true });
-  try {
-    const parsed = JSON.parse(await readFile(indexPath, "utf8")) as Partial<Store>;
-    return { version: 1, applications: parsed.applications ?? {} };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, applications: {} };
-    throw error;
-  }
+  const parsed = await readJsonFile<Partial<Store>>(indexPath, () => ({ version: 1, applications: {} }));
+  return { version: 1, applications: parsed.applications ?? {} };
 };
 
-const save = async (store: Store) => {
-  const temporary = `${indexPath}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-    await rename(temporary, indexPath);
-  } finally { await unlink(temporary).catch(() => undefined); }
-};
+const save = (store: Store) => writeJsonFileAtomically(indexPath, store);
 
 const postFor = async (postId: string) => {
   const snapshot = await getSnapshot();

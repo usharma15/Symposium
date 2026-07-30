@@ -1,0 +1,75 @@
+/* Responsive rules for the established presentation layer. */
+
+@media (max-width: 1120px) {
+  .detail-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    --brand-nav-slot: 112px;
+    top: 10px;
+    left: 14px;
+    right: 14px;
+  }
+
+  .brand {
+    min-width: 0;
+    max-width: 112px;
+  }
+
+  .brand small,
+  .profile-button span,
+  .pocket span,
+  .sync-status {
+    display: none;
+  }
+
+  .stage {
+    width: calc(100vw - 20px);
+    padding: 78px 0 96px;
+  }
+
+  .detail-main,
+  .profile-hero {
+    padding: 22px;
+  }
+
+  .composer-topline,
+  .comment-composer-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .post-composer select,
+  .comment-composer select {
+    width: 100%;
+    max-width: none;
+  }
+
+  .feed-post {
+    padding: 14px 12px;
+  }
+
+  .social-actions {
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding-bottom: 2px;
+  }
+
+  .profile-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-hero h1 {
+    font-size: 2.2rem;
+  }
+
+  .pocket {
+    bottom: 70px;
+    width: 46px;
+    justify-content: center;
+    padding: 0;
+  }
+}

@@ -16,8 +16,7 @@
 }
 
 .search-modal,
-.profile-settings-modal,
-.messages-modal {
+.profile-settings-modal {
   width: min(720px, calc(100vw - 48px));
   max-height: min(76vh, 760px);
   overflow: auto;
@@ -31,8 +30,7 @@
 }
 
 .search-modal header,
-.profile-settings-modal header,
-.messages-modal header {
+.profile-settings-modal header {
   position: sticky;
   top: 0;
   z-index: 2;
@@ -68,8 +66,7 @@
 }
 
 .search-modal header button,
-.profile-settings-modal header button,
-.messages-modal header button {
+.profile-settings-modal header button {
   display: grid;
   place-items: center;
   width: 40px;
@@ -79,69 +76,9 @@
   background: rgba(255, 255, 255, 0.62);
 }
 
-.messages-modal {
-  width: min(500px, calc(100vw - 48px));
-}
-
-.messages-modal header span {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink);
-  font-weight: 900;
-}
-
-.message-list {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-}
-
-.message-thread {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-  width: 100%;
-  border: 1px solid rgba(20, 32, 31, 0.12);
-  border-radius: 8px;
-  padding: 11px;
-  background: rgba(255, 253, 245, 0.62);
-  color: var(--ink);
-  text-align: left;
-  text-decoration: none;
-}
-
-.message-thread.active,
-.message-thread:hover,
-.message-thread:focus-visible {
-  border-color: rgba(34, 128, 138, 0.44);
-  background: rgba(224, 246, 244, 0.58);
-}
-
-.message-thread > span:not(.avatar) {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.message-thread strong {
-  color: var(--ink);
-  font-size: 0.95rem;
-}
-
-.message-thread small,
-.message-thread em {
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-style: normal;
-  line-height: 1.35;
-}
-
 .symposium-shell.night .community-layer > header button,
 .symposium-shell.night .community-card-topline strong,
-.symposium-shell.night .selected-community-header h1,
-.symposium-shell.night .community-call-panel div strong {
+.symposium-shell.night .selected-community-header h1 {
   color: #fff8ea;
 }
 
@@ -158,13 +95,11 @@
 }
 
 .symposium-shell.night .community-field,
-.symposium-shell.night .selected-community-header > span,
-.symposium-shell.night .community-call-panel div span {
+.symposium-shell.night .selected-community-header > span {
   color: rgba(246, 234, 212, 0.78);
 }
 
 .symposium-shell.night .community-summary,
-.symposium-shell.night .communities-context p,
 .symposium-shell.night .selected-community-header p {
   color: rgba(246, 234, 212, 0.82);
 }
@@ -185,24 +120,6 @@
   border-color: rgba(255, 253, 245, 0.22);
   background: rgba(245, 239, 226, 0.16);
   color: #fff8ea;
-}
-
-.symposium-shell.night .community-call-panel {
-  border-color: rgba(255, 253, 245, 0.22);
-  background: rgba(245, 239, 226, 0.14);
-}
-
-.symposium-shell.night .community-call-panel button {
-  border-color: rgba(255, 253, 245, 0.34);
-  background: rgba(245, 239, 226, 0.84);
-  color: #11191a;
-}
-
-.symposium-shell.night .community-call-panel button:disabled {
-  border-color: rgba(255, 253, 245, 0.16);
-  background: rgba(245, 239, 226, 0.14);
-  color: rgba(246, 234, 212, 0.52);
-  opacity: 1;
 }
 
 .symposium-shell.night .feed-post,
@@ -263,43 +180,6 @@
 
 .symposium-shell.night .comment-card.highlighted {
   background: rgba(131, 203, 209, 0.12);
-}
-
-.symposium-shell.night .messages-modal {
-  border-color: rgba(255, 253, 245, 0.22);
-  background:
-    linear-gradient(180deg, rgba(28, 30, 29, 0.95), rgba(13, 17, 20, 0.9)),
-    rgba(13, 17, 20, 0.92);
-  color: #fff8ea;
-}
-
-.symposium-shell.night .messages-modal header {
-  border-bottom-color: rgba(255, 253, 245, 0.16);
-  background: rgba(16, 20, 21, 0.88);
-}
-
-.symposium-shell.night .messages-modal header span,
-.symposium-shell.night .message-thread strong {
-  color: #fff8ea;
-}
-
-.symposium-shell.night .messages-modal header button {
-  border-color: rgba(255, 253, 245, 0.18);
-  background: rgba(245, 239, 226, 0.12);
-  color: #fff8ea;
-}
-
-.symposium-shell.night .message-thread {
-  border-color: rgba(255, 253, 245, 0.18);
-  background:
-    linear-gradient(135deg, rgba(245, 239, 226, 0.16), rgba(245, 239, 226, 0.08)),
-    rgba(12, 17, 19, 0.72);
-  color: #fff8ea;
-}
-
-.symposium-shell.night .message-thread small,
-.symposium-shell.night .message-thread em {
-  color: rgba(246, 234, 212, 0.76);
 }
 
 .search-results {

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
@@ -20,6 +20,7 @@ import { profile, profilesByName, researchCommunities, type ResearchCommunity, t
 import { seededCommunityCallMap } from "@/lib/communityFixtures";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { activeCommunityAnnouncements } from "@/lib/communityAnnouncements";
+import { createSerializedExecutor, readJsonFile, writeJsonFileAtomically } from "@/lib/localJsonStore";
 
 type StoredMembership = {
   status: Exclude<CommunityMembershipStatusContract, "none"> | "rejected" | "removed";
@@ -42,12 +43,7 @@ const historicalCommunitySnapshotPath = process.env.VERCEL
   ? path.join("/tmp", "historical-world-v1-communities.snapshot.json")
   : path.join(process.cwd(), ".data", "snapshots", "historical-world-v1-communities.json");
 
-let queue: Promise<void> = Promise.resolve();
-const withLock = <T>(operation: () => Promise<T>) => {
-  const result = queue.then(operation, operation);
-  queue = result.then(() => undefined, () => undefined);
-  return result;
-};
+const withLock = createSerializedExecutor();
 
 const seedState = (): LocalCommunityState => ({
   version: 6,
@@ -72,7 +68,10 @@ const seedState = (): LocalCommunityState => ({
 
 const readState = async (): Promise<LocalCommunityState> => {
   try {
-    const parsed = JSON.parse(await readFile(storagePath, "utf8")) as Omit<Partial<LocalCommunityState>, "version"> & { version?: number };
+    const parsed = await readJsonFile<Omit<Partial<LocalCommunityState>, "version"> & { version?: number }>(
+      storagePath,
+      seedState
+    );
     if (!Array.isArray(parsed.communities) || !parsed.memberships || !Array.isArray(parsed.calls)) return seedState();
     const seeded = seedState();
     if (parsed.version !== 6) {
@@ -125,12 +124,7 @@ const readState = async (): Promise<LocalCommunityState> => {
   }
 };
 
-const writeState = async (state: LocalCommunityState) => {
-  await mkdir(path.dirname(storagePath), { recursive: true });
-  const temporaryPath = `${storagePath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  await rename(temporaryPath, storagePath);
-};
+const writeState = (state: LocalCommunityState) => writeJsonFileAtomically(storagePath, state);
 
 const projectCommunity = (state: LocalCommunityState, community: ResearchCommunity, rawHandle?: string) => {
   const handle = rawHandle ? cleanHandle(rawHandle) : "";
