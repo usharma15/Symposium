@@ -4,25 +4,25 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Implemented and verified in the current worktree; exact-commit, clean-checkout, CI, push, deployment, and production verification remain pending |
+| Status | Released and closed; exact-SHA local/CI/deployment/readiness evidence reconciled, with explicit production-proof limits |
 | Prepared / updated | July 29, 2026 |
 | Repository | `/Users/udayansharma/Documents/Science Rebirth` |
 | Branch | `codex/refactor-pass-02` |
 | Exact baseline | `10fdc8fd2952a61ad3b47a86988926c8825c74b6` |
-| Candidate commit | Pending |
+| Released commit | `59fe7dc4bc992f0f38c556a2cf16b5f33d53b73a` |
 | Route surface | 85 Next API route files / 116 exported methods, unchanged |
 | Migration boundary | 64 migrations; latest `0064_authored_artifact_design_assignments`; no migration changed |
 | Source baseline | 461 files / 128,349 physical / 120,121 nonblank |
-| Current worktree | 465 files / 128,331 physical / 120,078 nonblank |
-| Category result | 91,113 production / 17,615 styles / 19,603 checks and tools |
-| Pass result | −18 physical / −43 nonblank; production −400, styles 0, checks +382 |
-| Pass ceiling | The exact committed candidate must remain at or below 128,331 and below the 128,349 baseline |
+| Released result | 468 files / 126,778 physical / 118,710 nonblank |
+| Category result | 90,837 production / 16,283 styles / 19,658 checks and tools |
+| Pass result | −1,571 physical / −1,411 nonblank; production −676, styles −1,332, checks +437 |
+| Pass ceiling | Ratcheted to the exact released result of 126,778 |
 | Schema boundary | No product schema change and no migration |
 | Design boundary | No Paper, Thought, Main Hall, room, Workspace, responsive, Day/Night, asset, or interaction redesign |
 | Assistant boundary | No new capability, context, tool, posting authority, messaging authority, or autonomy |
 
 This file is the authoritative architectural charter and execution record for
-Pass 02. Detailed local proof and the still-pending release proof are kept in
+Pass 02. Detailed local and released evidence is kept in
 `docs/refactor-evidence/pass-02/`.
 
 ## 1. Purpose and success hierarchy
@@ -160,8 +160,12 @@ remain intentionally outside the generic forwarding path:
 | External URLs | Absolute untrusted URLs are never reinterpreted as first-party `/api` routes |
 | Encoded identifiers | Encoded and malformed percent sequences do not crash mapping |
 
-No `apps/api` repository, database migration, contract definition, local-store
-format, component, stylesheet, or provider configuration changed in this pass.
+The runtime-spine checkpoint did not change `apps/api`, migrations, contracts,
+local-store formats, components, stylesheets, or provider configuration. The
+immediate cumulative tranche then shared post-conversation repository reads,
+atomic local JSON writes, seed normalization, and presentation ownership
+without changing schemas, persistence formats, provider configuration,
+components, or approved rendered design.
 
 ## 5. Non-negotiable invariants
 
@@ -220,7 +224,7 @@ format, component, stylesheet, or provider configuration changed in this pass.
 | Live-required private families | Assistant routes consolidated without capability change |
 | Hybrid local/live families | Profiles, communities, calls, opportunities, Workspace, scribble, posts, comments, actions, analytics, and attachments migrated |
 | Conditional catch-all | Deliberately not used; explicit routes are safer and remain auditable |
-| Adversarial reconciliation | Implementation findings addressed; exact-commit and release reconciliation remain |
+| Adversarial reconciliation | Implementation findings addressed; exact-commit and release reconciliation complete |
 
 The route surface is mechanically locked to the baseline signatures by
 `scripts/architectureBoundaryCheck.ts`.
@@ -231,15 +235,16 @@ The route surface is mechanically locked to the baseline signatures by
 | --- | --- |
 | Implemented | Complete in the current worktree |
 | Focused local checks | Green |
-| Full local verification | 56/56 green in the dirty worktree, including typechecks, production build, and hydration |
-| Browser canary | 5/5 green in 39.0 seconds in an isolated disposable local preview |
-| Current worktree LOC | 128,331 physical; 18 below baseline |
-| Exact candidate commit | Pending |
-| Clean exact-SHA checkout | Pending |
-| GitHub CI exact SHA | Pending |
-| Pushed to `main` | Pending |
-| Render/Vercel deployment | Pending |
-| Exact-SHA readiness and production readback | Pending |
+| Full verification | 56/56 green locally and in the clean exact-SHA GitHub run |
+| Browser canary | 5/5 green locally and in the clean exact-SHA GitHub run |
+| Extended presentation audit | Green across sixteen representative routes and responsive/overlay states |
+| Released LOC | 126,778 physical; 1,571 below the Pass 02 baseline |
+| Exact candidate commit | `59fe7dc4bc992f0f38c556a2cf16b5f33d53b73a` |
+| Clean exact-SHA checkout | Green |
+| GitHub CI exact SHA | Run `30510959884`, required job success, retained artifact digest recorded |
+| Pushed to `main` | Complete |
+| Render/Vercel deployment | Exact-SHA success |
+| Exact-SHA readiness and production readback | Strict ready, 64/64 migrations, no issues/warnings, representative routes healthy |
 
 The browser suite proves:
 
@@ -252,33 +257,32 @@ The browser suite proves:
 - no unexpected canary console, page, request, hydration, skipped, flaky, or
   unexpected failures.
 
-It does not prove process-restart persistence, Paper/comment/attachment/
-community/Workspace mutation flows in-browser, authenticated multi-session
-behavior, live Postgres transactions, durable cross-process SSE, Redis, R2,
-production Clerk, provider health, deployment identity, or production writes.
-Those boundaries are covered only to the level named in the local evidence
-record, or remain pending. Fresh browser context is not process restart.
+It does not prove every possible process-restart, Paper/comment/attachment/
+community/Workspace browser mutation, authenticated multi-session sequence,
+provider failure, or production write. Those boundaries are covered only to
+the level named in the local and release evidence. Fresh browser context is not
+process restart, strict readiness is not a manufactured production mutation,
+and the authenticated Render runtime-log review was not independently retained.
 
 ## 8. LOC result and anti-gaming contract
 
-| Metric | Baseline | Worktree | Delta |
+| Metric | Baseline | Released SHA | Delta |
 | --- | ---: | ---: | ---: |
-| Files | 461 | 465 | +4 |
-| Physical | 128,349 | 128,331 | −18 |
-| Nonblank | 120,121 | 120,078 | −43 |
-| Production physical | 91,513 | 91,113 | −400 |
-| Styles physical | 17,615 | 17,615 | 0 |
-| Checks/tools physical | 19,221 | 19,603 | +382 |
+| Files | 461 | 468 | +7 |
+| Physical | 128,349 | 126,778 | −1,571 |
+| Nonblank | 120,121 | 118,710 | −1,411 |
+| Production physical | 91,513 | 90,837 | −676 |
+| Styles physical | 17,615 | 16,283 | −1,332 |
+| Checks/tools physical | 19,221 | 19,658 | +437 |
 
-The pre-execution 800–2,000-line forecast was not achieved and is not claimed.
-The real result is smaller but architecturally meaningful: 400 production
-lines were removed while stronger characterization added 382 proof lines,
-leaving the aggregate pass net negative.
+The cumulative Pass 02 result landed inside the original 800–2,000 physical
+line planning envelope. It is architecturally meaningful: shared transport,
+persistence, seed, post-conversation, and presentation ownership replaced
+overlap while stronger proof remained counted.
 
-Release still requires:
+The released result establishes:
 
-- the committed candidate to remain below 128,349;
-- the checked-in pass ceiling to ratchet to the exact committed result;
+- the checked-in pass ceiling at the exact 126,778 result;
 - an exact-ref inventory that excludes neither tracked source nor failures;
 - no LOC credit for relocation, formatting compression, weaker types,
   deleted proof, generated-source hiding, or exclusion changes.
@@ -295,7 +299,7 @@ Release still requires:
 | Token or actor leakage | Header-capture checks; stop if compatibility identity becomes production authority |
 | Error drift | Status/body/header fixtures; stop on unexplained user-visible or retry-driving change |
 | SSE or protected-delivery drift | Existing stream checks and protected redirect/denial/malformed fixtures |
-| LOC reversal | Exact inventory and ratchet; stop at or above 128,349 |
+| LOC reversal | Exact inventory and ratchet; a later pass starts at 126,778 and may not silently raise it |
 | Hidden domain policy | Adversarial review; stop if transport absorbs authorization or business meaning |
 
 ## 10. Rollback and release order
@@ -304,7 +308,7 @@ Pass 02 is schema-neutral. The previous application commit remains deployable,
 and rollback must not reset Postgres, local data, R2 objects, events, receipts,
 revisions, or browser data.
 
-Release order:
+The completed release order was:
 
 1. finalize the exact lower source ceiling and documentation;
 2. commit the candidate and record its immutable SHA;
@@ -318,23 +322,25 @@ Release order:
 8. run read-only production route/UI smoke and inspect safe provider logs;
 9. keep production writes out of release verification.
 
-If any gate fails, hold release or revert/redeploy the previous exact
-application SHA while retaining all user data. Implemented, locally verified,
-clean-checkout verified, CI verified, pushed, deployed, and production
-verified remain separate states.
+All named gates completed for the released SHA within the evidence boundaries.
+A later failure still requires hold/revert/redeploy while retaining all user
+data. Implemented, locally verified, clean-checkout verified, CI verified,
+pushed, deployed, and production verified remain separate states.
 
 ## 11. Completion contract
 
-The architecture is implemented and locally characterized. Pass 02 is not
-released or production verified until:
+The architecture is implemented, characterized, released, and read-only
+production verified:
 
-- the exact committed source remains at or below the ratcheted lower ceiling;
-- the clean exact-SHA checkout reproduces the complete local proof;
-- GitHub succeeds on that exact SHA;
-- the exact SHA is pushed and provider deployment identity is verified;
-- readiness reports 64/64 migrations and the exact release;
-- read-only production smoke and safe log review show no regression.
+- the exact committed source is at the ratcheted 126,778 ceiling;
+- the clean exact-SHA checkout reproduced the complete proof;
+- GitHub succeeded on that exact SHA;
+- the exact SHA was pushed and both provider deployment identities were
+  verified;
+- readiness reported 64/64 migrations and the exact release;
+- read-only production smoke showed no regression.
 
 No document may convert missing provider, authenticated, durable-database, or
 production evidence into a pass. Release evidence must name limitations
-rather than infer perfection.
+rather than infer perfection. The authenticated Render runtime-log review and
+new production mutations remain explicit limitations.

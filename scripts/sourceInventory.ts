@@ -28,7 +28,7 @@ export const sourcePolicy = {
   baselineRef: "8e900d0fa675b311a67029b8d2f109b4da97301e",
   baselinePhysical: 127_151,
   baselineNonblank: 119_000,
-  passMaximum: 128_331,
+  passMaximum: 126_778,
   programMaximum: 99_999
 } as const;
 
@@ -244,7 +244,7 @@ export const sourceInventoryProblems = (
   if (report.untrackedSource.length) {
     problems.push(`Untracked source is absent from the canonical metric: ${report.untrackedSource.join(", ")}`);
   }
-  const maximum = options.maximum ?? sourcePolicy.passMaximum;
+  const maximum = options.maximum ?? (options.checkBaseline ? sourcePolicy.baselinePhysical : sourcePolicy.passMaximum);
   if (report.totals.physical > maximum) {
     problems.push(`Source ceiling exceeded: ${report.totals.physical} > ${maximum}`);
   }

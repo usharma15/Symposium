@@ -4,14 +4,16 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Active program; the latest major implementation candidate has shared persistence/conversation kernels and audited presentation ownership, but the program remains incomplete above 99,999 lines |
+| Status | Active program; Pass 02 is released with shared transport, persistence, conversation, and presentation ownership, but the program remains incomplete above 99,999 lines |
 | Prepared | July 29, 2026 |
 | Execution gate | **Satisfied July 29, 2026.** “Local design lab integration” completed at the exact baseline below and the user explicitly authorized the first Ultra pass |
 | Repository | `/Users/udayansharma/Documents/Science Rebirth` |
 | Exact post-integration baseline | `8e900d0fa675b311a67029b8d2f109b4da97301e`; migration `0064_authored_artifact_design_assignments`; 127,151 canonical tracked source lines / 119,000 nonblank |
 | Pass 01 local candidate | 128,351 canonical physical / 120,123 nonblank lines across 461 files; +1,200 physical, entirely in proof/check tooling; no product or style source changed |
-| Latest current-main baseline | `c603bbec2ac83841ad5535725dabb34fdb633bdd`; 128,331 canonical physical / 120,078 nonblank lines |
-| Latest major candidate | 126,778 canonical physical / 118,710 nonblank lines; -1,553 physical / -1,368 nonblank versus current main; still 26,779 lines above the absolute completion gate |
+| Latest current-main baseline | `59fe7dc4bc992f0f38c556a2cf16b5f33d53b73a`; 468 files / 126,778 canonical physical / 118,710 nonblank lines |
+| Pass 02 cumulative result | -1,571 physical / -1,411 nonblank versus `10fdc8f`; production -676, styles -1,332, checks/tools +437 |
+| Remaining completion distance | 26,779 physical lines; 21.1% of the complete counted repository, or about 25.0% of production plus styles if proof code remains flat |
+| Sub-100k feasibility status | **Possible but unproven.** The threshold remains the program test, but no future saving is pre-credited and the code may not be contorted, weakened, or stripped to satisfy it |
 | Governing priority | Build a beautiful, sublime, ultra-capable, ultra-lean engineering system while permitting zero loss of site usage, functionality, persistence, live synchronization, design, privacy, security, accessibility, or recoverability |
 | Meaning of the LOC target | A forcing function and absolute falsifiable test of whether conceptual and implementation waste was actually removed—not the highest-order objective and never a substitute for engineering quality |
 | Required product outcome | The complete site continues to operate perfectly at every known microfeature boundary and becomes measurably faster, smoother, safer, easier to change, or more efficient wherever the refactor creates a legitimate opportunity |
@@ -47,7 +49,8 @@ The document deliberately distinguishes four kinds of statement:
 
 Time-sensitive deployment and provider state must still be verified at the
 moment it is used. The source identity, migration identity, and line-count
-arithmetic in this revision are the exact post-integration baseline.
+arithmetic in this revision distinguish the historical post-integration
+baseline from the exact current-main baseline.
 
 ---
 
@@ -1356,6 +1359,16 @@ reduction, not a fake consolidation claim.
 **Purpose:** identify which transitional paths remain required and converge
 them behind explicit adapters.
 
+**Current disposition after released Pass 02:** substantially advanced, not
+complete. `c603bbe` established the canonical request mapper, live forwarder,
+private attachment boundaries, and explicit local/live route adapters.
+`59fe7dc` established shared atomic JSON writes, shared seed normalization, and
+additional local-store consolidation. The remaining `dataStore` authority
+split, duplicated backend read/mutation projections, proof-fixture overlap,
+and conditional client/presentation retirements are chartered in
+`docs/refactor-pass-03-plan.md`. This revised plan supersedes any assumption
+that the original candidate list is still untouched.
+
 Current candidates:
 
 - the Next compatibility routes under `app/api`;
@@ -1644,6 +1657,15 @@ Stop that exhausted approach, report the evidence, return to the architecture,
 and find a deeper zero-loss simplification. Product scope, functionality,
 proof, design, persistence, and live synchronization are not the variables
 used to buy the missing reduction.
+
+The current 26,779-line gap is large enough that feasibility must be measured,
+not assumed. If the audited, zero-loss opportunity ledger eventually totals
+less than the remaining gap, record that finding plainly. Do not compensate
+with formatting compression, abstraction theater, generated-code hiding,
+weaker types, deleted checks, or reduced product scope. At that point the user,
+not the refactor implementation, decides whether the numerical policy or
+product scope changes. Until that decision, the threshold remains active but
+unproven rather than guaranteed.
 
 ---
 
