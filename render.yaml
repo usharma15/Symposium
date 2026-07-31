@@ -45,7 +45,7 @@ services:
       - key: DATABASE_APPLICATION_NAME
         value: symposium-api-render
       - key: SYMPOSIUM_SEED_ON_BOOT
-        value: "false"
+        value: "true"
       - key: SYMPOSIUM_ATTACHMENT_STORAGE
         value: r2
       - key: CLERK_SECRET_KEY

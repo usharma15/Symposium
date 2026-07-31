@@ -5,6 +5,7 @@ import { env, webOrigins } from "./config/env";
 import { assertDeploymentEnv } from "./config/preflight";
 import { ensureDatabase } from "./db/migrate";
 import { sendError } from "./http/errors";
+import { ensureLiveData } from "./repository/foundation";
 import { registerAttachmentRoutes } from "./routes/attachmentRoutes";
 import { registerCommunityRoutes } from "./routes/communityRoutes";
 import { registerEventRoutes } from "./routes/eventRoutes";
@@ -29,6 +30,19 @@ import {
   shouldSampleRequestCost,
   type RequestCostState
 } from "./services/requestCosts";
+
+type ApiPersistencePreparationOptions = {
+  seedOnBoot?: boolean;
+  ensureDatabase?: () => Promise<void>;
+  ensureLiveData?: () => Promise<void>;
+};
+
+export const prepareApiPersistence = async (options: ApiPersistencePreparationOptions = {}) => {
+  const migrate = options.ensureDatabase ?? ensureDatabase;
+  const warmLiveData = options.ensureLiveData ?? ensureLiveData;
+  await migrate();
+  if (options.seedOnBoot ?? env.SYMPOSIUM_SEED_ON_BOOT) await warmLiveData();
+};
 
 export const buildApp = async (options: { logger?: boolean } = {}) => {
   const requestCosts = new WeakMap<object, RequestCostState>();
@@ -125,7 +139,7 @@ export const buildApp = async (options: { logger?: boolean } = {}) => {
 const start = async () => {
   assertDeploymentEnv();
   const app = await buildApp();
-  await ensureDatabase();
+  await prepareApiPersistence();
   startDatabaseMaintenance();
   app.addHook("onClose", async () => {
     stopDatabaseMaintenance();

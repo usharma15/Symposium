@@ -10,6 +10,7 @@ import {
   responsePayloadBytes,
   runWithRequestCost
 } from "@/apps/api/src/services/requestCosts";
+import { prepareApiPersistence } from "@/apps/api/src/server";
 
 const server = readFileSync("apps/api/src/server.ts", "utf8");
 const rateLimit = readFileSync("apps/api/src/services/rateLimit.ts", "utf8");
@@ -97,8 +98,13 @@ assert.match(
 assert.match(apiEnv, /SYMPOSIUM_SEED_ON_BOOT: booleanFromEnv\(true\)/);
 assert.match(
   renderBlueprint,
-  /SYMPOSIUM_SEED_ON_BOOT[\s\S]*value: "false"/,
-  "Render must preserve the zero-user boundary instead of issuing fixture checks on every boot."
+  /SYMPOSIUM_SEED_ON_BOOT[\s\S]*value: "true"/,
+  "Render must prime the one-query fixture fast path before admitting user traffic."
+);
+assert.match(
+  server,
+  /await prepareApiPersistence\(\);[\s\S]*startDatabaseMaintenance\(\);[\s\S]*await app\.listen/,
+  "Schema and configured live-data priming must finish before maintenance and network admission."
 );
 assert.match(readiness, /options: \{ probeDatabase\?: boolean \}/);
 assert.match(readiness, /getCachedMigrationStatus\(\)/);
@@ -123,6 +129,44 @@ assert.match(
 );
 assert.match(profileActivityController, /includeSummary: String\(requestSummary\)/);
 assert.match(profileActivityController, /data\.items\?\.length \|\| data\.profiles/);
+
+const verifyStartupPreparation = async () => {
+  const startupCalls: string[] = [];
+  await prepareApiPersistence({
+    seedOnBoot: true,
+    ensureDatabase: async () => { startupCalls.push("migrate"); },
+    ensureLiveData: async () => { startupCalls.push("prime"); }
+  });
+  assert.deepEqual(startupCalls, ["migrate", "prime"]);
+
+  const lazyStartupCalls: string[] = [];
+  await prepareApiPersistence({
+    seedOnBoot: false,
+    ensureDatabase: async () => { lazyStartupCalls.push("migrate"); },
+    ensureLiveData: async () => { lazyStartupCalls.push("prime"); }
+  });
+  assert.deepEqual(lazyStartupCalls, ["migrate"]);
+
+  const migrationFailureCalls: string[] = [];
+  await assert.rejects(
+    prepareApiPersistence({
+      seedOnBoot: true,
+      ensureDatabase: async () => {
+        migrationFailureCalls.push("migrate");
+        throw new Error("migration failed");
+      },
+      ensureLiveData: async () => { migrationFailureCalls.push("prime"); }
+    }),
+    /migration failed/
+  );
+  assert.deepEqual(migrationFailureCalls, ["migrate"]);
+
+  await assert.rejects(prepareApiPersistence({
+    seedOnBoot: true,
+    ensureDatabase: async () => {},
+    ensureLiveData: async () => { throw new Error("priming failed"); }
+  }), /priming failed/);
+};
 
 const measuredCost = createRequestCostState();
 runWithRequestCost(measuredCost, () => {
@@ -153,4 +197,9 @@ finishDelayedQuery?.();
 assert.equal(delayedCost.queryCount, 1, "Database timing must retain the originating request after async context changes.");
 assert.equal(delayedCost.queryDurationMs, 9);
 
-console.log("Provider cost boundary checks passed.");
+const main = async () => {
+  await verifyStartupPreparation();
+  console.log("Provider cost boundary checks passed.");
+};
+
+void main();
