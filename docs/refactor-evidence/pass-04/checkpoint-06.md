@@ -67,15 +67,16 @@ owner.
 | Metric | Baseline | Candidate | Delta |
 | --- | ---: | ---: | ---: |
 | Tracked source files | 476 | 477 | +1 |
-| Physical source lines | 125,725 | 125,722 | -3 |
-| Nonblank source lines | 117,682 | 117,672 | -10 |
-| Production | 87,285 | 87,246 | -39 |
+| Physical source lines | 125,725 | 125,721 | -4 |
+| Nonblank source lines | 117,682 | 117,671 | -11 |
+| Production | 87,285 | 87,245 | -40 |
 | Styles | 16,200 | 16,200 | 0 |
 | Checks and tools | 22,240 | 22,276 | +36 |
 | `components/SymposiumV0.tsx` | 5,030 | 4,903 | -127 |
 
-The exact `sourcePolicy.passMaximum` is ratcheted to 125,722. The candidate
-remains 10,723 physical lines above the Pass 04 ceiling of 114,999, so Pass 04
+The exact `sourcePolicy.passMaximum` remains ratcheted to 125,722; this
+candidate is one line below it. The candidate remains 10,722 physical lines
+above the Pass 04 ceiling of 114,999, so Pass 04
 is explicitly incomplete.
 
 ## Verification
@@ -93,6 +94,9 @@ Final candidate results:
 - `npm run browser:canary` — 6/6 serial clean-candidate canaries passed with
   zero skipped, unexpected, flaky, or retried cases; exact report validation
   passed;
+- the navigation/PDF/history journey that failed once on the first hosted Linux
+  run passed 15/15 local stress repetitions across two equivalent corrected
+  teardown implementations, including 5/5 against the exact final candidate;
 - `npm run storage-filesystem:integration` — passed on isolated PostgreSQL 17
   through `0065_comment_deletion_reconciliation`, comprehensive read/write and
   public/private delivery checks, authorization, receipts, audit/events/ranges,
@@ -126,6 +130,14 @@ them:
 4. The first database integration selected the known non-SSL-linked PostgreSQL
    binary and failed loading `pgcrypto` before an application assertion. The
    compatible SSL-linked PostgreSQL 17 server then passed the complete harness.
+5. The first exact-SHA GitHub run passed every non-browser stage and five of six
+   canaries. Its retained Playwright trace proved that navigation and history
+   were correct, but a feed PDF range reader emitted an uncaught vendor
+   `AbortError` while its loading task was destroyed during route replacement.
+   PDF teardown now allows the finite download to settle before worker
+   destruction, without filtering diagnostics or disabling the assertion. The
+   journey then passed 10/10 stress repetitions; the source-equivalent
+   simplified final form passed another 5/5.
 
 ## Next authority
 

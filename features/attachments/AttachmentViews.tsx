@@ -1411,6 +1411,7 @@ function PdfAttachmentPreview({
     let loadingTask: import("pdfjs-dist").PDFDocumentLoadingTask | null = null;
     void loadPdfModule()
       .then((pdfjs) => {
+        if (cancelled) return null;
         const sourceUrl = new URL(resolvePdfDocumentUrl(attachment.url!, window.location.href));
         loadingTask = pdfjs.getDocument({
           url: sourceUrl.toString(),
@@ -1421,10 +1422,7 @@ function PdfAttachmentPreview({
         return loadingTask.promise;
       })
       .then(async (loadedDocument) => {
-        if (cancelled) {
-          void loadingTask?.destroy().catch(() => undefined);
-          return;
-        }
+        if (!loadedDocument || cancelled) return;
         const firstPage = await loadedDocument.getPage(1);
         const firstViewport = firstPage.getViewport({ scale: 1 });
         const firstDimensions = { width: firstViewport.width, height: firstViewport.height };
@@ -1446,7 +1444,8 @@ function PdfAttachmentPreview({
       });
     return () => {
       cancelled = true;
-      void loadingTask?.destroy().catch(() => undefined);
+      void loadingTask?.promise.then((loaded) => loaded.getDownloadInfo()).catch(() => undefined)
+        .then(() => loadingTask?.destroy()).catch(() => undefined);
     };
   }, [attachment.id, attachment.url, mode]);
 
