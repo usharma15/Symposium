@@ -39,8 +39,8 @@ const main = async () => {
   };
   const legacyStages = packageJson.scripts["verify:legacy"]?.split("&&")
     .map((command) => command.trim().replace(/^npm run /, ""));
-  assert.equal(verificationManifest.length, 67);
-  assert.equal(new Set(verificationManifest.map((stage) => stage.id)).size, 67);
+  assert.equal(verificationManifest.length, 68);
+  assert.equal(new Set(verificationManifest.map((stage) => stage.id)).size, 68);
   assert.deepEqual(verificationManifest.map((stage) => stage.script), legacyStages);
   for (const stage of verificationManifest) assert.ok(packageJson.scripts[stage.script], `${stage.script} must exist.`);
   assert.equal(selectVerificationStages(["assistant"], []).length, 8);

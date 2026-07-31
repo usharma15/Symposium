@@ -28,8 +28,8 @@ security, accessibility, and recoverability remains the highest-order gate.
 
 ## Released authority sequence
 
-The released production baseline before this persistence pass is
-`0ae293d216aab7a1741162908fdc67566a30f999`. It includes:
+The released production baseline before the Messaging authority pass is
+`8cb445f4a05220970caf940046d1c8520eca1af2`. It includes:
 
 1. canonical mutation/read-model and local persistence boundaries;
 2. canonical view and browser-history authority;
@@ -38,8 +38,12 @@ The released production baseline before this persistence pass is
 5. global live-event delivery and routing authority; and
 6. exact-user authentication, entrance, cache, read, social, and live
    admission authority;
-7. browser/runtime recovery and reconnect authority; and
-8. transient shell-surface lifecycle authority.
+7. browser/runtime recovery and reconnect authority;
+8. transient shell-surface lifecycle authority;
+9. explicit canonical/local-preview/unavailable persistence mode authority;
+   and
+10. consolidated Assistant, Conversations, and Notifications compatibility
+    route authority.
 
 `components/SymposiumV0.tsx` remains the composition root.
 The direct-Postgres Next authority is already retired. Credential-free local
@@ -125,7 +129,7 @@ Deleting it would be a product decision, not infrastructure cleanup.
 
 ## Compatibility route authority
 
-The compatibility-authority candidate retires 22 distributed Assistant,
+The released compatibility authority retires 22 distributed Assistant,
 Conversations, and Notifications route modules in favor of three explicit,
 allowlisted dispatchers. All 31 logical method contracts remain available.
 The repository now contains 66 Next route modules / 96 exported framework
@@ -143,10 +147,42 @@ protected delivery, local attachment bytes, live-stream redirection, or an
 explicit canonical retry boundary. Removing those responsibilities would
 narrow supported behavior rather than improve infrastructure.
 
+## Messaging browser authority
+
+The user explicitly reopened infrastructure work after the governing stop
+condition was satisfied in order to remove the largest remaining feature-side
+transport entanglement. The current candidate establishes one typed browser
+Messaging gateway for all conversation, message, participant, discovery,
+profile-search, read-receipt, draft, block, and attachment-cleanup operations.
+
+The cutover:
+
+- removes every raw Messaging request and API route string from
+  `features/messages/MessagesSection.tsx`;
+- centralizes route construction, request methods, actor propagation,
+  cursor/query encoding, revisions, and mutation idempotency scopes in an
+  injectable `messagingGateway`;
+- moves local message-draft keys, reads, writes, deletion, storage-failure
+  behavior, and failed-send restoration into one draft-storage authority;
+- centralizes retry classification, missing-resource recognition, and draft
+  conflict decoding at the transport boundary;
+- retains the existing live-event reconciliation, send ordering, optimistic
+  projection, recovery epochs, UI state, confirmation, and attachment upload
+  behavior; and
+- adds direct route/body/idempotency/storage/failure contract tests plus
+  architecture guards that fail if raw API or localStorage authority returns
+  to the Messaging view.
+
+This pass does not change server routes, schemas, migrations, rendered design,
+or product capability. It is an ownership cutover intended to make Messaging
+changes reviewable and safe without creating a second runtime path.
+
 ## Remaining structural sequence
 
-1. run the complete exact-SHA local, CI, browser, database, Render, and Vercel
-   proof for this compatibility-authority cutover;
-2. stop the revamp when the governing completion tests above are satisfied;
-3. reopen infrastructure only for a demonstrated failure mode or an explicit
+1. run the complete local verification and browser proof for the Messaging
+   authority candidate;
+2. merge only through protected CI, then require exact-merge-SHA Render,
+   database, production API, and Vercel proof;
+3. stop the revamp when the governing completion tests above are satisfied;
+4. reopen infrastructure only for a demonstrated failure mode or an explicit
    product/runtime decision that makes another retained boundary obsolete.

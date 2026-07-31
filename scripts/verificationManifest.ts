@@ -69,6 +69,7 @@ export const verificationManifest = [
   stage("storage-deletion:check", "content-storage"),
   stage("mutation:check", "content-storage"),
   stage("messaging:check", "collaboration"),
+  stage("messaging-gateway:check", "collaboration"),
   stage("notifications:check", "collaboration"),
   stage("content-analytics:check", "collaboration"),
   stage("note-revision:check", "collaboration"),
