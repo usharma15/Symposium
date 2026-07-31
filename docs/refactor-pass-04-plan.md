@@ -31,8 +31,8 @@ but it is not this pass.
 > profile, and analytics cross-tab transports are exact-viewer scoped; direct
 > account replacement cannot present or hydrate the previous viewer.
 > `SymposiumV0.tsx` contains no authentication or entrance transition policy
-> and is 2,279 lines. The exact candidate is 493 tracked source files / 130,139
-> physical / 121,958 nonblank. Per explicit product direction, LOC reduction is
+> and is 2,279 lines. The exact candidate is 493 tracked source files / 130,141
+> physical / 121,960 nonblank. Per explicit product direction, LOC reduction is
 > on standby: these
 > figures remain informational drift evidence, the original 114,999 completion
 > contract is not met, and no repository reduction credit or Pass 04

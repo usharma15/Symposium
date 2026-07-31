@@ -9,8 +9,8 @@ owns the browser and Clerk effects, while
 transitions and admission predicates.
 
 This is a structural checkpoint, not Pass 04 completion. LOC governance is
-explicitly on standby. The repository is 493 tracked source files / 130,139
-physical / 121,958 nonblank lines, and the application shell fell from 2,400
+explicitly on standby. The repository is 493 tracked source files / 130,141
+physical / 121,960 nonblank lines, and the application shell fell from 2,400
 to 2,279 lines. The replacement controller, reducer, cache and cross-tab
 hardening, proof stage, and browser canary are larger than the retired shell
 block. No repository LOC reduction credit is claimed. The operational source
@@ -131,6 +131,12 @@ The local release candidate passed:
 - the independent proof kernel and proof TypeScript project;
 - `npm audit --audit-level=high` with zero vulnerabilities; and
 - staged and unstaged whitespace checks.
+
+The first clean CI attempt exposed and retained a pre-existing nondeterministic
+storage-signature assertion: replacing the last character with `0` did not
+tamper a valid signature that already ended in `0`. The assertion now always
+chooses a different terminal character and explicitly proves the candidate
+differs before verifying rejection.
 
 Clean CI and exact-SHA hosted frontend/API evidence must be verified after the
 candidate is committed and pushed. The protected user-owned canary-server copy
