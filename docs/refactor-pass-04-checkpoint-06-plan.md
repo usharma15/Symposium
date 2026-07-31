@@ -4,13 +4,15 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Prepared only; implementation has not started |
+| Status | Slice C1 executed and verified; C2-C4 remain pending; Pass 04 is incomplete |
 | Prepared | July 30, 2026 |
 | Exact released baseline | `b0ce00548a29e2111d74c4e90acb9bcf27404bf0` |
+| Execution baseline | `b0b071c79962976f2c56b8692057225862860d7f` (documentation-only successor; identical source inventory) |
 | Baseline inventory | 476 files / 125,725 physical / 117,682 nonblank |
+| C1 candidate inventory | 477 files / 125,722 physical / 117,672 nonblank |
 | Baseline categories | 87,285 production / 16,200 styles / 22,240 checks and tools |
 | Pass 04 ceiling | 114,999 physical |
-| Remaining distance to Pass 04 ceiling | 10,726 physical |
+| Remaining distance to Pass 04 ceiling | 10,723 physical |
 | Program ceiling | 99,999 physical |
 | Remaining distance to program ceiling | 25,726 physical |
 | Selected authority | Client route, inquiry entity, mutation, live-sync, cross-tab, and profile/social coordination still owned by `SymposiumExperience` |
@@ -23,8 +25,10 @@ Documentation is excluded from the source inventory. The user-owned untracked
 canary copy must remain byte-for-byte unchanged at SHA-256
 `9ca3d8239ffb43186453d70feb5b5d8e4f023d9dc3ec411abc82c687197e2b4a`.
 
-This document prepares the next executable checkpoint. It does not claim that
-the remaining 10,726-line Pass 04 gap can be removed from the client shell.
+The C1 execution record is
+[`docs/refactor-evidence/pass-04/checkpoint-06.md`](refactor-evidence/pass-04/checkpoint-06.md).
+C2-C4 remain prepared but unexecuted. This document does not claim that
+the remaining 10,723-line Pass 04 gap can be removed from the client shell.
 Moving functions into new files is not retirement and earns no LOC credit.
 Pass 04 remains incomplete unless the exact tracked source inventory reaches
 114,999 or lower with every release gate green.

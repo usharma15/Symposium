@@ -9,6 +9,7 @@ import {
 import {
   assistantBackdropForView,
   canonicalRouteForView,
+  nextViewSnapshot,
   roomForCanonicalRoute,
   snapshotForCanonicalRoute
 } from "@/features/navigation/viewState";
@@ -158,6 +159,30 @@ assert.equal(canonicalRouteHref({ kind: "communities" }), "/communities");
 assert.deepEqual(parseCanonicalRoute("/communities"), { kind: "communities" });
 assert.deepEqual(parseCanonicalRoute("/unknown/path"), { kind: "hall" });
 
+const navigationStates = [
+  { selectedItemId: "paper-one", selectedCommentId: "comment-one" },
+  { selectedItemId: null, messagesOpen: true, selectedConversationId: "conversation-one" },
+  { messagesOpen: false, assistantOpen: true, assistantThreadId: "thread-one" },
+  { selectedProfileName: "@ada", profileSocialView: "followers" as const },
+  { assistantOpen: false, selectedProfileName: "@ada", profileTab: "papers" as const }
+].reduce(
+  (states, transition) => [...states, nextViewSnapshot(states.at(-1)!, transition)],
+  [snapshotForCanonicalRoute({ kind: "hall" })]
+);
+assert.deepEqual(
+  navigationStates.slice(1).map((state) => [
+    state.selectedCommentId, state.messagesOpen, state.selectedConversationId,
+    state.assistantOpen, state.assistantBackdrop, state.profileSocialView
+  ]),
+  [
+    ["comment-one", false, null, false, null, null],
+    [null, true, "conversation-one", false, null, null],
+    [null, false, null, true, "messages", null],
+    [null, false, null, false, null, "followers"],
+    [null, false, null, false, null, null]
+  ]
+);
+
 console.log(
   JSON.stringify(
     {
@@ -169,6 +194,7 @@ console.log(
         "post and comment round-trip",
         "profile filter and social-graph routes",
         "community routes",
+        "single view-transition authority",
         "safe fallback"
       ]
     },

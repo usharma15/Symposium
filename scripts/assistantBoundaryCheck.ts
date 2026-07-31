@@ -2269,7 +2269,7 @@ assert.match(shell, /surface: "attachment"/);
 assert.match(shell, /const toggleTablet = \(\) => \{[\s\S]*?if \(assistantOpen\)[\s\S]*?collapseAssistantToTablet\(assistantThreadId\)[\s\S]*?if \(tabletOpen\)[\s\S]*?assistantOpen: true/);
 assert.match(shell, /const assistantCollapseThreadIdRef = useRef<string \| null \| undefined>\(undefined\)/);
 assert.match(shell, /const collapseAssistantToTablet = \(threadId: string \| null\) => \{[\s\S]*?assistantCollapseThreadIdRef\.current = threadId;[\s\S]*?goBack\(\)/);
-assert.match(restoreViewBlock, /isAssistantCollapse[\s\S]*?setAssistantThreadId\([\s\S]*?collapsedAssistantThreadId/);
+assert.match(restoreViewBlock, /isAssistantCollapse[\s\S]*?replaceViewSnapshot\([\s\S]*?assistantOpen: isAssistantCollapse \? false[\s\S]*?assistantThreadId: isAssistantCollapse[\s\S]*?collapsedAssistantThreadId/);
 assert.doesNotMatch(restoreViewBlock, /setTabletOpen\(false\)/);
 assert.doesNotMatch(navigateViewBlock, /setTabletOpen\(false\)/);
 assert.match(shell, /title=\{assistantOpen \? "Collapse AI Workspace to Tablet" : tabletOpen \? "Expand AI Tablet" : "Open AI Tablet"\}/);

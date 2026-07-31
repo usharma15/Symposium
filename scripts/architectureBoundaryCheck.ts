@@ -94,6 +94,16 @@ const main = async () => {
 
   assert.deepEqual(symposiumImporters.sort(), ["app/SymposiumPage.tsx"]);
   const symposiumSource = await readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8");
+  assert.match(
+    symposiumSource,
+    /useSymposiumViewController/,
+    "Symposium view state must remain owned by the navigation controller."
+  );
+  assert.doesNotMatch(
+    symposiumSource,
+    /const \[(?:activeRoom|selectedItemId|selectedProfileName|messagesOpen|assistantOpen),/,
+    "Legacy independent view state must not return to SymposiumV0.tsx."
+  );
   assert.doesNotMatch(
     symposiumSource,
     /new\s+(?:EventSource|BroadcastChannel)\s*\(/,

@@ -53,6 +53,7 @@ export type ViewSnapshot = DetailOriginSnapshot & {
 };
 
 export const detailOriginFromSnapshot = ({ detailOrigin: _detailOrigin, ...snapshot }: ViewSnapshot): DetailOriginSnapshot => snapshot;
+const transitionValue = <T>(value: T | undefined, fallback: T) => value === undefined ? fallback : value;
 
 export const roomForAssistantBackdrop = (backdrop: AssistantBackdropId): RoomId => {
   if (backdrop === "messages") return "hall";
@@ -173,3 +174,39 @@ export const snapshotForCanonicalRoute = (
   scrollY: 0,
   detailOrigin: null
 });
+
+export const nextViewSnapshot = (
+  current: ViewSnapshot,
+  next: Partial<Omit<ViewSnapshot, "scrollY">>,
+  scrollY: number | null = 0
+): ViewSnapshot => {
+  const messagesOpen = next.messagesOpen ?? false;
+  const assistantOpen = next.assistantOpen ?? false;
+  const leavesApplicationReview =
+    next.selectedItemId !== undefined ||
+    Boolean(next.selectedProfileName || next.selectedCommunityId || messagesOpen) ||
+    Boolean(next.activeRoom && next.activeRoom !== "opportunities");
+  return {
+    ...current,
+    ...next,
+    selectedCommentId: transitionValue(next.selectedCommentId, next.selectedItemId !== undefined ? null : current.selectedCommentId),
+    applicationReviewPostId: transitionValue(next.applicationReviewPostId, leavesApplicationReview ? null : current.applicationReviewPostId),
+    selectedApplicationId: transitionValue(next.selectedApplicationId, next.applicationReviewPostId !== undefined ? null : current.selectedApplicationId),
+    profileSocialView: transitionValue(next.profileSocialView, next.selectedProfileName !== undefined ? null : current.profileSocialView),
+    messagesOpen,
+    selectedConversationId: transitionValue(next.selectedConversationId, messagesOpen ? current.selectedConversationId : null),
+    assistantOpen,
+    assistantThreadId: transitionValue(next.assistantThreadId, assistantOpen ? current.assistantThreadId : null),
+    assistantBackdrop: transitionValue(
+      next.assistantBackdrop,
+      assistantOpen
+        ? current.assistantOpen
+          ? current.assistantBackdrop ?? assistantBackdropForView(current)
+          : assistantBackdropForView(current)
+        : null
+    ),
+    scrollAnchor: null,
+    scrollY: scrollY ?? current.scrollY,
+    detailOrigin: transitionValue(next.detailOrigin, current.detailOrigin)
+  };
+};

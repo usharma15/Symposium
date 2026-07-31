@@ -109,7 +109,6 @@ import {
 } from "@/features/live-sync/inquiryActionReconciler";
 import {
   parseCanonicalRoute,
-  type AssistantBackdropId,
   type CanonicalRoute,
   type ProfileSocialView
 } from "@/features/navigation/canonicalRoute";
@@ -117,14 +116,12 @@ import {
   assistantBackdropForView,
   canonicalRouteForView as routeForViewSnapshot,
   detailOriginFromSnapshot,
-  officeModeForCanonicalRoute,
-  roomForCanonicalRoute,
+  nextViewSnapshot,
   snapshotForCanonicalRoute,
-  type DetailOriginSnapshot,
-  type WorkspaceViewSnapshot,
   type OfficeMode,
   type ViewSnapshot
 } from "@/features/navigation/viewState";
+import { useSymposiumViewController } from "@/features/navigation/useSymposiumViewController";
 import { selectActiveProfile } from "@/features/identity/selectActiveProfile";
 import { persistCachedIdentity, readCachedIdentity } from "@/features/identity/cachedIdentity";
 import { useInquiryEntityStore } from "@/features/entities/useInquiryEntityStore";
@@ -584,40 +581,40 @@ function SymposiumExperience({
     !clerkEnabled || (authLoaded && (!isSignedIn || signedIn))
   );
   const { replayEntrance, shouldPlayEntrance } = useBrowserSessionEntrance(initialShouldPlayEntrance);
-  const [activeRoom, setActiveRoom] = useState<RoomId>(() =>
-    roomForCanonicalRoute(
-      initialRoute,
-      (postId) => inquiryItems.find((item) => item.id === postId)?.room
-    )
+  const {
+    state: viewState,
+    replaceSnapshot: replaceViewSnapshot,
+    setField: setViewField,
+    setWorkspaceView
+  } = useSymposiumViewController(
+    initialRoute,
+    (postId) => inquiryItems.find((item) => item.id === postId)?.room
   );
+  const {
+    activeRoom,
+    applicationReviewPostId,
+    assistantBackdrop,
+    assistantOpen,
+    assistantThreadId,
+    commentSegmentStacks,
+    messagesOpen,
+    officeMode,
+    profileSocialView,
+    profileTab: profileActiveTab,
+    selectedApplicationId,
+    selectedCommentId,
+    selectedCommunityId,
+    selectedConversationId,
+    selectedItemId,
+    selectedProfileName,
+    workspaceView
+  } = viewState;
   const { items, itemsRef, replaceItems } = useInquiryEntityStore(initialBoundedInquiryItems);
   const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
   const [currentProfile, setCurrentProfile] = useState<ResearchProfile>(profile);
   const [followingHandles, setFollowingHandles] = useState<string[]>([]);
   const [profileSocialLists, setProfileSocialLists] = useState<Record<string, ProfileSocialLists>>({});
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
-  const [officeMode, setOfficeMode] = useState<OfficeMode>(officeModeForCanonicalRoute(initialRoute));
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(
-    initialRoute.kind === "post" ? initialRoute.postId : null
-  );
-  const [applicationReviewPostId, setApplicationReviewPostId] = useState<string | null>(initialRoute.kind === "opportunityApplications" ? initialRoute.postId : null);
-  const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(initialRoute.kind === "opportunityApplications" ? initialRoute.applicationId ?? null : null);
-  const [selectedCommentId, setSelectedCommentId] = useState<string | null>(
-    initialRoute.kind === "post" ? initialRoute.commentId ?? null : null
-  );
-  const [detailOrigin, setDetailOrigin] = useState<DetailOriginSnapshot | null>(null);
-  const [workspaceView, setWorkspaceView] = useState<WorkspaceViewSnapshot>(() => ({
-    section: "all",
-    selectedNotebookId: null,
-    selectedDocumentId: initialRoute.kind === "workspace" ? initialRoute.noteId ?? null : null,
-    editSelected: false,
-    expandedNotebookIds: [],
-    query: ""
-  }));
-  const [commentSegmentStacks, setCommentSegmentStacks] = useState<CommentSegmentStacks>({});
-  const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(
-    initialRoute.kind === "community" ? initialRoute.communityId : null
-  );
   const [communitiesExpanded, setCommunitiesExpanded] = useState(false);
   const [communityQuery, setCommunityQuery] = useState("");
   const {
@@ -635,13 +632,6 @@ function SymposiumExperience({
     setSelectedCommunityFeedView
   } = useCommunityState(currentProfile.handle, selectedCommunityId);
   const [tabletOpen, setTabletOpen] = useState(initialRoute.kind === "assistant");
-  const [assistantOpen, setAssistantOpen] = useState(initialRoute.kind === "assistant");
-  const [assistantThreadId, setAssistantThreadId] = useState<string | null>(
-    initialRoute.kind === "assistant" ? initialRoute.threadId ?? null : null
-  );
-  const [assistantBackdrop, setAssistantBackdrop] = useState<AssistantBackdropId | null>(
-    initialRoute.kind === "assistant" ? initialRoute.backdrop ?? "hall" : null
-  );
   const [assistantOriginContext, setAssistantOriginContext] = useState<
     NonNullable<AssistantMessageInputContract["context"]> | null
   >(null);
@@ -650,8 +640,6 @@ function SymposiumExperience({
   const [quoteSelection, setQuoteSelection] = useState<QuoteSelection | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [messagesOpen, setMessagesOpen] = useState(initialRoute.kind === "messages");
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(initialRoute.kind === "messages" ? initialRoute.conversationId ?? null : null);
   const [messagesQuickOpen, setMessagesQuickOpen] = useState(false);
   const [quickConversationId, setQuickConversationId] = useState<string | null>(null);
   const [messagingEvents, setMessagingEvents] = useState<SymposiumLiveEvent[]>([]);
@@ -670,13 +658,6 @@ function SymposiumExperience({
   const [communitySearchResultIds, setCommunitySearchResultIds] = useState<string[] | null>(null);
   const [communitySearchLoading, setCommunitySearchLoading] = useState(false);
   const [feedPages, setFeedPages] = useState<Record<string, FeedPageState>>({});
-  const [selectedProfileName, setSelectedProfileName] = useState<string | null>(
-    initialRoute.kind === "profile" ? initialRoute.handle : null
-  );
-  const [profileSocialView, setProfileSocialView] = useState<ProfileSocialView | null>(
-    initialRoute.kind === "profile" ? initialRoute.social ?? null : null
-  );
-  const [profileActiveTab, setProfileActiveTab] = useState<ProfileTab>(initialRoute.kind === "profile" ? initialRoute.tab ?? "all" : "all");
   const [profileActivityRevision, setProfileActivityRevision] = useState(0);
   const [profileActivityByHandle, setProfileActivityByHandle] = useState<
     Record<string, ProfileActivitySnapshot>
@@ -1881,27 +1862,10 @@ function SymposiumExperience({
       initialRoute,
       (postId) => itemsRef.current.find((item) => item.id === postId)?.room
     );
-    setActiveRoom(snapshot.activeRoom);
-    setSelectedItemId(snapshot.selectedItemId);
-    setApplicationReviewPostId(snapshot.applicationReviewPostId);
-    setSelectedApplicationId(snapshot.selectedApplicationId);
-    setSelectedCommentId(snapshot.selectedCommentId);
-    setDetailOrigin(snapshot.detailOrigin);
-    setSelectedProfileName(snapshot.selectedProfileName);
-    setProfileSocialView(snapshot.profileSocialView);
-    setProfileActiveTab(snapshot.profileTab);
-    setOfficeMode(snapshot.officeMode);
-    setWorkspaceView(snapshot.workspaceView);
-    setSelectedCommunityId(snapshot.selectedCommunityId);
-    setMessagesOpen(snapshot.messagesOpen);
-    setSelectedConversationId(snapshot.selectedConversationId);
-    setAssistantOpen(snapshot.assistantOpen);
-    setAssistantThreadId(snapshot.assistantThreadId);
-    setAssistantBackdrop(snapshot.assistantBackdrop);
+    replaceViewSnapshot(snapshot);
     setAssistantOriginContext(null);
     commentSegmentStacksRef.current = {};
     visibleCommentSegmentStacksRef.current = {};
-    setCommentSegmentStacks({});
     resetHistory();
   };
 
@@ -2747,7 +2711,7 @@ function SymposiumExperience({
   }, [activeRoom, currentProfile.handle, selectedCommunityFeedView.query, selectedCommunityId]);
 
   const updateCommentSegmentStack = (key: string, stack: string[]) => {
-    setCommentSegmentStacks((current) => {
+    setViewField("commentSegmentStacks", (current) => {
       const currentStack = current[key] ?? [];
       if (currentStack.join("|") === stack.join("|")) return current;
 
@@ -2807,22 +2771,8 @@ function SymposiumExperience({
     }
 
     return {
-      activeRoom,
-      selectedItemId,
-      applicationReviewPostId,
-      selectedApplicationId,
-      selectedCommentId,
-      selectedProfileName,
-      profileSocialView,
+      ...viewState,
       profileTab: selectedProfileName ? profileActiveTab : "all",
-      officeMode,
-      workspaceView,
-      selectedCommunityId,
-      messagesOpen,
-      selectedConversationId,
-      assistantOpen,
-      assistantThreadId,
-      assistantBackdrop,
       commentSegmentStacks: cloneCommentSegmentStacks({
         ...commentSegmentStacksRef.current,
         ...visibleCommentSegmentStacksRef.current,
@@ -2830,7 +2780,6 @@ function SymposiumExperience({
       }),
       scrollAnchor,
       scrollY: window.scrollY,
-      detailOrigin
     };
   };
 
@@ -2861,43 +2810,30 @@ function SymposiumExperience({
     assistantCollapseThreadIdRef.current = undefined;
     dismissTransientSyncStatus();
     if (snapshot.selectedProfileName) flushPendingActivityRecency();
-    setActiveRoom(snapshot.activeRoom);
-    setSelectedItemId(snapshot.selectedItemId);
-    setApplicationReviewPostId(snapshot.applicationReviewPostId ?? null);
-    setSelectedApplicationId(snapshot.selectedApplicationId ?? null);
-    setSelectedCommentId(snapshot.selectedCommentId);
-    setDetailOrigin(snapshot.detailOrigin ?? null);
-    setSelectedProfileName(snapshot.selectedProfileName);
-    setProfileSocialView(snapshot.profileSocialView ?? null);
-    setProfileActiveTab(snapshot.profileTab);
-    setOfficeMode(snapshot.officeMode);
-    setWorkspaceView(snapshot.workspaceView ?? {
-      section: "all",
-      selectedNotebookId: null,
-      selectedDocumentId: null,
-      editSelected: false,
-      expandedNotebookIds: [],
-      query: ""
-    });
-    setSelectedCommunityId(snapshot.selectedCommunityId);
     const restoredSegmentStacks = cloneCommentSegmentStacks(snapshot.commentSegmentStacks ?? {});
     commentSegmentStacksRef.current = restoredSegmentStacks;
     visibleCommentSegmentStacksRef.current = {};
-    setCommentSegmentStacks(restoredSegmentStacks);
+    const defaultWorkspaceView = snapshotForCanonicalRoute({ kind: "hall" }).workspaceView;
+    replaceViewSnapshot({
+      ...snapshot,
+      applicationReviewPostId: snapshot.applicationReviewPostId ?? null,
+      selectedApplicationId: snapshot.selectedApplicationId ?? null,
+      detailOrigin: snapshot.detailOrigin ?? null,
+      profileSocialView: snapshot.profileSocialView ?? null,
+      workspaceView: snapshot.workspaceView ?? defaultWorkspaceView,
+      commentSegmentStacks: restoredSegmentStacks,
+      selectedConversationId: snapshot.selectedConversationId ?? null,
+      assistantOpen: isAssistantCollapse ? false : snapshot.assistantOpen ?? false,
+      assistantThreadId: isAssistantCollapse
+        ? collapsedAssistantThreadId
+        : snapshot.assistantThreadId ?? null,
+      assistantBackdrop: snapshot.assistantBackdrop ?? null
+    });
     setComposerOpen(false);
     setComposerCommunityId(null);
     setSettingsOpen(false);
     setSearchOpen(false);
     setMessagesQuickOpen(false);
-    setMessagesOpen(snapshot.messagesOpen);
-    setSelectedConversationId(snapshot.selectedConversationId ?? null);
-    setAssistantOpen(isAssistantCollapse ? false : snapshot.assistantOpen ?? false);
-    setAssistantThreadId(
-      isAssistantCollapse
-        ? collapsedAssistantThreadId
-        : snapshot.assistantThreadId ?? null
-    );
-    setAssistantBackdrop(snapshot.assistantBackdrop ?? null);
     setAssistantOriginContext(null);
     restoreScrollPosition(snapshot);
   };
@@ -2934,81 +2870,18 @@ function SymposiumExperience({
     dismissTransientSyncStatus();
     if (next.selectedProfileName) flushPendingActivityRecency();
     const currentSnapshot = snapshotView();
-    const nextSnapshot: ViewSnapshot = {
-      ...currentSnapshot,
-      ...next,
-      selectedCommentId: next.selectedCommentId ?? (next.selectedItemId !== undefined ? null : currentSnapshot.selectedCommentId),
-      applicationReviewPostId: next.applicationReviewPostId !== undefined
-        ? next.applicationReviewPostId
-        : next.selectedItemId !== undefined || next.selectedProfileName || next.selectedCommunityId || next.messagesOpen || (next.activeRoom && next.activeRoom !== "opportunities")
-          ? null
-          : currentSnapshot.applicationReviewPostId,
-      selectedApplicationId: next.selectedApplicationId !== undefined
-        ? next.selectedApplicationId
-        : next.applicationReviewPostId !== undefined ? null : currentSnapshot.selectedApplicationId,
-      profileSocialView:
-        next.profileSocialView !== undefined
-          ? next.profileSocialView
-          : next.selectedProfileName !== undefined
-            ? null
-            : currentSnapshot.profileSocialView,
-      messagesOpen: next.messagesOpen ?? false,
-      selectedConversationId:
-        next.selectedConversationId !== undefined
-          ? next.selectedConversationId
-          : next.messagesOpen
-            ? currentSnapshot.selectedConversationId
-            : null,
-      assistantOpen: next.assistantOpen ?? false,
-      assistantThreadId:
-        next.assistantThreadId !== undefined
-          ? next.assistantThreadId
-          : next.assistantOpen
-            ? currentSnapshot.assistantThreadId
-            : null,
-      assistantBackdrop:
-        next.assistantBackdrop !== undefined
-          ? next.assistantBackdrop
-          : next.assistantOpen
-            ? currentSnapshot.assistantOpen
-              ? currentSnapshot.assistantBackdrop ?? assistantBackdropForView(currentSnapshot)
-              : assistantBackdropForView(currentSnapshot)
-            : null,
-      scrollAnchor: null,
-      scrollY: scrollY ?? currentSnapshot.scrollY,
-      detailOrigin: next.detailOrigin !== undefined ? next.detailOrigin : currentSnapshot.detailOrigin
-    };
-    recordNavigation(currentSnapshot, nextSnapshot);
-    if (next.activeRoom !== undefined) setActiveRoom(next.activeRoom);
-    if (next.selectedItemId !== undefined) setSelectedItemId(next.selectedItemId);
-    setApplicationReviewPostId(nextSnapshot.applicationReviewPostId);
-    setSelectedApplicationId(nextSnapshot.selectedApplicationId);
-    if (next.selectedCommentId !== undefined) setSelectedCommentId(next.selectedCommentId);
-    if (next.detailOrigin !== undefined) setDetailOrigin(next.detailOrigin);
-    if (next.selectedProfileName !== undefined) setSelectedProfileName(next.selectedProfileName);
-    if (next.profileSocialView !== undefined) setProfileSocialView(next.profileSocialView);
-    if (next.profileTab !== undefined) setProfileActiveTab(next.profileTab);
+    let nextSnapshot = nextViewSnapshot(currentSnapshot, next, scrollY);
     if (next.selectedItemId !== undefined && next.selectedItemId !== selectedItemId) {
+      nextSnapshot = { ...nextSnapshot, commentSegmentStacks: {} };
       commentSegmentStacksRef.current = {};
       visibleCommentSegmentStacksRef.current = {};
-      setCommentSegmentStacks({});
     }
-    if (next.officeMode !== undefined) setOfficeMode(next.officeMode);
-    if (next.selectedCommunityId !== undefined) setSelectedCommunityId(next.selectedCommunityId);
+    recordNavigation(currentSnapshot, nextSnapshot);
+    replaceViewSnapshot(nextSnapshot);
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
     setMessagesQuickOpen(false);
-    setMessagesOpen(next.messagesOpen ?? false);
-    if (next.selectedConversationId !== undefined) setSelectedConversationId(next.selectedConversationId);
-    else if (!next.messagesOpen) setSelectedConversationId(null);
-    setAssistantOpen(next.assistantOpen ?? false);
-    if (next.assistantThreadId !== undefined) {
-      setAssistantThreadId(next.assistantThreadId);
-    } else if (!next.assistantOpen) {
-      setAssistantThreadId(null);
-    }
-    setAssistantBackdrop(nextSnapshot.assistantBackdrop);
     if (!nextSnapshot.assistantOpen) setAssistantOriginContext(null);
     if (scrollY !== null) {
       window.setTimeout(() => window.scrollTo({ top: scrollY, behavior: "auto" }), 0);
@@ -3304,14 +3177,14 @@ function SymposiumExperience({
     replaceItems(optimisticItems);
     persistLocalSnapshot(optimisticItems, profilesRef.current);
     touchActivity(itemId);
-    setSelectedItemId(itemId);
-    setSelectedCommentId(optimisticComment.id ?? null);
+    setViewField("selectedItemId", itemId);
+    setViewField("selectedCommentId", optimisticComment.id ?? null);
 
     const rollbackOptimisticComment = (message: string) => {
       replaceItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
-      setSelectedItemId(previousSelectedItemId);
-      setSelectedCommentId(previousSelectedCommentId);
+      setViewField("selectedItemId", previousSelectedItemId);
+      setViewField("selectedCommentId", previousSelectedCommentId);
       setSyncStatus(message);
     };
 
@@ -3348,7 +3221,7 @@ function SymposiumExperience({
       }
 
       const committedCommentId = data.comment?.id ?? optimisticComment.id ?? null;
-      setSelectedCommentId(committedCommentId);
+      setViewField("selectedCommentId", committedCommentId);
       if (committedCommentId) {
         replaceCanonicalRoute({ kind: "post", postId: itemId, commentId: committedCommentId });
       }
@@ -3491,7 +3364,7 @@ function SymposiumExperience({
     setProfiles(nextProfiles);
     replaceItems(nextItems);
     if (selectedProfileName === currentProfile.name || selectedProfileName === currentProfile.handle) {
-      setSelectedProfileName(updatedProfile.handle);
+      setViewField("selectedProfileName", updatedProfile.handle);
     }
     persistLocalSnapshot(nextItems, nextProfiles, updatedProfile);
     setSyncStatus("Saving profile settings");
@@ -4142,7 +4015,7 @@ function SymposiumExperience({
     setTabletOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
-    setMessagesOpen(false);
+    setViewField("messagesOpen", false);
     setComposerOpen(false);
     setComposerCommunityId(null);
     setQuoteSelection(selection);
@@ -4414,7 +4287,7 @@ function SymposiumExperience({
   useEffect(() => {
     const selectedThreadId = assistantController.conversationId ?? null;
     if (selectedThreadId === assistantThreadId) return;
-    setAssistantThreadId(selectedThreadId);
+    setViewField("assistantThreadId", selectedThreadId);
     if (assistantOpen) {
       replaceCanonicalRoute({
         kind: "assistant",
@@ -4655,7 +4528,7 @@ function SymposiumExperience({
               setTabletOpen(false);
               setComposerOpen(false);
               setSearchOpen(false);
-              setMessagesOpen(false);
+              setViewField("messagesOpen", false);
               setSettingsOpen(true);
             }}
             onToggleFollow={toggleFollow}
@@ -4745,7 +4618,7 @@ function SymposiumExperience({
             profiles={profiles}
             selectedCommentId={selectedCommentId}
             onClearSelectedComment={() => {
-              setSelectedCommentId(null);
+              setViewField("selectedCommentId", null);
               replaceCanonicalRoute({ kind: "post", postId: selectedItem.id });
             }}
             onSelectComment={(commentId) => openPost(selectedItem.id, commentId, "thread")}
