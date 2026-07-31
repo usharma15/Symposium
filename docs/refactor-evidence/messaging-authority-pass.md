@@ -4,8 +4,9 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Local and browser verified candidate; CI, merge, deployment, and production proof pending |
+| Status | Released, protected-CI green, and exact-SHA production verified |
 | Exact released baseline | `8cb445f4a05220970caf940046d1c8520eca1af2` |
+| Exact merge SHA | `0edc8131476c0f09987fb1b03b202a4d6b641980` |
 | Baseline inventory | 484 files / 132,456 physical / 124,197 nonblank |
 | Candidate inventory | 487 files / 132,915 physical / 124,617 nonblank |
 | Candidate delta | +3 files / +459 physical / +420 nonblank |
@@ -84,5 +85,17 @@ The exact candidate was rerun outside that restriction, where all 11 browser
 cases executed and passed. This is recorded as an execution-environment
 precondition, not counted as an application pass or failure.
 
-Protected CI, merge, and exact-merge-SHA production proof remain required
-before this record can be marked released.
+Release evidence:
+
+- merged through protected [PR #3](https://github.com/usharma15/Symposium/pull/3);
+- post-merge GitHub run `30662040958` passed every job and retained both
+  evidence artifacts with SHA-256 digests;
+- Vercel production reported the exact merge SHA Ready and Current;
+- Render deployment `dep-d9mg5nc9v7es73bmj870` reported the exact merge SHA
+  live and strict-ready with 65/65 migrations, every required provider
+  healthy, and zero readiness issues or warnings;
+- production API smoke passed across health, bootstrap, communities, calls,
+  opportunities, and validation; and
+- the deployed Messaging UI remained live-connected, returned the canonical
+  `@plato` profile through the gateway search, and logged no browser warning
+  or error.

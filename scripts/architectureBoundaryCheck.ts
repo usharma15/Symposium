@@ -216,6 +216,14 @@ const main = async () => {
     path.join(root, "features/messages/messageDraftStorage.ts"),
     "utf8"
   );
+  const notificationViewSource = await readFile(
+    path.join(root, "features/notifications/NotificationsPanel.tsx"),
+    "utf8"
+  );
+  const notificationGatewaySource = await readFile(
+    path.join(root, "features/notifications/notificationGateway.ts"),
+    "utf8"
+  );
   assert.match(
     symposiumSource,
     /useSymposiumViewController/,
@@ -295,6 +303,31 @@ const main = async () => {
     /symposium:message-draft/,
     "Browser message draft persistence must remain owned by messageDraftStorage."
   );
+  assert.match(
+    notificationViewSource,
+    /notificationGateway/,
+    "Notifications presentation must consume the typed Notifications transport authority."
+  );
+  assert.doesNotMatch(
+    notificationViewSource,
+    /\bsymposiumApi\.(?:request|configure)|\bfetch\s*\(|["'`]\/api\/notifications/,
+    "Notifications presentation must not construct raw requests or route paths."
+  );
+  for (const operation of [
+    "list",
+    "getUnreadCount",
+    "getPreferences",
+    "updatePreferences",
+    "markRead",
+    "markAllRead",
+    "archive",
+    "clearRead"
+  ]) {
+    assert.ok(
+      notificationGatewaySource.includes(operation),
+      `${operation} must remain owned by the Notifications gateway.`
+    );
+  }
   assert.match(
     symposiumSource,
     /useInquiryController/,

@@ -15,12 +15,10 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   NotificationContract,
-  NotificationPageContract,
-  NotificationPreferencesContract,
-  NotificationUnreadCountContract
+  NotificationPreferencesContract
 } from "@/packages/contracts/src";
 import { notificationPreferencesSchema } from "@/packages/contracts/src";
-import { symposiumApi } from "@/features/api/symposiumApiClient";
+import { notificationGateway } from "@/features/notifications/notificationGateway";
 import {
   applyNotificationLiveEvent,
   archiveNotificationGroup,
@@ -144,11 +142,7 @@ export function NotificationsControl({
     setPreferencesLoading(true);
     setPreferencesStatus("");
     try {
-      const parameters = new URLSearchParams({ actorHandle });
-      const response = await symposiumApi.request<NotificationPreferencesContract>(
-        `/api/notifications/preferences?${parameters}`,
-        { cache: "no-store" }
-      );
+      const response = await notificationGateway.getPreferences(actorHandle);
       const next = notificationPreferencesSchema.parse(response);
       if (requestEpoch !== preferencesRequestEpochRef.current) return;
       setPreferences(next);
@@ -168,16 +162,10 @@ export function NotificationsControl({
     setPreferencesSaving(true);
     setPreferencesStatus("Saving…");
     try {
-      const response = await symposiumApi.request<NotificationPreferencesContract>(
-        "/api/notifications/preferences",
-        {
-          method: "PATCH",
-          body: {
-            actorHandle,
-            expectedRevision: previous.revision,
-            changes: { [key]: value }
-          }
-        }
+      const response = await notificationGateway.updatePreferences(
+        actorHandle,
+        previous.revision,
+        { [key]: value }
       );
       const canonical = notificationPreferencesSchema.parse(response);
       setPreferences(canonical);
@@ -200,12 +188,7 @@ export function NotificationsControl({
     if (append) setLoadingMore(true);
     else setLoadState((current) => current === "loaded" ? current : "loading");
     try {
-      const parameters = new URLSearchParams({ actorHandle, limit: "50" });
-      if (cursor) parameters.set("cursor", cursor);
-      const page = await symposiumApi.request<NotificationPageContract>(
-        `/api/notifications?${parameters}`,
-        { cache: "no-store" }
-      );
+      const page = await notificationGateway.list(actorHandle, 50, cursor);
       if (requestEpoch !== requestEpochRef.current) return;
       setState((current) => ({
         notifications: append
@@ -242,11 +225,7 @@ export function NotificationsControl({
     requestEpochRef.current = requestEpoch;
     setLoadState((current) => current === "loaded" ? current : "loading");
     try {
-      const parameters = new URLSearchParams({ actorHandle });
-      const result = await symposiumApi.request<NotificationUnreadCountContract>(
-        `/api/notifications/unread?${parameters}`,
-        { cache: "no-store" }
-      );
+      const result = await notificationGateway.getUnreadCount(actorHandle);
       if (requestEpoch !== requestEpochRef.current) return;
       setState((current) => ({ ...current, unreadCount: result.unreadCount }));
       setLoadState("loaded");
@@ -398,15 +377,11 @@ export function NotificationsControl({
         ),
         unreadCount: Math.max(0, current.unreadCount - 1)
       }));
-      void symposiumApi.request("/api/notifications/read", {
-        method: "POST",
-        keepalive: true,
-        body: {
-          actorHandle,
-          notificationId: notification.id,
-          groupKey: notification.groupKey
-        }
-      }).catch(() => void refresh()).finally(() => {
+      void notificationGateway.markRead(
+        actorHandle,
+        notification.id,
+        notification.groupKey
+      ).catch(() => void refresh()).finally(() => {
         pendingReadGroupsRef.current.delete(notification.groupKey);
       });
     }
@@ -423,10 +398,7 @@ export function NotificationsControl({
       unreadCount: 0
     }));
     try {
-      await symposiumApi.request("/api/notifications/read", {
-        method: "POST",
-        body: { actorHandle, all: true }
-      });
+      await notificationGateway.markAllRead(actorHandle);
     } catch {
       await refresh();
     } finally {
@@ -439,14 +411,11 @@ export function NotificationsControl({
     setArchivingGroups((current) => new Set(current).add(notification.groupKey));
     setState((current) => archiveNotificationGroup(current, notification.groupKey));
     try {
-      await symposiumApi.request("/api/notifications/archive", {
-        method: "POST",
-        body: {
-          actorHandle,
-          notificationId: notification.id,
-          groupKey: notification.groupKey
-        }
-      });
+      await notificationGateway.archive(
+        actorHandle,
+        notification.id,
+        notification.groupKey
+      );
     } catch {
       await refresh();
     } finally {
@@ -463,10 +432,7 @@ export function NotificationsControl({
     setClearingRead(true);
     setState(archiveReadNotifications);
     try {
-      await symposiumApi.request("/api/notifications/archive", {
-        method: "POST",
-        body: { actorHandle, clearRead: true }
-      });
+      await notificationGateway.clearRead(actorHandle);
     } catch {
       await refresh();
     } finally {

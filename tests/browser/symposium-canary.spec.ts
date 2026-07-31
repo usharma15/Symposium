@@ -277,6 +277,193 @@ test.describe("returning browser session", () => {
     clean();
   });
 
+  test("keeps Notifications transport and optimistic recovery authoritative", async ({ page }) => {
+    const clean = watchDiagnostics(page, ["409 (Conflict)"]);
+    const actorHandle = "@udayan";
+    const recordedRequests: Array<{
+      body: Record<string, unknown> | null;
+      method: string;
+      path: string;
+      search: string;
+    }> = [];
+    const now = "2026-07-31T12:00:00.000Z";
+    const notification = (
+      index: number,
+      title: string,
+      readAt: string | null
+    ) => ({
+      id: `50000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      groupKey: `browser-notification-${index}`,
+      groupCount: 1,
+      actorHandles: ["@plato"],
+      priority: "activity",
+      actionLabel: null,
+      kind: "post_signal",
+      title,
+      body: `${title} body`,
+      href: null,
+      readAt,
+      resolvedAt: null,
+      metadata: {},
+      createdAt: `2026-07-31T11:${String(60 - index).padStart(2, "0")}:00.000Z`
+    });
+    const initialNotifications = [
+      notification(1, "Browser authority unread one", null),
+      notification(2, "Browser authority unread two", null),
+      notification(3, "Browser authority already read", now)
+    ];
+    const olderNotification = notification(4, "Browser authority older", now);
+    let preferences = {
+      activityEnabled: true,
+      likes: true,
+      commentsAndReplies: true,
+      reshares: true,
+      quotes: true,
+      newFollowers: true,
+      workspaceActivity: true,
+      revision: 1,
+      updatedAt: now
+    };
+    let preferenceReads = 0;
+    let preferenceWrites = 0;
+
+    await page.route("**/api/notifications**", async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const rawBody = request.postData();
+      const body = rawBody ? JSON.parse(rawBody) as Record<string, unknown> : null;
+      recordedRequests.push({
+        body,
+        method: request.method(),
+        path: url.pathname,
+        search: url.search
+      });
+
+      if (request.method() === "GET" && url.pathname === "/api/notifications/unread") {
+        await route.fulfill({ json: { unreadCount: 2 } });
+        return;
+      }
+      if (request.method() === "GET" && url.pathname === "/api/notifications/preferences") {
+        preferenceReads += 1;
+        await route.fulfill({ json: preferences });
+        return;
+      }
+      if (request.method() === "PATCH" && url.pathname === "/api/notifications/preferences") {
+        preferenceWrites += 1;
+        if (preferenceWrites === 2) {
+          preferences = {
+            ...preferences,
+            commentsAndReplies: true,
+            revision: preferences.revision + 1,
+            updatedAt: "2026-07-31T12:02:00.000Z"
+          };
+          await route.fulfill({ status: 409, json: { error: "revision_conflict" } });
+          return;
+        }
+        preferences = {
+          ...preferences,
+          ...(body?.changes as Record<string, boolean>),
+          revision: preferences.revision + 1,
+          updatedAt: "2026-07-31T12:01:00.000Z"
+        };
+        await route.fulfill({ json: preferences });
+        return;
+      }
+      if (request.method() === "GET" && url.pathname === "/api/notifications") {
+        await route.fulfill({
+          json: url.searchParams.get("cursor")
+            ? { notifications: [olderNotification], unreadCount: 2, nextCursor: null }
+            : { notifications: initialNotifications, unreadCount: 2, nextCursor: "browser cursor/+" }
+        });
+        return;
+      }
+      if (
+        request.method() === "POST" &&
+        (url.pathname === "/api/notifications/read" || url.pathname === "/api/notifications/archive")
+      ) {
+        await route.fulfill({ json: { ok: true } });
+        return;
+      }
+      await route.abort("failed");
+    });
+
+    await page.goto("/");
+    const trigger = page.getByRole("button", { name: "Notifications · 2 unread" });
+    await expect(trigger).toBeVisible();
+    expect(recordedRequests.find((entry) => entry.path.endsWith("/unread"))).toMatchObject({
+      method: "GET",
+      search: "?actorHandle=%40udayan"
+    });
+
+    await trigger.click();
+    await expect(page.getByRole("region", { name: "Notifications" })).toBeVisible();
+    await expect(page.getByText("Browser authority unread one", { exact: true })).toBeVisible();
+    const firstPageRead = recordedRequests.find((entry) =>
+      entry.method === "GET" && entry.path === "/api/notifications" && !entry.search.includes("cursor=")
+    );
+    expect(firstPageRead?.search).toBe("?actorHandle=%40udayan&limit=50");
+
+    await page.getByRole("button", { name: /View all notifications/ }).click();
+    await page.getByRole("button", { name: "Load older notifications" }).click();
+    await expect(page.getByText("Browser authority older", { exact: true })).toBeVisible();
+    expect(recordedRequests.find((entry) => entry.search.includes("cursor="))?.search)
+      .toBe("?actorHandle=%40udayan&limit=50&cursor=browser+cursor%2F%2B");
+
+    await page.getByRole("button", { name: "Notification settings" }).click();
+    await expect(page.getByRole("region", { name: "Notification settings" })).toBeVisible();
+    const likes = page.getByRole("switch", { name: /Likes/ });
+    await expect(likes).toHaveAttribute("aria-checked", "true");
+    await likes.click();
+    await expect(likes).toHaveAttribute("aria-checked", "false");
+    await expect(page.locator(".notification-preferences-status")).toHaveText("Saved");
+
+    const comments = page.getByRole("switch", { name: /Comments, replies & mentions/ });
+    await comments.click();
+    await expect.poll(() => preferenceReads).toBe(2);
+    await expect(comments).toHaveAttribute("aria-checked", "true");
+    expect(recordedRequests.filter((entry) => entry.method === "PATCH").map((entry) => entry.body))
+      .toEqual([
+        { actorHandle, expectedRevision: 1, changes: { likes: false } },
+        { actorHandle, expectedRevision: 2, changes: { commentsAndReplies: false } }
+      ]);
+
+    await page.getByRole("button", { name: "Back to notifications" }).click();
+    const firstUnread = page.locator(".notification-card-main").filter({
+      hasText: "Browser authority unread one"
+    });
+    await firstUnread.click();
+    await expect(page.getByRole("button", { name: "Notifications · 1 unread" })).toBeVisible();
+    await page.getByRole("button", { name: "Mark all notifications read" }).click();
+    await expect(page.getByRole("button", { name: "Notifications", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Archive Browser authority unread one" }).click();
+    await expect(page.getByText("Browser authority unread one", { exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Clear read notifications" }).click();
+    await expect(page.getByText("You are all caught up.")).toBeVisible();
+
+    expect(recordedRequests.filter((entry) => entry.path === "/api/notifications/read").map((entry) => entry.body))
+      .toEqual([
+        {
+          actorHandle,
+          notificationId: initialNotifications[0].id,
+          groupKey: initialNotifications[0].groupKey
+        },
+        { actorHandle, all: true }
+      ]);
+    expect(recordedRequests.filter((entry) => entry.path === "/api/notifications/archive").map((entry) => entry.body))
+      .toEqual([
+        {
+          actorHandle,
+          notificationId: initialNotifications[0].id,
+          groupKey: initialNotifications[0].groupKey
+        },
+        { actorHandle, clearRead: true }
+      ]);
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".notifications-panel")).toHaveCount(0);
+    clean();
+  });
+
   test("routes canonical live events without a bootstrap refresh", async ({ page }) => {
     const clean = watchDiagnostics(page);
     const sourceResponse = await page.request.get(

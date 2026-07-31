@@ -203,7 +203,9 @@ Profiles reuse the same collection coordinator and ordered browser transport as 
 - `features/attachments`: metadata generation, carousel, document/media previews, continuous virtualized PDF.js and DOCX reading surfaces, attachment-scoped reading/translation sessions shared across preview/modal/fullscreen, scroll-derived active-page context, parallel reconstructed translation pages for extracted and scanned documents, selectable PDF text, zoom and fullscreen
 - `features/discovery`: the typed global/community query, remote/local projection, stale-request, privacy, and bounded-merge authority
 - `features/profiles`: the typed profile, identity projection, social graph, follow, activity, cross-tab, cache, and settings authority plus privacy-aware views
-- `features/communities`, `features/rooms`, `features/workspace`, `features/messages`, `features/search`: their respective presentation surfaces
+- `features/communities`, `features/rooms`, `features/workspace`, `features/search`: their respective presentation surfaces
+- `features/messages`: Messaging presentation and live/send orchestration; `messagingGateway.ts` owns all browser route, method, actor, cursor, revision, idempotency, and transport-error contracts, while `messageDraftStorage.ts` owns browser draft persistence and failed-send recovery
+- `features/notifications`: notification state/live projection and presentation; `notificationGateway.ts` is the single browser authority for list, unread, preference, read, and archive transport contracts, while the panel retains interaction, optimistic projection, recovery, and rendering
 - `features/assistant`: one mounted conversation controller plus bounded presentation modules for the shell, transcript messages, Evidence Map citation staging, Context Dock inspection, Quick Note persistence, and thread administration; those modules do not create competing assistant state owners
 - `features/entities`, `features/live-sync`, `features/navigation`, `features/actions`: shared client invariants and contracts
 - `features/api`: same-origin JSON requests, structured failures, and retry-safe mutation identities
@@ -269,6 +271,15 @@ The notification repository owns page/unread reads and read convergence. Domain 
     route modules are retired, three allowlisted dispatchers preserve all 31
     logical method contracts, and every remaining route module has a named
     local-preview, protected-boundary, or canonical-compatibility reason.
+18. Replace Messaging browser transport and draft-storage authority.
+    Complete: one typed gateway owns 23 domain operations and one storage
+    authority owns draft keys, validation, failure behavior, and ordered-send
+    recovery; the presentation component owns neither raw routes nor direct
+    `localStorage` access.
+19. Replace Notifications browser transport authority. Main-integrated and
+    locally verified: one typed gateway owns all eight domain operations
+    and nine request shapes; presentation contains no raw Notifications route,
+    API-client, or fetch authority. Exact-SHA production proof remains pending.
 
 ## Checkpoint gates
 
