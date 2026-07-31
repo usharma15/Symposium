@@ -28,8 +28,8 @@ security, accessibility, and recoverability remains the highest-order gate.
 
 ## Released authority sequence
 
-The current production baseline before the recovery pass is
-`7be1d3d4c6a804f1f9b2079043dd34a0a6515e5c`. It includes:
+The released production baseline before the shell-surface pass is
+`4b2b613cf0239312634f93802bb93c5b46ac8e43`. It includes:
 
 1. canonical mutation/read-model and local persistence boundaries;
 2. canonical view and browser-history authority;
@@ -37,7 +37,8 @@ The current production baseline before the recovery pass is
 4. global and community discovery authority;
 5. global live-event delivery and routing authority; and
 6. exact-user authentication, entrance, cache, read, social, and live
-   admission authority.
+   admission authority; and
+7. browser/runtime recovery and reconnect authority.
 
 `components/SymposiumV0.tsx` remains the composition root.
 `lib/dataStore.ts` and the direct-Postgres Next compatibility mode remain
@@ -68,13 +69,39 @@ data:
 This authority does not automatically retry unsafe non-idempotent mutations,
 invent offline writes, or convert a provider outage into local-preview trust.
 
+## Shell surface authority
+
+Transient surface lifecycle now has one typed reducer and one React
+controller. The authority owns the compact Assistant, Assistant origin
+context, post composer and destination, quote composer, settings, Quick
+Messages and selected conversation, post/comment editors, and dedicated
+attachment preview.
+
+The cutover:
+
+- retires ten independent shell state owners and the composer destination
+  state that was incorrectly stored in the community domain;
+- makes composer visibility and destination, and Quick Messages visibility
+  and selected conversation, atomic states;
+- centralizes route commit, browser-history restore, session-route reset,
+  Assistant expand/collapse, search preparation, and surface open/close
+  transitions;
+- preserves the existing surface-coexistence contract, including compact
+  Assistant context beside the attachment viewer;
+- keeps live deletion cleanup guarded by exact post/comment identity; and
+- adds a pure transition proof plus architecture guards preventing the old
+  shell and community authorities from returning.
+
+Search remains owned by discovery, full Assistant/Messages routes remain
+owned by canonical view state, and attachment/PDF content context remains
+owned by the corresponding feature controllers.
+
 ## Remaining structural sequence
 
-After recovery/resilience is released:
+After the shell-surface authority is released:
 
-1. audit and replace remaining shell-owned composition policy;
-2. converge supported persistence modes without deleting local development or
+1. converge supported persistence modes without deleting local development or
    fallback behavior prematurely;
-3. retire only compatibility paths proven superseded by those authorities;
-4. run the complete exact-SHA proof and stop the revamp when the governing
+2. retire only compatibility paths proven superseded by those authorities;
+3. run the complete exact-SHA proof and stop the revamp when the governing
    completion tests above are satisfied.

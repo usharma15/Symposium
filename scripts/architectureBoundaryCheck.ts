@@ -138,6 +138,18 @@ const main = async () => {
     path.join(root, "features/recovery/symposiumRecoveryModel.ts"),
     "utf8"
   );
+  const surfaceControllerSource = await readFile(
+    path.join(root, "features/shell/useSymposiumSurfaceController.ts"),
+    "utf8"
+  );
+  const surfaceStateSource = await readFile(
+    path.join(root, "features/shell/symposiumSurfaceState.ts"),
+    "utf8"
+  );
+  const communityStateSource = await readFile(
+    path.join(root, "features/communities/useCommunityState.ts"),
+    "utf8"
+  );
   const cachedBootstrapSource = await readFile(
     path.join(root, "features/bootstrap/cachedBootstrap.ts"),
     "utf8"
@@ -160,6 +172,31 @@ const main = async () => {
     symposiumSource,
     /new\s+(?:EventSource|BroadcastChannel)\s*\(/,
     "Browser live and cross-tab transport must remain outside SymposiumV0.tsx."
+  );
+  assert.equal(
+    symposiumSource.match(/useSymposiumSurfaceController\(/g)?.length ?? 0,
+    1,
+    "Symposium transient surfaces must have one controller authority."
+  );
+  assert.match(
+    surfaceControllerSource,
+    /useReducer\(\s*symposiumSurfaceReducer/,
+    "The surface controller must delegate transition policy to its pure reducer."
+  );
+  assert.match(
+    surfaceStateSource,
+    /const closeNavigationSurfaces/,
+    "Navigation surface cleanup must remain owned by the surface model."
+  );
+  assert.doesNotMatch(
+    symposiumSource,
+    /const \[(?:tabletOpen|composerOpen|quoteSelection|settingsOpen|messagesQuickOpen|quickConversationId|editingPost|editingComment|attachmentPreview),/,
+    "Independent transient-surface state must not return to SymposiumV0.tsx."
+  );
+  assert.doesNotMatch(
+    communityStateSource,
+    /composerCommunityId|setComposerCommunityId/,
+    "Composer lifecycle and destination must not return to community domain state."
   );
   assert.doesNotMatch(
     symposiumSource,
@@ -515,6 +552,7 @@ const main = async () => {
     "single global live-event routing and delivery authority",
     "single authentication and entrance lifecycle authority",
     "single browser and transport recovery authority",
+    "single transient-surface lifecycle authority",
     "extracted feature ownership",
     "acyclic feature dependencies"
   ]);

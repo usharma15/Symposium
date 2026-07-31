@@ -340,7 +340,7 @@ assert.match(historicalFixtures, /fixture_revisions/, "Historical community fixt
 assert.match(foundation, /communityCalls/, "Canonical bootstrap refreshes must reconcile community calls.");
 assert.match(historicalFixtures, /historical-world-v2-casual-activity/, "Rich community content must hydrate the durable backend exactly once.");
 assert.match(foundation, /community\.memberHandles\.slice\(0, communityMemberPreviewLimit\)/, "General bootstrap delivery must cap member previews; the directory endpoint owns full pagination.");
-assert.match(shell, /selectedCommunity && canParticipateInCommunity/, "The global composer must default to the selected community when participation is allowed.");
+assert.match(shell, /selectedCommunity\s*&&\s*canParticipateInCommunity/, "The global composer must default to the selected community when participation is allowed.");
 assert.match(shell, /<ProfileView[\s\S]+items=\{items\}/, "Profiles must receive the complete viewer-projected item collection rather than a global-feed subset.");
 assert.match(postViews, /Post destination/, "The global composer must allow switching between community and global publication.");
 assert.match(postViews, /className="profile-community-provenance"/, "Profile post provenance must render in the post header actions.");

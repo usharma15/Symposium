@@ -2368,7 +2368,11 @@ assert.match(assistantPage, /kind: "assistant"/);
 assert.match(assistantThreadPage, /kind: "assistant", threadId/);
 assert.match(shell, /assistantBackdropForView/);
 assert.match(shell, /assistantBackdropRender/);
-assert.match(shell, /setAssistantOriginContext\(tabletContext\)/);
+assert.match(
+  shell,
+  /expandAssistant\(tabletContext\)/,
+  "Assistant expansion must capture its origin through the surface authority."
+);
 assert.match(shell, /const assistantVisibleContext =/);
 assert.match(shell, /assistantOpen && assistantBackdrop === "messages"/);
 assert.match(shell, /context: assistantVisibleContext/);

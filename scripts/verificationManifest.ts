@@ -24,6 +24,7 @@ const stage = (script: string, category: VerificationCategory): VerificationStag
 
 export const verificationManifest = [
   stage("architecture:check", "architecture-design-security"),
+  stage("surface-state:check", "architecture-design-security"),
   stage("authority:check", "architecture-design-security"),
   stage("platform:check", "architecture-design-security"),
   stage("styles:check", "architecture-design-security"),

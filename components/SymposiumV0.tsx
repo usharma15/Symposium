@@ -100,6 +100,7 @@ import {
   syncStatusAfterNavigation,
   syncStatusExpiryMs
 } from "@/features/shell/syncStatusState";
+import { useSymposiumSurfaceController } from "@/features/shell/useSymposiumSurfaceController";
 import type { ViewSurface } from "@/features/actions/actionTypes";
 import {
   type CommentSegmentStacks
@@ -173,17 +174,6 @@ import {
   useSymposiumRenderPreload,
   type Theme
 } from "@/features/rooms/roomRenderAssets";
-
-type EditingCommentTarget = {
-  itemId: string;
-  commentId: string;
-};
-
-type AttachmentPreviewTarget = {
-  itemId: string;
-  commentId?: string;
-  attachmentId: string;
-};
 
 const initialBoundedInquiryItems = [...inquiryItems]
   .sort((left, right) => itemTimestampScore(right) - itemTimestampScore(left))
@@ -452,8 +442,6 @@ function SymposiumExperience({
     setCommunityCalls,
     communityMembershipBusy,
     setCommunityMembershipBusy,
-    composerCommunityId,
-    setComposerCommunityId,
     selectedCommunity,
     selectedCommunityFeedView,
     setSelectedCommunityFeedView
@@ -467,16 +455,47 @@ function SymposiumExperience({
       if (incomingCalls) setCommunityCalls(incomingCalls);
     }
   };
-  const [tabletOpen, setTabletOpen] = useState(initialRoute.kind === "assistant");
-  const [assistantOriginContext, setAssistantOriginContext] = useState<
-    NonNullable<AssistantMessageInputContract["context"]> | null
-  >(null);
+  const surfaceController = useSymposiumSurfaceController(
+    initialRoute.kind === "assistant"
+  );
+  const {
+    assistantOriginContext,
+    attachmentPreview,
+    closeCommentEditor,
+    closeComposer,
+    closePostEditor,
+    closeQuickMessages,
+    closeQuote,
+    closeSettings,
+    closeTablet,
+    collapseAssistant,
+    composerCommunityId,
+    composerOpen,
+    editingComment,
+    editingPost,
+    expandAssistant,
+    initialRouteApplied,
+    messagesQuickOpen,
+    navigationCommitted,
+    navigationRestored,
+    openCommentEditor,
+    openComposer,
+    openGlobalComposer,
+    openPostEditor,
+    openQuickMessages,
+    openQuote,
+    openSettings,
+    openTablet,
+    prepareSearch,
+    quickConversationId,
+    quoteSelection,
+    selectQuickConversation,
+    setAttachmentPreview,
+    setComposerCommunityId,
+    settingsOpen,
+    tabletOpen
+  } = surfaceController;
   const assistantCollapseThreadIdRef = useRef<string | null | undefined>(undefined);
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [quoteSelection, setQuoteSelection] = useState<QuoteSelection | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [messagesQuickOpen, setMessagesQuickOpen] = useState(false);
-  const [quickConversationId, setQuickConversationId] = useState<string | null>(null);
   const [messageTabletContext, setMessageTabletContext] = useState<{
     conversationId: string;
     title: string;
@@ -484,9 +503,6 @@ function SymposiumExperience({
     revision: number;
   } | null>(null);
   const [workspaceTabletDocument, setWorkspaceTabletDocument] = useState<WorkspaceDocument | null>(null);
-  const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
-  const [editingComment, setEditingComment] = useState<EditingCommentTarget | null>(null);
-  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewTarget | null>(null);
   const [postAttachmentViewContext, setPostAttachmentViewContext] = useState<PdfAttachmentViewContext | null>(null);
   const [attachmentPreviewViewContext, setAttachmentPreviewViewContext] = useState<PdfAttachmentViewContext | null>(null);
   const selectedItemIdRef = useRef(selectedItemId);
@@ -527,13 +543,9 @@ function SymposiumExperience({
     onStaleLiveState: () => scheduleLiveRefresh(),
     onStatus: setSyncStatus,
     onTouchItem: profileActivity.touchItem,
-    clearPostEditor: () => setEditingPost(null),
+    clearPostEditor: () => closePostEditor(),
     clearCommentEditor: (itemId, commentId) =>
-      setEditingComment((current) =>
-        current?.itemId === itemId && current.commentId === commentId
-          ? null
-          : current
-      )
+      closeCommentEditor({ itemId, commentId })
   });
   const {
     feedPages,
@@ -775,17 +787,13 @@ function SymposiumExperience({
       acceptCanonicalActivity: profileActivity.acceptCanonical,
       acceptLiveActionProjection: inquiryController.acceptLiveActionProjection,
       closeCommentEditor: (commentId) => {
-        setEditingComment((current) =>
-          current?.commentId === commentId ? null : current
-        );
+        closeCommentEditor({ commentId });
       },
       closeCommentEditorsForPost: (itemId) => {
-        setEditingComment((current) =>
-          current?.itemId === itemId ? null : current
-        );
+        closeCommentEditor({ itemId });
       },
       closePostEditor: (itemId) => {
-        setEditingPost((current) => current?.id === itemId ? null : current);
+        closePostEditor(itemId);
       },
       currentActorHandle: () => currentProfileRef.current.handle,
       invalidateQuotedSource: invalidateLiveQuotedSource,
@@ -821,7 +829,7 @@ function SymposiumExperience({
       (postId) => itemsRef.current.find((item) => item.id === postId)?.room
     );
     replaceViewSnapshot(snapshot);
-    setAssistantOriginContext(null);
+    initialRouteApplied();
     commentSegmentStacksRef.current = {};
     visibleCommentSegmentStacksRef.current = {};
     resetHistory();
@@ -1010,12 +1018,8 @@ function SymposiumExperience({
         : snapshot.assistantThreadId ?? null,
       assistantBackdrop: snapshot.assistantBackdrop ?? null
     });
-    setComposerOpen(false);
-    setComposerCommunityId(null);
-    setSettingsOpen(false);
+    navigationRestored();
     setSearchOpen(false);
-    setMessagesQuickOpen(false);
-    setAssistantOriginContext(null);
     restoreScrollPosition(snapshot);
   };
 
@@ -1039,8 +1043,7 @@ function SymposiumExperience({
 
   const collapseAssistantToTablet = (threadId: string | null) => {
     assistantCollapseThreadIdRef.current = threadId;
-    setAssistantOriginContext(null);
-    setTabletOpen(true);
+    collapseAssistant();
     goBack();
   };
 
@@ -1059,11 +1062,8 @@ function SymposiumExperience({
     }
     recordNavigation(currentSnapshot, nextSnapshot);
     replaceViewSnapshot(nextSnapshot);
-    setComposerOpen(false);
-    setSettingsOpen(false);
+    navigationCommitted(nextSnapshot.assistantOpen);
     setSearchOpen(false);
-    setMessagesQuickOpen(false);
-    if (!nextSnapshot.assistantOpen) setAssistantOriginContext(null);
     if (scrollY !== null) {
       window.setTimeout(() => window.scrollTo({ top: scrollY, behavior: "auto" }), 0);
     }
@@ -1135,25 +1135,19 @@ function SymposiumExperience({
       return;
     }
     if (tabletOpen) {
-      setAssistantOriginContext(tabletContext);
+      expandAssistant(tabletContext);
       navigateView({
         assistantOpen: true,
         assistantThreadId
       }, null);
       return;
     }
-    setComposerOpen(false);
-    setSettingsOpen(false);
+    openTablet();
     setSearchOpen(false);
-    setMessagesQuickOpen(false);
-    setTabletOpen(true);
   };
 
   const openSearch = () => {
-    setTabletOpen(false);
-    setComposerOpen(false);
-    setSettingsOpen(false);
-    setMessagesQuickOpen(false);
+    prepareSearch();
     setSearchOpen(true);
   };
 
@@ -1234,8 +1228,7 @@ function SymposiumExperience({
       officeMode: "desk",
       selectedCommunityId: committedItem.communityId ?? null
     });
-    setComposerOpen(false);
-    setComposerCommunityId(null);
+    closeComposer();
     return { ok: true as const };
   };
 
@@ -1364,14 +1357,14 @@ function SymposiumExperience({
     }
     const committedProfile = await profileController.saveSettings(draft);
     if (committedProfile) {
-      setSettingsOpen(false);
+      closeSettings();
     }
   };
 
   const toggleFollow = profileController.toggleFollow;
 
   const signOut = async () => {
-    setSettingsOpen(false);
+    closeSettings();
     await sessionController.signOut();
   };
 
@@ -1392,7 +1385,7 @@ function SymposiumExperience({
     }
   ) => {
     if (await inquiryController.savePostEdit(itemId, draft)) {
-      setEditingPost(null);
+      closePostEditor();
     }
   };
 
@@ -1414,7 +1407,7 @@ function SymposiumExperience({
       attachments,
       quote
     })) {
-      setEditingComment(null);
+      closeCommentEditor();
     }
   };
 
@@ -1459,17 +1452,13 @@ function SymposiumExperience({
   };
 
   const beginQuote = (selection: QuoteSelection) => {
-    setTabletOpen(false);
-    setSettingsOpen(false);
     setSearchOpen(false);
     setViewField("messagesOpen", false);
-    setComposerOpen(false);
-    setComposerCommunityId(null);
-    setQuoteSelection(selection);
+    openQuote(selection);
   };
 
   const openQuotedSource = (selection: QuoteSelection) => {
-    setQuoteSelection(null);
+    closeQuote();
     openPost(
       selection.sourcePostId,
       selection.sourceType === "comment" ? selection.sourceId : null,
@@ -1793,7 +1782,7 @@ function SymposiumExperience({
             actorHandle={currentProfile.handle}
             liveEvents={notificationEvents}
             onOpenConversation={(conversationId) => {
-              setMessagesQuickOpen(false);
+              closeQuickMessages();
               navigateView({ messagesOpen: true, selectedConversationId: conversationId });
             }}
             onNavigate={(href) => {
@@ -1844,10 +1833,7 @@ function SymposiumExperience({
             actorHandle={currentProfile.handle}
             expanded={messagesQuickOpen}
             liveEvents={messagingEvents}
-            onOpen={() => {
-              setQuickConversationId(null);
-              setMessagesQuickOpen(true);
-            }}
+            onOpen={openQuickMessages}
           />
           <CanonicalLink
             className="profile-button"
@@ -1909,14 +1895,12 @@ function SymposiumExperience({
             onCommentAction={applyCommentAction}
             onQuote={beginQuote}
             onOpenQuote={openQuotedSource}
-            onEditComment={(itemId, commentId) => setEditingComment({ itemId, commentId })}
+            onEditComment={(itemId, commentId) => openCommentEditor({ itemId, commentId })}
             onDeleteComment={deleteComment}
             onOpenSettings={() => {
-              setTabletOpen(false);
-              setComposerOpen(false);
               setSearchOpen(false);
               setViewField("messagesOpen", false);
-              setSettingsOpen(true);
+              openSettings();
             }}
             onToggleFollow={toggleFollow}
             onMessage={(handle) => {
@@ -1978,7 +1962,7 @@ function SymposiumExperience({
               void Promise.all(tasks).catch(() => setSyncStatus("More profile activity could not load"));
             }}
             onSocialViewChange={changeProfileSocialView}
-            onEditPost={setEditingPost}
+            onEditPost={openPostEditor}
             onDeletePost={deletePost}
             onOpenAttachmentPreview={openAttachmentPreview}
             onOpenCommentAttachmentPreview={openCommentAttachmentPreview}
@@ -1997,9 +1981,9 @@ function SymposiumExperience({
             onQuote={beginQuote}
             onOpenQuote={openQuotedSource}
             onCommentAction={applyCommentAction}
-            onEditComment={(itemId, commentId) => setEditingComment({ itemId, commentId })}
+            onEditComment={(itemId, commentId) => openCommentEditor({ itemId, commentId })}
             onDeleteComment={deleteComment}
-            onEditPost={setEditingPost}
+            onEditPost={openPostEditor}
             onDeletePost={deletePost}
             actorHandle={currentProfile.handle}
             profiles={profiles}
@@ -2065,12 +2049,14 @@ function SymposiumExperience({
               onCreateAnnouncement: communityController.createAnnouncement,
               onUpdateAnnouncement: communityController.updateAnnouncement,
               onDeleteAnnouncement: communityController.deleteAnnouncement,
-              onCreatePost: () => { if (selectedCommunity) { setComposerCommunityId(selectedCommunity.id); setComposerOpen(true); } },
+              onCreatePost: () => {
+                if (selectedCommunity) openComposer(selectedCommunity.id);
+              },
               onCreateCall: communityController.createCall, onJoinCall: communityController.joinCall,
               onInvite: communityController.invite, onMessageModerator: (handle) => { const normalized = cleanHandle(handle); navigateView({ messagesOpen: true, selectedConversationId: `direct:${normalized}` }, null); },
               onOpenCommunity: openCommunity, onCreateCommunity: communityController.createCommunity,
               onSelect: openPost, onOpenProfile: openProfile, onAction: applyAction, onQuote: beginQuote,
-              onOpenQuote: openQuotedSource, onEditPost: setEditingPost, onDeletePost: deletePost,
+              onOpenQuote: openQuotedSource, onEditPost: openPostEditor, onDeletePost: deletePost,
               onOpenAttachmentPreview: openAttachmentPreview,
               onFeedView: setSelectedCommunityFeedView,
               onLoadMore: () => activeFeedRequest
@@ -2092,7 +2078,7 @@ function SymposiumExperience({
             onAction={applyAction}
             onQuote={beginQuote}
             onOpenQuote={openQuotedSource}
-            onEditPost={setEditingPost}
+            onEditPost={openPostEditor}
             onDeletePost={deletePost}
             onOpenNotes={() => toggleOfficeMode("notes")}
             onOpenSaved={() => toggleOfficeMode("saved")}
@@ -2114,11 +2100,13 @@ function SymposiumExperience({
         className="new-post-launcher bottom-action bottom-action-new"
         type="button"
         onClick={() => {
-          setTabletOpen(false);
-          setSettingsOpen(false);
           setSearchOpen(false);
-          setComposerCommunityId(selectedCommunity && canParticipateInCommunity(selectedCommunity, currentProfile) ? selectedCommunity.id : null);
-          setComposerOpen(true);
+          openGlobalComposer(
+            selectedCommunity &&
+              canParticipateInCommunity(selectedCommunity, currentProfile)
+              ? selectedCommunity.id
+              : null
+          );
         }}
       >
         <NotebookPen size={18} />
@@ -2142,10 +2130,9 @@ function SymposiumExperience({
         <AssistantExperience
           controller={assistantController}
           mode={assistantOpen ? "workspace" : "compact"}
-          onClose={() => setTabletOpen(false)}
+          onClose={closeTablet}
           onExpand={() => {
-            setTabletOpen(true);
-            setAssistantOriginContext(tabletContext);
+            expandAssistant(tabletContext);
             navigateView({
               assistantOpen: true,
               assistantThreadId: assistantController.conversationId ?? null
@@ -2162,26 +2149,23 @@ function SymposiumExperience({
           actor={currentProfile}
           profiles={profiles}
           selectedConversationId={quickConversationId}
-          onSelectConversation={setQuickConversationId}
+          onSelectConversation={selectQuickConversation}
           onOpenProfile={(handle) => {
-            setMessagesQuickOpen(false);
+            closeQuickMessages();
             openProfile(handle);
           }}
           onOpenFull={(conversationId) => {
-            setMessagesQuickOpen(false);
+            closeQuickMessages();
             navigateView({ messagesOpen: true, selectedConversationId: conversationId }, null);
           }}
-          onClose={() => setMessagesQuickOpen(false)}
+          onClose={closeQuickMessages}
           liveEvents={messagingEvents}
         />
       ) : null}
 
       {composerOpen ? (
         <PostComposerModal
-          onClose={() => {
-            setComposerOpen(false);
-            setComposerCommunityId(null);
-          }}
+          onClose={closeComposer}
           onCreatePost={createPost}
           onSaveDraft={savePostDraft}
           onUploadAttachment={uploadPostAttachment}
@@ -2208,7 +2192,7 @@ function SymposiumExperience({
           quote={quotePreview}
           selection={quoteSelection}
           profiles={profiles}
-          onClose={() => setQuoteSelection(null)}
+          onClose={closeQuote}
           onCreatePost={createPost}
           onAddComment={addComment}
           onUploadPostAttachment={uploadPostAttachment}
@@ -2220,7 +2204,7 @@ function SymposiumExperience({
         <PostEditModal
           key={editingPostItem.id}
           item={editingPostItem}
-          onClose={() => setEditingPost(null)}
+          onClose={() => closePostEditor()}
           onSave={savePostEdit}
           onDelete={deletePost}
           onUploadAttachment={uploadPostAttachment}
@@ -2234,7 +2218,7 @@ function SymposiumExperience({
           key={`${editingComment.itemId}:${editingComment.commentId}`}
           item={editingCommentItem}
           comment={editingCommentValue}
-          onClose={() => setEditingComment(null)}
+          onClose={() => closeCommentEditor()}
           onSave={saveCommentEdit}
           onDelete={deleteComment}
           onUploadAttachment={uploadCommentAttachment}
@@ -2277,7 +2261,7 @@ function SymposiumExperience({
       {settingsOpen ? (
         <ProfileSettingsModal
           currentProfile={currentProfile}
-          onClose={() => setSettingsOpen(false)}
+          onClose={closeSettings}
           onSave={saveProfileSettings}
           onUploadAvatar={uploadProfileAvatar}
           onSignOut={signOut}

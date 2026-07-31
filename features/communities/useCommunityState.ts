@@ -27,7 +27,6 @@ export const useCommunityState = (currentProfileHandle: string, selectedCommunit
     () => seededCommunityCallMap(researchCommunities, Date.UTC(2026, 6, 16, 16))
   );
   const [communityMembershipBusy, setCommunityMembershipBusy] = useState(false);
-  const [composerCommunityId, setComposerCommunityId] = useState<string | null>(null);
   const [communityFeedViews, setCommunityFeedViews] = useState<Record<string, CommunityFeedViewState>>({});
   const communitiesRef = useRef(communities);
   const selectedCommunity = useMemo(
@@ -84,8 +83,6 @@ export const useCommunityState = (currentProfileHandle: string, selectedCommunit
     setCommunityCalls,
     communityMembershipBusy,
     setCommunityMembershipBusy,
-    composerCommunityId,
-    setComposerCommunityId,
     selectedCommunity,
     selectedCommunityFeedView,
     setSelectedCommunityFeedView
