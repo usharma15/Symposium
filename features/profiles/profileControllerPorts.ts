@@ -26,10 +26,14 @@ export type ProfileInquiryPort = {
     actorHandle: string
   ) => void;
   findItem: (itemId: string) => InquiryItem | undefined;
-  hydrateCachedSnapshot: (storedProfileHandle: string | null) => {
+  hydrateCachedSnapshot: (
+    storedProfileHandle: string | null,
+    cacheScopeKey: string | null
+  ) => {
     profiles: Record<string, ResearchProfile>;
     currentProfile: ResearchProfile;
     communities?: ResearchCommunity[];
+    cacheHit: boolean;
   };
   loadPostPage: (
     key: string,

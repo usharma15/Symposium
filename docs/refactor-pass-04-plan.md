@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | In progress; safe checkpoint implemented, mid-pass and release LOC gates not met |
+| Status | In progress; structural checkpoints continue while LOC governance is explicitly on standby |
 | Prepared | July 30, 2026 |
 | Repository | `/Users/udayansharma/Documents/Science Rebirth` |
 | Exact baseline SHA | `5d89eadd83c1d3042b3eb320c0cb81ae9522d21d` |
@@ -23,18 +23,23 @@ This is the execution charter for the next pass. It deliberately sets a
 material result threshold. Another few-hundred-line cleanup is useful work,
 but it is not this pass.
 
-> **Current execution addendum, July 30, 2026:** checkpoint 10 implements C5
-> global live-event authority. One typed controller/router now owns stream
-> subscription, ordered event classification, bounded consumer delivery,
-> cross-domain invalidation, and actor/backend-scoped callback and private
-> buffer isolation. The shell contains no live transport or event-kind policy.
-> The exact candidate is 490 tracked source files / 128,699 physical / 120,565
-> nonblank, 13,700 physical lines above the Pass 04 ceiling; no repository
-> reduction credit is claimed. Authentication/entrance lifecycle is the next
-> characterized authority candidate. Ephemeral modal and view composition
-> remain shell responsibilities rather than grounds for a global store. Exact
-> C5 evidence is in
-> [`refactor-evidence/pass-04/checkpoint-10.md`](refactor-evidence/pass-04/checkpoint-10.md).
+> **Current execution addendum, July 31, 2026:** checkpoint 11 implements C6
+> authentication and entrance lifecycle authority. One typed controller and
+> pure reducer now own browser-session entry, Clerk account admission,
+> abortable exact-user synchronization, read/live/social gates, local preview,
+> sign-out, and entrance replay. Authenticated bootstrap caches and inquiry,
+> profile, and analytics cross-tab transports are exact-viewer scoped; direct
+> account replacement cannot present or hydrate the previous viewer.
+> `SymposiumV0.tsx` contains no authentication or entrance transition policy
+> and is 2,279 lines. The exact candidate is 493 tracked source files / 130,139
+> physical / 121,958 nonblank. Per explicit product direction, LOC reduction is
+> on standby: these
+> figures remain informational drift evidence, the original 114,999 completion
+> contract is not met, and no repository reduction credit or Pass 04
+> completion is claimed. Operational recovery evidence is the next
+> infrastructure priority; ephemeral modal and cross-domain view composition
+> remain legitimate shell responsibilities. Exact C6 evidence is in
+> [`refactor-evidence/pass-04/checkpoint-11.md`](refactor-evidence/pass-04/checkpoint-11.md).
 
 The threshold is an acceptance gate, not permission to game the count. If
 11,544 safe deletions cannot be proved, the implementation must stop at a

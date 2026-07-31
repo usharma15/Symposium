@@ -195,6 +195,7 @@ type InquiryActivityPort = {
 
 type InquiryControllerInput = {
   actorHandle: string;
+  cacheScopeKey: string | null;
   communitiesRef: MutableRefObject<ResearchCommunity[]>;
   currentProfileRef: MutableRefObject<ResearchProfile>;
   initialItems: InquiryItem[];
@@ -383,6 +384,7 @@ export const useInquiryController = (input: InquiryControllerInput) => {
 
   const persistSnapshot = () => {
     const current = inputRef.current;
+    if (!current.cacheScopeKey) return;
     persistCachedBootstrap(
       window.localStorage,
       {
@@ -390,7 +392,8 @@ export const useInquiryController = (input: InquiryControllerInput) => {
         profiles: current.profilesRef.current,
         communities: current.communitiesRef.current
       },
-      current.currentProfileRef.current.handle
+      current.currentProfileRef.current.handle,
+      current.cacheScopeKey
     );
   };
 
@@ -403,6 +406,8 @@ export const useInquiryController = (input: InquiryControllerInput) => {
       const nextItems = sortByPublishedRecency(received.items);
       replaceItems(nextItems);
       lastPersistedItemsRef.current = nextItems;
+      const cacheScopeKey = inputRef.current.cacheScopeKey;
+      if (!cacheScopeKey) return;
       persistCachedBootstrap(
         window.localStorage,
         {
@@ -410,9 +415,11 @@ export const useInquiryController = (input: InquiryControllerInput) => {
           profiles: inputRef.current.profilesRef.current,
           communities: inputRef.current.communitiesRef.current
         },
-        inputRef.current.currentProfileRef.current.handle
+        inputRef.current.currentProfileRef.current.handle,
+        cacheScopeKey
       );
     },
+    scopeKey: input.cacheScopeKey,
     storageKey: "symposium-cross-tab-item"
   });
 
@@ -420,15 +427,19 @@ export const useInquiryController = (input: InquiryControllerInput) => {
     nextItems: InquiryItem[],
     explicitItemIds: string[] = []
   ) => {
-    persistCachedBootstrap(
-      window.localStorage,
-      {
-        items: nextItems,
-        profiles: inputRef.current.profilesRef.current,
-        communities: inputRef.current.communitiesRef.current
-      },
-      inputRef.current.currentProfileRef.current.handle
-    );
+    const cacheScopeKey = inputRef.current.cacheScopeKey;
+    if (cacheScopeKey) {
+      persistCachedBootstrap(
+        window.localStorage,
+        {
+          items: nextItems,
+          profiles: inputRef.current.profilesRef.current,
+          communities: inputRef.current.communitiesRef.current
+        },
+        inputRef.current.currentProfileRef.current.handle,
+        cacheScopeKey
+      );
+    }
     const messages = coordinatorRef.current.publishChanges(
       nextItems,
       lastPersistedItemsRef.current,
@@ -446,12 +457,19 @@ export const useInquiryController = (input: InquiryControllerInput) => {
     persistItems(nextItems, explicitItemIds);
   };
 
-  const hydrateCachedSnapshot = (preferredHandle: string | null) => {
+  const hydrateCachedSnapshot = (
+    preferredHandle: string | null,
+    cacheScopeKey: string | null
+  ) => {
+    const snapshot = readCachedBootstrapSnapshot(
+      window.localStorage,
+      cacheScopeKey
+    );
     const cached = resolveCachedBootstrap({
       fallbackProfile: profile,
       preferredHandle,
       seedItems: input.initialItems,
-      snapshot: readCachedBootstrapSnapshot(window.localStorage)
+      snapshot
     });
     const cachedItems = sortByPublishedRecency(normalizeClientSeedTimes(cached.items));
     lastPersistedItemsRef.current = cachedItems;
@@ -459,7 +477,8 @@ export const useInquiryController = (input: InquiryControllerInput) => {
     return {
       communities: cached.communities,
       currentProfile: cached.currentProfile,
-      profiles: cached.profiles
+      profiles: cached.profiles,
+      cacheHit: Boolean(snapshot)
     };
   };
 

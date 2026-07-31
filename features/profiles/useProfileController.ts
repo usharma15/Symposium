@@ -62,9 +62,14 @@ type ProfileFollowResponse = {
   followers?: ProfileFollowRecord[];
 };
 type ProfileSyncEntity = ResearchProfile & { id: string };
+type ProfileSessionRequest = {
+  signal?: AbortSignal;
+  shouldCommit?: () => boolean;
+};
 
 type ProfileControllerInput = ProfileControllerBridgeRefs & {
   activeTab: ProfileTab;
+  cacheScopeKey: string | null;
   fallbackProfile?: ResearchProfile;
   localPreview: boolean;
   onStatus: (status: string) => void;
@@ -329,6 +334,7 @@ export const useProfileController = (input: ProfileControllerInput) => {
         }
         inquiry?.persistSnapshot();
       },
+      scopeKey: input.cacheScopeKey,
       storageKey: "symposium-cross-tab-profile"
     });
 
@@ -370,7 +376,8 @@ export const useProfileController = (input: ProfileControllerInput) => {
   };
 
   const refreshData = async (
-    preferredHandle = currentProfileRef.current.handle
+    preferredHandle = currentProfileRef.current.handle,
+    request?: ProfileSessionRequest
   ) => {
     const inquiry = inputRef.current.inquiryRef.current;
     const commitInquiryRefresh = inquiry?.beginRefresh();
@@ -382,8 +389,12 @@ export const useProfileController = (input: ProfileControllerInput) => {
       defaultProfile: ResearchProfile;
     }>(
       `/api/bootstrap?actorHandle=${encodeURIComponent(preferredHandle)}`,
-      { cache: "no-store" }
+      {
+        cache: "no-store",
+        signal: request?.signal
+      }
     );
+    if (request?.shouldCommit && !request.shouldCommit()) return null;
     const incomingProfiles = Object.keys(data.profiles).length
       ? data.profiles
       : { [data.defaultProfile.handle]: data.defaultProfile };
@@ -740,15 +751,29 @@ export const useProfileController = (input: ProfileControllerInput) => {
     }
   };
 
-  const hydrateCachedBootstrap = (storedProfileHandle: string | null) => {
+  const hydrateCachedBootstrap = (
+    storedProfileHandle: string | null,
+    cacheScopeKey: string | null,
+    authenticatedProfile?: ResearchProfile | null
+  ) => {
     const inquiry = inputRef.current.inquiryRef.current;
     if (!inquiry) return null;
-    const cached = inquiry.hydrateCachedSnapshot(storedProfileHandle);
-    setProfileState(cached.profiles, cached.currentProfile);
+    const cached = inquiry.hydrateCachedSnapshot(
+      storedProfileHandle,
+      cacheScopeKey
+    );
+    const nextProfiles = authenticatedProfile
+      ? {
+          ...cached.profiles,
+          [authenticatedProfile.handle]: authenticatedProfile
+        }
+      : cached.profiles;
+    const nextProfile = authenticatedProfile ?? cached.currentProfile;
+    setProfileState(nextProfiles, nextProfile);
     inputRef.current.environmentRef.current?.applyBootstrap({
       communities: cached.communities
     });
-    return cached.currentProfile;
+    return cached.cacheHit ? nextProfile : null;
   };
 
   const enterLocalPreview = () => {
@@ -776,11 +801,18 @@ export const useProfileController = (input: ProfileControllerInput) => {
     return cachedIdentity;
   };
 
-  const syncAuthenticatedAccount = async (userId: string) => {
+  const syncAuthenticatedAccount = async (
+    userId: string,
+    request?: ProfileSessionRequest
+  ) => {
     const data = await symposiumApi.request<{ profile: ResearchProfile }>(
       "/api/auth/sync",
-      { method: "POST" }
+      {
+        method: "POST",
+        signal: request?.signal
+      }
     );
+    if (request?.shouldCommit && !request.shouldCommit()) return null;
     authenticatedProfileHandleRef.current = data.profile.handle;
     const nextProfiles = {
       ...profilesRef.current,
@@ -796,6 +828,7 @@ export const useProfileController = (input: ProfileControllerInput) => {
   };
 
   const scheduleLiveRefresh = useCoalescedRefresh(() => {
+    if (!inputRef.current.readsEnabled) return [];
     const handle = currentProfileRef.current.handle;
     const selectedKey = selectedProfileNameRef.current;
     const selected = selectedKey
@@ -927,7 +960,10 @@ export const useProfileController = (input: ProfileControllerInput) => {
         return;
       }
       if (event.key !== "symposium-local-snapshot") return;
-      const snapshot = readCachedBootstrapSnapshot(window.localStorage);
+      const snapshot = readCachedBootstrapSnapshot(
+        window.localStorage,
+        inputRef.current.cacheScopeKey
+      );
       if (!snapshot) return;
       if (snapshot.communities?.length) {
         inputRef.current.environmentRef.current?.applyBootstrap({

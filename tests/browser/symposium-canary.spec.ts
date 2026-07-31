@@ -38,6 +38,35 @@ test("first session enters the isolated local preview", async ({ page }) => {
   clean();
 });
 
+test("replays entrance and retires the previous local session on sign-out", async ({ page }) => {
+  const clean = watchDiagnostics(page);
+  await page.goto("/");
+  await expect(
+    page.getByRole("main", { name: "Approaching Symposium" })
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Enter local preview" }).click({
+    timeout: 8_000
+  });
+  await page.getByRole("link", { name: "Open your profile" }).click();
+  await expect(page).toHaveURL(/\/profiles\/udayan$/);
+  await page.getByRole("button", { name: "Edit profile" }).click();
+  await expect(page.getByText("Profile settings", { exact: true }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  await expect(
+    page.getByRole("main", { name: "Approaching Symposium" })
+  ).toBeVisible();
+  await expect(page.locator("main.symposium-shell")).toHaveCount(0);
+  await page.getByRole("button", { name: "Enter local preview" }).click({
+    timeout: 8_000
+  });
+  await expect(page.locator("main.symposium-shell")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open your profile" }))
+    .toHaveAttribute("href", "/profiles/udayan");
+  clean();
+});
+
 test("serializes simultaneous local preview writes without loss", async ({ request }) => {
   const bodies = Array.from(
     { length: 12 },

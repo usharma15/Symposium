@@ -2280,7 +2280,11 @@ assert.match(shell, /title=\{assistantOpen \? "Collapse AI Workspace to Tablet" 
 assert.match(shell, /aria-expanded=\{tabletOpen \|\| assistantOpen\}/);
 assert.match(shell, /\{tabletOpen \|\| assistantOpen \? \([\s\S]*?mode=\{assistantOpen \? "workspace" : "compact"\}/);
 assert.match(shell, /assistantThreadId: assistantController\.conversationId \?\? null/);
-assert.match(shell, /enabled: tabletOpen \|\| assistantOpen/);
+assert.match(
+  shell,
+  /enabled:\s+sessionController\.readsEnabled &&\s+\(tabletOpen \|\| assistantOpen\)/,
+  "Assistant private reads must remain suspended outside the admitted viewer session."
+);
 assert.match(shell, /liveEvents: assistantEvents/);
 assert.match(liveController, /appendAssistantEvent/);
 assert.match(liveController, /setAssistantBuffer/);

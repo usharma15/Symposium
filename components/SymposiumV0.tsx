@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth, useUser } from "@clerk/nextjs";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowLeft,
   BrainCircuit,
@@ -153,12 +153,12 @@ import { RoomView } from "@/features/rooms/RoomView";
 import { opportunityApplicationsView, opportunityPostView, OpportunityApplicationsStage, useOpportunityApplicationComposer } from "@/features/opportunities/OpportunityExperience";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { useCanonicalBrowserHistory } from "@/features/navigation/useCanonicalBrowserHistory";
-import { useBrowserSessionEntrance } from "@/features/entrance/useBrowserSessionEntrance";
 import {
-  entryModeForBrowserSession,
-  resolvePresentedEntryMode,
-  shouldCompleteEntryAfterAccountSync
-} from "@/features/entrance/browserSession";
+  useSymposiumSessionController,
+  type SymposiumAuthState,
+  type SymposiumSessionEnvironmentPort,
+  type SymposiumSessionIdentityPort
+} from "@/features/session/useSymposiumSessionController";
 import { cachedBootstrapItemLimit } from "@/features/bootstrap/cachedBootstrap";
 import {
   assistantBackdropRender,
@@ -171,7 +171,6 @@ import {
   type Theme
 } from "@/features/rooms/roomRenderAssets";
 
-type EntryMode = "loading" | "approach" | "auth" | "complete";
 type EditingCommentTarget = {
   itemId: string;
   commentId: string;
@@ -181,15 +180,6 @@ type AttachmentPreviewTarget = {
   itemId: string;
   commentId?: string;
   attachmentId: string;
-};
-
-type SymposiumAuthState = {
-  clerkEnabled: boolean;
-  authLoaded: boolean;
-  getAccessToken: () => Promise<string | null>;
-  isSignedIn: boolean;
-  userId: string | null;
-  signOut: () => Promise<void>;
 };
 
 const initialBoundedInquiryItems = [...inquiryItems]
@@ -351,16 +341,26 @@ function SymposiumExperience({
   initialShouldPlayEntrance: boolean | null;
   liveBackendUrl: string | null;
 }) {
-  const { authLoaded, clerkEnabled, isSignedIn, userId } = auth;
+  const { authLoaded, clerkEnabled } = auth;
   symposiumApi.configure({ backendUrl: liveBackendUrl, getAccessToken: auth.getAccessToken });
   const [theme, setTheme] = useState<Theme>("day");
-  const [entryMode, setEntryMode] = useState<EntryMode>(() => entryModeForBrowserSession(initialShouldPlayEntrance));
-  const [signedIn, setSignedIn] = useState(false);
-  const [browserReadStateHydrated, setBrowserReadStateHydrated] = useState(false);
-  const readSessionReady = browserReadStateHydrated && (
-    !clerkEnabled || (authLoaded && (!isSignedIn || signedIn))
-  );
-  const { replayEntrance, shouldPlayEntrance } = useBrowserSessionEntrance(initialShouldPlayEntrance);
+  const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
+  const sessionIdentityRef =
+    useRef<SymposiumSessionIdentityPort | null>(null);
+  const sessionEnvironmentRef =
+    useRef<SymposiumSessionEnvironmentPort | null>(null);
+  const sessionController = useSymposiumSessionController({
+    auth,
+    environmentRef: sessionEnvironmentRef,
+    identityRef: sessionIdentityRef,
+    initialIsSignedIn,
+    initialShouldPlayEntrance,
+    onStatus: setSyncStatus
+  });
+  const {
+    entryMode,
+    readSessionReady
+  } = sessionController;
   const {
     state: viewState,
     replaceSnapshot: replaceViewSnapshot,
@@ -389,18 +389,17 @@ function SymposiumExperience({
     selectedProfileName,
     workspaceView
   } = viewState;
-  const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
-  const [authError, setAuthError] = useState("");
   const retryMutationRegistryRef = useRef(createRetryMutationRegistry());
   const profileEnvironmentRef = useRef<ProfileEnvironmentPort | null>(null);
   const profileInquiryRef = useRef<ProfileInquiryPort | null>(null);
   const profileController = useProfileController({
     activeTab: profileActiveTab,
+    cacheScopeKey: sessionController.bootstrapCacheScopeKey,
     environmentRef: profileEnvironmentRef,
     inquiryRef: profileInquiryRef,
     localPreview: !liveBackendUrl,
     onStatus: setSyncStatus,
-    readsEnabled: entryMode === "complete" && readSessionReady,
+    readsEnabled: sessionController.readsEnabled,
     retryMutation: {
       acquire: (scope, fingerprint) =>
         retryMutationRegistryRef.current.acquire(scope, fingerprint),
@@ -408,9 +407,7 @@ function SymposiumExperience({
         retryMutationRegistryRef.current.clear(fingerprintKey)
     },
     selectedProfileName,
-    socialHydrationEnabled:
-      signedIn ||
-      (!clerkEnabled && entryMode === "complete" && readSessionReady)
+    socialHydrationEnabled: sessionController.socialHydrationEnabled
   });
   const {
     activity: profileActivity,
@@ -423,6 +420,16 @@ function SymposiumExperience({
     selectedProfileHandle,
     socialLists: profileSocialLists
   } = profileController;
+  sessionIdentityRef.current = {
+    clearAuthenticatedIdentity:
+      profileController.clearAuthenticatedIdentity,
+    enterLocalPreview: profileController.enterLocalPreview,
+    hydrateCachedBootstrap: profileController.hydrateCachedBootstrap,
+    hydrateCachedIdentity: profileController.hydrateCachedIdentity,
+    refreshData: profileController.refreshData,
+    syncAuthenticatedAccount:
+      profileController.syncAuthenticatedAccount
+  };
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
   const [communitiesExpanded, setCommunitiesExpanded] = useState(false);
   const [communityQuery, setCommunityQuery] = useState("");
@@ -477,15 +484,9 @@ function SymposiumExperience({
   const connectionSyncStatusRef = useRef<string>(liveStatus.loading);
   const commentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const visibleCommentSegmentStacksRef = useRef<CommentSegmentStacks>({});
-  const entranceStartedAtRef = useRef<number | null>(null);
-  const entryModeRef = useRef(entryMode);
-  entryModeRef.current = entryMode;
-  const entryAuthStateRef = useRef({ accountSynced: signedIn, browserSignedIn: Boolean(isSignedIn) });
-  entryAuthStateRef.current = { accountSynced: signedIn, browserSignedIn: Boolean(isSignedIn) };
-  const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
-
   const inquiryController = useInquiryController({
     actorHandle: currentProfile.handle,
+    cacheScopeKey: sessionController.bootstrapCacheScopeKey,
     communitiesRef,
     currentProfileRef,
     initialItems: initialBoundedInquiryItems,
@@ -753,11 +754,9 @@ function SymposiumExperience({
     messagingEvents,
     notificationEvents
   } = useSymposiumLiveController({
-    authSessionKey: authLoaded
-      ? (isSignedIn ? userId ?? "signed-in" : "anonymous")
-      : "loading",
+    authSessionKey: sessionController.authSessionKey,
     backendUrl: liveBackendUrl,
-    enabled: entryMode !== "loading",
+    enabled: sessionController.liveEventsEnabled,
     getAccessToken: auth.getAccessToken,
     onConnected: markLiveDataConnected,
     onReconnecting: markLiveUpdatesReconnecting,
@@ -817,114 +816,22 @@ function SymposiumExperience({
     resetHistory();
   };
 
-  useLayoutEffect(() => {
-    if (shouldPlayEntrance === null) return;
-    const storedTheme = window.localStorage.getItem("symposium-theme") as Theme | null;
-    const storedProfileHandle = window.localStorage.getItem("symposium-profile-handle");
-
-    if (storedTheme === "day" || storedTheme === "night") {
-      setTheme(storedTheme);
-    } else if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
-      setTheme("night");
-    }
-    profileActivity.hydrateLocalRecency();
-    profileController.hydrateCachedBootstrap(storedProfileHandle);
-    const sessionEntryMode = entryModeForBrowserSession(shouldPlayEntrance);
-    setEntryMode(sessionEntryMode);
-    if (sessionEntryMode === "approach") entranceStartedAtRef.current = Date.now();
-    if (sessionEntryMode === "complete") {
-      applyInitialRouteState();
-      window.sessionStorage.setItem("symposium-entry-complete", "true");
-    }
-    setBrowserReadStateHydrated(true);
-
-    if (!clerkEnabled) {
-      profileController.refreshData(storedProfileHandle ?? undefined).catch(() => {
-        setSyncStatus("Using seed data");
-      });
-    }
-  }, [shouldPlayEntrance]);
-
-  useEffect(() => {
-    if (entryMode !== "approach" || shouldPlayEntrance !== true) return undefined;
-
-    const startedAt = entranceStartedAtRef.current ?? Date.now();
-    entranceStartedAtRef.current = startedAt;
-    const timer = window.setTimeout(() => {
-      const latestAuth = entryAuthStateRef.current;
-      if (latestAuth.accountSynced || latestAuth.browserSignedIn) {
-        window.sessionStorage.setItem("symposium-entry-complete", "true");
-        setEntryMode("complete");
-        applyInitialRouteState();
-      } else {
-        setEntryMode("auth");
+  sessionEnvironmentRef.current = {
+    applyInitialRouteState,
+    hydrateBrowserAppearance: () => {
+      const storedTheme = window.localStorage.getItem(
+        "symposium-theme"
+      ) as Theme | null;
+      if (storedTheme === "day" || storedTheme === "night") {
+        setTheme(storedTheme);
+      } else if (
+        window.matchMedia?.("(prefers-color-scheme: dark)").matches
+      ) {
+        setTheme("night");
       }
-    }, Math.max(0, startedAt + 5000 - Date.now()));
-
-    return () => window.clearTimeout(timer);
-  }, [entryMode, shouldPlayEntrance]);
-
-  useEffect(() => {
-    if (!clerkEnabled) return;
-    if (!authLoaded) return;
-
-    if (!isSignedIn) {
-      setSignedIn(false);
-      setSyncedClerkUserId(null);
-      profileController.clearAuthenticatedIdentity();
-      window.localStorage.removeItem("symposium-auth-handle");
-      window.localStorage.removeItem("symposium-auth-records");
-      return;
-    }
-
-    if (!userId || syncedClerkUserId === userId) return;
-
-    let cancelled = false;
-    const cachedIdentity = profileController.hydrateCachedIdentity(userId);
-    if (cachedIdentity) {
-      setSignedIn(true);
-    }
-
-    const syncAccount = async () => {
-      setSyncStatus("Syncing account");
-      setAuthError("");
-      const syncedProfile =
-        await profileController.syncAuthenticatedAccount(userId);
-      if (cancelled) return;
-
-      setSignedIn(true);
-      setSyncedClerkUserId(userId);
-      if (shouldCompleteEntryAfterAccountSync(entryModeRef.current)) {
-        setEntryMode("complete");
-        applyInitialRouteState();
-      }
-      window.sessionStorage.setItem("symposium-entry-complete", "true");
-      window.localStorage.setItem(
-        "symposium-profile-handle",
-        syncedProfile.handle
-      );
-      setSyncStatus("Signed in");
-      void profileController.refreshData(syncedProfile.handle).catch(() => {
-        if (!cancelled) setSyncStatus("Using cached data");
-      });
-    };
-
-    syncAccount().catch((error) => {
-      if (cancelled) return;
-      setAuthError(error instanceof Error ? error.message : "Could not sync your account.");
-      setSyncStatus("Account sync failed");
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authLoaded, clerkEnabled, isSignedIn, syncedClerkUserId, userId]);
-
-  useEffect(() => {
-    if (!clerkEnabled || !authLoaded || isSignedIn || entryMode !== "complete") return;
-    window.sessionStorage.removeItem("symposium-entry-complete");
-    setEntryMode("auth");
-  }, [authLoaded, clerkEnabled, entryMode, isSignedIn]);
+    },
+    hydrateLocalRecency: profileActivity.hydrateLocalRecency
+  };
 
   useEffect(() => {
     window.localStorage.setItem("symposium-theme", theme);
@@ -1361,17 +1268,6 @@ function SymposiumExperience({
     });
   };
 
-  const enterLocalPreview = () => {
-    const previewProfile = profileController.enterLocalPreview();
-    setSignedIn(true);
-    setAuthError("");
-    setEntryMode("complete");
-    applyInitialRouteState();
-    window.sessionStorage.setItem("symposium-entry-complete", "true");
-    window.localStorage.setItem("symposium-profile-handle", previewProfile.handle);
-    setSyncStatus("Local preview");
-  };
-
   const readFileAsDataUrl = (file: File) =>
     new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -1464,17 +1360,8 @@ function SymposiumExperience({
   const toggleFollow = profileController.toggleFollow;
 
   const signOut = async () => {
-    await auth.signOut().catch(() => undefined);
-    window.localStorage.removeItem("symposium-auth-handle");
-    window.localStorage.removeItem("symposium-auth-records");
-    window.sessionStorage.removeItem("symposium-entry-complete");
-    setSignedIn(false);
-    setSyncedClerkUserId(null);
     setSettingsOpen(false);
-    setAuthError("");
-    entranceStartedAtRef.current = Date.now();
-    replayEntrance();
-    setEntryMode("approach");
+    await sessionController.signOut();
   };
 
   const applyAction = inquiryController.applyAction;
@@ -1808,7 +1695,9 @@ function SymposiumExperience({
     actorHandle: currentProfile.handle,
     context: assistantVisibleContext,
     requestedConversationId: assistantThreadId,
-    enabled: tabletOpen || assistantOpen,
+    enabled:
+      sessionController.readsEnabled &&
+      (tabletOpen || assistantOpen),
     liveEvents: assistantEvents
   });
 
@@ -1831,27 +1720,17 @@ function SymposiumExperience({
     replaceCanonicalRoute
   ]);
 
-  const presentedEntryMode = resolvePresentedEntryMode({
-    entryMode,
-    clerkEnabled,
-    authLoaded,
-    initialIsSignedIn,
-    isSignedIn: Boolean(isSignedIn),
-    accountSynced: signedIn,
-    authError
-  });
-
-  if (presentedEntryMode !== "complete") {
+  if (sessionController.presentedEntryMode !== "complete") {
     return (
       <EntrySequence
         theme={theme}
         entranceRender={entranceRenders[theme]}
-        mode={presentedEntryMode}
-        authError={authError}
+        mode={sessionController.presentedEntryMode}
+        authError={sessionController.authError}
         authLoaded={authLoaded}
         clerkEnabled={clerkEnabled}
-        onLocalPreview={enterLocalPreview}
-        playApproach={shouldPlayEntrance === true}
+        onLocalPreview={sessionController.enterLocalPreview}
+        playApproach={sessionController.playApproach}
       />
     );
   }

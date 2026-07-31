@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const expectedCanaries = [
   "symposium-canary.spec.ts\0first session enters the isolated local preview",
+  "symposium-canary.spec.ts\0replays entrance and retires the previous local session on sign-out",
   "symposium-canary.spec.ts\0serializes simultaneous local preview writes without loss",
   "symposium-canary.spec.ts\0hydrates canonical routes and preserves in-app history",
   "symposium-canary.spec.ts\0keeps Paper and Thought design identities stable across theme and reload",

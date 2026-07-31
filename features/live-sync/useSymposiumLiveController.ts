@@ -68,6 +68,7 @@ export const useSymposiumLiveController = ({
       channelName: contentAnalyticsSyncChannel,
       isMessage: isContentAnalyticsInvalidation,
       onMessage: dispatchContentAnalyticsInvalidation,
+      scopeKey: authSessionKey,
       storageKey: contentAnalyticsSyncStorageKey
     });
 

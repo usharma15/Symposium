@@ -158,11 +158,23 @@ buffer accepted for a previous viewer is ineligible for the current viewer.
 The shell supplies narrow domain ports and cannot classify event families,
 retain event buffers, or subscribe to the transport directly.
 
+`features/session/useSymposiumSessionController.ts` is the single
+authentication and entrance lifecycle authority. Its pure reducer in
+`features/session/symposiumSessionLifecycle.ts` owns browser-session entry,
+Clerk identity admission, exact-user synchronization, local preview,
+sign-out, and the read/live/social gates projected to the rest of the
+application. A direct account transition masks the previous viewer until the
+new viewer's canonical bootstrap commits; abort signals and identity epochs
+reject delayed account work. Authenticated bootstrap caches and inquiry,
+profile, and analytics cross-tab transports are keyed by exact Clerk user.
+Unresolved identity cannot consume those transports, and legacy unscoped
+bootstrap data remains readable only by local preview.
+
 Profiles reuse the same collection coordinator and ordered browser transport as inquiry items. Follow relationships use a relationship-specific coordinator that tracks the pending desired state and the last authoritative relationship revision, so refreshes and delayed events cannot reverse a follow or unfollow while its request is outstanding. Profile, follow, post, comment, and action writes all use the shared JSON API client and idempotency-key policy.
 
 ## Frontend ownership
 
-`SymposiumV0.tsx` is the application orchestrator: authentication/entrance lifecycle, cross-domain composition, ephemeral modal selection, and invocation of typed feature commands. Canonical view state belongs to `useSymposiumViewController`; inquiry reads, writes, live/cross-tab convergence, and item persistence belong to `useInquiryController`; profile, identity projection, follow, social-list, and profile-activity state belong to `useProfileController` and its activity subcontroller; global and community search belongs to `useDiscoveryController`; global live-event delivery and routing belong to `useSymposiumLiveController`. The shell owns zero direct feature HTTP requests and zero event-family policy. HTTP normalization, retry identities, SSE lifecycle, mutation ordering, routing, and reconciliation remain delegated to shared infrastructure. Rendering and feature policy are owned below it:
+`SymposiumV0.tsx` is the application composition root: cross-domain port wiring, ephemeral modal selection, and invocation of typed feature commands. Authentication and entrance lifecycle belong to `useSymposiumSessionController`; canonical view state belongs to `useSymposiumViewController`; inquiry reads, writes, live/cross-tab convergence, and item persistence belong to `useInquiryController`; profile, identity projection, follow, social-list, and profile-activity state belong to `useProfileController` and its activity subcontroller; global and community search belongs to `useDiscoveryController`; global live-event delivery and routing belong to `useSymposiumLiveController`. The shell owns zero direct feature HTTP requests, zero event-family policy, and zero authentication or entrance transition policy. HTTP normalization, retry identities, SSE lifecycle, mutation ordering, routing, and reconciliation remain delegated to shared infrastructure. Rendering and feature policy are owned below it:
 
 - `features/posts`: composers, feed cards, detail views, edit surfaces, post action presentation
 - `features/inquiry`: the typed inquiry entity, read, mutation, convergence, cross-tab, and persistence authority
@@ -183,7 +195,7 @@ Assistant context identity and context-type projection are canonicalized once in
 
 The canonical browser-history state machine is owned by `features/navigation/useCanonicalBrowserHistory.ts`. The shell supplies and restores view snapshots, but it does not directly implement browser index, popstate, or direct-entry fallback policy.
 
-Browser-session entry is server-coordinated. `app/SymposiumPage.tsx` reads a non-persistent session cookie and renders subsequent tabs directly into their canonical route; `features/entrance/useBrowserSessionEntrance.ts` establishes the marker on the first visit. The first browser-session visit alone owns the five-second entrance. `features/bootstrap/cachedBootstrap.ts` owns best-effort cached entity/profile hydration so later tabs do not wait for Clerk synchronization or the live bootstrap request before rendering useful content. Exact Clerk-user identity and viewer-scoped profile first-page projections extend that acceleration boundary to returning authenticated profile routes; the same existing API reads always revalidate them, cursor continuations remain network-only, and no provider request is added. Browser storage quota pressure is non-fatal and cannot fail a live mutation. Server-rendered shell values, including timestamps, must be deterministic across server and browser locales to preserve hydration.
+Browser-session entry is server-coordinated. `app/SymposiumPage.tsx` reads a non-persistent session cookie, `features/entrance/useBrowserSessionEntrance.ts` establishes the marker on the first visit, and `useSymposiumSessionController` owns the resulting five-second approach, authentication admission, and replay on sign-out. `features/bootstrap/cachedBootstrap.ts` owns best-effort cached entity/profile hydration. Local preview retains compatible legacy cache data; an authenticated session accepts only a snapshot written for its exact Clerk user and purges the acceleration state when identity is retired or replaced. Exact Clerk-user identity and viewer-scoped profile first-page projections extend that acceleration boundary to returning authenticated profile routes; the same existing API reads always revalidate them, cursor continuations remain network-only, and no provider request is added. Browser storage quota or removal failure is non-fatal and cannot fail a live mutation or sign-out. Server-rendered shell values, including timestamps, must be deterministic across server and browser locales to preserve hydration.
 
 ## Backend ownership
 
@@ -207,6 +219,7 @@ The notification repository owns page/unread reads and read convergence. Domain 
 12. Extract the client API, live-event, and browser-transport kernels and extend idempotent mutation coverage to profiles and follows. Complete.
 13. Construct the unified Patronage Hall domain. Complete for proposal contracts, creation and editing, Office drafts, exact-revision publication, canonical proposal and contribution-ledger storage, local/live persistence, feed and detail projections, and payment/private-capital feature gates. Provider payment ingestion remains intentionally unopened.
 14. Replace shell-owned global and community discovery. Complete: one typed controller now owns both search requests, query/result state, actor-scoped isolation, abort policy, local fallback, and bounded entity composition.
+15. Replace shell-owned authentication and entrance lifecycle. Complete: one typed controller and pure reducer now own browser entry, exact-user account admission, cache/cross-tab scope, read/live/social gates, local preview, and sign-out replay.
 
 ## Checkpoint gates
 

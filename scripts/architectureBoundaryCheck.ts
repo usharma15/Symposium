@@ -122,6 +122,22 @@ const main = async () => {
     path.join(root, "features/live-sync/symposiumLiveEventRouter.ts"),
     "utf8"
   );
+  const sessionControllerSource = await readFile(
+    path.join(root, "features/session/useSymposiumSessionController.ts"),
+    "utf8"
+  );
+  const sessionLifecycleSource = await readFile(
+    path.join(root, "features/session/symposiumSessionLifecycle.ts"),
+    "utf8"
+  );
+  const cachedBootstrapSource = await readFile(
+    path.join(root, "features/bootstrap/cachedBootstrap.ts"),
+    "utf8"
+  );
+  const crossTabTransportSource = await readFile(
+    path.join(root, "features/live-sync/useCrossTabItemTransport.ts"),
+    "utf8"
+  );
   assert.match(
     symposiumSource,
     /useSymposiumViewController/,
@@ -213,6 +229,11 @@ const main = async () => {
     symposiumSource.match(/useSymposiumLiveController\(\{/g)?.length ?? 0,
     1,
     "Symposium global live-event routing must have one controller authority."
+  );
+  assert.equal(
+    symposiumSource.match(/useSymposiumSessionController\(\{/g)?.length ?? 0,
+    1,
+    "Symposium authentication and entrance lifecycle must have one controller authority."
   );
   for (const retiredDiscoveryShellAuthority of [
     /\/api\/search/,
@@ -327,6 +348,80 @@ const main = async () => {
       `${liveRouterAuthority} must remain owned by the global live-event router.`
     );
   }
+  for (const retiredSessionShellAuthority of [
+    /useBrowserSessionEntrance/,
+    /entryModeForBrowserSession/,
+    /resolvePresentedEntryMode/,
+    /setSignedIn/,
+    /setSyncedClerkUserId/,
+    /entryAuthStateRef/,
+    /entranceStartedAtRef/,
+    /symposium-auth-handle/,
+    /symposium-auth-records/,
+    /symposium-entry-complete/
+  ]) {
+    assert.doesNotMatch(
+      symposiumSource,
+      retiredSessionShellAuthority,
+      `Retired session authority returned to SymposiumV0.tsx: ${retiredSessionShellAuthority}.`
+    );
+  }
+  for (const sessionControllerAuthority of [
+    "useReducer(",
+    "reduceSymposiumSessionLifecycle",
+    "useBrowserSessionEntrance",
+    "activeSyncControllerRef.current?.abort()",
+    "latest.userId === userId",
+    "identity.syncAuthenticatedAccount(userId",
+    "identity.refreshData(syncedProfile.handle",
+    "clearCachedBootstrap(window.localStorage)",
+    "bootstrapCacheScopeKey:",
+    "resolvePresentedEntryMode",
+    "authSessionScopeKey",
+    "sessionReadStateIsReady"
+  ]) {
+    assert.ok(
+      sessionControllerSource.includes(sessionControllerAuthority),
+      `${sessionControllerAuthority} must remain owned by the session controller.`
+    );
+  }
+  for (const sessionLifecycleAuthority of [
+    "reduceSymposiumSessionLifecycle",
+    "authenticatedIdentityTransitionIsPending",
+    "currentAccountIsSynced",
+    "resolveApproachElapsedMode",
+    'if (identityTransitionPending) return "loading";'
+  ]) {
+    assert.ok(
+      sessionLifecycleSource.includes(sessionLifecycleAuthority),
+      `${sessionLifecycleAuthority} must remain owned by the session lifecycle model.`
+    );
+  }
+  assert.match(
+    profileControllerSource,
+    /if \(request\?\.shouldCommit && !request\.shouldCommit\(\)\) return null;/,
+    "Profile session reads must reject stale viewer commits before mutating state."
+  );
+  assert.match(
+    cachedBootstrapSource,
+    /if \(storedScopeKey !== cacheScopeKey\) return null;/,
+    "Authenticated bootstrap caches must reject a different viewer scope."
+  );
+  assert.match(
+    crossTabTransportSource,
+    /scopeKey === null[\s\S]*encodeURIComponent\(scopeKey\)/,
+    "Cross-tab transport must suspend unresolved identity and namespace exact viewers."
+  );
+  assert.match(
+    inquiryControllerSource,
+    /scopeKey: input\.cacheScopeKey/,
+    "Inquiry cross-tab entities must remain scoped to the current viewer."
+  );
+  assert.match(
+    profileControllerSource,
+    /scopeKey: input\.cacheScopeKey/,
+    "Profile cross-tab entities must remain scoped to the current viewer."
+  );
   for (const infrastructureImport of [
     "features/api/symposiumApiClient"
   ]) {
@@ -380,6 +475,7 @@ const main = async () => {
     "single profile, social, follow, activity, cross-tab, and persistence authority",
     "single global and community discovery authority",
     "single global live-event routing and delivery authority",
+    "single authentication and entrance lifecycle authority",
     "extracted feature ownership",
     "acyclic feature dependencies"
   ]);
