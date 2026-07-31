@@ -28,6 +28,44 @@ const imports = async (file: string) => {
 };
 
 const apiRouteBaseline = "10fdc8fd2952a61ad3b47a86988926c8825c74b6";
+const consolidatedCompatibilityRoutes = new Map([
+  [
+    "app/api/assistant/[[...segments]]/route.ts",
+    "DELETE,GET,PATCH,POST|runtime=nodejs|dynamic=force-dynamic"
+  ],
+  [
+    "app/api/conversations/[[...segments]]/route.ts",
+    "DELETE,GET,PATCH,POST|runtime=nodejs|dynamic=force-dynamic"
+  ],
+  [
+    "app/api/notifications/[[...segments]]/route.ts",
+    "GET,PATCH,POST|runtime=nodejs|dynamic=force-dynamic"
+  ]
+]);
+const retiredCompatibilityRouteModules = [
+  "app/api/assistant/actions/office-draft-edits/route.ts",
+  "app/api/assistant/actions/office-draft-edits/undo/route.ts",
+  "app/api/assistant/actions/office-note-drafts/route.ts",
+  "app/api/assistant/actions/office-post-drafts/route.ts",
+  "app/api/assistant/content-translations/route.ts",
+  "app/api/assistant/conversations/[...segments]/route.ts",
+  "app/api/assistant/conversations/route.ts",
+  "app/api/assistant/document-translations/route.ts",
+  "app/api/assistant/messages/route.ts",
+  "app/api/assistant/projects/[projectId]/route.ts",
+  "app/api/assistant/projects/route.ts",
+  "app/api/assistant/quick-notes/route.ts",
+  "app/api/assistant/quota/route.ts",
+  "app/api/conversations/[...segments]/route.ts",
+  "app/api/conversations/groups/route.ts",
+  "app/api/conversations/route.ts",
+  "app/api/conversations/unread/route.ts",
+  "app/api/notifications/archive/route.ts",
+  "app/api/notifications/preferences/route.ts",
+  "app/api/notifications/read/route.ts",
+  "app/api/notifications/route.ts",
+  "app/api/notifications/unread/route.ts"
+] as const;
 const routeSignature = (source: string) => {
   const methods = [...source.matchAll(
     /export\s+(?:(?:async\s+)?function|const)\s+(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\b/g
@@ -46,15 +84,23 @@ const main = async () => {
   let routeMethodCount = 0;
   for (const { file, name } of apiRoutes) {
     const signature = routeSignature(await readFile(file, "utf8"));
-    assert.equal(
-      signature,
-      routeSignature(execFileSync("git", ["show", `${apiRouteBaseline}:${name}`], { encoding: "utf8" })),
-      `${name} changed its public method, runtime, or dynamic contract.`
-    );
+    const consolidatedSignature = consolidatedCompatibilityRoutes.get(name);
+    if (consolidatedSignature) {
+      assert.equal(signature, consolidatedSignature, `${name} changed its consolidated route contract.`);
+    } else {
+      assert.equal(
+        signature,
+        routeSignature(execFileSync("git", ["show", `${apiRouteBaseline}:${name}`], { encoding: "utf8" })),
+        `${name} changed its public method, runtime, or dynamic contract.`
+      );
+    }
     routeMethodCount += signature.split("|")[0]?.split(",").filter(Boolean).length ?? 0;
   }
-  assert.equal(apiRoutes.length, 85);
-  assert.equal(routeMethodCount, 116);
+  assert.equal(apiRoutes.length, 66);
+  assert.equal(routeMethodCount, 96);
+  for (const retiredRoute of retiredCompatibilityRouteModules) {
+    assert.equal(fileNames.has(retiredRoute), false, `${retiredRoute} must remain retired.`);
+  }
   const symposiumImporters: string[] = [];
   const featureGraph = new Map<string, string[]>();
   for (const file of files) {
@@ -541,7 +587,7 @@ const main = async () => {
 
   reportCheck([
     "single legacy shell entrypoint",
-    "exact 85-route and 116-method API surface preservation",
+    "exact retained route signatures and consolidated compatibility-module retirement",
     "backend to frontend dependency isolation",
     "feature module independence",
     "shell and feature dependency boundaries",

@@ -78,7 +78,7 @@ import {
 import {
   DELETE as deleteAssistantConversationRoute,
   PATCH as updateAssistantConversationRoute
-} from "@/app/api/assistant/conversations/[...segments]/route";
+} from "@/app/api/assistant/[[...segments]]/route";
 import {
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
