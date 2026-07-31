@@ -25,6 +25,18 @@ or when database credentials are configured. Canonical repositories never
 import it, and browser features receive action types from the domain core
 rather than from a persistence implementation.
 
+The remaining Next compatibility surface also has explicit ownership. The
+Assistant, Conversations, and Notifications families are routed by three
+optional catch-all modules backed by typed allowlists, rather than 22 thin
+files that independently selected methods and local fallbacks. The allowlists
+preserve 31 logical method contracts, reject an unknown path with a private
+no-store 404, and reject an unsupported method with a private no-store 405.
+They do not turn the catch-alls into arbitrary API proxies. Persisted local
+preview routes, Clerk synchronization, local attachment transport, protected
+attachment delivery, and the short live-stream redirect remain separate
+because those are genuine Next runtime boundaries rather than proxy
+boilerplate.
+
 ## Target dependency direction
 
 ```text
@@ -252,6 +264,11 @@ The notification repository owns page/unread reads and read convergence. Domain 
     epochs, live delivery suspends and replays through it, authenticated
     token loss fails closed, session bootstrap retries under exact-user
     guards, and feature refreshers consume the shared resume signal.
+17. Consolidate canonical Next compatibility authority. Complete for the
+    Assistant, Conversations, and Notifications families: 22 distributed
+    route modules are retired, three allowlisted dispatchers preserve all 31
+    logical method contracts, and every remaining route module has a named
+    local-preview, protected-boundary, or canonical-compatibility reason.
 
 ## Checkpoint gates
 

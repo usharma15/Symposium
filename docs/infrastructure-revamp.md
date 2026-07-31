@@ -123,11 +123,30 @@ The cutover:
 The local-preview store remains load-bearing for credential-free laptop work.
 Deleting it would be a product decision, not infrastructure cleanup.
 
+## Compatibility route authority
+
+The compatibility-authority candidate retires 22 distributed Assistant,
+Conversations, and Notifications route modules in favor of three explicit,
+allowlisted dispatchers. All 31 logical method contracts remain available.
+The repository now contains 66 Next route modules / 96 exported framework
+handlers, classified as:
+
+- 3 consolidated compatibility authorities;
+- 8 protected Next-only boundaries;
+- 3 canonical-only compatibility exceptions;
+- 4 synthesized local-preview projections; and
+- 48 persisted local-preview adapters.
+
+The apparently large compatibility surface is therefore no longer
+unexplained. The retained modules own local persistence, Clerk admission,
+protected delivery, local attachment bytes, live-stream redirection, or an
+explicit canonical retry boundary. Removing those responsibilities would
+narrow supported behavior rather than improve infrastructure.
+
 ## Remaining structural sequence
 
-After the persistence-mode authority is released:
-
-1. retire only Next compatibility paths proven superseded while preserving
-   local preview, Clerk synchronization, and protected delivery;
-2. run the complete exact-SHA proof and stop the revamp when the governing
-   completion tests above are satisfied.
+1. run the complete exact-SHA local, CI, browser, database, Render, and Vercel
+   proof for this compatibility-authority cutover;
+2. stop the revamp when the governing completion tests above are satisfied;
+3. reopen infrastructure only for a demonstrated failure mode or an explicit
+   product/runtime decision that makes another retained boundary obsolete.

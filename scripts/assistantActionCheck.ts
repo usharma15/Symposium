@@ -635,7 +635,7 @@ const staticBoundaryChecks = () => {
     "utf8"
   );
   const proxy = readFileSync(
-    "app/api/assistant/actions/office-note-drafts/route.ts",
+    "lib/assistantRouteSupport.ts",
     "utf8"
   );
   const card = readFileSync(
@@ -663,7 +663,7 @@ const staticBoundaryChecks = () => {
   assert.match(repository, /assistant\.action\.office_note\.create_draft/);
   assert.match(repository, /assistant\.action\.completed/);
   assert.match(route, /withWriteActor\(request, \{[\s\S]*scope: "assistant-action"/);
-  assert.match(proxy, /export const POST = assistantMutationRoute/);
+  assert.match(proxy, /\/api\/assistant\/actions\/office-note-drafts/);
   assert.match(proxy, /AI Assistant actions require the live workspace/);
   assert.doesNotMatch(proxy, /localStorage|fallback/i);
   assert.match(card, /Not saved yet/);

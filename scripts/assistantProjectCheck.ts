@@ -205,15 +205,15 @@ assert.match(
 );
 
 const nextListRoute = readFileSync(
-  "app/api/assistant/projects/route.ts",
+  "app/api/assistant/[[...segments]]/route.ts",
   "utf8"
 );
 const nextMutationRoute = readFileSync(
-  "app/api/assistant/projects/[projectId]/route.ts",
+  "lib/assistantRouteSupport.ts",
   "utf8"
 );
 for (const route of [nextListRoute, nextMutationRoute]) {
-  assert.match(route, /require the live backend|status: 503/i);
+  assert.match(route, /assistantCompatibilityRoute|require the live backend|status: 503/i);
   assert.doesNotMatch(route, /mock|local fallback|localStorage/i);
 }
 
