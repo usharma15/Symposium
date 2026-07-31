@@ -32,6 +32,7 @@ const shellViews = readFileSync("features/shell/SymposiumShellViews.tsx", "utf8"
 const nextConfig = readFileSync("next.config.mjs", "utf8");
 const profileRepository = readFileSync("apps/api/src/repository/profiles.ts", "utf8");
 const profileActions = readFileSync("apps/api/src/repository/actions.ts", "utf8");
+const foundation = readFileSync("apps/api/src/repository/foundation.ts", "utf8");
 const profileActivityController = readFileSync(
   "features/profiles/useProfileActivityController.ts",
   "utf8"
@@ -88,6 +89,17 @@ assert.match(maintenance, /created_at < now\(\) - interval '365 days'/);
 assert.match(maintenance, /scheduleDatabaseMaintenanceAfterActivity/);
 assert.doesNotMatch(maintenance, /setInterval\(/);
 assert.match(server, /snapshot\.queryCount > 0\) scheduleDatabaseMaintenanceAfterActivity\(\)/);
+assert.match(
+  foundation,
+  /SELECT id FROM fixture_revisions WHERE id = ANY\(\$1::text\[\]\)[\s\S]*historicalWorldFixtureRevisionsApplied\(fixtureRevisions\.rows\)[\s\S]*getPool\(\)\.connect\(\)/,
+  "The first live read must skip fixture locks and transactions when every fixture revision is already applied."
+);
+assert.match(apiEnv, /SYMPOSIUM_SEED_ON_BOOT: booleanFromEnv\(true\)/);
+assert.match(
+  renderBlueprint,
+  /SYMPOSIUM_SEED_ON_BOOT[\s\S]*value: "false"/,
+  "Render must preserve the zero-user boundary instead of issuing fixture checks on every boot."
+);
 assert.match(readiness, /options: \{ probeDatabase\?: boolean \}/);
 assert.match(readiness, /getCachedMigrationStatus\(\)/);
 assert.match(readiness, /databaseProbe: options\.probeDatabase \? "deep" : "startup"/);
