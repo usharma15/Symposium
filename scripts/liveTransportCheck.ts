@@ -8,7 +8,10 @@ import {
   liveEventCursorIsAfter,
   type ServerSentEvent
 } from "@/features/live-sync/liveEventTransport";
-import { liveEventsPath } from "@/features/live-sync/useLiveEventStream";
+import {
+  liveEventScopeKey,
+  liveEventsPath
+} from "@/features/live-sync/useLiveEventStream";
 import { publishCrossTabMessage } from "@/features/live-sync/useCrossTabItemTransport";
 import {
   getLocalLiveBusStatus,
@@ -19,6 +22,10 @@ import {
 
 const main = async () => {
 assert.equal(liveEventsPath("/api/events", ""), "/api/events");
+assert.notEqual(
+  liveEventScopeKey("actor:first", "https://api.example"),
+  liveEventScopeKey("actor:second", "https://api.example")
+);
 assert.equal(
   liveEventsPath("/api/events/stream", "2026-07-11T10:00:00.000Z:event/1"),
   "/api/events/stream?cursor=2026-07-11T10%3A00%3A00.000Z%3Aevent%2F1"
@@ -104,12 +111,24 @@ for (const unsubscribe of capacitySubscriptions) unsubscribe();
 assert.deepEqual(getLocalLiveBusStatus(), { listenerCount: 0, maxListeners: 500 });
 
 const root = process.cwd();
-const [clientTransport, apiStreamRoute, nextStreamRoute, maintenance, controller, postRepository, commentRepository] = await Promise.all([
+const [
+  clientTransport,
+  apiStreamRoute,
+  nextStreamRoute,
+  maintenance,
+  shell,
+  liveController,
+  liveRouter,
+  postRepository,
+  commentRepository
+] = await Promise.all([
   readFile(path.join(root, "features/live-sync/useLiveEventStream.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/routes/eventRoutes.ts"), "utf8"),
   readFile(path.join(root, "app/api/events/stream/route.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/maintenance.ts"), "utf8"),
   readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8"),
+  readFile(path.join(root, "features/live-sync/useSymposiumLiveController.ts"), "utf8"),
+  readFile(path.join(root, "features/live-sync/symposiumLiveEventRouter.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/repository/posts.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/repository/comments.ts"), "utf8")
 ]);
@@ -117,6 +136,7 @@ assert.match(clientTransport, /consumeLiveEventStream/);
 assert.match(clientTransport, /liveEventCursorIsAfter/);
 assert.match(clientTransport, /document\.hidden/);
 assert.match(clientTransport, /cursorScopeKeyRef/);
+assert.match(clientTransport, /callbacksRef\.current\.onEvent\(event, cursorScopeKey\)/);
 assert.match(clientTransport, /pollInFlight/);
 assert.match(clientTransport, /armWatchdog\(10_000\)/);
 assert.match(clientTransport, /armWatchdog\(22_000\)/);
@@ -140,9 +160,11 @@ assert.match(nextStreamRoute, /status: 307/);
 assert.match(nextStreamRoute, /Location: directUrl/);
 assert.doesNotMatch(nextStreamRoute, /proxyLiveBackendStream/);
 assert.doesNotMatch(maintenance, /storageDeletionIntervalMs/);
-assert.match(controller, /mergeLiveMetricPatch/);
-assert.match(controller, /setMessagingEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);
-assert.doesNotMatch(controller, /if \(synced\) scheduleLiveRefresh\(\)/);
+assert.match(liveRouter, /ports\.mergeLiveMetricPatch\(payload\)/);
+assert.match(liveController, /setMessagingBuffer\(\(current\) =>[\s\S]*appendScopedLiveEvent\(current, authSessionKey, incoming, 1000\)/);
+assert.match(liveController, /scopedLiveEvents\(messagingBuffer, authSessionKey\)/);
+assert.match(liveController, /eventScopeKey !== transportScopeKey/);
+assert.doesNotMatch(shell, /useLiveEventStream|setMessagingEvents|if \(synced\) scheduleLiveRefresh\(\)/);
 assert.match(postRepository, /metrics: updated\.metrics,[\s\S]*revision: updated\.revision/);
 assert.match(commentRepository, /metrics: updatedComment\.metrics,[\s\S]*commentRevision: updatedComment\.revision/);
 
@@ -162,6 +184,7 @@ reportCheck([
   "anti-buffering response headers, socket mode, and initial flush padding",
   "stalled-stream watchdog recovery",
   "session-scoped cursor reset",
+  "session-scoped callback rejection",
   "serialized fallback polling",
   "immediate online and offline recovery",
   "database-idle-safe single-process event stream",

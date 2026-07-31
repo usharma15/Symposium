@@ -208,6 +208,10 @@ const main = async () => {
   const sync = readFileSync("features/analytics/contentAnalyticsSync.ts", "utf8");
   const navigation = readFileSync("features/analytics/contentAnalyticsNavigation.ts", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
+  const liveController = readFileSync(
+    "features/live-sync/useSymposiumLiveController.ts",
+    "utf8"
+  );
   const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
 
   assert.match(repository, /Only the author can view private content analytics/);
@@ -237,7 +241,9 @@ const main = async () => {
   assert.match(dialog, /Analytics could not refresh\. Showing the latest available results\./);
   assert.match(sync, /symposium-content-analytics-sync-v1/);
   assert.match(navigation, /memoryPendingContentAnalytics/);
-  assert.match(shell, /publishContentAnalyticsInvalidation/);
+  assert.match(liveController, /publishContentAnalyticsInvalidation/);
+  assert.match(liveController, /contentAnalyticsInvalidationFromLiveEvent/);
+  assert.doesNotMatch(shell, /publishContentAnalyticsInvalidation/);
   assert.match(shell, /queuePendingContentAnalytics/);
   assert.match(migration, /0047_content_analytics_live/);
   assert.match(migration, /post_actions_content_analytics_idx/);

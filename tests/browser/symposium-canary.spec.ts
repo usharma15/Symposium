@@ -233,6 +233,94 @@ test.describe("returning browser session", () => {
     clean();
   });
 
+  test("routes canonical live events without a bootstrap refresh", async ({ page }) => {
+    const clean = watchDiagnostics(page);
+    const sourceResponse = await page.request.get(
+      "/api/posts/paper-bell-epr?actorHandle=%40udayan"
+    );
+    expect(sourceResponse.ok()).toBe(true);
+    const source = await sourceResponse.json() as {
+      item: Record<string, unknown> & { id: string; revision?: number };
+    };
+    const liveBody =
+      "Browser live-routing proof: the canonical stream projection arrived without a bootstrap refresh.";
+    const liveTitle =
+      "Browser live-routing proof: canonical title projection";
+    const liveItem = {
+      ...source.item,
+      title: liveTitle,
+      body: liveBody,
+      excerpt: liveBody,
+      revision: (source.item.revision ?? 1) + 1000
+    };
+    let releaseEvent: () => void = () => undefined;
+    const eventGate = new Promise<void>((resolve) => {
+      releaseEvent = resolve;
+    });
+    let delivered = false;
+    await page.route("**/api/events/stream*", async (route) => {
+      if (!delivered) {
+        await eventGate;
+        delivered = true;
+        await route.fulfill({
+          contentType: "text/event-stream; charset=utf-8",
+          body: [
+            "retry: 2000",
+            "",
+            "event: symposium-ready",
+            "data: {\"ok\":true}",
+            "",
+            "event: symposium-event",
+            "id: browser-live-routing-cursor",
+            `data: ${JSON.stringify({
+              id: "browser-live-routing-event",
+              cursor: "browser-live-routing-cursor",
+              kind: "post.updated",
+              actorHandle: "@udayan",
+              subjectType: "post",
+              subjectId: liveItem.id,
+              payload: { item: liveItem },
+              createdAt: "2026-07-30T12:34:56.000Z"
+            })}`,
+            "",
+            ""
+          ].join("\n")
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: "text/event-stream; charset=utf-8",
+        body: "event: symposium-ready\ndata: {\"ok\":true}\n\n"
+      });
+    });
+
+    const initialDetail = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/posts/paper-bell-epr"
+    );
+    await page.goto("/posts/paper-bell-epr");
+    expect((await initialDetail).ok()).toBe(true);
+    await expect(
+      page.getByRole("heading", { name: "On the Einstein Podolsky Rosen paradox" })
+    ).toBeVisible();
+
+    const unexpectedAuthoritativeReads: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        request.method() === "GET"
+        && (url.pathname === "/api/bootstrap" || url.pathname === "/api/posts/paper-bell-epr")
+      ) {
+        unexpectedAuthoritativeReads.push(url.pathname);
+      }
+    });
+    releaseEvent();
+    await expect(page.getByRole("heading", { name: liveTitle })).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(unexpectedAuthoritativeReads).toEqual([]);
+    clean();
+  });
+
   test("creates, edits, and durably reloads a titleless Thought", async ({ page, browser }) => {
     const clean = watchDiagnostics(page);
     const initial = "Browser proof: titleless Thought creation persists.";

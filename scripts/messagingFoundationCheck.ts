@@ -395,6 +395,10 @@ const main = async () => {
   const events = readFileSync("apps/api/src/services/events.ts", "utf8");
   const styles = readFileSync("styles/89-messages.css", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
+  const liveController = readFileSync(
+    "features/live-sync/useSymposiumLiveController.ts",
+    "utf8"
+  );
   const messageAttachmentRoute = readFileSync("app/api/message-attachments/[attachmentId]/route.ts", "utf8");
   const protectedAttachmentRoute = readFileSync("lib/protectedAttachmentRoute.ts", "utf8");
   const discardAttachmentRoute = readFileSync("app/api/attachments/[attachmentId]/route.ts", "utf8");
@@ -531,9 +535,12 @@ const main = async () => {
   assert.match(shell, /data-view=\{assistantOpen \? "assistant" : messagesOpen \? "messages"/);
   assert.match(shell, /onMessage=\{/);
   assert.match(shell, /notificationEvents/);
-  assert.match(shell, /setMessagingEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);
+  assert.match(
+    liveController,
+    /setMessagingBuffer\(\(current\) =>[\s\S]*appendScopedLiveEvent\(current, authSessionKey, incoming, 1000\)/
+  );
+  assert.doesNotMatch(shell, /setMessagingEvents|event\.kind\.startsWith\("message\."\)/);
   assert.doesNotMatch(shell, /event\.kind === "conversation\.invited"/);
-  assert.match(shell, /event\.kind\.startsWith\("notification\."\)/);
   assert.match(routes, /\/v1\/conversations\/:id\/participants/);
   assert.match(routes, /\/v1\/conversations\/:id\/leave/);
   assert.match(routes, /\/v1\/conversations\/:id\/messages\/:messageId\/context/);

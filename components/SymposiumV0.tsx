@@ -20,10 +20,8 @@ import {
   type InquiryAttachment,
   type InquiryComment,
   type InquiryItem,
-  type ResearchProfile,
   type RoomId
 } from "@/lib/mockData";
-import type { PostAction } from "@/lib/dataStore";
 import type {
   AssistantMessageInputContract,
   OpportunityPostInputContract,
@@ -38,20 +36,8 @@ import {
   isDeletedPost,
   itemTimestampScore
 } from "@/lib/symposiumCore";
-import {
-  emptyProfileActivityCounts,
-  isCanonicalActionActivity
-} from "@/lib/profileActivity";
-import { useCrossTabItemTransport } from "@/features/live-sync/useCrossTabItemTransport";
-import { useLiveEventStream } from "@/features/live-sync/useLiveEventStream";
-import {
-  contentAnalyticsInvalidationFromLiveEvent,
-  contentAnalyticsSyncChannel,
-  contentAnalyticsSyncStorageKey,
-  dispatchContentAnalyticsInvalidation,
-  isContentAnalyticsInvalidation,
-  type ContentAnalyticsInvalidation
-} from "@/features/analytics/contentAnalyticsSync";
+import { emptyProfileActivityCounts } from "@/lib/profileActivity";
+import { useSymposiumLiveController } from "@/features/live-sync/useSymposiumLiveController";
 import {
   dispatchPendingContentAnalytics,
   queuePendingContentAnalytics,
@@ -85,7 +71,7 @@ import {
 import type { PdfAttachmentViewContext } from "@/features/attachments/pdfAttachmentClient";
 import { buildTabletAttachmentContext } from "@/features/assistant/tabletAttachmentContext";
 import { AssistantExperience } from "@/features/assistant/AssistantExperience";
-import { useAssistantController, type AssistantThreadLiveEvent } from "@/features/assistant/useAssistantController";
+import { useAssistantController } from "@/features/assistant/useAssistantController";
 import {
   confirmAttachmentUpload,
   prepareAttachmentUpload,
@@ -146,8 +132,7 @@ import type {
   ProfileInquiryPort
 } from "@/features/profiles/profileControllerPorts";
 import {
-  useProfileController,
-  type ProfileFollowRecord
+  useProfileController
 } from "@/features/profiles/useProfileController";
 import {
   CommunitiesStage
@@ -196,31 +181,6 @@ type AttachmentPreviewTarget = {
   itemId: string;
   commentId?: string;
   attachmentId: string;
-};
-
-type LiveEventPayload = {
-  [key: string]: unknown;
-  item?: unknown;
-  profile?: unknown;
-  follow?: ProfileFollowRecord;
-  action?: PostAction;
-  activity?: unknown;
-  itemId?: string;
-  commentId?: string;
-  commentRevision?: number;
-  metrics?: Partial<InquiryItem["metrics"]>;
-  revision?: number;
-};
-
-type SymposiumLiveEvent = {
-  id?: string;
-  cursor?: string;
-  kind: string;
-  actorHandle?: string;
-  subjectType: string;
-  subjectId: string;
-  payload?: LiveEventPayload;
-  createdAt?: string;
 };
 
 type SymposiumAuthState = {
@@ -300,22 +260,6 @@ const tabletDiscussionText = (
   }
   return lines;
 };
-
-const isLiveInquiryItem = (value: unknown): value is InquiryItem =>
-  typeof value === "object" &&
-  value !== null &&
-  typeof (value as InquiryItem).id === "string" &&
-  typeof (value as InquiryItem).title === "string" &&
-  typeof (value as InquiryItem).kind === "string" &&
-  typeof (value as InquiryItem).room === "string" &&
-  typeof (value as InquiryItem).metrics === "object";
-
-const isLiveResearchProfile = (value: unknown): value is ResearchProfile =>
-  typeof value === "object" &&
-  value !== null &&
-  typeof (value as ResearchProfile).handle === "string" &&
-  typeof (value as ResearchProfile).name === "string" &&
-  Array.isArray((value as ResearchProfile).fields);
 
 const localPreviewAuth: SymposiumAuthState = {
   clerkEnabled: false,
@@ -515,8 +459,6 @@ function SymposiumExperience({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [messagesQuickOpen, setMessagesQuickOpen] = useState(false);
   const [quickConversationId, setQuickConversationId] = useState<string | null>(null);
-  const [messagingEvents, setMessagingEvents] = useState<SymposiumLiveEvent[]>([]);
-  const [assistantEvents, setAssistantEvents] = useState<AssistantThreadLiveEvent[]>([]);
   const [messageTabletContext, setMessageTabletContext] = useState<{
     conversationId: string;
     title: string;
@@ -524,7 +466,6 @@ function SymposiumExperience({
     revision: number;
   } | null>(null);
   const [workspaceTabletDocument, setWorkspaceTabletDocument] = useState<WorkspaceDocument | null>(null);
-  const [notificationEvents, setNotificationEvents] = useState<SymposiumLiveEvent[]>([]);
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [editingComment, setEditingComment] = useState<EditingCommentTarget | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewTarget | null>(null);
@@ -774,14 +715,6 @@ function SymposiumExperience({
     };
   }, [activeRoom, feedScope, officeMode, selectedCommunityId]);
 
-  const publishContentAnalyticsInvalidation =
-    useCrossTabItemTransport<ContentAnalyticsInvalidation>({
-      channelName: contentAnalyticsSyncChannel,
-      isMessage: isContentAnalyticsInvalidation,
-      onMessage: dispatchContentAnalyticsInvalidation,
-      storageKey: contentAnalyticsSyncStorageKey
-    });
-
   const markLiveDataConnected = () => {
     connectionSyncStatusRef.current = liveStatus.connected;
     setSyncStatus((status) =>
@@ -815,168 +748,61 @@ function SymposiumExperience({
 
   const invalidateLiveQuotedSource = inquiryController.invalidateLiveQuotedSource;
 
-  const mergeLiveEvent = (event: SymposiumLiveEvent) => {
-    const payload = event.payload ?? {};
-    const analyticsInvalidation = contentAnalyticsInvalidationFromLiveEvent(event);
-    if (analyticsInvalidation) {
-      dispatchContentAnalyticsInvalidation(analyticsInvalidation);
-      publishContentAnalyticsInvalidation(analyticsInvalidation);
+  const {
+    assistantEvents,
+    messagingEvents,
+    notificationEvents
+  } = useSymposiumLiveController({
+    authSessionKey: authLoaded
+      ? (isSignedIn ? userId ?? "signed-in" : "anonymous")
+      : "loading",
+    backendUrl: liveBackendUrl,
+    enabled: entryMode !== "loading",
+    getAccessToken: auth.getAccessToken,
+    onConnected: markLiveDataConnected,
+    onReconnecting: markLiveUpdatesReconnecting,
+    routing: {
+      acceptCanonicalActivity: profileActivity.acceptCanonical,
+      acceptLiveActionProjection: inquiryController.acceptLiveActionProjection,
+      closeCommentEditor: (commentId) => {
+        setEditingComment((current) =>
+          current?.commentId === commentId ? null : current
+        );
+      },
+      closeCommentEditorsForPost: (itemId) => {
+        setEditingComment((current) =>
+          current?.itemId === itemId ? null : current
+        );
+      },
+      closePostEditor: (itemId) => {
+        setEditingPost((current) => current?.id === itemId ? null : current);
+      },
+      currentActorHandle: () => currentProfileRef.current.handle,
+      invalidateQuotedSource: invalidateLiveQuotedSource,
+      mergeLiveFollow: profileController.mergeLiveFollow,
+      mergeLiveItem,
+      mergeLiveMetricPatch,
+      mergeLiveProfile: profileController.mergeLiveProfile,
+      refreshActivity: scheduleProfileActivityRefresh,
+      refreshAll: scheduleLiveRefresh,
+      touchCommentActivity: (
+        itemId,
+        commentId,
+        action,
+        actorHandle,
+        timestamp
+      ) => {
+        profileActivity.touchComment(
+          itemId,
+          commentId,
+          action,
+          actorHandle,
+          timestamp
+        );
+      },
+      touchPostActivity: profileActivity.touchPost
     }
-    if (
-      event.kind.startsWith("notification.")
-    ) {
-      setNotificationEvents((current) => [...current, event].slice(-1000));
-    }
-    if (event.kind.startsWith("assistant.")) {
-      setAssistantEvents((current) => [...current, {
-        id: event.id,
-        cursor: event.cursor,
-        kind: event.kind,
-        subjectId: event.subjectId
-      }].slice(-100));
-      return;
-    }
-    if (
-      event.kind.startsWith("message.") ||
-      event.kind.startsWith("conversation.") ||
-      event.kind === "profile.blocked" ||
-      event.kind === "profile.unblocked"
-    ) {
-      setMessagingEvents((current) => [...current, event].slice(-1000));
-      return;
-    }
-    if (payload.action && payload.metrics && !isLiveInquiryItem(payload.item)) {
-      mergeLiveMetricPatch(payload);
-      return;
-    }
-    if (event.kind === "post.deleted") {
-      const deletedPostId = isLiveInquiryItem(payload.item)
-        ? payload.item.id
-        : typeof payload.itemId === "string"
-          ? payload.itemId
-          : event.subjectId;
-      if (deletedPostId) {
-        invalidateLiveQuotedSource({ sourceType: "post", sourceId: deletedPostId, sourcePostId: deletedPostId });
-      }
-      if (isLiveInquiryItem(payload.item)) {
-        const deletedItem = payload.item;
-        mergeLiveItem(deletedItem);
-        setEditingPost((current) => (current?.id === deletedItem.id ? null : current));
-        setEditingComment((current) => (current?.itemId === deletedItem.id ? null : current));
-      } else {
-        scheduleLiveRefresh();
-      }
-      scheduleProfileActivityRefresh();
-      return;
-    }
-
-    if (event.kind === "comment.deleted" && typeof payload.commentId === "string") {
-      const sourcePostId = isLiveInquiryItem(payload.item)
-        ? payload.item.id
-        : typeof payload.itemId === "string"
-          ? payload.itemId
-          : "";
-      if (sourcePostId) {
-        invalidateLiveQuotedSource({
-          sourceType: "comment",
-          sourceId: payload.commentId,
-          sourcePostId
-        });
-      }
-      setEditingComment((current) => (current?.commentId === payload.commentId ? null : current));
-    }
-
-    if (payload.follow || event.kind === "profile.followed" || event.kind === "profile.unfollowed") {
-      profileController.mergeLiveFollow(
-        payload.follow,
-        event.kind !== "profile.unfollowed"
-      );
-    }
-
-    if (event.kind === "profile.updated" && isLiveResearchProfile(payload.profile)) {
-      profileController.mergeLiveProfile(payload.profile);
-      return;
-    }
-
-    if (isLiveInquiryItem(payload.item)) {
-      const action = payload.action;
-      if (action === "read") {
-        mergeLiveItem(payload.item);
-        return;
-      }
-      const canonicalActivity = isCanonicalActionActivity(payload.activity) ? payload.activity : null;
-      if (
-        canonicalActivity &&
-        !profileActivity.acceptCanonical(canonicalActivity)
-      ) {
-        return;
-      }
-      if (
-        !canonicalActivity &&
-        action &&
-        event.actorHandle &&
-        cleanHandle(event.actorHandle) === cleanHandle(currentProfileRef.current.handle)
-      ) {
-        const eventTimestamp = event.createdAt ? Date.parse(event.createdAt) : Number.NaN;
-        const profileActivityTimestamp = Number.isFinite(eventTimestamp) ? eventTimestamp : Date.now();
-        if (typeof payload.commentId === "string") {
-          if (!inquiryController.acceptLiveActionProjection({
-            action,
-            actorHandle: currentProfileRef.current.handle,
-            commentId: payload.commentId,
-            item: payload.item
-          })) return;
-          profileActivity.touchComment(
-            payload.item.id,
-            payload.commentId,
-            action,
-            currentProfileRef.current.handle,
-            profileActivityTimestamp
-          );
-        } else {
-          if (!inquiryController.acceptLiveActionProjection({
-            action,
-            actorHandle: currentProfileRef.current.handle,
-            item: payload.item
-          })) return;
-          profileActivity.touchPost(
-            payload.item.id,
-            action,
-            currentProfileRef.current.handle,
-            profileActivityTimestamp
-          );
-        }
-      }
-
-      mergeLiveItem(payload.item);
-      scheduleProfileActivityRefresh();
-      return;
-    }
-
-    if (
-      event.kind.startsWith("post.") ||
-      event.kind.startsWith("comment.") ||
-      event.kind.startsWith("profile.") ||
-      event.kind.startsWith("community.") ||
-      event.kind.startsWith("note.")
-      || event.kind.startsWith("opportunity.application.")
-      || event.kind.startsWith("scribble.")
-    ) {
-      if (event.kind.startsWith("note.")) {
-        window.dispatchEvent(new Event("symposium-workspace-change"));
-      }
-      if (event.kind.startsWith("scribble.")) {
-        const scribbleRevision = (payload as Record<string, unknown>).revision;
-        window.dispatchEvent(new CustomEvent("symposium-scribble-change", {
-          detail: { revision: typeof scribbleRevision === "number" ? scribbleRevision : undefined }
-        }));
-      }
-      if (event.kind.startsWith("opportunity.application.")) {
-        window.dispatchEvent(new Event("symposium-opportunity-applications-change"));
-      }
-      scheduleLiveRefresh();
-    }
-  };
+  });
 
   const applyInitialRouteState = () => {
     dismissTransientSyncStatus();
@@ -990,17 +816,6 @@ function SymposiumExperience({
     visibleCommentSegmentStacksRef.current = {};
     resetHistory();
   };
-
-  useLiveEventStream<SymposiumLiveEvent>({
-    authSessionKey: authLoaded ? (isSignedIn ? userId ?? "signed-in" : "anonymous") : "loading",
-    backendUrl: liveBackendUrl,
-    enabled: entryMode !== "loading",
-    getAccessToken: auth.getAccessToken,
-    onConnected: markLiveDataConnected,
-    onEvent: mergeLiveEvent,
-    onMalformedEvent: scheduleLiveRefresh,
-    onReconnecting: markLiveUpdatesReconnecting
-  });
 
   useLayoutEffect(() => {
     if (shouldPlayEntrance === null) return;

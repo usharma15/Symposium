@@ -18,6 +18,11 @@ type LiveEventBatch<T> = {
 export const liveEventsPath = (basePath: string, cursor: string) =>
   `${basePath}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`;
 
+export const liveEventScopeKey = (
+  authSessionKey?: string | null,
+  backendUrl?: string | null
+) => `${authSessionKey ?? ""}::${backendUrl ?? ""}`;
+
 export const useLiveEventStream = <T extends LiveEventEnvelope>({
   authSessionKey,
   backendUrl,
@@ -33,10 +38,10 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
   backendUrl?: string | null;
   enabled: boolean;
   getAccessToken?: () => Promise<string | null>;
-  onConnected: () => void;
-  onEvent: (event: T) => void;
-  onMalformedEvent: () => void;
-  onReconnecting: () => void;
+  onConnected: (scopeKey: string) => void;
+  onEvent: (event: T, scopeKey: string) => void;
+  onMalformedEvent: (scopeKey: string) => void;
+  onReconnecting: (scopeKey: string) => void;
   pollIntervalMs?: number;
 }) => {
   const callbacksRef = useRef({ onConnected, onEvent, onMalformedEvent, onReconnecting });
@@ -44,12 +49,12 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
   const getAccessTokenRef = useRef(getAccessToken);
   getAccessTokenRef.current = getAccessToken;
   const cursorRef = useRef("");
-  const cursorScopeKeyRef = useRef(`${authSessionKey ?? ""}::${backendUrl ?? ""}`);
+  const cursorScopeKeyRef = useRef(liveEventScopeKey(authSessionKey, backendUrl));
 
   useEffect(() => {
     if (!enabled) return undefined;
 
-    const cursorScopeKey = `${authSessionKey ?? ""}::${backendUrl ?? ""}`;
+    const cursorScopeKey = liveEventScopeKey(authSessionKey, backendUrl);
     if (cursorScopeKeyRef.current !== cursorScopeKey) cursorRef.current = "";
     cursorScopeKeyRef.current = cursorScopeKey;
 
@@ -67,7 +72,7 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
         if (!liveEventCursorIsAfter(event.cursor, cursorRef.current)) return;
         cursorRef.current = event.cursor;
       }
-      callbacksRef.current.onEvent(event);
+      callbacksRef.current.onEvent(event, cursorScopeKey);
     };
 
     const fetchEvents = async () => {
@@ -88,7 +93,7 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
         if (closed || controller.signal.aborted) return;
         for (const event of data.events ?? []) acceptEvent(event);
         if (data.cursor && liveEventCursorIsAfter(data.cursor, cursorRef.current)) cursorRef.current = data.cursor;
-        callbacksRef.current.onConnected();
+        callbacksRef.current.onConnected(cursorScopeKey);
       } finally {
         if (pollController === controller) pollController = null;
         pollInFlight = false;
@@ -116,14 +121,14 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
       if (closed) return;
       if (message.event === "symposium-ready" || message.event === "symposium-heartbeat") {
         stopPolling();
-        callbacksRef.current.onConnected();
+        callbacksRef.current.onConnected(cursorScopeKey);
         return;
       }
       if (message.event !== "symposium-event") return;
       try {
         acceptEvent(JSON.parse(message.data) as T);
       } catch {
-        callbacksRef.current.onMalformedEvent();
+        callbacksRef.current.onMalformedEvent(cursorScopeKey);
       }
     };
 
@@ -157,7 +162,7 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
           watchdogTimer = null;
           if (closed || controller.signal.aborted) return;
           restartAfterAbort = true;
-          callbacksRef.current.onReconnecting();
+          callbacksRef.current.onReconnecting(cursorScopeKey);
           controller.abort();
         }, timeoutMs);
       };
@@ -172,17 +177,19 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
             if (closed || controller.signal.aborted) return;
             armWatchdog(22_000);
             stopPolling();
-            callbacksRef.current.onConnected();
+            callbacksRef.current.onConnected(cursorScopeKey);
           },
           onEvent: (message) => {
             armWatchdog(22_000);
             acceptStreamEvent(message);
           }
         });
-        if (!closed && !controller.signal.aborted) callbacksRef.current.onReconnecting();
+        if (!closed && !controller.signal.aborted) {
+          callbacksRef.current.onReconnecting(cursorScopeKey);
+        }
       } catch (error) {
         if (!controller.signal.aborted) {
-          callbacksRef.current.onReconnecting();
+          callbacksRef.current.onReconnecting(cursorScopeKey);
         }
       } finally {
         clearWatchdog();
@@ -205,19 +212,19 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
       source.onopen = () => {
         if (!closed) {
           stopPolling();
-          callbacksRef.current.onConnected();
+          callbacksRef.current.onConnected(cursorScopeKey);
         }
       };
       source.addEventListener("symposium-ready", () => {
         if (!closed) {
           stopPolling();
-          callbacksRef.current.onConnected();
+          callbacksRef.current.onConnected(cursorScopeKey);
         }
       });
       source.addEventListener("symposium-heartbeat", () => {
         if (!closed) {
           stopPolling();
-          callbacksRef.current.onConnected();
+          callbacksRef.current.onConnected(cursorScopeKey);
         }
       });
       source.addEventListener("symposium-event", (message) => {
@@ -225,12 +232,12 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
         try {
           acceptEvent(JSON.parse((message as MessageEvent<string>).data) as T);
         } catch {
-          callbacksRef.current.onMalformedEvent();
+          callbacksRef.current.onMalformedEvent(cursorScopeKey);
         }
       });
       source.onerror = () => {
         if (!closed) {
-          callbacksRef.current.onReconnecting();
+          callbacksRef.current.onReconnecting(cursorScopeKey);
           startPolling();
         }
       };
@@ -266,7 +273,7 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
       stopPolling();
       abortPoll();
       stopStream();
-      callbacksRef.current.onReconnecting();
+      callbacksRef.current.onReconnecting(cursorScopeKey);
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);

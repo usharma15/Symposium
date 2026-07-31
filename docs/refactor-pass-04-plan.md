@@ -23,16 +23,18 @@ This is the execution charter for the next pass. It deliberately sets a
 material result threshold. Another few-hundred-line cleanup is useful work,
 but it is not this pass.
 
-> **Current execution addendum, July 30, 2026:** checkpoint 09 implements C4
-> discovery authority and removes the final feature requests from the shell.
-> Global and community search now share one typed owner with abortable,
-> actor-scoped requests, privacy-safe local fallback, and bounded entity
-> merging. The exact candidate is 487 tracked source files / 127,886 physical /
-> 119,783 nonblank, 12,887 physical lines above the Pass 04 ceiling; no
-> reduction credit is claimed. The next decision is the final
-> disposition of the remaining application orchestrator, not another global
-> store. Exact C4 evidence is in
-> [`refactor-evidence/pass-04/checkpoint-09.md`](refactor-evidence/pass-04/checkpoint-09.md).
+> **Current execution addendum, July 30, 2026:** checkpoint 10 implements C5
+> global live-event authority. One typed controller/router now owns stream
+> subscription, ordered event classification, bounded consumer delivery,
+> cross-domain invalidation, and actor/backend-scoped callback and private
+> buffer isolation. The shell contains no live transport or event-kind policy.
+> The exact candidate is 490 tracked source files / 128,699 physical / 120,565
+> nonblank, 13,700 physical lines above the Pass 04 ceiling; no repository
+> reduction credit is claimed. Authentication/entrance lifecycle is the next
+> characterized authority candidate. Ephemeral modal and view composition
+> remain shell responsibilities rather than grounds for a global store. Exact
+> C5 evidence is in
+> [`refactor-evidence/pass-04/checkpoint-10.md`](refactor-evidence/pass-04/checkpoint-10.md).
 
 The threshold is an acceptance gate, not permission to game the count. If
 11,544 safe deletions cannot be proved, the implementation must stop at a

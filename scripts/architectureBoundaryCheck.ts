@@ -114,6 +114,14 @@ const main = async () => {
     path.join(root, "features/discovery/discoveryModel.ts"),
     "utf8"
   );
+  const liveControllerSource = await readFile(
+    path.join(root, "features/live-sync/useSymposiumLiveController.ts"),
+    "utf8"
+  );
+  const liveRouterSource = await readFile(
+    path.join(root, "features/live-sync/symposiumLiveEventRouter.ts"),
+    "utf8"
+  );
   assert.match(
     symposiumSource,
     /useSymposiumViewController/,
@@ -201,6 +209,11 @@ const main = async () => {
     1,
     "Symposium discovery state must have one controller authority."
   );
+  assert.equal(
+    symposiumSource.match(/useSymposiumLiveController\(\{/g)?.length ?? 0,
+    1,
+    "Symposium global live-event routing must have one controller authority."
+  );
   for (const retiredDiscoveryShellAuthority of [
     /\/api\/search/,
     /setRemoteSearchResults/,
@@ -270,10 +283,52 @@ const main = async () => {
       `${discoveryPolicy} must remain owned by the discovery model.`
     );
   }
+  for (const retiredLiveShellAuthority of [
+    /useLiveEventStream/,
+    /useCrossTabItemTransport/,
+    /setMessagingEvents/,
+    /setNotificationEvents/,
+    /setAssistantEvents/,
+    /event\.kind\.startsWith\("(?:notification|assistant|message|conversation|post|comment|profile|community|note|scribble)\./
+  ]) {
+    assert.doesNotMatch(
+      symposiumSource,
+      retiredLiveShellAuthority,
+      `Retired live-event routing authority returned to SymposiumV0.tsx: ${retiredLiveShellAuthority}.`
+    );
+  }
+  for (const liveControllerAuthority of [
+    "useLiveEventStream<SymposiumLiveEvent>",
+    "useCrossTabItemTransport<ContentAnalyticsInvalidation>",
+    "contentAnalyticsInvalidationFromLiveEvent",
+    "routeSymposiumLiveEvent",
+    "appendScopedLiveEvent(current, authSessionKey, incoming, 1000)",
+    "scopedLiveEvents(messagingBuffer, authSessionKey)",
+    "eventScopeKey !== transportScopeKey"
+  ]) {
+    assert.ok(
+      liveControllerSource.includes(liveControllerAuthority),
+      `${liveControllerAuthority} must remain owned by the global live controller.`
+    );
+  }
+  for (const liveRouterAuthority of [
+    "ports.acceptLiveActionProjection",
+    "ports.invalidateQuotedSource",
+    "ports.mergeLiveMetricPatch",
+    "ports.mergeLiveFollow",
+    "appendScopedLiveEvent",
+    "resetScopedLiveEventBuffer",
+    "ports.dispatchWorkspaceChange",
+    "ports.dispatchScribbleChange",
+    "ports.dispatchOpportunityApplicationsChange"
+  ]) {
+    assert.ok(
+      liveRouterSource.includes(liveRouterAuthority),
+      `${liveRouterAuthority} must remain owned by the global live-event router.`
+    );
+  }
   for (const infrastructureImport of [
-    "features/api/symposiumApiClient",
-    "features/live-sync/useCrossTabItemTransport",
-    "features/live-sync/useLiveEventStream"
+    "features/api/symposiumApiClient"
   ]) {
     assert.ok(
       symposiumSource.includes(infrastructureImport),
@@ -324,6 +379,7 @@ const main = async () => {
     "single inquiry read, mutation, reconciliation, cross-tab, and persistence authority",
     "single profile, social, follow, activity, cross-tab, and persistence authority",
     "single global and community discovery authority",
+    "single global live-event routing and delivery authority",
     "extracted feature ownership",
     "acyclic feature dependencies"
   ]);

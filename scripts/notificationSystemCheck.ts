@@ -841,6 +841,10 @@ const main = async () => {
   const delivery = readFileSync("apps/api/src/services/notificationDelivery.ts", "utf8");
   const panel = readFileSync("features/notifications/NotificationsPanel.tsx", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
+  const liveController = readFileSync(
+    "features/live-sync/useSymposiumLiveController.ts",
+    "utf8"
+  );
   const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
   const workspaceAccess = readFileSync("apps/api/src/repository/workspaceAccess.ts", "utf8");
   const conversations = readFileSync("apps/api/src/repository/conversations.ts", "utf8");
@@ -955,7 +959,11 @@ const main = async () => {
   assert.match(panel, /Archive notification/);
   assert.match(panel, /notificationCanArchive/);
   assert.doesNotMatch(panel, /window\.location\.assign/);
-  assert.match(shell, /setNotificationEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);
+  assert.match(
+    liveController,
+    /setNotificationBuffer\(\(current\) =>[\s\S]*appendScopedLiveEvent\(current, authSessionKey, incoming, 1000\)/
+  );
+  assert.doesNotMatch(shell, /setNotificationEvents|event\.kind\.startsWith\("notification\."\)/);
   assert.match(shell, /parseCanonicalRoute\(url\.pathname, url\.search\)/);
   assert.match(shell, /symposium:pending-community-requests/);
   assert.match(shell, /symposium:open-community-requests/);

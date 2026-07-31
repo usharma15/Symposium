@@ -146,11 +146,23 @@ keys belong to `features/discovery/discoveryModel.ts`. The shell renders the
 typed result and supplies the inquiry merge port; it cannot request search or
 derive a competing fallback result.
 
+`features/live-sync/useSymposiumLiveController.ts` is the single global
+live-event delivery authority. It composes the cursor-monotonic stream,
+polling fallback, cross-tab analytics invalidation, bounded Assistant,
+messaging, and notification buffers, browser-domain invalidation events, and
+connection recovery. `features/live-sync/symposiumLiveEventRouter.ts` owns the
+pure ordered classification policy and typed ports into inquiry, profile,
+activity, editor, and fallback-refresh authorities. Transport callbacks and
+private buffers are keyed by actor/backend session; a delayed callback or
+buffer accepted for a previous viewer is ineligible for the current viewer.
+The shell supplies narrow domain ports and cannot classify event families,
+retain event buffers, or subscribe to the transport directly.
+
 Profiles reuse the same collection coordinator and ordered browser transport as inquiry items. Follow relationships use a relationship-specific coordinator that tracks the pending desired state and the last authoritative relationship revision, so refreshes and delayed events cannot reverse a follow or unfollow while its request is outstanding. Profile, follow, post, comment, and action writes all use the shared JSON API client and idempotency-key policy.
 
 ## Frontend ownership
 
-`SymposiumV0.tsx` is the application orchestrator: authentication lifecycle, global live-event routing, cross-domain composition, and invocation of typed feature commands. Canonical view state belongs to `useSymposiumViewController`; inquiry reads, writes, live/cross-tab convergence, and item persistence belong to `useInquiryController`; profile, identity projection, follow, social-list, and profile-activity state belong to `useProfileController` and its activity subcontroller; global and community search belongs to `useDiscoveryController`. The shell owns zero direct feature HTTP requests. HTTP normalization, retry identities, SSE lifecycle, mutation ordering, and reconciliation remain delegated to shared infrastructure. Rendering and feature policy are owned below it:
+`SymposiumV0.tsx` is the application orchestrator: authentication/entrance lifecycle, cross-domain composition, ephemeral modal selection, and invocation of typed feature commands. Canonical view state belongs to `useSymposiumViewController`; inquiry reads, writes, live/cross-tab convergence, and item persistence belong to `useInquiryController`; profile, identity projection, follow, social-list, and profile-activity state belong to `useProfileController` and its activity subcontroller; global and community search belongs to `useDiscoveryController`; global live-event delivery and routing belong to `useSymposiumLiveController`. The shell owns zero direct feature HTTP requests and zero event-family policy. HTTP normalization, retry identities, SSE lifecycle, mutation ordering, routing, and reconciliation remain delegated to shared infrastructure. Rendering and feature policy are owned below it:
 
 - `features/posts`: composers, feed cards, detail views, edit surfaces, post action presentation
 - `features/inquiry`: the typed inquiry entity, read, mutation, convergence, cross-tab, and persistence authority

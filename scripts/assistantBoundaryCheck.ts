@@ -1976,6 +1976,10 @@ const assistantController = [
   assistantControllerModel
 ].join("\n");
 const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
+const liveController = readFileSync(
+  "features/live-sync/useSymposiumLiveController.ts",
+  "utf8"
+);
 const canonicalRoutes = readFileSync("features/navigation/canonicalRoute.ts", "utf8");
 const assistantPage = readFileSync("app/assistant/page.tsx", "utf8");
 const assistantThreadPage = readFileSync("app/assistant/threads/[threadId]/page.tsx", "utf8");
@@ -2278,7 +2282,9 @@ assert.match(shell, /\{tabletOpen \|\| assistantOpen \? \([\s\S]*?mode=\{assista
 assert.match(shell, /assistantThreadId: assistantController\.conversationId \?\? null/);
 assert.match(shell, /enabled: tabletOpen \|\| assistantOpen/);
 assert.match(shell, /liveEvents: assistantEvents/);
-assert.match(shell, /event\.kind\.startsWith\("assistant\."\)/);
+assert.match(liveController, /appendAssistantEvent/);
+assert.match(liveController, /setAssistantBuffer/);
+assert.doesNotMatch(shell, /event\.kind\.startsWith\("assistant\."\)|setAssistantEvents/);
 assert.match(tablet, /Expand to AI Workspace/);
 assert.match(tablet, /Collapse to AI Tablet/);
 assert.match(tablet, /Search chats/);

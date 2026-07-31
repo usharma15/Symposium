@@ -45,6 +45,7 @@ export const verificationManifest = [
   stage("follow-reconciliation:check", "state-sync"),
   stage("api-client:check", "state-sync"),
   stage("live-transport:check", "state-sync"),
+  stage("live-routing:check", "state-sync"),
   stage("local-persistence:check", "state-sync"),
   stage("core:check", "state-sync"),
   stage("action:check", "state-sync"),
