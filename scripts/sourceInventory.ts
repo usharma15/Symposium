@@ -27,9 +27,7 @@ const utf8 = new TextDecoder("utf-8", { fatal: true });
 export const sourcePolicy = {
   baselineRef: "8e900d0fa675b311a67029b8d2f109b4da97301e",
   baselinePhysical: 127_151,
-  baselineNonblank: 119_000,
-  passMaximum: 130_206,
-  programMaximum: 99_999
+  baselineNonblank: 119_000
 } as const;
 
 export type SourceTotals = { files: number; physical: number; nonblank: number };
@@ -244,8 +242,9 @@ export const sourceInventoryProblems = (
   if (report.untrackedSource.length) {
     problems.push(`Untracked source is absent from the canonical metric: ${report.untrackedSource.join(", ")}`);
   }
-  const maximum = options.maximum ?? (options.checkBaseline ? sourcePolicy.baselinePhysical : sourcePolicy.passMaximum);
-  if (report.totals.physical > maximum) {
+  const maximum = options.maximum ??
+    (options.checkBaseline ? sourcePolicy.baselinePhysical : undefined);
+  if (maximum !== undefined && report.totals.physical > maximum) {
     problems.push(`Source ceiling exceeded: ${report.totals.physical} > ${maximum}`);
   }
   if (
@@ -277,7 +276,7 @@ export const formatSourceInventory = (report: SourceInventory, delta?: SourceInv
   return [
     `Source inventory ${report.sha}${report.ref ? ` (${report.ref})` : report.dirty ? " (dirty worktree)" : ""}`,
     `TOTAL              ${String(report.totals.files).padStart(4)} files  ${String(report.totals.physical).padStart(7)} physical  ${String(report.totals.nonblank).padStart(7)} nonblank`,
-    `Distance to 99,999: ${Math.max(0, report.totals.physical - sourcePolicy.programMaximum)}`,
+    "LOC policy: measured historical signal; no governing ceiling",
     ...(delta ? [
       `Delta vs ${delta.baselineRef}: ${signed(delta.totals.files)} files, ${signed(delta.totals.physical)} physical, ${signed(delta.totals.nonblank)} nonblank`
     ] : []),

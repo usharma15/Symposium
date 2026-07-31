@@ -203,6 +203,18 @@ canonical identity is admitted. The server boolean can avoid a false sign-in
 panel, but it cannot authorize a default profile frame because it carries no
 profile projection.
 
+Browser/runtime recovery is owned by
+`features/recovery/browserRecoveryCoordinator.ts` and its pure model. One
+coordinator observes online, focus, visibility, page restoration, and
+recoverable transport transitions. Hidden tabs synchronously suspend live
+delivery; a monotonic recovery epoch wakes session bootstrap, notifications,
+messaging, Assistant, analytics, and Scribble refreshers without each feature
+installing competing browser listeners. Live delivery retains its exact-user
+cursor and uses bounded backoff before replay. Authenticated API and direct
+live requests fail closed when Clerk cannot supply a token; they never
+downgrade to handle trust. Domain mutation idempotency, conflict handling, and
+optimistic reconciliation remain with their owning domain controllers.
+
 ## Backend ownership
 
 Backend persistence is split into bounded repositories for posts, comments, identity, profiles, communities, conversations, notifications, search, workspaces, attachments, actions, opportunities, and the assistant. HTTP and tRPC routes import their owning repository directly. Cross-domain note-to-post and note-to-proposal publication is explicit in `services/notePublishing.ts`; there is no compatibility façade. The post repository owns proposal creation and metadata edits in the same transaction as the public post, while payment ingestion remains gated behind a future provider-owned service. Domain repositories may depend on the shared foundation, transaction, mutation, audit, event, database, and storage kernels, but they may not import one another sideways.
@@ -226,6 +238,11 @@ The notification repository owns page/unread reads and read convergence. Domain 
 13. Construct the unified Patronage Hall domain. Complete for proposal contracts, creation and editing, Office drafts, exact-revision publication, canonical proposal and contribution-ledger storage, local/live persistence, feed and detail projections, and payment/private-capital feature gates. Provider payment ingestion remains intentionally unopened.
 14. Replace shell-owned global and community discovery. Complete: one typed controller now owns both search requests, query/result state, actor-scoped isolation, abort policy, local fallback, and bounded entity composition.
 15. Replace shell-owned authentication and entrance lifecycle. Complete: one typed controller and pure reducer now own browser entry, exact-user account admission, cache/cross-tab scope, read/live/social gates, local preview, and sign-out replay.
+16. Replace distributed browser/runtime recovery policy. Complete for the
+    current client: one coordinator owns availability and transport recovery
+    epochs, live delivery suspends and replays through it, authenticated
+    token loss fails closed, session bootstrap retries under exact-user
+    guards, and feature refreshers consume the shared resume signal.
 
 ## Checkpoint gates
 

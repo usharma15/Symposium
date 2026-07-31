@@ -9,6 +9,15 @@ import {
   compactMessageUnreadCount,
   latestUnreadChangingEventKey
 } from "@/features/messages/messageUnreadState";
+import {
+  browserRecoveryCoordinator
+} from "@/features/recovery/browserRecoveryCoordinator";
+import {
+  symposiumRecoveryRetryDelayMs
+} from "@/features/recovery/symposiumRecoveryModel";
+import {
+  useSymposiumRecoveryRefresh
+} from "@/features/recovery/useSymposiumRecovery";
 
 type UnreadLoadState = "loading" | "loaded" | "error";
 
@@ -30,6 +39,7 @@ export function MessagesUnreadButton({
   const requestEpochRef = useRef(0);
   const refreshTimerRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
+  const retryAttemptRef = useRef(0);
   const wasExpandedRef = useRef(expanded);
   const latestEventKey = useMemo(() => latestUnreadChangingEventKey(liveEvents), [liveEvents]);
 
@@ -49,15 +59,27 @@ export function MessagesUnreadButton({
       if (requestEpoch !== requestEpochRef.current) return;
       setUnreadCount(result.unreadCount);
       setLoadState("loaded");
+      retryAttemptRef.current = 0;
     } catch {
       if (requestEpoch !== requestEpochRef.current) return;
       setLoadState("error");
+      const attempt = retryAttemptRef.current;
+      retryAttemptRef.current += 1;
       retryTimerRef.current = window.setTimeout(() => {
         retryTimerRef.current = null;
-        void loadUnreadCount();
-      }, unreadRetryDelayMs);
+        if (browserRecoveryCoordinator.canAttempt()) {
+          void loadUnreadCount();
+        }
+      }, symposiumRecoveryRetryDelayMs(attempt, {
+        baseMs: unreadRetryDelayMs
+      }));
     }
   }, [actorHandle]);
+
+  useSymposiumRecoveryRefresh(() => {
+    retryAttemptRef.current = 0;
+    void loadUnreadCount();
+  });
 
   useEffect(() => {
     setUnreadCount(0);
@@ -67,20 +89,6 @@ export function MessagesUnreadButton({
       requestEpochRef.current += 1;
       if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
-    };
-  }, [loadUnreadCount]);
-
-  useEffect(() => {
-    const refreshWhenActive = () => {
-      if (document.visibilityState === "visible") void loadUnreadCount();
-    };
-    window.addEventListener("focus", refreshWhenActive);
-    window.addEventListener("online", refreshWhenActive);
-    document.addEventListener("visibilitychange", refreshWhenActive);
-    return () => {
-      window.removeEventListener("focus", refreshWhenActive);
-      window.removeEventListener("online", refreshWhenActive);
-      document.removeEventListener("visibilitychange", refreshWhenActive);
     };
   }, [loadUnreadCount]);
 

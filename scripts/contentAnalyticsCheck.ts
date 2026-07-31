@@ -234,7 +234,8 @@ const main = async () => {
   assert.match(posts, /View post analytics/);
   assert.match(comments, /View comment analytics/);
   assert.match(dialog, /contentAnalyticsInvalidationEvent/);
-  assert.match(dialog, /visibilitychange/);
+  assert.match(dialog, /useSymposiumRecoveryRefresh\(scheduleRefresh\)/);
+  assert.doesNotMatch(dialog, /addEventListener\("visibilitychange"/);
   assert.match(dialog, /previousFocus/);
   assert.match(dialog, /event\.key !== "Tab"/);
   assert.match(dialog, /setView\(initialView\)/);

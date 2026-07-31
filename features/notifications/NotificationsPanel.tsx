@@ -38,11 +38,19 @@ import {
   notificationPreferencesFromLiveEvent,
   type NotificationPreferenceKey
 } from "@/features/notifications/notificationPreferences";
+import {
+  browserRecoveryCoordinator
+} from "@/features/recovery/browserRecoveryCoordinator";
+import {
+  symposiumRecoveryRetryDelayMs
+} from "@/features/recovery/symposiumRecoveryModel";
+import {
+  useSymposiumRecoveryRefresh
+} from "@/features/recovery/useSymposiumRecovery";
 
 type NotificationLoadState = "loading" | "loaded" | "error";
 
 const retryDelayMs = 2_000;
-const maximumRetryDelayMs = 30_000;
 
 const activityPreferenceRows: {
   key: Exclude<NotificationPreferenceKey, "activityEnabled">;
@@ -213,14 +221,14 @@ export function NotificationsControl({
       if (requestEpoch !== requestEpochRef.current) return;
       setLoadState("error");
       if (!append && document.visibilityState === "visible" && navigator.onLine) {
-        const delay = Math.min(
-          retryDelayMs * 2 ** retryAttemptRef.current,
-          maximumRetryDelayMs
+        const delay = symposiumRecoveryRetryDelayMs(
+          retryAttemptRef.current,
+          { baseMs: retryDelayMs }
         );
         retryAttemptRef.current += 1;
         retryTimerRef.current = window.setTimeout(() => {
           retryTimerRef.current = null;
-          void load(false);
+          if (browserRecoveryCoordinator.canAttempt()) void load(false);
         }, delay);
       }
     } finally {
@@ -247,14 +255,16 @@ export function NotificationsControl({
       if (requestEpoch !== requestEpochRef.current) return;
       setLoadState("error");
       if (document.visibilityState === "visible" && navigator.onLine) {
-        const delay = Math.min(
-          retryDelayMs * 2 ** retryAttemptRef.current,
-          maximumRetryDelayMs
+        const delay = symposiumRecoveryRetryDelayMs(
+          retryAttemptRef.current,
+          { baseMs: retryDelayMs }
         );
         retryAttemptRef.current += 1;
         retryTimerRef.current = window.setTimeout(() => {
           retryTimerRef.current = null;
-          void loadUnreadCount();
+          if (browserRecoveryCoordinator.canAttempt()) {
+            void loadUnreadCount();
+          }
         }, delay);
       }
     }
@@ -263,6 +273,10 @@ export function NotificationsControl({
   const refresh = useCallback(() =>
     openRef.current ? load(false) : loadUnreadCount(),
   [load, loadUnreadCount]);
+
+  useSymposiumRecoveryRefresh(() => {
+    void refresh();
+  });
 
   useEffect(() => {
     requestEpochRef.current += 1;
@@ -297,20 +311,6 @@ export function NotificationsControl({
       refreshTimerRef.current = null;
     };
   }, [actorHandle, loadUnreadCount]); // live event history is intentionally excluded from actor reset
-
-  useEffect(() => {
-    const refreshWhenActive = () => {
-      if (document.visibilityState === "visible") void refresh();
-    };
-    window.addEventListener("focus", refreshWhenActive);
-    window.addEventListener("online", refreshWhenActive);
-    document.addEventListener("visibilitychange", refreshWhenActive);
-    return () => {
-      window.removeEventListener("focus", refreshWhenActive);
-      window.removeEventListener("online", refreshWhenActive);
-      document.removeEventListener("visibilitychange", refreshWhenActive);
-    };
-  }, [refresh]);
 
   useEffect(() => {
     if (!latestEventKey) return;

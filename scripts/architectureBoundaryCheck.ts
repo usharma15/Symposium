@@ -130,6 +130,14 @@ const main = async () => {
     path.join(root, "features/session/symposiumSessionLifecycle.ts"),
     "utf8"
   );
+  const recoveryCoordinatorSource = await readFile(
+    path.join(root, "features/recovery/browserRecoveryCoordinator.ts"),
+    "utf8"
+  );
+  const recoveryModelSource = await readFile(
+    path.join(root, "features/recovery/symposiumRecoveryModel.ts"),
+    "utf8"
+  );
   const cachedBootstrapSource = await readFile(
     path.join(root, "features/bootstrap/cachedBootstrap.ts"),
     "utf8"
@@ -398,6 +406,34 @@ const main = async () => {
       `${sessionLifecycleAuthority} must remain owned by the session lifecycle model.`
     );
   }
+  for (const recoveryAuthority of [
+    "createBrowserRecoveryCoordinator",
+    "reportTransportFailure",
+    "reportTransportSuccess",
+    "visibilitychange",
+    "pageshow"
+  ]) {
+    assert.ok(
+      recoveryCoordinatorSource.includes(recoveryAuthority),
+      `${recoveryAuthority} must remain owned by the browser recovery coordinator.`
+    );
+  }
+  for (const recoveryPolicy of [
+    "reduceSymposiumRecovery",
+    "symposiumRecoveryCanAttempt",
+    "symposiumRecoveryPhase",
+    "symposiumRecoveryRetryDelayMs"
+  ]) {
+    assert.ok(
+      recoveryModelSource.includes(recoveryPolicy),
+      `${recoveryPolicy} must remain owned by the recovery model.`
+    );
+  }
+  assert.match(
+    symposiumSource,
+    /accessTokenRequired: clerkEnabled && auth\.isSignedIn/,
+    "The shell must configure authenticated requests to fail closed."
+  );
   assert.match(
     profileControllerSource,
     /if \(request\?\.shouldCommit && !request\.shouldCommit\(\)\) return null;/,
@@ -424,7 +460,8 @@ const main = async () => {
     "Profile cross-tab entities must remain scoped to the current viewer."
   );
   for (const infrastructureImport of [
-    "features/api/symposiumApiClient"
+    "features/api/symposiumApiClient",
+    "features/recovery/browserRecoveryCoordinator"
   ]) {
     assert.ok(
       symposiumSource.includes(infrastructureImport),
@@ -477,6 +514,7 @@ const main = async () => {
     "single global and community discovery authority",
     "single global live-event routing and delivery authority",
     "single authentication and entrance lifecycle authority",
+    "single browser and transport recovery authority",
     "extracted feature ownership",
     "acyclic feature dependencies"
   ]);

@@ -12,6 +12,7 @@ const expectedCanaries = [
   "symposium-canary.spec.ts\0keeps profile activity, social navigation, and follow state authoritative across reload",
   "symposium-canary.spec.ts\0keeps global and community discovery authoritative across rapid queries",
   "symposium-canary.spec.ts\0routes canonical live events without a bootstrap refresh",
+  "symposium-canary.spec.ts\0replays missed live events after offline recovery without a reload",
   "symposium-canary.spec.ts\0creates, edits, and durably reloads a titleless Thought"
 ].sort();
 

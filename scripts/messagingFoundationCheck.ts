@@ -549,9 +549,10 @@ const main = async () => {
   assert.match(unreadButton, /\/api\/conversations\/unread/);
   assert.doesNotMatch(unreadButton, /\}, 80\)/);
   assert.match(unreadButton, /latestUnreadChangingEventKey/);
-  assert.match(unreadButton, /window\.addEventListener\("focus", refreshWhenActive\)/);
-  assert.match(unreadButton, /window\.addEventListener\("online", refreshWhenActive\)/);
-  assert.match(unreadButton, /document\.addEventListener\("visibilitychange", refreshWhenActive\)/);
+  assert.match(unreadButton, /useSymposiumRecoveryRefresh/);
+  assert.doesNotMatch(unreadButton, /addEventListener\("focus"/);
+  assert.doesNotMatch(unreadButton, /addEventListener\("online"/);
+  assert.doesNotMatch(unreadButton, /addEventListener\("visibilitychange"/);
   assert.match(unreadButton, /retryTimerRef\.current = window\.setTimeout/);
   assert.match(unreadButton, /aria-label=\{title\}/);
   assert.match(unreadButton, /data-unread-state=\{loadState\}/);

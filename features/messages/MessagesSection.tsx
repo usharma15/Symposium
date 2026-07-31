@@ -60,6 +60,15 @@ import {
   SymposiumApiError,
   symposiumApi
 } from "@/features/api/symposiumApiClient";
+import {
+  browserRecoveryCoordinator
+} from "@/features/recovery/browserRecoveryCoordinator";
+import {
+  symposiumRecoveryRetryDelayMs
+} from "@/features/recovery/symposiumRecoveryModel";
+import {
+  useSymposiumRecoveryRefresh
+} from "@/features/recovery/useSymposiumRecovery";
 import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
 import { uploadConfirmedAttachment } from "@/features/attachments/attachmentUploadClient";
 import {
@@ -1321,8 +1330,10 @@ export function MessagingExperience({
       conversationSummaryRetryAttemptsRef.current.set(conversationId, attempt);
       const retryTimer = window.setTimeout(() => {
         conversationSummaryRetryTimersRef.current.delete(conversationId);
-        loadConversationSummaryRef.current(conversationId);
-      }, Math.min(30_000, 1_000 * (2 ** (attempt - 1))));
+        if (browserRecoveryCoordinator.canAttempt()) {
+          loadConversationSummaryRef.current(conversationId);
+        }
+      }, symposiumRecoveryRetryDelayMs(attempt - 1));
       conversationSummaryRetryTimersRef.current.set(conversationId, retryTimer);
     }
   }, [actor.handle, applyDraftAction]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1334,17 +1345,9 @@ export function MessagingExperience({
     void loadConversations(false);
   }, [actor.handle]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    const flushWhenActive = () => flushReadReceiptRef.current();
-    window.addEventListener("focus", flushWhenActive);
-    window.addEventListener("online", flushWhenActive);
-    document.addEventListener("visibilitychange", flushWhenActive);
-    return () => {
-      window.removeEventListener("focus", flushWhenActive);
-      window.removeEventListener("online", flushWhenActive);
-      document.removeEventListener("visibilitychange", flushWhenActive);
-    };
-  }, []);
+  useSymposiumRecoveryRefresh(() => {
+    flushReadReceiptRef.current();
+  });
 
   const mergeLiveMessage = useCallback((incoming: MessageContract, kind: string) => {
     markMessageProjectionChanged(incoming.conversationId);
@@ -1743,9 +1746,10 @@ export function MessagingExperience({
       }
       const retryAttempt = Math.min(6, draftRetryAttemptRef.current + 1);
       draftRetryAttemptRef.current = retryAttempt;
-      const retryDelay = Math.min(30_000, 1_000 * (2 ** (retryAttempt - 1)));
+      const retryDelay = symposiumRecoveryRetryDelayMs(retryAttempt - 1);
       draftRetryTimerRef.current = window.setTimeout(() => {
         draftRetryTimerRef.current = null;
+        if (!browserRecoveryCoordinator.canAttempt()) return;
         const current = draftStateRef.current;
         if (
           ownsDraftSurface() &&
@@ -1797,30 +1801,23 @@ export function MessagingExperience({
     };
   }, [actor.handle, draftServerHydrated, draftState, persistDraft, selectedConversationId]);
 
-  useEffect(() => {
-    const retryWhenActive = () => {
-      if (document.visibilityState !== "visible") return;
-      const current = draftStateRef.current;
-      if (!current.conversationId || !current.dirty || !current.clientVersion) return;
-      if (draftRetryTimerRef.current !== null) window.clearTimeout(draftRetryTimerRef.current);
-      draftRetryTimerRef.current = null;
-      draftRetryAttemptRef.current = 0;
-      persistDraftRef.current(
-        current.conversationId,
-        current.body,
-        current.serverRevision,
-        current.clientVersion
-      );
-    };
-    window.addEventListener("focus", retryWhenActive);
-    window.addEventListener("online", retryWhenActive);
-    document.addEventListener("visibilitychange", retryWhenActive);
-    return () => {
-      window.removeEventListener("focus", retryWhenActive);
-      window.removeEventListener("online", retryWhenActive);
-      document.removeEventListener("visibilitychange", retryWhenActive);
-    };
-  }, []);
+  useSymposiumRecoveryRefresh(() => {
+    const current = draftStateRef.current;
+    if (!current.conversationId || !current.dirty || !current.clientVersion) {
+      return;
+    }
+    if (draftRetryTimerRef.current !== null) {
+      window.clearTimeout(draftRetryTimerRef.current);
+    }
+    draftRetryTimerRef.current = null;
+    draftRetryAttemptRef.current = 0;
+    persistDraftRef.current(
+      current.conversationId,
+      current.body,
+      current.serverRevision,
+      current.clientVersion
+    );
+  });
 
   useEffect(() => {
     const textarea = textareaRef.current;

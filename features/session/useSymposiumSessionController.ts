@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useReducer,
   useRef,
+  useState,
   type MutableRefObject
 } from "react";
 import type { ResearchProfile } from "@/lib/mockData";
@@ -14,6 +15,16 @@ import {
   localPreviewBootstrapScopeKey
 } from "@/features/bootstrap/cachedBootstrap";
 import { useBrowserSessionEntrance } from "@/features/entrance/useBrowserSessionEntrance";
+import {
+  browserRecoveryCoordinator
+} from "@/features/recovery/browserRecoveryCoordinator";
+import {
+  symposiumRecoveryCanAttempt,
+  symposiumRecoveryRetryDelayMs
+} from "@/features/recovery/symposiumRecoveryModel";
+import {
+  useSymposiumRecovery
+} from "@/features/recovery/useSymposiumRecovery";
 import {
   authSessionScopeKey,
   authenticatedIdentityTransitionIsPending,
@@ -149,6 +160,19 @@ export const useSymposiumSessionController = ({
   authRef.current = { authLoaded, isSignedIn, userId };
   const syncEpochRef = useRef(0);
   const activeSyncControllerRef = useRef<AbortController | null>(null);
+  const recovery = useSymposiumRecovery();
+  const [syncRetryRevision, setSyncRetryRevision] = useState(0);
+  const syncRetryAttemptRef = useRef(0);
+  const syncRetryTimerRef = useRef<number | null>(null);
+  const syncRetryUserIdRef = useRef<string | null>(null);
+
+  const clearScheduledSyncRetry = useCallback((resetAttempt = false) => {
+    if (syncRetryTimerRef.current !== null) {
+      window.clearTimeout(syncRetryTimerRef.current);
+      syncRetryTimerRef.current = null;
+    }
+    if (resetAttempt) syncRetryAttemptRef.current = 0;
+  }, []);
 
   const invalidateActiveSync = useCallback(() => {
     syncEpochRef.current += 1;
@@ -247,6 +271,8 @@ export const useSymposiumSessionController = ({
     const identity = requireIdentity();
 
     if (!isSignedIn) {
+      clearScheduledSyncRetry(true);
+      syncRetryUserIdRef.current = null;
       invalidateActiveSync();
       identity.clearAuthenticatedIdentity();
       clearAuthenticatedBrowserState();
@@ -259,11 +285,23 @@ export const useSymposiumSessionController = ({
     }
 
     if (!userId) return undefined;
+    if (!recovery.canAttempt) {
+      clearScheduledSyncRetry();
+      invalidateActiveSync();
+      return undefined;
+    }
+    if (syncRetryUserIdRef.current !== userId) {
+      clearScheduledSyncRetry(true);
+      syncRetryUserIdRef.current = userId;
+    } else {
+      clearScheduledSyncRetry();
+    }
     const committedUserId = lifecycleRef.current.identityUserId;
     if (
       committedUserId === userId &&
       lifecycleRef.current.accountSynced &&
-      lifecycleRef.current.pendingUserId === null
+      lifecycleRef.current.pendingUserId === null &&
+      !lifecycleRef.current.authError
     ) {
       return undefined;
     }
@@ -322,6 +360,7 @@ export const useSymposiumSessionController = ({
         if (!refreshedProfile || !shouldCommit()) return;
       }
       dispatch({ type: "identity_sync_succeeded", userId });
+      clearScheduledSyncRetry(true);
       if (
         shouldCompleteEntryAfterAccountSync(
           lifecycleRef.current.entryMode
@@ -361,9 +400,21 @@ export const useSymposiumSessionController = ({
       });
       onStatus(
         syncStage === "read-model"
-          ? "Account data sync failed"
-          : "Account sync failed"
+          ? "Account data sync interrupted · retrying"
+          : "Account sync interrupted · retrying"
       );
+      if (
+        symposiumRecoveryCanAttempt(
+          browserRecoveryCoordinator.getSnapshot()
+        )
+      ) {
+        const attempt = syncRetryAttemptRef.current;
+        syncRetryAttemptRef.current += 1;
+        syncRetryTimerRef.current = window.setTimeout(() => {
+          syncRetryTimerRef.current = null;
+          setSyncRetryRevision((current) => current + 1);
+        }, symposiumRecoveryRetryDelayMs(attempt));
+      }
     });
 
     return () => {
@@ -372,16 +423,29 @@ export const useSymposiumSessionController = ({
         activeSyncControllerRef.current = null;
       }
     };
-  }, [authLoaded, clerkEnabled, invalidateActiveSync, isSignedIn, userId]);
+  }, [
+    authLoaded,
+    clerkEnabled,
+    clearScheduledSyncRetry,
+    invalidateActiveSync,
+    isSignedIn,
+    recovery.canAttempt,
+    recovery.resumeEpoch,
+    syncRetryRevision,
+    userId
+  ]);
 
   useEffect(
     () => () => {
+      clearScheduledSyncRetry();
       invalidateActiveSync();
     },
-    [invalidateActiveSync]
+    [clearScheduledSyncRetry, invalidateActiveSync]
   );
 
   const enterLocalPreview = () => {
+    clearScheduledSyncRetry(true);
+    syncRetryUserIdRef.current = null;
     invalidateActiveSync();
     const previewProfile = requireIdentity().enterLocalPreview();
     dispatch({ type: "local_preview_entered" });
@@ -402,6 +466,8 @@ export const useSymposiumSessionController = ({
       onStatus("Sign out failed");
       return;
     }
+    clearScheduledSyncRetry(true);
+    syncRetryUserIdRef.current = null;
     invalidateActiveSync();
     requireIdentity().clearAuthenticatedIdentity();
     clearAuthenticatedBrowserState();

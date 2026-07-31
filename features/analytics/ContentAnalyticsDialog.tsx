@@ -15,6 +15,12 @@ import type {
   ContentAnalyticsViewContract
 } from "@/packages/contracts/src";
 import { symposiumApi } from "@/features/api/symposiumApiClient";
+import {
+  browserRecoveryCoordinator
+} from "@/features/recovery/browserRecoveryCoordinator";
+import {
+  useSymposiumRecoveryRefresh
+} from "@/features/recovery/useSymposiumRecovery";
 import { formatMetric, metricNumber } from "@/lib/symposiumCore";
 
 const tabs: { id: ContentAnalyticsViewContract; label: string }[] = [
@@ -129,6 +135,19 @@ export function ContentAnalyticsDialog({
     }
   }, [actorHandle, commentId, postId, query, subjectType, view]);
   loadRef.current = load;
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      if (browserRecoveryCoordinator.canAttempt()) {
+        void loadRef.current(null, { background: true });
+      }
+    }, 120);
+  }, []);
+
+  useSymposiumRecoveryRefresh(scheduleRefresh);
 
   useEffect(() => {
     requestEpoch.current += 1;
@@ -193,13 +212,6 @@ export function ContentAnalyticsDialog({
       postId,
       ...(subjectType === "comment" && commentId ? { commentId } : {})
     };
-    const scheduleRefresh = () => {
-      if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current);
-      refreshTimerRef.current = window.setTimeout(() => {
-        refreshTimerRef.current = null;
-        void loadRef.current(null, { background: true });
-      }, 120);
-    };
     const onInvalidation = (event: Event) => {
       const message = (event as CustomEvent<unknown>).detail;
       if (!isContentAnalyticsInvalidation(message)) return;
@@ -217,24 +229,15 @@ export function ContentAnalyticsDialog({
       if (remembered.seen) return;
       scheduleRefresh();
     };
-    const onResume = () => {
-      if (document.visibilityState === "visible") scheduleRefresh();
-    };
     window.addEventListener(contentAnalyticsInvalidationEvent, onInvalidation);
-    window.addEventListener("focus", onResume);
-    window.addEventListener("online", onResume);
-    document.addEventListener("visibilitychange", onResume);
     return () => {
       window.removeEventListener(contentAnalyticsInvalidationEvent, onInvalidation);
-      window.removeEventListener("focus", onResume);
-      window.removeEventListener("online", onResume);
-      document.removeEventListener("visibilitychange", onResume);
       if (refreshTimerRef.current !== null) {
         window.clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = null;
       }
     };
-  }, [commentId, postId, subjectType]);
+  }, [commentId, postId, scheduleRefresh, subjectType]);
 
   const listEmpty = !loading && !error && page && (
     view === "quotes" ? !page.quotes.length : view !== "overview" && !page.actors.length

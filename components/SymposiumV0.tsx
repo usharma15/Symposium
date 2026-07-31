@@ -49,6 +49,9 @@ import {
   symposiumApi
 } from "@/features/api/symposiumApiClient";
 import {
+  browserRecoveryCoordinator
+} from "@/features/recovery/browserRecoveryCoordinator";
+import {
   parseCanonicalRoute,
   type CanonicalRoute,
   type ProfileSocialView
@@ -342,7 +345,15 @@ function SymposiumExperience({
   liveBackendUrl: string | null;
 }) {
   const { authLoaded, clerkEnabled } = auth;
-  symposiumApi.configure({ backendUrl: liveBackendUrl, getAccessToken: auth.getAccessToken });
+  symposiumApi.configure({
+    accessTokenRequired: clerkEnabled && auth.isSignedIn,
+    backendUrl: liveBackendUrl,
+    getAccessToken: auth.getAccessToken,
+    onRecoverableFailure:
+      browserRecoveryCoordinator.reportTransportFailure,
+    onTransportSuccess:
+      browserRecoveryCoordinator.reportTransportSuccess
+  });
   const [theme, setTheme] = useState<Theme>("day");
   const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
   const sessionIdentityRef =

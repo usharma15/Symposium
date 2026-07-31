@@ -942,9 +942,10 @@ const main = async () => {
   assert.match(panel, /requestEpochRef/);
   assert.match(panel, /retryTimerRef/);
   assert.match(panel, /\/api\/notifications\/unread/);
-  assert.match(panel, /window\.addEventListener\("focus", refreshWhenActive\)/);
-  assert.match(panel, /window\.addEventListener\("online", refreshWhenActive\)/);
-  assert.match(panel, /document\.addEventListener\("visibilitychange", refreshWhenActive\)/);
+  assert.match(panel, /useSymposiumRecoveryRefresh/);
+  assert.doesNotMatch(panel, /addEventListener\("focus"/);
+  assert.doesNotMatch(panel, /addEventListener\("online"/);
+  assert.doesNotMatch(panel, /addEventListener\("visibilitychange"/);
   assert.match(panel, /applyNotificationLiveEvent/);
   assert.match(panel, /data-unread-state=\{loadState\}/);
   assert.match(panel, /keepalive: true/);

@@ -44,6 +44,7 @@ export const verificationManifest = [
   stage("entity-revision:check", "state-sync"),
   stage("follow-reconciliation:check", "state-sync"),
   stage("api-client:check", "state-sync"),
+  stage("client-recovery:check", "state-sync"),
   stage("live-transport:check", "state-sync"),
   stage("live-routing:check", "state-sync"),
   stage("session-lifecycle:check", "state-sync"),

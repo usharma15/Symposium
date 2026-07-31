@@ -134,15 +134,20 @@ const [
 ]);
 assert.match(clientTransport, /consumeLiveEventStream/);
 assert.match(clientTransport, /liveEventCursorIsAfter/);
-assert.match(clientTransport, /document\.hidden/);
+assert.match(clientTransport, /browserRecoveryCoordinator\.subscribe/);
+assert.match(clientTransport, /symposiumRecoveryCanAttempt/);
 assert.match(clientTransport, /cursorScopeKeyRef/);
 assert.match(clientTransport, /callbacksRef\.current\.onEvent\(event, cursorScopeKey\)/);
 assert.match(clientTransport, /pollInFlight/);
 assert.match(clientTransport, /armWatchdog\(10_000\)/);
 assert.match(clientTransport, /armWatchdog\(22_000\)/);
-assert.match(clientTransport, /window\.addEventListener\("online"/);
-assert.match(clientTransport, /window\.addEventListener\("offline"/);
-assert.match(clientTransport, /\}, 750\)/);
+assert.doesNotMatch(clientTransport, /addEventListener\("online"/);
+assert.doesNotMatch(clientTransport, /addEventListener\("offline"/);
+assert.doesNotMatch(clientTransport, /addEventListener\("visibilitychange"/);
+assert.match(clientTransport, /symposiumRecoveryRetryDelayMs\(reconnectAttempt/);
+assert.match(clientTransport, /reconnectAttempt \+= 1/);
+assert.match(clientTransport, /Live authentication token unavailable/);
+assert.match(clientTransport, /reportTransportSuccess\(\)/);
 assert.match(clientTransport, /directBackendUrl \? `\$\{directBackendUrl\}\/v1\/events`/);
 assert.doesNotMatch(apiStreamRoute, /setInterval\(\(\) => \{\s+void flushMissedEvents/);
 assert.doesNotMatch(apiStreamRoute, /LISTEN|databaseBridge|getPool\(\)\.connect\(\)/);
@@ -186,7 +191,8 @@ reportCheck([
   "session-scoped cursor reset",
   "session-scoped callback rejection",
   "serialized fallback polling",
-  "immediate online and offline recovery",
+  "centralized immediate online, offline, and visibility recovery",
+  "fail-closed authenticated live-token recovery",
   "database-idle-safe single-process event stream",
   "route-aligned 500-listener live-bus capacity without leaks",
   "idle-safe database maintenance",

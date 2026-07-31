@@ -63,7 +63,10 @@ const main = async () => {
     assert.equal(baseline.entries.some((entry) => entry.path === "ignored.ts"), false);
     assert.deepEqual(sourceInventoryProblems(baseline, { maximum: 11 }), []);
     assert.equal(JSON.stringify(createSourceInventory(root, "HEAD")), JSON.stringify(baseline));
-    assert.match(formatSourceInventory(baseline), /Distance to 99,999: 0/);
+    assert.match(
+      formatSourceInventory(baseline),
+      /LOC policy: measured historical signal; no governing ceiling/
+    );
 
     git(root, "mv", "src/space # β.ts", "src/space # β.mts");
     const renamed = createSourceInventory(root);

@@ -6,7 +6,10 @@ const sessionCookie = {
   domain: "localhost",
   path: "/"
 };
-const watchDiagnostics = (page: Page) => {
+const watchDiagnostics = (
+  page: Page,
+  allowedRequestFailures: readonly string[] = []
+) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
   page.on("console", (message) => {
@@ -16,7 +19,12 @@ const watchDiagnostics = (page: Page) => {
     }
   });
   page.on("requestfailed", (request) => {
-    if (request.url().startsWith("http://localhost:3117") && request.failure()?.errorText !== "net::ERR_ABORTED") {
+    const failure = request.failure()?.errorText ?? "";
+    if (
+      request.url().startsWith("http://localhost:3117") &&
+      failure !== "net::ERR_ABORTED" &&
+      !allowedRequestFailures.includes(failure)
+    ) {
       errors.push(`request: ${request.method()} ${request.url()} ${request.failure()?.errorText}`);
     }
   });
@@ -347,6 +355,97 @@ test.describe("returning browser session", () => {
     await expect(page.getByRole("heading", { name: liveTitle })).toBeVisible();
     await page.waitForTimeout(300);
     expect(unexpectedAuthoritativeReads).toEqual([]);
+    clean();
+  });
+
+  test("replays missed live events after offline recovery without a reload", async ({
+    context,
+    page,
+    request
+  }) => {
+    const clean = watchDiagnostics(page, [
+      "net::ERR_INTERNET_DISCONNECTED",
+      "net::ERR_NETWORK_CHANGED"
+    ]);
+    const baselineCursor =
+      "2026-07-31T06:40:00.000Z::00000000-0000-4000-8000-000000000001";
+    const replayCursor =
+      "2026-07-31T06:40:01.000Z::00000000-0000-4000-8000-000000000002";
+    let replayItem: Record<string, unknown> | null = null;
+    let replayDelivered = false;
+    const requestedCursors: Array<string | null> = [];
+    await page.route("**/api/events*", async (route) => {
+      const url = new URL(route.request().url());
+      if (
+        route.request().method() !== "GET" ||
+        url.pathname !== "/api/events"
+      ) {
+        await route.continue();
+        return;
+      }
+      const cursor = url.searchParams.get("cursor");
+      requestedCursors.push(cursor);
+      const event = replayItem && cursor === baselineCursor && !replayDelivered
+        ? {
+            id: "00000000-0000-4000-8000-000000000002",
+            cursor: replayCursor,
+            kind: "post.created",
+            actorHandle: "@udayan",
+            subjectType: "post",
+            subjectId: String(replayItem.id),
+            payload: { item: replayItem },
+            createdAt: "2026-07-31T06:40:01.000Z"
+          }
+        : null;
+      if (event) replayDelivered = true;
+      await route.fulfill({
+        json: {
+          events: event ? [event] : [],
+          cursor: event ? replayCursor : baselineCursor
+        }
+      });
+    });
+    const initialCursorResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname === "/api/events"
+    );
+    await page.goto("/rooms/amphitheater");
+    expect((await initialCursorResponse).ok()).toBe(true);
+    await expect(page.locator(".sync-status")).toContainText(
+      "Live data connected"
+    );
+
+    await context.setOffline(true);
+    await expect(page.locator(".sync-status")).toContainText(
+      "Live updates reconnecting"
+    );
+
+    const body =
+      "Browser recovery proof: the event created offline arrived after cursor replay.";
+    const create = await request.post("/api/posts", {
+      data: {
+        attachmentIds: [],
+        authorHandle: "@udayan",
+        body,
+        kind: "thought",
+        postType: "thought",
+        room: "amphitheater",
+        title: ""
+      }
+    });
+    expect(create.ok()).toBe(true);
+    replayItem = ((await create.json()) as {
+      item: Record<string, unknown>;
+    }).item;
+
+    await context.setOffline(false);
+    await expect(page.getByText(body, { exact: true })).toBeVisible();
+    expect(replayDelivered).toBe(true);
+    expect(requestedCursors).toContain(baselineCursor);
+    await expect(page.locator(".sync-status")).toContainText(
+      "Live data connected"
+    );
+    await expect(page).toHaveURL(/\/rooms\/amphitheater$/);
     clean();
   });
 

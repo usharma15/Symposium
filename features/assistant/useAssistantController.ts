@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
+import {
+  useSymposiumRecoveryRefresh
+} from "@/features/recovery/useSymposiumRecovery";
 import { assistantRequestIntentFor } from "@/features/assistant/assistantRequestIntent";
 import {
   orderAssistantThreadsByLatestMessage,
@@ -1075,26 +1078,16 @@ export function useAssistantController({
     startNewThread
   ]);
 
-  useEffect(() => {
-    if (!enabled) return;
-    const refresh = () => {
-      if (document.visibilityState === "hidden") return;
-      const selectedRefresh = conversationIdRef.current
-        ? refreshSelectedThread().catch(() => null)
-        : Promise.resolve(null);
-      void Promise.all([
-        selectedRefresh,
-        refreshThreads({ silent: true }).catch(() => null),
-        refreshProjects().catch(() => null)
-      ]);
-    };
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [enabled, refreshProjects, refreshSelectedThread, refreshThreads]);
+  useSymposiumRecoveryRefresh(() => {
+    const selectedRefresh = conversationIdRef.current
+      ? refreshSelectedThread().catch(() => null)
+      : Promise.resolve(null);
+    void Promise.all([
+      selectedRefresh,
+      refreshThreads({ silent: true }).catch(() => null),
+      refreshProjects().catch(() => null)
+    ]);
+  }, enabled);
 
   const runContextMutation = useCallback(async <
     Result extends
