@@ -1,6 +1,6 @@
 import { jsonError, readJson } from "@/lib/api";
 import { createCommentInputSchema, createPostInputSchema } from "@/packages/contracts/src";
-import { addComment, createPost, updateComment, updatePost } from "@/lib/dataStore";
+import { addComment, createPost, updateComment, updatePost } from "@/lib/localPreviewStore";
 import {
   promoteLocalWorkspaceCommentAttachments,
   promoteLocalWorkspaceDocumentAttachments

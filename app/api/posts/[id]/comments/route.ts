@@ -1,4 +1,5 @@
-import { addComment, getSnapshot, type CreateCommentInput } from "@/lib/dataStore";
+import { addComment, getSnapshot } from "@/lib/localPreviewStore";
+import type { CreateCommentInput } from "@/lib/localPreviewStoreTypes";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { randomUUID } from "node:crypto";

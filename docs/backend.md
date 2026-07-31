@@ -5,7 +5,7 @@ This repo now has two runtime surfaces:
 - `next dev` / Vercel: the laptop-first SYMPOSIUM interface.
 - `npm run api:dev` / Render: the live TypeScript backend.
 
-The existing Next API routes remain in place for local preview, Clerk profile synchronization, protected attachment delivery, and compatibility fallback. When `SYMPOSIUM_API_URL` is set on Vercel, ordinary browser requests and the authenticated live-event stream connect directly to Render with the Clerk bearer token. This removes the Vercel function hop from normal traffic. A failed direct GET or idempotent mutation may retry through the compatibility bridge; application errors never replay. When the backend URL is not set, local development keeps using the existing `.data/symposium.json` fallback.
+The existing Next API routes remain in place for local preview, Clerk profile synchronization, protected attachment delivery, and compatibility fallback. When `SYMPOSIUM_API_URL` is set on Vercel, ordinary browser requests and the authenticated live-event stream connect directly to Render with the Clerk bearer token. This removes the Vercel function hop from normal traffic. A failed direct GET or idempotent mutation may retry through the compatibility bridge; application errors never replay. When the backend URL is not set, non-production development uses the explicit `lib/localPreviewStore.ts` adapter over `.data/symposium.json`. Production without the canonical backend fails closed with a no-store 503; it never reads or writes the local JSON world.
 
 Current production endpoints:
 

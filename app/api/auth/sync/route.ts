@@ -1,6 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { jsonError } from "@/lib/api";
-import { getSnapshot, upsertProfile, type CreateProfileInput } from "@/lib/dataStore";
+import { getSnapshot, upsertProfile } from "@/lib/localPreviewStore";
+import type { CreateProfileInput } from "@/lib/localPreviewStoreTypes";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 
@@ -32,19 +33,6 @@ export async function POST(request: Request) {
   const email = user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress;
   const name = user.fullName || user.username || email?.split("@")[0] || "Symposium member";
   const handle = handleFromIdentity(name, email, user.username);
-  const existingProfile = (await getSnapshot().catch(() => null))?.profiles[handle];
-  const input: CreateProfileInput = {
-    name: existingProfile?.name ?? name,
-    handle,
-    email: existingProfile?.email ?? email,
-    avatarUrl: existingProfile?.avatarUrl ?? user.imageUrl,
-    likesPublic: existingProfile?.likesPublic ?? true,
-    resharesPublic: existingProfile?.resharesPublic ?? true,
-    role: existingProfile?.role ?? "Symposium participant",
-    location: existingProfile?.location ?? "Public rooms",
-    bio: existingProfile?.bio ?? "A participant in the current inquiry thread.",
-    fields: existingProfile?.fields ?? ["Inquiry"]
-  };
 
   const live = await proxyLiveApiRequest(request, {
     body: {
@@ -58,6 +46,19 @@ export async function POST(request: Request) {
   });
   if (live) return live;
 
+  const existingProfile = (await getSnapshot().catch(() => null))?.profiles[handle];
+  const input: CreateProfileInput = {
+    name: existingProfile?.name ?? name,
+    handle,
+    email: existingProfile?.email ?? email,
+    avatarUrl: existingProfile?.avatarUrl ?? user.imageUrl,
+    likesPublic: existingProfile?.likesPublic ?? true,
+    resharesPublic: existingProfile?.resharesPublic ?? true,
+    role: existingProfile?.role ?? "Symposium participant",
+    location: existingProfile?.location ?? "Public rooms",
+    bio: existingProfile?.bio ?? "A participant in the current inquiry thread.",
+    fields: existingProfile?.fields ?? ["Inquiry"]
+  };
   const profile = await upsertProfile(input);
   return Response.json({ profile });
 }

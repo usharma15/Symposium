@@ -28,8 +28,8 @@ security, accessibility, and recoverability remains the highest-order gate.
 
 ## Released authority sequence
 
-The released production baseline before the shell-surface pass is
-`4b2b613cf0239312634f93802bb93c5b46ac8e43`. It includes:
+The released production baseline before this persistence pass is
+`0ae293d216aab7a1741162908fdc67566a30f999`. It includes:
 
 1. canonical mutation/read-model and local persistence boundaries;
 2. canonical view and browser-history authority;
@@ -37,13 +37,14 @@ The released production baseline before the shell-surface pass is
 4. global and community discovery authority;
 5. global live-event delivery and routing authority; and
 6. exact-user authentication, entrance, cache, read, social, and live
-   admission authority; and
-7. browser/runtime recovery and reconnect authority.
+   admission authority;
+7. browser/runtime recovery and reconnect authority; and
+8. transient shell-surface lifecycle authority.
 
 `components/SymposiumV0.tsx` remains the composition root.
-`lib/dataStore.ts` and the direct-Postgres Next compatibility mode remain
-transitional and load-bearing until a supported persistence authority
-replaces them.
+The direct-Postgres Next authority is already retired. Credential-free local
+preview remains deliberately supported through `lib/localPreviewStore.ts`;
+it is not a production fallback or a second database authority.
 
 ## Recovery and resilience authority
 
@@ -96,12 +97,37 @@ Search remains owned by discovery, full Assistant/Messages routes remain
 owned by canonical view state, and attachment/PDF content context remains
 owned by the corresponding feature controllers.
 
+## Persistence mode authority
+
+The Next boundary now selects exactly one named mode: `canonical-api` when a
+valid backend URL exists, `local-preview` only outside production when no
+backend exists, or `unavailable` in production without the canonical API.
+The production-unavailable mode returns a no-store 503 and cannot fall
+through to local JSON.
+
+The cutover:
+
+- retires the ambiguous `lib/dataStore.ts` name and makes the supported JSON
+  implementation explicitly local-preview-only;
+- fails closed if that store is invoked in production or beside database
+  credentials;
+- moves shared action types back to the domain core and local input types to
+  a type-only module, so browser features no longer depend on a persistence
+  implementation;
+- makes Clerk sync attempt the canonical API before any local snapshot read,
+  preventing production bridge traffic from initializing ephemeral local
+  state; and
+- retains the exact local JSON file, seed normalization, serialized atomic
+  mutation, action ledger, view dedupe, and restart behavior.
+
+The local-preview store remains load-bearing for credential-free laptop work.
+Deleting it would be a product decision, not infrastructure cleanup.
+
 ## Remaining structural sequence
 
-After the shell-surface authority is released:
+After the persistence-mode authority is released:
 
-1. converge supported persistence modes without deleting local development or
-   fallback behavior prematurely;
-2. retire only compatibility paths proven superseded by those authorities;
-3. run the complete exact-SHA proof and stop the revamp when the governing
+1. retire only Next compatibility paths proven superseded while preserving
+   local preview, Clerk synchronization, and protected delivery;
+2. run the complete exact-SHA proof and stop the revamp when the governing
    completion tests above are satisfied.

@@ -14,7 +14,14 @@ const watchDiagnostics = (
   page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
   page.on("console", (message) => {
     const source = message.location().url;
-    if (message.type() === "error" && (!source || source.startsWith("http://localhost:3117"))) {
+    const expectedNetworkFailure = allowedRequestFailures.some((failure) =>
+      message.text().includes(failure)
+    );
+    if (
+      message.type() === "error" &&
+      !expectedNetworkFailure &&
+      (!source || source.startsWith("http://localhost:3117"))
+    ) {
       errors.push(`console: ${source} ${message.text()}`);
     }
   });

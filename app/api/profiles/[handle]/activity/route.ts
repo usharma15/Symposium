@@ -1,4 +1,4 @@
-import { getSnapshot } from "@/lib/dataStore";
+import { getSnapshot } from "@/lib/localPreviewStore";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 import type { ToggleActionContract } from "@/packages/contracts/src";

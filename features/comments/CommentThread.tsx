@@ -19,7 +19,7 @@ import {
   ThumbsUp,
   Trash2
 } from "lucide-react";
-import type { CommentAction } from "@/lib/dataStore";
+import type { CommentAction } from "@/lib/symposiumCore";
 import type { ContentQuoteSource, InquiryAttachment, InquiryComment, ResearchProfile } from "@/lib/mockData";
 import {
   cleanHandle,

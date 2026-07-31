@@ -1,4 +1,4 @@
-import type { PostAction } from "@/lib/dataStore";
+import type { PostAction } from "@/lib/symposiumCore";
 import type { InquiryComment } from "@/lib/mockData";
 import type {
   CanonicalActionActivityContract,

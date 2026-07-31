@@ -1,4 +1,4 @@
-import type { CommentAction, PostAction } from "@/lib/dataStore";
+import type { CommentAction, PostAction } from "@/lib/symposiumCore";
 
 export type ViewTrigger = "visibility" | "click" | "expand";
 export type ViewSurface = "feed" | "profile" | "detail" | "thread" | "search" | "community";

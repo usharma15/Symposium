@@ -1,5 +1,9 @@
 import { auth } from "@clerk/nextjs/server";
-import { liveBackendUnavailableResponse, localDataFallbackAllowed } from "@/lib/runtimeSafety";
+import {
+  liveBackendUnavailableResponse,
+  localPreviewRuntimeAllowed,
+  selectNextPersistenceMode
+} from "@/lib/runtimeSafety";
 import {
   mapSymposiumApiRoute,
   normalizeSymposiumBackendUrl,
@@ -20,7 +24,7 @@ type LiveBackendDependencies = {
   backendUrl?: string | null;
   fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
   getToken?: () => Promise<string | null>;
-  localFallbackAllowed?: () => boolean;
+  localPreviewAllowed?: () => boolean;
   reportError?: (...values: unknown[]) => void;
 };
 
@@ -70,12 +74,16 @@ export const createLiveBackendProxy = (dependencies: LiveBackendDependencies = {
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const getToken = dependencies.getToken ?? (async () =>
     clerkEnabled ? await (await auth()).getToken().catch(() => null) : null);
-  const fallbackAllowed = dependencies.localFallbackAllowed ?? localDataFallbackAllowed;
+  const localPreviewAllowed = dependencies.localPreviewAllowed ?? localPreviewRuntimeAllowed;
   const reportError = dependencies.reportError ?? console.error;
 
   return async (path: string, options: LiveBackendOptions = {}) => {
-    if (!configuredBackendUrl) {
-      if (fallbackAllowed()) return null;
+    const persistenceMode = selectNextPersistenceMode({
+      backendUrl: configuredBackendUrl,
+      localPreviewAllowed: localPreviewAllowed()
+    });
+    if (persistenceMode !== "canonical-api") {
+      if (persistenceMode === "local-preview") return null;
 
       reportError("SYMPOSIUM_API_URL is required when running the Next application in production.");
       return liveBackendUnavailableResponse();

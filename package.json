@@ -12,7 +12,7 @@
     "client-recovery:check": "tsx scripts/clientRecoveryCheck.ts",
     "architecture:check": "tsx scripts/architectureBoundaryCheck.ts",
     "surface-state:check": "tsx scripts/symposiumSurfaceStateCheck.ts",
-    "authority:check": "tsx scripts/dataStoreAuthorityCheck.ts",
+    "authority:check": "tsx scripts/localPreviewAuthorityCheck.ts",
     "attachment:check": "tsx scripts/attachmentSecurityCheck.ts",
     "attachment-preview:check": "tsx scripts/structuredAttachmentPreviewCheck.ts",
     "dev": "WATCHPACK_POLLING=true next dev --webpack",

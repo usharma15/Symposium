@@ -1,4 +1,5 @@
-import { deleteComment, getSnapshot, updateComment, type UpdateCommentInput } from "@/lib/dataStore";
+import { deleteComment, getSnapshot, updateComment } from "@/lib/localPreviewStore";
+import type { UpdateCommentInput } from "@/lib/localPreviewStoreTypes";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import {

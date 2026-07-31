@@ -1,7 +1,8 @@
-import { applyPostAction, getSnapshot, type PostAction } from "@/lib/dataStore";
+import { applyPostAction, getSnapshot } from "@/lib/localPreviewStore";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { localCommunityReadAllowed } from "@/lib/localCommunityAuthorization";
+import type { PostAction } from "@/lib/symposiumCore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

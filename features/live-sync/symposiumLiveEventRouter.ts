@@ -1,5 +1,5 @@
 import type { CanonicalActionActivityContract } from "@/packages/contracts/src";
-import type { PostAction } from "@/lib/dataStore";
+import type { PostAction } from "@/lib/symposiumCore";
 import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import type { InquiryLivePayload } from "@/features/inquiry/useInquiryController";

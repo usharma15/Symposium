@@ -6,7 +6,7 @@ import {
   useState,
   type MutableRefObject
 } from "react";
-import type { CommentAction, PostAction } from "@/lib/dataStore";
+import type { CommentAction, PostAction } from "@/lib/symposiumCore";
 import {
   profile,
   type ContentQuoteSource,

@@ -3,24 +3,16 @@ import { randomInt } from "node:crypto";
 import path from "node:path";
 import type {
   CanonicalActionActivityContract,
-  ContentQuoteContract,
-  OpportunityPostInputContract,
-  PatronageProposalInputContract,
-  PostTypeContract,
-  ToggleActionContract,
-  VersionedDocumentContract
+  ToggleActionContract
 } from "@/packages/contracts/src";
 import {
   getProfileForName,
   inquiryItems,
   profile as defaultProfile,
   profilesByName,
-  type ContentKind,
-  type InquiryAttachment,
   type InquiryComment,
   type InquiryItem,
-  type ResearchProfile,
-  type RoomId
+  type ResearchProfile
 } from "@/lib/mockData";
 import {
   appendCommentToTree,
@@ -42,6 +34,7 @@ import {
   tombstoneCommentInItem,
   tombstonePost,
   updateSignalValue,
+  type CommentAction,
   type PostAction
 } from "@/lib/symposiumCore";
 import {
@@ -65,6 +58,15 @@ import {
   randomPostDesignAssignment,
   resolvePostDesignAssignment
 } from "@/lib/postDesign";
+import { assertLocalPreviewPersistenceAvailable } from "@/lib/runtimeSafety";
+import type {
+  ActionMutationResult,
+  CreateCommentInput,
+  CreatePostInput,
+  CreateProfileInput,
+  UpdateCommentInput,
+  UpdatePostInput
+} from "@/lib/localPreviewStoreTypes";
 
 type AppData = {
   fixtureRevision?: string;
@@ -78,68 +80,6 @@ const historicalWorldFixtureRevision = "historical-world-v2-casual-activity";
 const localHistoricalWorldSnapshotPath = process.env.VERCEL
   ? path.join("/tmp", `${historicalWorldFixtureRevision}-symposium.snapshot.json`)
   : path.join(process.cwd(), ".data", "snapshots", `${historicalWorldFixtureRevision}-symposium.json`);
-
-export type CreateProfileInput = {
-  name: string;
-  handle: string;
-  email?: string;
-  avatarUrl?: string;
-  likesPublic?: boolean;
-  resharesPublic?: boolean;
-  role: string;
-  location: string;
-  bio: string;
-  fields: string[];
-};
-
-export type CreatePostInput = {
-  title: string;
-  body: string;
-  document?: VersionedDocumentContract;
-  kind: ContentKind;
-  postType: PostTypeContract;
-  room: Exclude<RoomId, "hall">;
-  communityId?: string;
-  attachments?: InquiryAttachment[];
-  quote?: ContentQuoteContract;
-  patronage?: PatronageProposalInputContract;
-  opportunity?: OpportunityPostInputContract;
-};
-
-export type CreateCommentInput = {
-  id?: string;
-  body: string;
-  document?: VersionedDocumentContract;
-  stance: string;
-  parentId?: string | null;
-  attachments?: InquiryAttachment[];
-  quote?: ContentQuoteContract;
-};
-
-export type { PostAction };
-export type CommentAction = PostAction;
-
-export type ActionMutationResult = {
-  item: InquiryItem;
-  activity?: CanonicalActionActivityContract;
-};
-
-export type UpdatePostInput = {
-  title: string;
-  body: string;
-  document?: VersionedDocumentContract;
-  attachments?: InquiryAttachment[];
-  quote?: ContentQuoteContract | null;
-  patronage?: PatronageProposalInputContract;
-  opportunity?: OpportunityPostInputContract;
-};
-
-export type UpdateCommentInput = {
-  body: string;
-  document?: VersionedDocumentContract;
-  attachments?: InquiryAttachment[];
-  quote?: ContentQuoteContract | null;
-};
 
 const viewDedupeWindowMs = 60 * 60 * 1000;
 type ViewTargetType = "post" | "comment";
@@ -155,10 +95,7 @@ const databaseBackedModeConfigured = [
 let localMutationQueue: Promise<void> = Promise.resolve();
 
 const assertLocalPreviewMode = () => {
-  if (!databaseBackedModeConfigured) return;
-  throw new Error(
-    "Direct Postgres access from the Next compatibility store has been retired. Configure SYMPOSIUM_API_URL and run the canonical API for database-backed development."
-  );
+  assertLocalPreviewPersistenceAvailable({ databaseBackedModeConfigured });
 };
 
 const withLocalMutation = <T>(operation: () => Promise<T>) => {

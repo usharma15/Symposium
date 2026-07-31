@@ -16,6 +16,15 @@ The following systems are established and should be reused rather than rebuilt:
 - Migration-aware readiness, request correlation, maintenance, and release gates.
 - A production-fail-closed Next bridge plus an explicit local-preview adapter.
 
+The Next bridge has one runtime-mode authority. A valid `SYMPOSIUM_API_URL`
+selects the canonical API; absence of that URL selects credential-free local
+preview only outside production; production without it is unavailable and
+returns a no-store 503. `lib/localPreviewStore.ts` owns the serialized atomic
+JSON world for the supported laptop preview and refuses to open in production
+or when database credentials are configured. Canonical repositories never
+import it, and browser features receive action types from the domain core
+rather than from a persistence implementation.
+
 ## Target dependency direction
 
 ```text

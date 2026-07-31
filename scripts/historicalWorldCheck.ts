@@ -173,7 +173,7 @@ for (const fileName of normalizedPaperFileNames.filter((name) => name !== "plato
 assert.ok(!existsSync(join(process.cwd(), "public/historical-world/images/71baeb5b116f780a78c3edf795671b5e.jpg")));
 
 const fixtureSource = readFileSync(join(process.cwd(), "apps/api/src/repository/historicalWorldFixtures.ts"), "utf8");
-const localStoreSource = readFileSync(join(process.cwd(), "lib/dataStore.ts"), "utf8");
+const localStoreSource = readFileSync(join(process.cwd(), "lib/localPreviewStore.ts"), "utf8");
 for (const requiredBoundary of [
   "historical_world_snapshots",
   "clerk_user_id IS NOT NULL",

@@ -1,5 +1,5 @@
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
-import { getSnapshot } from "@/lib/dataStore";
+import { getSnapshot } from "@/lib/localPreviewStore";
 import { listLocalCommunities } from "@/lib/localCommunityStore";
 import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
 import { communityPostIsExternallyDiscoverable } from "@/features/communities/communityPolicy";
