@@ -219,6 +219,14 @@ export const authSessionScopeKey = ({
     ? (isSignedIn ? userId ?? "signed-in" : "anonymous")
     : "loading";
 
+export const sessionDataAccessIsEnabled = ({
+  presentedEntryMode,
+  readSessionReady
+}: {
+  presentedEntryMode: EntryMode;
+  readSessionReady: boolean;
+}) => presentedEntryMode === "complete" && readSessionReady;
+
 export const resolvePresentedEntryMode = ({
   entryMode,
   clerkEnabled,
@@ -241,11 +249,12 @@ export const resolvePresentedEntryMode = ({
   if (!clerkEnabled || entryMode === "approach") return entryMode;
   if (authError) return "auth";
   if (identityTransitionPending) return "loading";
-  // A completed browser session must render its canonical shell on the first
-  // frame. Clerk and account synchronization continue behind that shell.
   if (entryMode === "complete") {
-    if (!authLoaded) return initialIsSignedIn === false ? "auth" : "complete";
-    return isSignedIn ? "complete" : "auth";
+    if (!authLoaded) {
+      return initialIsSignedIn === false ? "auth" : "loading";
+    }
+    if (!isSignedIn) return "auth";
+    return accountSynced ? "complete" : "loading";
   }
   if (!authLoaded || (isSignedIn && !accountSynced)) return "loading";
   return entryMode;

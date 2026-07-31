@@ -29,10 +29,12 @@ but it is not this pass.
 > abortable exact-user synchronization, read/live/social gates, local preview,
 > sign-out, and entrance replay. Authenticated bootstrap caches and inquiry,
 > profile, and analytics cross-tab transports are exact-viewer scoped; direct
-> account replacement cannot present or hydrate the previous viewer.
+> account replacement cannot present or hydrate the previous viewer, and a
+> server-authenticated return cannot present the shell or subscribe to live
+> delivery before exact client identity admission.
 > `SymposiumV0.tsx` contains no authentication or entrance transition policy
-> and is 2,279 lines. The exact candidate is 493 tracked source files / 130,141
-> physical / 121,960 nonblank. Per explicit product direction, LOC reduction is
+> and is 2,279 lines. The exact candidate is 493 tracked source files / 130,206
+> physical / 122,024 nonblank. Per explicit product direction, LOC reduction is
 > on standby: these
 > figures remain informational drift evidence, the original 114,999 completion
 > contract is not met, and no repository reduction credit or Pass 04

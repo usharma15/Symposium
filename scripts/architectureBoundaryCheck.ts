@@ -378,6 +378,7 @@ const main = async () => {
     "bootstrapCacheScopeKey:",
     "resolvePresentedEntryMode",
     "authSessionScopeKey",
+    "sessionDataAccessIsEnabled",
     "sessionReadStateIsReady"
   ]) {
     assert.ok(

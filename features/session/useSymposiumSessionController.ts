@@ -22,6 +22,7 @@ import {
   entryModeForBrowserSession,
   reduceSymposiumSessionLifecycle,
   resolvePresentedEntryMode,
+  sessionDataAccessIsEnabled,
   sessionReadStateIsReady,
   shouldCompleteEntryAfterAccountSync
 } from "@/features/session/symposiumSessionLifecycle";
@@ -439,6 +440,10 @@ export const useSymposiumSessionController = ({
     authError: lifecycle.authError,
     identityTransitionPending
   });
+  const dataAccessEnabled = sessionDataAccessIsEnabled({
+    presentedEntryMode,
+    readSessionReady
+  });
 
   return {
     accountSynced,
@@ -457,12 +462,11 @@ export const useSymposiumSessionController = ({
     enterLocalPreview,
     entryMode: lifecycle.entryMode,
     identityTransitionPending,
-    liveEventsEnabled: lifecycle.entryMode !== "loading",
+    liveEventsEnabled: dataAccessEnabled,
     playApproach: shouldPlayEntrance === true,
     presentedEntryMode,
     readSessionReady,
-    readsEnabled:
-      lifecycle.entryMode === "complete" && readSessionReady,
+    readsEnabled: dataAccessEnabled,
     signOut,
     socialHydrationEnabled:
       accountSynced ||

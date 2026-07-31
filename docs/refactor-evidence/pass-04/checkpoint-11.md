@@ -9,8 +9,8 @@ owns the browser and Clerk effects, while
 transitions and admission predicates.
 
 This is a structural checkpoint, not Pass 04 completion. LOC governance is
-explicitly on standby. The repository is 493 tracked source files / 130,141
-physical / 121,960 nonblank lines, and the application shell fell from 2,400
+explicitly on standby. The repository is 493 tracked source files / 130,206
+physical / 122,024 nonblank lines, and the application shell fell from 2,400
 to 2,279 lines. The replacement controller, reducer, cache and cross-tab
 hardening, proof stage, and browser canary are larger than the retired shell
 block. No repository LOC reduction credit is claimed. The operational source
@@ -59,6 +59,13 @@ replacement clears A's authenticated identity and cached acceleration state,
 masks the shell, synchronizes B, loads B's canonical bootstrap, and only then
 admits B. Delayed A cache, success, failure, transport, or read-model
 completion cannot admit A.
+
+Production smoke exposed the analogous first-load edge: the server knew a
+returning request was authenticated but supplied no exact user/profile
+projection, so the shell could briefly render the default profile before
+client Clerk resolution. Returning authenticated sessions now remain on the
+stationary loading surface, with live delivery suspended, until the exact
+client user and that user's scoped cache or canonical identity are admitted.
 
 A second audit found that the general bootstrap cache and entity cross-tab
 channels were browser-wide. Those projections can contain viewer-specific
@@ -124,7 +131,7 @@ The local release candidate passed:
 
 - all 64 aggregate verification stages, including production build and
   hydration;
-- all 10 isolated browser canaries in 1.1 minutes;
+- all 10 isolated browser canaries in 1.2 minutes;
 - PostgreSQL 17 plus all 65 migrations, comprehensive filesystem/API writes,
   authorization, receipts, audits, events, ranges, restart persistence, and
   deterministic deletion with zero remaining object files;

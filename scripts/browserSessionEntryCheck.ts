@@ -48,12 +48,12 @@ const main = async () => {
     accountSynced: false,
     authError: ""
   };
-  assert.equal(resolvePresentedEntryMode(returningClerkSession), "complete");
+  assert.equal(resolvePresentedEntryMode(returningClerkSession), "loading");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, accountSynced: true }), "complete");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, isSignedIn: false }), "auth");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, authError: "Sync failed" }), "auth");
   assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, entryMode: "approach" }), "approach");
-  assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, authLoaded: false }), "complete");
+  assert.equal(resolvePresentedEntryMode({ ...returningClerkSession, authLoaded: false }), "loading");
   assert.equal(
     resolvePresentedEntryMode({ ...returningClerkSession, authLoaded: false, initialIsSignedIn: false }),
     "auth"
@@ -332,7 +332,7 @@ const main = async () => {
 
   reportCheck([
     "first browser-session entrance",
-    "zero-frame repeat-session entry",
+    "exact-identity-gated repeat-session entry",
     "server-side browser-session decision",
     "cached bootstrap selection",
     "non-fatal cached-bootstrap quota pressure",

@@ -10,6 +10,7 @@ import {
   reduceSymposiumSessionLifecycle,
   resolveApproachElapsedMode,
   resolvePresentedEntryMode,
+  sessionDataAccessIsEnabled,
   sessionReadStateIsReady
 } from "@/features/session/symposiumSessionLifecycle";
 
@@ -137,6 +138,19 @@ assert.equal(
   }),
   "loading",
   "a new Clerk viewer must never see the previous viewer while identity sync is pending"
+);
+assert.equal(
+  resolvePresentedEntryMode({
+    accountSynced: false,
+    authError: "",
+    authLoaded: false,
+    clerkEnabled: true,
+    entryMode: "complete",
+    initialIsSignedIn: true,
+    isSignedIn: false
+  }),
+  "loading",
+  "a server-authenticated return must stay masked until the exact client identity is admitted"
 );
 assert.equal(
   reduce(switchingToB, {
@@ -325,6 +339,29 @@ assert.equal(
   }),
   "user-b"
 );
+assert.equal(
+  sessionDataAccessIsEnabled({
+    presentedEntryMode: "loading",
+    readSessionReady: true
+  }),
+  false,
+  "authenticated live delivery must wait for exact-viewer read admission"
+);
+assert.equal(
+  sessionDataAccessIsEnabled({
+    presentedEntryMode: "auth",
+    readSessionReady: true
+  }),
+  false,
+  "provider sign-out must close reads and live delivery before effect cleanup"
+);
+assert.equal(
+  sessionDataAccessIsEnabled({
+    presentedEntryMode: "complete",
+    readSessionReady: true
+  }),
+  true
+);
 
 const root = process.cwd();
 const shell = readFileSync(
@@ -373,6 +410,18 @@ assert.match(
 assert.doesNotMatch(controller, /auth\.signOut\(\)\.catch\(\(\) => undefined\)/);
 assert.match(
   controller,
+  /const dataAccessEnabled = sessionDataAccessIsEnabled\(/
+);
+assert.match(
+  controller,
+  /liveEventsEnabled: dataAccessEnabled/
+);
+assert.match(
+  controller,
+  /readsEnabled: dataAccessEnabled/
+);
+assert.match(
+  controller,
   /bootstrapCacheScopeKey:\s+!clerkEnabled\s+\? localPreviewBootstrapScopeKey/
 );
 assert.match(
@@ -419,15 +468,17 @@ reportCheck([
   "pure reducer-governed session transitions",
   "first and returning browser-session decisions",
   "approach timeout authentication admission",
-    "exact-user cached identity commitment",
-    "exact-user bootstrap cache admission",
-    "cross-user presentation isolation",
+  "exact-user cached identity commitment",
+  "exact-user bootstrap cache admission",
+  "cross-user presentation isolation",
+  "server-authenticated first-frame isolation",
   "stale identity completion rejection",
   "abortable authenticated sync and bootstrap refresh",
   "viewer-scoped read admission",
   "live-event authentication scope projection",
-    "local preview admission",
-    "provider-confirmed sign-out retirement",
-    "sign-out cleanup and entrance replay",
+  "unadmitted live-event suspension",
+  "local preview admission",
+  "provider-confirmed sign-out retirement",
+  "sign-out cleanup and entrance replay",
   "shell authentication-policy retirement"
 ]);

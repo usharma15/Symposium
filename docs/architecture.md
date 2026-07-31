@@ -197,6 +197,12 @@ The canonical browser-history state machine is owned by `features/navigation/use
 
 Browser-session entry is server-coordinated. `app/SymposiumPage.tsx` reads a non-persistent session cookie, `features/entrance/useBrowserSessionEntrance.ts` establishes the marker on the first visit, and `useSymposiumSessionController` owns the resulting five-second approach, authentication admission, and replay on sign-out. `features/bootstrap/cachedBootstrap.ts` owns best-effort cached entity/profile hydration. Local preview retains compatible legacy cache data; an authenticated session accepts only a snapshot written for its exact Clerk user and purges the acceleration state when identity is retired or replaced. Exact Clerk-user identity and viewer-scoped profile first-page projections extend that acceleration boundary to returning authenticated profile routes; the same existing API reads always revalidate them, cursor continuations remain network-only, and no provider request is added. Browser storage quota or removal failure is non-fatal and cannot fail a live mutation or sign-out. Server-rendered shell values, including timestamps, must be deterministic across server and browser locales to preserve hydration.
 
+A server-authenticated returning request still withholds the shell and live
+transport until Clerk resolves the exact client user and that user's cached or
+canonical identity is admitted. The server boolean can avoid a false sign-in
+panel, but it cannot authorize a default profile frame because it carries no
+profile projection.
+
 ## Backend ownership
 
 Backend persistence is split into bounded repositories for posts, comments, identity, profiles, communities, conversations, notifications, search, workspaces, attachments, actions, opportunities, and the assistant. HTTP and tRPC routes import their owning repository directly. Cross-domain note-to-post and note-to-proposal publication is explicit in `services/notePublishing.ts`; there is no compatibility façade. The post repository owns proposal creation and metadata edits in the same transaction as the public post, while payment ingestion remains gated behind a future provider-owned service. Domain repositories may depend on the shared foundation, transaction, mutation, audit, event, database, and storage kernels, but they may not import one another sideways.
