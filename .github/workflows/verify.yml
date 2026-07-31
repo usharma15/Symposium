@@ -15,10 +15,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  required-proof:
-    name: Symposium required proof
+  verification-proof:
+    name: Verification proof
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     env:
       CI: "true"
       FORCE_COLOR: "0"
@@ -38,7 +38,7 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Initialize evidence
+      - name: Initialize verification evidence
         shell: bash
         env:
           PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
@@ -46,6 +46,7 @@ jobs:
         run: |
           mkdir -p .artifacts/refactor
           {
+            printf 'lane=verification\n'
             printf 'sha=%s\n' "$GITHUB_SHA"
             printf 'pull-request-head-sha=%s\n' "$PULL_REQUEST_HEAD_SHA"
             printf 'pull-request-base-sha=%s\n' "$PULL_REQUEST_BASE_SHA"
@@ -93,6 +94,150 @@ jobs:
         continue-on-error: true
         run: npm run verify
 
+      - name: Verify verification evidence and a pristine tracked tree
+        id: integrity
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          git status --porcelain=v1 --untracked-files=all > .artifacts/refactor/git-status-after-proof.txt
+          node -e 'const fs=require("node:fs"); for (const file of process.argv.slice(1)) JSON.parse(fs.readFileSync(file,"utf8"))' \
+            .artifacts/refactor/source-inventory.json \
+            .artifacts/refactor/npm-audit.json \
+            .artifacts/refactor/verification.json
+          node -e 'const fs=require("node:fs"),load=f=>JSON.parse(fs.readFileSync(f,"utf8")),source=load(process.argv[1]).report,verification=load(process.argv[2]); if(source.sha!==process.env.GITHUB_SHA||source.dirty||verification.source.headSha!==process.env.GITHUB_SHA||verification.source.dirty||verification.status!=="passed"||verification.notRun.length) process.exit(1)' \
+            .artifacts/refactor/source-inventory.json \
+            .artifacts/refactor/verification.json
+          test ! -s .artifacts/refactor/git-status-after-proof.txt
+
+      - name: Record verification gate outcomes
+        if: always()
+        shell: bash
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          LOC_OUTCOME: ${{ steps.loc.outcome }}
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+          PROOF_OUTCOME: ${{ steps.proof.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          INTEGRITY_OUTCOME: ${{ steps.integrity.outcome }}
+        run: |
+          printf '%s\n' \
+            "install=$INSTALL_OUTCOME" \
+            "loc=$LOC_OUTCOME" \
+            "audit=$AUDIT_OUTCOME" \
+            "proof=$PROOF_OUTCOME" \
+            "verify=$VERIFY_OUTCOME" \
+            "integrity=$INTEGRITY_OUTCOME" \
+            > .artifacts/refactor/gate-outcomes.txt
+
+      - name: Manifest verification evidence
+        id: evidence
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          find .artifacts/refactor -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > .artifacts/refactor/SHA256SUMS
+          test -s .artifacts/refactor/SHA256SUMS
+
+      - name: Enforce every verification outcome
+        if: always()
+        shell: bash
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          LOC_OUTCOME: ${{ steps.loc.outcome }}
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+          PROOF_OUTCOME: ${{ steps.proof.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          INTEGRITY_OUTCOME: ${{ steps.integrity.outcome }}
+          EVIDENCE_OUTCOME: ${{ steps.evidence.outcome }}
+        run: |
+          test "$INSTALL_OUTCOME" = success
+          test "$LOC_OUTCOME" = success
+          test "$AUDIT_OUTCOME" = success
+          test "$PROOF_OUTCOME" = success
+          test "$VERIFY_OUTCOME" = success
+          test "$INTEGRITY_OUTCOME" = success
+          test "$EVIDENCE_OUTCOME" = success
+
+      - name: Retain verification evidence
+        id: proof_artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: verification-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/refactor/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 90 || 30 }}
+
+      - name: Record retained verification artifact identity
+        if: always() && steps.proof_artifact.outcome == 'success'
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ steps.proof_artifact.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.proof_artifact.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.proof_artifact.outputs.artifact-digest }}
+        run: |
+          {
+            printf '### Retained verification proof\n\n'
+            printf -- '- Artifact ID: `%s`\n' "$ARTIFACT_ID"
+            printf -- '- Artifact URL: %s\n' "$ARTIFACT_URL"
+            printf -- '- Artifact SHA-256: `%s`\n' "$ARTIFACT_DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  browser-proof:
+    name: Browser proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CI: "true"
+      FORCE_COLOR: "0"
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Use the repository Node version
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: package.json
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Initialize browser evidence
+        shell: bash
+        env:
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: |
+          mkdir -p .artifacts/browser
+          {
+            printf 'lane=browser\n'
+            printf 'sha=%s\n' "$GITHUB_SHA"
+            printf 'pull-request-head-sha=%s\n' "$PULL_REQUEST_HEAD_SHA"
+            printf 'pull-request-base-sha=%s\n' "$PULL_REQUEST_BASE_SHA"
+            printf 'ref=%s\n' "$GITHUB_REF"
+            printf 'event=%s\n' "$GITHUB_EVENT_NAME"
+            printf 'repository=%s\n' "$GITHUB_REPOSITORY"
+            printf 'run-id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run-attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'runner=%s\n' "$RUNNER_OS"
+            printf 'node=%s\n' "$(node --version)"
+            printf 'npm=%s\n' "$(npm --version)"
+          } > .artifacts/browser/environment.txt
+          sha256sum package-lock.json > .artifacts/browser/package-lock.sha256
+
+      - name: Install the locked dependency graph
+        id: install
+        continue-on-error: true
+        run: npm ci
+
       - name: Install the pinned Chromium runtime
         id: browser_install
         if: steps.install.outcome == 'success'
@@ -105,96 +250,73 @@ jobs:
         continue-on-error: true
         run: npm run browser:canary
 
-      - name: Verify evidence and a pristine tracked tree
+      - name: Verify browser evidence and a pristine tracked tree
         id: integrity
         if: always()
         continue-on-error: true
         shell: bash
         run: |
-          git status --porcelain=v1 --untracked-files=all > .artifacts/refactor/git-status-after-proof.txt
-          node -e 'const fs=require("node:fs"); for (const file of process.argv.slice(1)) JSON.parse(fs.readFileSync(file,"utf8"))' \
-            .artifacts/refactor/source-inventory.json \
-            .artifacts/refactor/npm-audit.json \
-            .artifacts/refactor/verification.json \
+          git status --porcelain=v1 --untracked-files=all > .artifacts/browser/git-status-after-proof.txt
+          node -e 'const fs=require("node:fs"); JSON.parse(fs.readFileSync(process.argv[1],"utf8"))' \
             .artifacts/browser/report.json
-          node -e 'const fs=require("node:fs"),load=f=>JSON.parse(fs.readFileSync(f,"utf8")),source=load(process.argv[1]).report,verification=load(process.argv[2]); if(source.sha!==process.env.GITHUB_SHA||source.dirty||verification.source.headSha!==process.env.GITHUB_SHA||verification.source.dirty||verification.status!=="passed"||verification.notRun.length) process.exit(1)' \
-            .artifacts/refactor/source-inventory.json \
-            .artifacts/refactor/verification.json
-          test ! -s .artifacts/refactor/git-status-after-proof.txt
+          npm run browser:report:test
+          test ! -s .artifacts/browser/git-status-after-proof.txt
 
-      - name: Record gate outcomes
+      - name: Record browser gate outcomes
         if: always()
         shell: bash
         env:
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
-          LOC_OUTCOME: ${{ steps.loc.outcome }}
-          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
-          PROOF_OUTCOME: ${{ steps.proof.outcome }}
-          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
           BROWSER_INSTALL_OUTCOME: ${{ steps.browser_install.outcome }}
           BROWSER_OUTCOME: ${{ steps.browser.outcome }}
           INTEGRITY_OUTCOME: ${{ steps.integrity.outcome }}
         run: |
           printf '%s\n' \
             "install=$INSTALL_OUTCOME" \
-            "loc=$LOC_OUTCOME" \
-            "audit=$AUDIT_OUTCOME" \
-            "proof=$PROOF_OUTCOME" \
-            "verify=$VERIFY_OUTCOME" \
             "browser-install=$BROWSER_INSTALL_OUTCOME" \
             "browser=$BROWSER_OUTCOME" \
             "integrity=$INTEGRITY_OUTCOME" \
-            > .artifacts/refactor/gate-outcomes.txt
+            > .artifacts/browser/gate-outcomes.txt
 
-      - name: Manifest retained evidence
+      - name: Manifest browser evidence
         id: evidence
         if: always()
         continue-on-error: true
         shell: bash
         run: |
-          find .artifacts/refactor .artifacts/browser -type f ! -name SHA256SUMS -print0 \
+          find .artifacts/browser -type f ! -name SHA256SUMS -print0 \
             | sort -z \
-            | xargs -0 sha256sum > .artifacts/refactor/SHA256SUMS
-          test -s .artifacts/refactor/SHA256SUMS
+            | xargs -0 sha256sum > .artifacts/browser/SHA256SUMS
+          test -s .artifacts/browser/SHA256SUMS
 
-      - name: Enforce every required outcome
+      - name: Enforce every browser outcome
         if: always()
         shell: bash
         env:
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
-          LOC_OUTCOME: ${{ steps.loc.outcome }}
-          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
-          PROOF_OUTCOME: ${{ steps.proof.outcome }}
-          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
           BROWSER_INSTALL_OUTCOME: ${{ steps.browser_install.outcome }}
           BROWSER_OUTCOME: ${{ steps.browser.outcome }}
           INTEGRITY_OUTCOME: ${{ steps.integrity.outcome }}
           EVIDENCE_OUTCOME: ${{ steps.evidence.outcome }}
         run: |
           test "$INSTALL_OUTCOME" = success
-          test "$LOC_OUTCOME" = success
-          test "$AUDIT_OUTCOME" = success
-          test "$PROOF_OUTCOME" = success
-          test "$VERIFY_OUTCOME" = success
           test "$BROWSER_INSTALL_OUTCOME" = success
           test "$BROWSER_OUTCOME" = success
           test "$INTEGRITY_OUTCOME" = success
           test "$EVIDENCE_OUTCOME" = success
 
-      - name: Retain proof evidence
+      - name: Retain browser evidence
         id: proof_artifact
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: pass-01-proof-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            .artifacts/refactor/
-            .artifacts/browser/
+          name: browser-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/browser/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: ${{ github.event_name == 'push' && 90 || 30 }}
 
-      - name: Record retained artifact identity
+      - name: Record retained browser artifact identity
         if: always() && steps.proof_artifact.outcome == 'success'
         shell: bash
         env:
@@ -203,8 +325,29 @@ jobs:
           ARTIFACT_DIGEST: ${{ steps.proof_artifact.outputs.artifact-digest }}
         run: |
           {
-            printf '### Retained Pass 01 proof\n\n'
+            printf '### Retained browser proof\n\n'
             printf -- '- Artifact ID: `%s`\n' "$ARTIFACT_ID"
             printf -- '- Artifact URL: %s\n' "$ARTIFACT_URL"
             printf -- '- Artifact SHA-256: `%s`\n' "$ARTIFACT_DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  required-proof:
+    name: Symposium required proof
+    if: always()
+    needs: [verification-proof, browser-proof]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Enforce every required proof lane
+        shell: bash
+        env:
+          VERIFICATION_RESULT: ${{ needs.verification-proof.result }}
+          BROWSER_RESULT: ${{ needs.browser-proof.result }}
+        run: |
+          test "$VERIFICATION_RESULT" = success
+          test "$BROWSER_RESULT" = success
+          {
+            printf '### Required Symposium proof\n\n'
+            printf -- '- Verification lane: `%s`\n' "$VERIFICATION_RESULT"
+            printf -- '- Browser lane: `%s`\n' "$BROWSER_RESULT"
           } >> "$GITHUB_STEP_SUMMARY"
