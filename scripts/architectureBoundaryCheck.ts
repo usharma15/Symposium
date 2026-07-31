@@ -94,6 +94,10 @@ const main = async () => {
 
   assert.deepEqual(symposiumImporters.sort(), ["app/SymposiumPage.tsx"]);
   const symposiumSource = await readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8");
+  const inquiryControllerSource = await readFile(
+    path.join(root, "features/inquiry/useInquiryController.ts"),
+    "utf8"
+  );
   assert.match(
     symposiumSource,
     /useSymposiumViewController/,
@@ -114,6 +118,39 @@ const main = async () => {
     /fetch\(\s*["'`]\/api\//,
     "Same-origin API request semantics must remain owned by features/api."
   );
+  assert.match(
+    symposiumSource,
+    /useInquiryController/,
+    "Symposium inquiry state must remain owned by the inquiry controller."
+  );
+  for (const retiredShellAuthority of [
+    /\/api\/posts(?:[/?`"]|\$\{)/,
+    /itemMutationCoordinatorRef/,
+    /createInquiryActionReconciler/,
+    /persistLocalSnapshot/,
+    /publishCrossTabItem/,
+    /recordPassiveView/
+  ]) {
+    assert.doesNotMatch(
+      symposiumSource,
+      retiredShellAuthority,
+      `Retired inquiry authority returned to SymposiumV0.tsx: ${retiredShellAuthority}.`
+    );
+  }
+  for (const controllerAuthority of [
+    "useInquiryEntityStore",
+    "createItemMutationCoordinator",
+    "createInquiryActionReconciler",
+    "useCrossTabItemTransport",
+    "persistCachedBootstrap",
+    "recordPassiveView",
+    "createContentDeletionController"
+  ]) {
+    assert.ok(
+      inquiryControllerSource.includes(controllerAuthority),
+      `${controllerAuthority} must remain composed by the inquiry controller.`
+    );
+  }
   for (const infrastructureImport of [
     "features/api/symposiumApiClient",
     "features/live-sync/useCrossTabItemTransport",
@@ -165,6 +202,7 @@ const main = async () => {
     "feature module independence",
     "shell and feature dependency boundaries",
     "controller transport and API isolation",
+    "single inquiry read, mutation, reconciliation, cross-tab, and persistence authority",
     "extracted feature ownership",
     "acyclic feature dependencies"
   ]);

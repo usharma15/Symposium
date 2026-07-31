@@ -357,14 +357,18 @@ assert.match(
 );
 
 const profileShell = readFileSync(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
+const inquiryController = readFileSync(
+  path.join(process.cwd(), "features/inquiry/useInquiryController.ts"),
+  "utf8"
+);
 assert.match(
-  profileShell,
-  /const reconcileBoundedReadItem =[\s\S]*?current\?\.detailLoaded && !incoming\.detailLoaded[\s\S]*?comments: mergeSparseProfileComments\(current\.comments, incoming\.comments \?\? \[\]\)/,
+  inquiryController,
+  /const reconcileBoundedReadItem =[\s\S]*?current\?\.detailLoaded && !incoming\.detailLoaded[\s\S]*?comments: mergeSparseComments\(current\.comments, incoming\.comments \?\? \[\]\)/,
   "A cached detail response must retain sparse comments selected by canonical profile activity."
 );
 assert.match(
-  profileShell,
-  /const normalizedItems =[\s\S]*?return reconcileBoundedReadItem\(incoming, current, nextProfile\.handle\);/,
+  inquiryController,
+  /const normalizedItems =[\s\S]*?return reconcileBoundedReadItem\(incoming, current, actorHandle\);/,
   "A bounded bootstrap refresh must retain sparse comments already hydrated by profile activity."
 );
 for (const scopedPagingBoundary of [

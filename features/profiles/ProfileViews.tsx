@@ -177,19 +177,6 @@ const collectProfileComments = (
   return activities.sort((a, b) => b.recency - a.recency);
 };
 
-export const updateCommentsForProfile = (
-  comments: InquiryComment[],
-  person: ResearchProfile
-): InquiryComment[] =>
-  comments.map((comment) => ({
-    ...comment,
-    author:
-      !isDeletedComment(comment) && comment.authorHandle && cleanHandle(comment.authorHandle) === person.handle
-        ? person.name
-        : comment.author,
-    replies: updateCommentsForProfile(comment.replies ?? [], person)
-  }));
-
 export const itemAuthoredByProfile = (item: InquiryItem, person: ResearchProfile) =>
   !isDeletedPost(item) && (item.authorHandle ? item.authorHandle === person.handle : item.author === person.name);
 

@@ -31,7 +31,6 @@ import type {
   CanonicalActionActivityContract,
   OpportunityPostInputContract,
   PatronageProposalInputContract,
-  PostPageResponseContract,
   PostPageQueryContract,
   ProfileActivityCountsContract,
   ProfileAuthoredCommentActivityContract,
@@ -41,22 +40,12 @@ import type {
   VersionedDocumentContract
 } from "@/packages/contracts/src";
 import {
-  appendCommentToTree,
   cleanHandle,
-  commentActionActive,
-  commentMetricsFallback,
   findCommentInTree,
-  hasHandle,
-  incrementMetric,
   isDeletedComment,
   isDeletedPost,
   itemTimestampScore,
-  isSavedBy,
-  mapCommentTree,
-  mutateCommentForActor,
-  mutateItemForActor,
-  normalizeSearchPhrase,
-  updateSignalValue
+  normalizeSearchPhrase
 } from "@/lib/symposiumCore";
 import {
   applyProfileActivityActionTotalTransition,
@@ -82,7 +71,6 @@ import {
 import { useCrossTabItemTransport } from "@/features/live-sync/useCrossTabItemTransport";
 import { useLiveEventStream } from "@/features/live-sync/useLiveEventStream";
 import { useCoalescedRefresh } from "@/features/live-sync/useCoalescedRefresh";
-import { recordPassiveView } from "@/features/live-sync/recordPassiveView";
 import {
   contentAnalyticsInvalidationFromLiveEvent,
   contentAnalyticsSyncChannel,
@@ -100,13 +88,8 @@ import {
   createClientMutationId,
   createRetryMutationRegistry,
   shouldRetainRetryMutation,
-  symposiumApi,
-  SymposiumApiError
+  symposiumApi
 } from "@/features/api/symposiumApiClient";
-import {
-  createInquiryActionReconciler,
-  type ProtectedActionMetricState
-} from "@/features/live-sync/inquiryActionReconciler";
 import {
   parseCanonicalRoute,
   type CanonicalRoute,
@@ -124,7 +107,7 @@ import {
 import { useSymposiumViewController } from "@/features/navigation/useSymposiumViewController";
 import { selectActiveProfile } from "@/features/identity/selectActiveProfile";
 import { persistCachedIdentity, readCachedIdentity } from "@/features/identity/cachedIdentity";
-import { useInquiryEntityStore } from "@/features/entities/useInquiryEntityStore";
+import { useInquiryController } from "@/features/inquiry/useInquiryController";
 import {
   buildPostAttachmentMetadata,
   type AttachmentPreviewHandler
@@ -158,10 +141,7 @@ import {
   syncStatusAfterNavigation,
   syncStatusExpiryMs
 } from "@/features/shell/syncStatusState";
-import type {
-  ViewActionOptions,
-  ViewSurface
-} from "@/features/actions/actionTypes";
+import type { ViewSurface } from "@/features/actions/actionTypes";
 import {
   type CommentSegmentStacks
 } from "@/features/comments/CommentThread";
@@ -177,12 +157,9 @@ import {
   type QuoteSelection
 } from "@/features/quotes/QuoteViews";
 import { resolveQuoteLink, type QuoteLinkResolver } from "@/features/quotes/quoteLinks";
-import { invalidateQuotedSource, resolveLocalContentQuote } from "@/lib/contentQuotes";
-import { communityViewerProjectionChanged } from "@/lib/communityContentProjection";
+import { resolveLocalContentQuote } from "@/lib/contentQuotes";
 import {
   postContextLabel,
-  postTitlePolicyError,
-  preservePostSemanticProjection,
   publicPostTitle
 } from "@/lib/postSemantics";
 import { selectVisibleFeedItems } from "@/features/feeds/feedVisibility";
@@ -190,7 +167,6 @@ import {
   ProfileSettingsModal,
   ProfileView,
   commentTimestampScore,
-  updateCommentsForProfile,
   type ProfileActivityKind,
   type ProfileCommentActivityKind,
   type ProfileSettingsDraft,
@@ -212,7 +188,6 @@ import { canParticipateInCommunity, communityPostIsExternallyDiscoverable } from
 import { useCommunityState } from "@/features/communities/useCommunityState";
 import { createCommunityController } from "@/features/communities/communityController";
 import { CommunityGovernanceProvider } from "@/features/communities/CommunityGovernanceContext";
-import { createContentDeletionController } from "@/features/moderation/contentDeletionController";
 import { WorkspaceView } from "@/features/workspace/WorkspaceView";
 import { savePostDraftToWorkspace } from "@/features/workspace/savePostDraftToWorkspace";
 import type { WorkspaceDocument, WorkspacePublicationResponse } from "@/lib/workspaceTypes";
@@ -231,14 +206,8 @@ import {
   shouldCompleteEntryAfterAccountSync
 } from "@/features/entrance/browserSession";
 import {
-  normalizeClientSeedTimes,
-  preservePublishedPosition
-} from "@/features/bootstrap/clientItemNormalization";
-import {
   cachedBootstrapItemLimit,
-  persistCachedBootstrap,
-  readCachedBootstrapSnapshot,
-  resolveCachedBootstrap
+  readCachedBootstrapSnapshot
 } from "@/features/bootstrap/cachedBootstrap";
 import {
   assistantBackdropRender,
@@ -252,18 +221,12 @@ import {
 } from "@/features/rooms/roomRenderAssets";
 
 type EntryMode = "loading" | "approach" | "auth" | "complete";
-type ViewTargetType = "post" | "comment";
 type EditingCommentTarget = {
   itemId: string;
   commentId: string;
 };
 
 type ProfileFollowRecord = RevisionedFollowRecord;
-type FeedPageState = {
-  initialized: boolean;
-  loading: boolean;
-  nextCursor: string | null;
-};
 type SearchResults = {
   titleMatches: InquiryItem[];
   contentMatches: InquiryItem[];
@@ -344,24 +307,6 @@ const emptyProfileActivitySnapshot = (): ProfileActivitySnapshot => ({
   hiddenCommunityCounts: emptyProfileActivityCounts()
 });
 
-const mergeSparseProfileComments = (
-  current: InquiryComment[],
-  incoming: InquiryComment[]
-) => {
-  const existingIds = new Set<string>();
-  const collectIds = (comments: InquiryComment[]) => {
-    for (const comment of comments) {
-      if (comment.id) existingIds.add(comment.id);
-      collectIds(comment.replies ?? []);
-    }
-  };
-  collectIds(current);
-  return [
-    ...current,
-    ...incoming.filter((comment) => !comment.id || !existingIds.has(comment.id))
-  ];
-};
-
 type SymposiumLiveEvent = {
   id?: string;
   cursor?: string;
@@ -395,9 +340,6 @@ const liveStatus = {
 
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
 
-const clientId = (prefix: string) =>
-  `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-
 const cloneCommentSegmentStacks = (stacks: CommentSegmentStacks): CommentSegmentStacks =>
   Object.fromEntries(Object.entries(stacks).map(([key, stack]) => [key, [...stack]]));
 
@@ -410,8 +352,6 @@ const parseCommentSegmentStack = (value: string | undefined) => {
     return [];
   }
 };
-
-const viewDedupeWindowMs = 60 * 60 * 1000;
 
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
   return findCommentInTree(comments, id) ?? undefined;
@@ -471,9 +411,6 @@ const isLiveResearchProfile = (value: unknown): value is ResearchProfile =>
   typeof (value as ResearchProfile).handle === "string" &&
   typeof (value as ResearchProfile).name === "string" &&
   Array.isArray((value as ResearchProfile).fields);
-
-const isCrossTabInquiryItemMessage = (value: unknown): value is CrossTabItemMessage<InquiryItem> =>
-  isCrossTabItemMessage<InquiryItem>(value);
 
 const isCrossTabProfileMessage = (value: unknown): value is CrossTabItemMessage<ProfileSyncEntity> =>
   isCrossTabItemMessage<ProfileSyncEntity>(value);
@@ -609,7 +546,6 @@ function SymposiumExperience({
     selectedProfileName,
     workspaceView
   } = viewState;
-  const { items, itemsRef, replaceItems } = useInquiryEntityStore(initialBoundedInquiryItems);
   const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
   const [currentProfile, setCurrentProfile] = useState<ResearchProfile>(profile);
   const [followingHandles, setFollowingHandles] = useState<string[]>([]);
@@ -657,7 +593,6 @@ function SymposiumExperience({
   const [searchLoading, setSearchLoading] = useState(false);
   const [communitySearchResultIds, setCommunitySearchResultIds] = useState<string[] | null>(null);
   const [communitySearchLoading, setCommunitySearchLoading] = useState(false);
-  const [feedPages, setFeedPages] = useState<Record<string, FeedPageState>>({});
   const [profileActivityRevision, setProfileActivityRevision] = useState(0);
   const [profileActivityByHandle, setProfileActivityByHandle] = useState<
     Record<string, ProfileActivitySnapshot>
@@ -668,7 +603,6 @@ function SymposiumExperience({
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewTarget | null>(null);
   const [postAttachmentViewContext, setPostAttachmentViewContext] = useState<PdfAttachmentViewContext | null>(null);
   const [attachmentPreviewViewContext, setAttachmentPreviewViewContext] = useState<PdfAttachmentViewContext | null>(null);
-  const closeAttachmentPreview = useDedicatedAttachmentViewer(items, setAttachmentPreview);
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
   const [authError, setAuthError] = useState("");
@@ -681,19 +615,6 @@ function SymposiumExperience({
   const connectionSyncStatusRef = useRef<string>(liveStatus.loading);
   const commentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const visibleCommentSegmentStacksRef = useRef<CommentSegmentStacks>({});
-  const actionVersionsRef = useRef<Record<string, number>>({});
-  const actionReconcilerRef = useRef(createInquiryActionReconciler());
-  const {
-    actionMetricStateFromValues,
-    clearDesiredActionState,
-    itemActionActive,
-    protectItemFromStaleActionState,
-    protectItemsFromStaleActionState,
-    protectedDesiredActionState,
-    setProtectedDesiredActionState,
-    settleFreshItemActionState
-  } = actionReconcilerRef.current;
-  const viewDedupeRef = useRef<Record<string, number>>({});
   const activityRecencyRef = useRef(activityRecency);
   const profileActivityByHandleRef = useRef(profileActivityByHandle);
   const profileActivityInFlightRef = useRef<Record<string, Promise<void> | undefined>>({});
@@ -701,14 +622,10 @@ function SymposiumExperience({
   const pendingCanonicalActionKeysRef = useRef(new Set<string>());
   const profileActivityRequestRef = useRef<Record<string, number>>({});
   const profileActivityCacheHydrationRef = useRef(new Set<string>());
-  const feedPagesRef = useRef<Record<string, FeedPageState>>({});
-  const feedActorHandleRef = useRef(currentProfile.handle);
   const retryMutationRegistryRef = useRef(createRetryMutationRegistry());
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
-  const itemMutationCoordinatorRef = useRef(createItemMutationCoordinator<InquiryItem>({ equalRevisionProjectionChanged: communityViewerProjectionChanged }));
   const profileMutationCoordinatorRef = useRef(createItemMutationCoordinator<ProfileSyncEntity>());
   const followMutationCoordinatorRef = useRef(createFollowMutationCoordinator());
-  const lastPersistedItemsRef = useRef<InquiryItem[]>(initialBoundedInquiryItems);
   const lastPersistedProfilesRef = useRef<ProfileSyncEntity[]>([]);
   const authenticatedProfileHandleRef = useRef<string | null>(null);
   const entranceStartedAtRef = useRef<number | null>(null);
@@ -718,53 +635,49 @@ function SymposiumExperience({
   entryAuthStateRef.current = { accountSynced: signedIn, browserSignedIn: Boolean(isSignedIn) };
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
 
-  const reconcileCommittedItem = (
-    incoming: InquiryItem,
-    current: InquiryItem | undefined,
-    actorHandle = currentProfileRef.current.handle
-  ) =>
-    preservePublishedPosition(
-      protectItemFromStaleActionState(
-        itemMutationCoordinatorRef.current.protectIncomingItem(
-          preservePostSemanticProjection(incoming, current),
-          current
+  const inquiryController = useInquiryController({
+    actorHandle: currentProfile.handle,
+    communitiesRef,
+    currentProfileRef,
+    initialItems: initialBoundedInquiryItems,
+    profilesRef,
+    retryMutation: {
+      acquire: (scope, fingerprint) =>
+        retryMutationRegistryRef.current.acquire(scope, fingerprint),
+      clear: (fingerprintKey) =>
+        retryMutationRegistryRef.current.clear(fingerprintKey)
+    },
+    activity: {
+      acceptCanonical: (activity) => acceptCanonicalActivity(activity),
+      committed: (...args) => canonicalActionWasCommitted(...args),
+      finishWithoutCanonical: (subjectType, subjectId, actorHandle, action) =>
+        pendingCanonicalActionKeysRef.current.delete(
+          canonicalActivityKey({ subjectType, subjectId, actorHandle, action })
         ),
-        current,
-        actorHandle
-      ),
-      current
-    );
-
-  const reconcileBoundedReadItem = (
-    incoming: InquiryItem,
-    current: InquiryItem | undefined,
-    actorHandle = currentProfileRef.current.handle
-  ) => {
-    let next = reconcileCommittedItem(incoming, current, actorHandle);
-    if (current?.detailLoaded && !incoming.detailLoaded) {
-      next = {
-        ...next,
-        comments: mergeSparseProfileComments(current.comments, incoming.comments ?? []),
-        attachments: current.attachments,
-        commentCount: incoming.commentCount ?? current.commentCount,
-        detailLoaded: true
-      };
-    } else if (incoming.detailLoaded) {
-      next = {
-        ...next,
-        comments: incoming.comments,
-        attachments: incoming.attachments,
-        commentCount: incoming.commentCount,
-        detailLoaded: true
-      };
-    } else {
-      next = {
-        ...next,
-        comments: mergeSparseProfileComments(current?.comments ?? [], incoming.comments ?? [])
-      };
-    }
-    return next;
-  };
+      restore: (...args) => restoreOptimisticCanonicalActivity(...args),
+      stage: (...args) => stageOptimisticCanonicalActivity(...args),
+      touchComment: (...args) => touchProfileCommentAction(...args),
+      touchPost: (...args) => touchProfileAction(...args)
+    },
+    onProfilesDiscovered: (incoming) => mergeDiscoveredProfiles(incoming),
+    onStaleLiveState: () => scheduleLiveRefresh(),
+    onStatus: setSyncStatus,
+    onTouchItem: (itemId) => touchActivity(itemId),
+    clearPostEditor: () => setEditingPost(null),
+    clearCommentEditor: (itemId, commentId) =>
+      setEditingComment((current) =>
+        current?.itemId === itemId && current.commentId === commentId
+          ? null
+          : current
+      )
+  });
+  const {
+    feedPages,
+    feedPagesRef,
+    items,
+    itemsRef
+  } = inquiryController;
+  const closeAttachmentPreview = useDedicatedAttachmentViewer(items, setAttachmentPreview);
 
   const activeRoomData = getRoom(activeRoom);
   const themedRoomRenders = roomRenders[theme];
@@ -847,17 +760,6 @@ function SymposiumExperience({
   }, [profiles]);
 
   useEffect(() => {
-    feedPagesRef.current = feedPages;
-  }, [feedPages]);
-
-  useEffect(() => {
-    if (feedActorHandleRef.current === currentProfile.handle) return;
-    feedActorHandleRef.current = currentProfile.handle;
-    feedPagesRef.current = {};
-    setFeedPages({});
-  }, [currentProfile.handle]);
-
-  useEffect(() => {
     profileActivityByHandleRef.current = profileActivityByHandle;
   }, [profileActivityByHandle]);
 
@@ -886,54 +788,6 @@ function SymposiumExperience({
     );
   };
 
-
-  const clientViewStorageKey = (handle: string) => `symposium-view-dedupe:${cleanHandle(handle)}`;
-  const clientViewKey = (targetType: ViewTargetType, targetId: string) => `${targetType}:${targetId}`;
-  const pruneClientViewDedupe = (dedupe: Record<string, number>, now = Date.now()) =>
-    Object.fromEntries(
-      Object.entries(dedupe).filter(([, timestamp]) => Number.isFinite(timestamp) && now - timestamp < viewDedupeWindowMs)
-    );
-  const persistClientViewDedupe = (dedupe: Record<string, number>, handle = currentProfileRef.current.handle) => {
-    const pruned = pruneClientViewDedupe(dedupe);
-    viewDedupeRef.current = pruned;
-    window.localStorage.setItem(clientViewStorageKey(handle), JSON.stringify(pruned));
-  };
-  const readClientViewDedupe = (handle: string) => {
-    try {
-      const raw = window.localStorage.getItem(clientViewStorageKey(handle));
-      if (!raw) return {};
-      const parsed = JSON.parse(raw) as Record<string, number>;
-      return pruneClientViewDedupe(parsed);
-    } catch {
-      return {};
-    }
-  };
-  const claimClientView = (targetType: ViewTargetType, targetId: string) => {
-    const now = Date.now();
-    const key = clientViewKey(targetType, targetId);
-    const dedupe = pruneClientViewDedupe(viewDedupeRef.current, now);
-    const lastViewedAt = dedupe[key];
-    if (Number.isFinite(lastViewedAt) && now - lastViewedAt < viewDedupeWindowMs) {
-      viewDedupeRef.current = dedupe;
-      return false;
-    }
-
-    dedupe[key] = now;
-    persistClientViewDedupe(dedupe);
-    return true;
-  };
-  const releaseClientViewClaim = (targetType: ViewTargetType, targetId: string) => {
-    const key = clientViewKey(targetType, targetId);
-    const rest = { ...viewDedupeRef.current };
-    delete rest[key];
-    persistClientViewDedupe(rest);
-  };
-
-  useEffect(() => {
-    const dedupe = readClientViewDedupe(currentProfile.handle);
-    viewDedupeRef.current = dedupe;
-    persistClientViewDedupe(dedupe, currentProfile.handle);
-  }, [currentProfile.handle]);
 
   useEffect(() => {
     selectedProfileNameRef.current = selectedProfileName;
@@ -1031,57 +885,21 @@ function SymposiumExperience({
     };
   }, [activeRoom, feedScope, officeMode, selectedCommunityId]);
 
-  const persistLocalSnapshot = (
-    nextItems = items,
-    nextProfiles = profiles,
-    nextProfile = currentProfile,
-    options?: { broadcastItemIds?: string[]; broadcastProfileHandles?: string[] }
+  const persistProfileSnapshot = (
+    broadcastProfileHandles: string[] = []
   ) => {
-    persistCachedBootstrap(
-      window.localStorage,
-      { items: nextItems, profiles: nextProfiles, communities: communitiesRef.current },
-      nextProfile.handle
-    );
-
-    const messages = itemMutationCoordinatorRef.current.publishChanges(
-      nextItems,
-      lastPersistedItemsRef.current,
-      options?.broadcastItemIds
-    );
-    lastPersistedItemsRef.current = nextItems;
-    const profileEntities = Object.values(nextProfiles).map(profileSyncEntity);
+    inquiryController.persistSnapshot();
+    const profileEntities = Object.values(profilesRef.current).map(profileSyncEntity);
     const profileMessages = profileMutationCoordinatorRef.current.publishChanges(
       profileEntities,
       lastPersistedProfilesRef.current,
-      options?.broadcastProfileHandles
+      broadcastProfileHandles
     );
     lastPersistedProfilesRef.current = profileEntities;
-
-    for (const message of messages) {
-      publishCrossTabItem(message);
-    }
     for (const message of profileMessages) {
       publishCrossTabProfile(message);
     }
   };
-
-  const publishCrossTabItem = useCrossTabItemTransport<CrossTabItemMessage<InquiryItem>>({
-    channelName: "symposium-item-sync-v1",
-    isMessage: isCrossTabInquiryItemMessage,
-    onMessage: (message) => {
-      const received = itemMutationCoordinatorRef.current.receive(message, itemsRef.current);
-      if (!received.accepted) return;
-      const nextItems = sortByPublishedRecency(received.items);
-      replaceItems(nextItems);
-      lastPersistedItemsRef.current = nextItems;
-      persistCachedBootstrap(
-        window.localStorage,
-        { items: nextItems, profiles: profilesRef.current, communities: communitiesRef.current },
-        currentProfileRef.current.handle
-      );
-    },
-    storageKey: "symposium-cross-tab-item"
-  });
 
   const publishCrossTabProfile = useCrossTabItemTransport<CrossTabItemMessage<ProfileSyncEntity>>({
     channelName: "symposium-profile-sync-v1",
@@ -1102,21 +920,10 @@ function SymposiumExperience({
       setCurrentProfile(nextCurrent);
       lastPersistedProfilesRef.current = received.items;
 
-      let nextItems = itemsRef.current;
       if (JSON.stringify(previousCurrent) !== JSON.stringify(nextCurrent)) {
-        nextItems = itemsRef.current.map((item) => ({
-          ...item,
-          author: item.authorHandle === nextCurrent.handle ? nextCurrent.name : item.author,
-          comments: updateCommentsForProfile(item.comments, nextCurrent)
-        }));
-        replaceItems(nextItems);
-        lastPersistedItemsRef.current = nextItems;
+        inquiryController.projectProfile(nextCurrent, { persist: false });
       }
-      persistCachedBootstrap(
-        window.localStorage,
-        { items: nextItems, profiles: nextProfiles, communities: communitiesRef.current },
-        nextCurrent.handle
-      );
+      inquiryController.persistSnapshot();
     },
     storageKey: "symposium-cross-tab-profile"
   });
@@ -1178,13 +985,7 @@ function SymposiumExperience({
           currentProfileRef.current = current;
           setCurrentProfile(current);
           if (JSON.stringify(previousCurrent) !== JSON.stringify(current)) {
-            const nextItems = itemsRef.current.map((item) => ({
-              ...item,
-              author: item.authorHandle === current.handle ? current.name : item.author,
-              comments: updateCommentsForProfile(item.comments, current)
-            }));
-            replaceItems(nextItems);
-            lastPersistedItemsRef.current = nextItems;
+            inquiryController.projectProfile(current, { persist: false });
           }
         }
         return;
@@ -1304,8 +1105,27 @@ function SymposiumExperience({
     );
   };
 
+  const mergeDiscoveredProfiles = (
+    incomingProfiles: Record<string, ResearchProfile>
+  ) => {
+    const nextProfiles = { ...profilesRef.current };
+    for (const [rawHandle, incoming] of Object.entries(incomingProfiles)) {
+      const handle = cleanHandle(rawHandle);
+      if (!handle || handle === "@") continue;
+      const current = nextProfiles[handle];
+      const protectedEntity = profileMutationCoordinatorRef.current.protectIncomingItem(
+        profileSyncEntity({ ...incoming, handle }),
+        current ? profileSyncEntity(current) : undefined
+      );
+      nextProfiles[handle] = researchProfileFromSyncEntity(protectedEntity);
+    }
+    profilesRef.current = nextProfiles;
+    setProfiles(nextProfiles);
+    return nextProfiles;
+  };
+
   const refreshData = async (preferredHandle = currentProfile.handle) => {
-    const mutationSnapshot = itemMutationCoordinatorRef.current.capture();
+    const mutationSnapshot = inquiryController.captureRefresh();
     const data = await symposiumApi.request<{
       items: InquiryItem[];
       profiles: Record<string, ResearchProfile>;
@@ -1336,48 +1156,15 @@ function SymposiumExperience({
       preferredHandle
     });
 
-    const currentById = new Map(itemsRef.current.map((item) => [item.id, item]));
-    const normalizedItems = sortByPublishedRecency(
-      normalizeClientSeedTimes(data.items).map((rawIncoming) => {
-        const current = currentById.get(rawIncoming.id);
-        const incoming = preservePostSemanticProjection(rawIncoming, current);
-        const comparison = compareEntityRevisions(incoming, current);
-        if (current && comparison !== null && comparison < 0) return current;
-        return reconcileBoundedReadItem(incoming, current, nextProfile.handle);
-      })
-    );
-    for (const incoming of normalizedItems) {
-      if (!itemMutationCoordinatorRef.current.changedSince(mutationSnapshot, incoming.id)) {
-        settleFreshItemActionState(incoming, nextProfile.handle);
-      }
-    }
-    const incomingIds = new Set(normalizedItems.map((item) => item.id));
-    const refreshInput = [
-      ...normalizedItems,
-      ...itemsRef.current.filter((item) => !incomingIds.has(item.id))
-    ];
-    const crossTabSafeItems = sortByPublishedRecency(
-      itemMutationCoordinatorRef.current.reconcileRefresh(
-        refreshInput,
-        itemsRef.current,
-        mutationSnapshot
-      )
-    );
-    const loadedItems = protectItemsFromStaleActionState(
-      crossTabSafeItems,
-      itemsRef.current,
-      nextProfile.handle
-    );
     profilesRef.current = loadedProfiles;
     currentProfileRef.current = nextProfile;
     const loadedCommunities = data.communities?.length ? data.communities : communitiesRef.current;
     communitiesRef.current = loadedCommunities;
-    replaceItems(loadedItems);
     setProfiles(loadedProfiles);
     setCurrentProfile(nextProfile);
     setCommunities(loadedCommunities);
     if (data.communityCalls) setCommunityCalls(data.communityCalls);
-    persistLocalSnapshot(loadedItems, loadedProfiles, nextProfile);
+    inquiryController.commitRefresh(data.items, nextProfile.handle, mutationSnapshot);
     setSyncStatus(liveStatus.connected);
   };
 
@@ -1410,34 +1197,7 @@ function SymposiumExperience({
     applySocialLists(normalizedHandle, socialListsFromResponse(data, normalizedHandle));
   };
 
-  const mergeLiveItem = (incoming: InquiryItem) => {
-    const currentItems = itemsRef.current;
-    const existingIndex = currentItems.findIndex((item) => item.id === incoming.id);
-    const currentItem = existingIndex >= 0 ? currentItems[existingIndex] : undefined;
-    const semanticIncoming = preservePostSemanticProjection(incoming, currentItem);
-    const revisionComparison = compareEntityRevisions(semanticIncoming, currentItem);
-    const canonicalIncomingIsNewer = (revisionComparison ?? 0) > 0;
-    if (currentItem && revisionComparison === 0) return false;
-    if (currentItem && itemMutationCoordinatorRef.current.isPending(incoming.id) && !canonicalIncomingIsNewer) {
-      scheduleLiveRefresh();
-      return false;
-    }
-    const crossTabProtected = itemMutationCoordinatorRef.current.protectIncomingItem(semanticIncoming, currentItem);
-    const protectedIncoming = protectItemFromStaleActionState(
-      crossTabProtected,
-      currentItem,
-      currentProfileRef.current.handle
-    );
-    const nextItem = preservePublishedPosition(protectedIncoming, currentItem);
-    const nextItems =
-      existingIndex >= 0
-        ? currentItems.map((item) => (item.id === incoming.id ? nextItem : item))
-        : sortByPublishedRecency([nextItem, ...currentItems]);
-
-    replaceItems(nextItems);
-    persistLocalSnapshot(nextItems, profilesRef.current, currentProfileRef.current);
-    return true;
-  };
+  const mergeLiveItem = inquiryController.mergeLiveItem;
 
   const mergeLiveProfile = (incoming: ResearchProfile) => {
     const handle = cleanHandle(incoming.handle);
@@ -1454,160 +1214,20 @@ function SymposiumExperience({
     }
 
     const nextProfiles = { ...profilesRef.current, [handle]: nextProfile };
-    const nextItems = itemsRef.current.map((item) => ({
-      ...item,
-      author: item.authorHandle === handle ? nextProfile.name : item.author,
-      comments: updateCommentsForProfile(item.comments, nextProfile)
-    }));
     profilesRef.current = nextProfiles;
     setProfiles(nextProfiles);
     if (currentProfileRef.current.handle === handle) {
       currentProfileRef.current = nextProfile;
       setCurrentProfile(nextProfile);
     }
-    replaceItems(nextItems);
-    persistLocalSnapshot(nextItems, nextProfiles, currentProfileRef.current, {
-      broadcastProfileHandles: [handle]
-    });
+    inquiryController.projectProfile(nextProfile, { persist: false });
+    persistProfileSnapshot([handle]);
     return true;
   };
 
-  const mergeBoundedRead = (data: {
-    items: InquiryItem[];
-    profiles?: Record<string, ResearchProfile>;
-  }, options: { persist?: boolean } = {}) => {
-    let nextProfiles = profilesRef.current;
-    if (data.profiles && Object.keys(data.profiles).length) {
-      nextProfiles = { ...profilesRef.current };
-      for (const [rawHandle, incoming] of Object.entries(data.profiles)) {
-        const handle = cleanHandle(rawHandle);
-        if (!handle || handle === "@") continue;
-        const current = nextProfiles[handle];
-        const protectedEntity = profileMutationCoordinatorRef.current.protectIncomingItem(
-          profileSyncEntity({ ...incoming, handle }),
-          current ? profileSyncEntity(current) : undefined
-        );
-        nextProfiles[handle] = researchProfileFromSyncEntity(protectedEntity);
-      }
-    }
-
-    const nextById = new Map(itemsRef.current.map((item) => [item.id, item]));
-    for (const rawIncoming of normalizeClientSeedTimes(data.items)) {
-      const current = nextById.get(rawIncoming.id);
-      const incoming = preservePostSemanticProjection(rawIncoming, current);
-      const comparison = compareEntityRevisions(incoming, current);
-      if (current && comparison !== null && comparison < 0) continue;
-
-      const next = reconcileBoundedReadItem(incoming, current, currentProfileRef.current.handle);
-      nextById.set(next.id, next);
-    }
-
-    const nextItems = sortByPublishedRecency([...nextById.values()]);
-    profilesRef.current = nextProfiles;
-    setProfiles(nextProfiles);
-    replaceItems(nextItems);
-    if (options.persist !== false) {
-      persistLocalSnapshot(nextItems, nextProfiles, currentProfileRef.current);
-    }
-  };
-
-  const setFeedPageState = (key: string, next: FeedPageState) => {
-    const pages = { ...feedPagesRef.current, [key]: next };
-    feedPagesRef.current = pages;
-    setFeedPages(pages);
-  };
-
-  const loadPostPage = async (
-    key: string,
-    query: PostPageQueryContract,
-    append = false
-  ) => {
-    const current = feedPagesRef.current[key];
-    if (current?.loading || (append && !current?.nextCursor)) return;
-    setFeedPageState(key, {
-      initialized: current?.initialized ?? false,
-      loading: true,
-      nextCursor: current?.nextCursor ?? null
-    });
-    try {
-      const parameters = new URLSearchParams({
-        limit: String(query.limit),
-        actorHandle: currentProfileRef.current.handle
-      });
-      if (append && current?.nextCursor) parameters.set("cursor", current.nextCursor);
-      if (query.room) parameters.set("room", query.room);
-      if (query.postType) parameters.set("postType", query.postType);
-      if (query.postTypes?.length) parameters.set("postTypes", query.postTypes.join(","));
-      if (query.communityId) parameters.set("communityId", query.communityId);
-      if (query.authorHandle) parameters.set("authorHandle", query.authorHandle);
-      if (query.saved) parameters.set("saved", "true");
-      if (query.following) parameters.set("following", "true");
-      if (query.ids?.length) parameters.set("ids", query.ids.join(","));
-      const page = await symposiumApi.request<PostPageResponseContract>(
-        `/api/posts?${parameters.toString()}`,
-        { cache: "no-store" }
-      );
-      mergeBoundedRead(page);
-      setFeedPageState(key, { initialized: true, loading: false, nextCursor: page.nextCursor });
-    } catch (error) {
-      setFeedPageState(key, {
-        initialized: current?.initialized ?? false,
-        loading: false,
-        nextCursor: current?.nextCursor ?? null
-      });
-      throw error;
-    }
-  };
-
-  const mergeLiveMetricPatch = (payload: LiveEventPayload) => {
-    if (!payload.itemId || !payload.metrics || typeof payload.metrics !== "object") return false;
-    const applyMetricPatch = <T extends { signal: string; forks: string; saves: string; reads: string }>(
-      current: T
-    ): T => ({
-      ...current,
-      signal: typeof payload.metrics?.signal === "string" ? payload.metrics.signal : current.signal,
-      forks: typeof payload.metrics?.forks === "string" ? payload.metrics.forks : current.forks,
-      saves: typeof payload.metrics?.saves === "string" ? payload.metrics.saves : current.saves,
-      reads: typeof payload.metrics?.reads === "string" ? payload.metrics.reads : current.reads
-    });
-    let changed = false;
-    const nextItems = itemsRef.current.map((item) => {
-      if (item.id !== payload.itemId) return item;
-      const itemRevision = item.revision ?? 0;
-      if (typeof payload.revision === "number" && itemRevision > payload.revision) return item;
-      if (!payload.commentId) {
-        changed = true;
-        return {
-          ...item,
-          metrics: applyMetricPatch(item.metrics),
-          revision: typeof payload.revision === "number" ? Math.max(itemRevision, payload.revision) : item.revision
-        };
-      }
-      const mapped = mapCommentTree(item.comments, payload.commentId, (comment) => {
-        const commentRevision = comment.revision ?? 0;
-        if (typeof payload.commentRevision === "number" && commentRevision > payload.commentRevision) return comment;
-        changed = true;
-        return {
-          ...comment,
-          metrics: applyMetricPatch({ ...commentMetricsFallback, ...(comment.metrics ?? {}) }),
-          revision:
-            typeof payload.commentRevision === "number"
-              ? Math.max(commentRevision, payload.commentRevision)
-              : comment.revision
-        };
-      });
-      if (!mapped.updated) return item;
-      return {
-        ...item,
-        comments: mapped.comments,
-        revision: typeof payload.revision === "number" ? Math.max(itemRevision, payload.revision) : item.revision
-      };
-    });
-    if (!changed) return false;
-    replaceItems(nextItems);
-    persistLocalSnapshot(nextItems, profilesRef.current, currentProfileRef.current);
-    return true;
-  };
+  const mergeBoundedRead = inquiryController.mergeBoundedRead;
+  const loadPostPage = inquiryController.loadPostPage;
+  const mergeLiveMetricPatch = inquiryController.mergeLiveMetricPatch;
 
   const mergeLiveFollow = (record: ProfileFollowRecord | undefined, active: boolean) => {
     const followerHandle = cleanHandle(String(record?.followerHandle ?? ""));
@@ -1688,18 +1308,7 @@ function SymposiumExperience({
     return requests;
   });
 
-  const invalidateLiveQuotedSource = (source: QuoteSelection) => {
-    const current = itemsRef.current;
-    const next = invalidateQuotedSource(current, source);
-    const changedItemIds = next
-      .filter((item, index) => item !== current[index])
-      .map((item) => item.id);
-    if (!changedItemIds.length) return;
-    replaceItems(next);
-    persistLocalSnapshot(next, profilesRef.current, currentProfileRef.current, {
-      broadcastItemIds: changedItemIds
-    });
-  };
+  const invalidateLiveQuotedSource = inquiryController.invalidateLiveQuotedSource;
 
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
     const payload = event.payload ?? {};
@@ -1798,13 +1407,12 @@ function SymposiumExperience({
         const eventTimestamp = event.createdAt ? Date.parse(event.createdAt) : Number.NaN;
         const profileActivityTimestamp = Number.isFinite(eventTimestamp) ? eventTimestamp : Date.now();
         if (typeof payload.commentId === "string") {
-          const key = `${payload.item.id}:${payload.commentId}:${action}:${currentProfileRef.current.handle}`;
-          const desired = protectedDesiredActionState(key);
-          const eventComment = findCommentById(payload.item.comments, payload.commentId);
-          const serverActive = eventComment
-            ? commentActionActive(eventComment, action, currentProfileRef.current.handle)
-            : undefined;
-          if (desired !== undefined && serverActive !== desired) return;
+          if (!inquiryController.acceptLiveActionProjection({
+            action,
+            actorHandle: currentProfileRef.current.handle,
+            commentId: payload.commentId,
+            item: payload.item
+          })) return;
           touchProfileCommentAction(
             payload.item.id,
             payload.commentId,
@@ -1813,10 +1421,11 @@ function SymposiumExperience({
             profileActivityTimestamp
           );
         } else {
-          const key = `${payload.item.id}:${action}:${currentProfileRef.current.handle}`;
-          const desired = protectedDesiredActionState(key);
-          const serverActive = itemActionActive(payload.item, action, currentProfileRef.current.handle);
-          if (desired !== undefined && serverActive !== desired) return;
+          if (!inquiryController.acceptLiveActionProjection({
+            action,
+            actorHandle: currentProfileRef.current.handle,
+            item: payload.item
+          })) return;
           touchProfileAction(
             payload.item.id,
             action,
@@ -1870,14 +1479,7 @@ function SymposiumExperience({
   };
 
   const hydrateCachedBootstrap = (storedProfileHandle: string | null) => {
-    const cached = resolveCachedBootstrap({
-      fallbackProfile: profile,
-      preferredHandle: storedProfileHandle,
-      seedItems: initialBoundedInquiryItems,
-      snapshot: readCachedBootstrapSnapshot(window.localStorage)
-    });
-    const cachedItems = sortByPublishedRecency(normalizeClientSeedTimes(cached.items));
-    lastPersistedItemsRef.current = cachedItems;
+    const cached = inquiryController.hydrateCachedSnapshot(storedProfileHandle);
     profilesRef.current = cached.profiles;
     currentProfileRef.current = cached.currentProfile;
     if (cached.communities?.length) {
@@ -1885,7 +1487,6 @@ function SymposiumExperience({
       setCommunities(cached.communities);
     }
     setProfiles(cached.profiles);
-    replaceItems(cachedItems);
     setCurrentProfile(cached.currentProfile);
   };
 
@@ -2336,28 +1937,14 @@ function SymposiumExperience({
       const hydrateSubjects = async (
         postIds: string[],
         commentIds: string[]
-      ) => {
-        if (!postIds.length) return;
-        const postParameters = new URLSearchParams({
-          ids: Array.from(new Set(postIds)).slice(0, 50).join(","),
-          limit: String(postIds.length),
-          actorHandle: cleanActor
-        });
-        if (commentIds.length) {
-          postParameters.set("commentIds", Array.from(new Set(commentIds)).slice(0, 50).join(","));
-        }
-        return symposiumApi.request<PostPageResponseContract>(
-          `/api/posts?${postParameters.toString()}`,
-          { cache: "no-store" }
-        );
-      };
+      ) => inquiryController.loadPostSubjects(postIds, commentIds, cleanActor);
       if (data.items?.length || data.profiles) {
         mergeBoundedRead({
           items: data.items ?? [],
           profiles: data.profiles ?? {}
         });
       } else {
-        const hydratedPages = await Promise.all([
+        await Promise.all([
           hydrateSubjects(
             entries.map((entry) => entry.postId),
             entries.filter((entry) => entry.subjectType === "comment").map((entry) => entry.subjectId)
@@ -2367,7 +1954,6 @@ function SymposiumExperience({
             authoredComments.map((activity) => activity.commentId)
           )
         ]);
-        for (const page of hydratedPages) if (page) mergeBoundedRead(page);
       }
 
       if (profileActivityRequestRef.current[requestKey] !== requestId) return;
@@ -2588,12 +2174,11 @@ function SymposiumExperience({
     const current = itemsRef.current.find((item) => item.id === postId);
     if (current?.detailLoaded) return;
     let cancelled = false;
-    void symposiumApi.request<{ item: InquiryItem; profiles?: Record<string, ResearchProfile> }>(
-      `/api/posts/${encodeURIComponent(postId)}?actorHandle=${encodeURIComponent(currentProfile.handle)}`,
-      { cache: "no-store" }
-    ).then((data) => {
-      if (!cancelled) mergeBoundedRead({ items: [data.item], profiles: data.profiles });
-    }).catch(() => {
+    void inquiryController.loadPostDetail(
+      postId,
+      currentProfile.handle,
+      () => !cancelled
+    ).catch(() => {
       if (!cancelled) setSyncStatus("Post detail could not load");
     });
     return () => {
@@ -2986,9 +2571,6 @@ function SymposiumExperience({
     setAttachmentPreview({ itemId, commentId, attachmentId });
   };
 
-  const routePostRoom = (kind: PostDraft["kind"]): Exclude<RoomId, "hall" | "office"> =>
-    kind === "proposal" ? "funding" : kind === "opportunity" ? "opportunities" : kind === "paper" ? "library" : "amphitheater";
-
   const uploadPostAttachment = async (file: File): Promise<InquiryAttachment> => {
     const contentType = file.type || "application/octet-stream";
     const metadata = await buildPostAttachmentMetadata(file, contentType);
@@ -3030,7 +2612,7 @@ function SymposiumExperience({
     selectedCommunity,
     retryMutationKey,
     clearRetryMutationKey,
-    persist: () => persistLocalSnapshot(itemsRef.current, profilesRef.current),
+    persist: inquiryController.persistSnapshot,
     openCommunity,
     refresh: scheduleLiveRefresh,
     setStatus: setSyncStatus
@@ -3044,57 +2626,10 @@ function SymposiumExperience({
     onStatus: setSyncStatus
   });
 
-  const createPost = async ({ title, body, document, kind, patronage, opportunity, attachments, quoteSource }: PostDraft) => {
-    const routedRoom = routePostRoom(kind);
-    const contentKind = kind === "proposal" ? "paper" : kind === "opportunity" ? "thought" : kind;
-    const createdAt = new Date().toISOString();
-    const postPayload = {
-      title,
-      body,
-      document,
-      kind: contentKind,
-      postType: kind,
-      room: routedRoom,
-      communityId: composerCommunityId ?? undefined,
-      patronage,
-      opportunity,
-      authorHandle: currentProfile.handle,
-      attachmentIds: attachments.map((attachment) => attachment.id),
-      quoteSource: quoteSource
-        ? { sourceType: quoteSource.sourceType, sourceId: quoteSource.sourceId }
-        : undefined
-    };
-    const mutation = retryMutationKey("post-create", JSON.stringify(postPayload));
-    setSyncStatus("Posting");
-    let data: { item: InquiryItem };
-    try {
-      data = await symposiumApi.request<{ item: InquiryItem }>("/api/posts", {
-        method: "POST",
-        idempotencyKey: mutation.idempotencyKey,
-        body: postPayload
-      });
-    } catch (error) {
-      if (!shouldRetainRetryMutation(error)) clearRetryMutationKey(mutation.fingerprintKey);
-      const message =
-        error instanceof SymposiumApiError && error.status === null
-          ? "Post could not reach the live service"
-          : error instanceof Error
-            ? error.message
-            : "Post could not be saved";
-      setSyncStatus(message);
-      return { ok: false as const, error: message };
-    }
-
-    clearRetryMutationKey(mutation.fingerprintKey);
-    const existingCommittedItem = itemsRef.current.find((item) => item.id === data.item.id);
-    const committedItem = reconcileCommittedItem(
-      { ...data.item, createdAt: data.item.createdAt ?? createdAt },
-      existingCommittedItem
-    );
-    const nextItems = sortByPublishedRecency([committedItem, ...items.filter((item) => item.id !== committedItem.id)]);
-    touchActivity(committedItem.id);
-    replaceItems(nextItems);
-    persistLocalSnapshot(nextItems, profiles, currentProfile, { broadcastItemIds: [committedItem.id] });
+  const createPost = async (draft: PostDraft) => {
+    const result = await inquiryController.createPost(draft, composerCommunityId);
+    if (!result.ok) return result;
+    const committedItem = result.item;
     navigateView({
       activeRoom: committedItem.communityId ? "communities" : committedItem.room,
       selectedItemId: committedItem.id,
@@ -3105,7 +2640,6 @@ function SymposiumExperience({
     });
     setComposerOpen(false);
     setComposerCommunityId(null);
-    setSyncStatus("Post saved");
     return { ok: true as const };
   };
 
@@ -3118,132 +2652,35 @@ function SymposiumExperience({
     attachments: InquiryAttachment[],
     quoteSource?: ContentQuoteSource
   ) => {
-    const previousItems = itemsRef.current;
     const previousSelectedItemId = selectedItemId;
     const previousSelectedCommentId = selectedCommentId;
-    const existing = previousItems.find((item) => item.id === itemId);
-    if (!existing || isDeletedPost(existing)) {
-      setSyncStatus("This post cannot accept comments");
-      return false;
-    }
-
-    if (parentId && !findCommentById(existing.comments, parentId)) {
-      setSyncStatus("Reply target is no longer available");
-      return false;
-    }
-
-    setSyncStatus(parentId ? "Saving reply" : "Saving comment");
-    let quote: InquiryComment["quote"];
-    try {
-      quote = resolveLocalContentQuote(previousItems, quoteSource);
-    } catch (error) {
-      setSyncStatus(error instanceof Error ? error.message : "Quoted content is unavailable");
-      return false;
-    }
-
-    const optimisticComment: InquiryComment = {
-      id: clientId("comment"),
-      parentId: parentId ?? null,
-      author: currentProfile.name,
-      authorHandle: currentProfile.handle,
-      stance: stance.trim() || "Comment",
-      body,
-      document,
-      createdAt: new Date().toISOString(),
-      metrics: { ...commentMetricsFallback },
-      savedBy: [],
-      signaledBy: [],
-      forkedBy: [],
-      attachments,
-      quote,
-      replies: []
-    };
-    const appended = appendCommentToTree(existing.comments, optimisticComment);
-    if (!appended.inserted) {
-      setSyncStatus("Reply target is no longer available");
-      return false;
-    }
-
-    itemMutationCoordinatorRef.current.begin(itemId);
-    const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
-    const optimisticItem: InquiryItem = {
-      ...existing,
-      metrics: { ...existing.metrics, critiques: nextCritiques },
-      signals: updateSignalValue(existing.signals, "Critiques", nextCritiques),
-      comments: appended.comments
-    };
-    const optimisticItems = previousItems.map((item) => (item.id === itemId ? optimisticItem : item));
-
-    replaceItems(optimisticItems);
-    persistLocalSnapshot(optimisticItems, profilesRef.current);
-    touchActivity(itemId);
-    setViewField("selectedItemId", itemId);
-    setViewField("selectedCommentId", optimisticComment.id ?? null);
-
-    const rollbackOptimisticComment = (message: string) => {
-      replaceItems(previousItems);
-      persistLocalSnapshot(previousItems, profilesRef.current);
-      setViewField("selectedItemId", previousSelectedItemId);
-      setViewField("selectedCommentId", previousSelectedCommentId);
-      setSyncStatus(message);
-    };
-
-    const commentPayload = {
+    return inquiryController.addComment({
+      itemId,
       body,
       document,
       stance,
       parentId: parentId ?? null,
-      authorHandle: currentProfile.handle,
-      attachmentIds: attachments.map((attachment) => attachment.id),
-      quoteSource
-    };
-    const mutation = retryMutationKey(
-      "comment-create",
-      JSON.stringify({ itemId, ...commentPayload })
-    );
-
-    try {
-      const data = await symposiumApi.request<{ comment?: InquiryComment; item?: InquiryItem }>(
-        `/api/posts/${itemId}/comments`,
-        {
-        method: "POST",
-        idempotencyKey: mutation.idempotencyKey,
-        body: commentPayload
+      attachments,
+      quoteSource,
+      onOptimistic: (commentId) => {
+        setViewField("selectedItemId", itemId);
+        setViewField("selectedCommentId", commentId);
+      },
+      onRollback: () => {
+        setViewField("selectedItemId", previousSelectedItemId);
+        setViewField("selectedCommentId", previousSelectedCommentId);
+      },
+      onCommitted: (committedCommentId) => {
+        setViewField("selectedCommentId", committedCommentId);
+        if (committedCommentId) {
+          replaceCanonicalRoute({
+            kind: "post",
+            postId: itemId,
+            commentId: committedCommentId
+          });
         }
-      );
-      clearRetryMutationKey(mutation.fingerprintKey);
-      if (data.item) {
-        const currentItem = itemsRef.current.find((item) => item.id === itemId);
-        const committedItem = reconcileCommittedItem(data.item, currentItem, currentProfile.handle);
-        const committedItems = itemsRef.current.map((item) => (item.id === itemId ? committedItem : item));
-        replaceItems(committedItems);
-        persistLocalSnapshot(committedItems, profilesRef.current);
       }
-
-      const committedCommentId = data.comment?.id ?? optimisticComment.id ?? null;
-      setViewField("selectedCommentId", committedCommentId);
-      if (committedCommentId) {
-        replaceCanonicalRoute({ kind: "post", postId: itemId, commentId: committedCommentId });
-      }
-      setSyncStatus(parentId ? "Reply saved" : "Comment saved");
-      return true;
-    } catch (error) {
-      if (!shouldRetainRetryMutation(error)) clearRetryMutationKey(mutation.fingerprintKey);
-      const message =
-        error instanceof SymposiumApiError && error.status === null
-          ? parentId
-            ? "Reply could not reach the live service"
-            : "Comment could not reach the live service"
-          : error instanceof Error
-            ? error.message
-            : parentId
-              ? "Reply could not be saved"
-              : "Comment could not be saved";
-      rollbackOptimisticComment(message);
-      return false;
-    } finally {
-      itemMutationCoordinatorRef.current.complete(itemId);
-    }
+    });
   };
 
   const enterLocalPreview = () => {
@@ -3251,6 +2688,8 @@ function SymposiumExperience({
     const previewProfile =
       fallbackProfiles[currentProfile.handle] ?? fallbackProfiles[profile.handle] ?? currentProfile ?? profile;
 
+    profilesRef.current = fallbackProfiles;
+    currentProfileRef.current = previewProfile;
     setProfiles(fallbackProfiles);
     setCurrentProfile(previewProfile);
     setSignedIn(true);
@@ -3259,7 +2698,7 @@ function SymposiumExperience({
     applyInitialRouteState();
     window.sessionStorage.setItem("symposium-entry-complete", "true");
     window.localStorage.setItem("symposium-profile-handle", previewProfile.handle);
-    persistLocalSnapshot(items, fallbackProfiles, previewProfile);
+    inquiryController.persistSnapshot();
     setSyncStatus("Local preview");
   };
 
@@ -3342,7 +2781,6 @@ function SymposiumExperience({
   const saveProfileSettings = async (draft: ProfileSettingsDraft) => {
     const previousProfile = currentProfileRef.current;
     const previousProfiles = profilesRef.current;
-    const previousItems = itemsRef.current;
     const cleanName = draft.name.trim() || currentProfile.name;
     const updatedProfile: ResearchProfile = {
       ...currentProfile,
@@ -3353,20 +2791,16 @@ function SymposiumExperience({
       resharesPublic: draft.resharesPublic
     };
     const nextProfiles = { ...profiles, [updatedProfile.handle]: updatedProfile };
-    const nextItems = items.map((item) => ({
-      ...item,
-      author: item.authorHandle === updatedProfile.handle ? updatedProfile.name : item.author,
-      comments: updateCommentsForProfile(item.comments, updatedProfile)
-    }));
 
     profileMutationCoordinatorRef.current.begin(updatedProfile.handle);
+    currentProfileRef.current = updatedProfile;
+    profilesRef.current = nextProfiles;
     setCurrentProfile(updatedProfile);
     setProfiles(nextProfiles);
-    replaceItems(nextItems);
+    inquiryController.projectProfile(updatedProfile);
     if (selectedProfileName === currentProfile.name || selectedProfileName === currentProfile.handle) {
       setViewField("selectedProfileName", updatedProfile.handle);
     }
-    persistLocalSnapshot(nextItems, nextProfiles, updatedProfile);
     setSyncStatus("Saving profile settings");
     const profilePayload = {
       name: updatedProfile.name,
@@ -3396,17 +2830,12 @@ function SymposiumExperience({
       profileMutationCoordinatorRef.current.complete(updatedProfile.handle);
       const committedProfile = researchProfileFromSyncEntity(committedEntity);
       const committedProfiles = { ...nextProfiles, [committedProfile.handle]: committedProfile };
-      const committedItems = nextItems.map((item) => ({
-        ...item,
-        author: item.authorHandle === committedProfile.handle ? committedProfile.name : item.author,
-        comments: updateCommentsForProfile(item.comments, committedProfile)
-      }));
+      currentProfileRef.current = committedProfile;
+      profilesRef.current = committedProfiles;
       setCurrentProfile(committedProfile);
       setProfiles(committedProfiles);
-      replaceItems(committedItems);
-      persistLocalSnapshot(committedItems, committedProfiles, committedProfile, {
-        broadcastProfileHandles: [committedProfile.handle]
-      });
+      inquiryController.projectProfile(committedProfile, { persist: false });
+      persistProfileSnapshot([committedProfile.handle]);
       setSettingsOpen(false);
       setSyncStatus("Profile settings saved");
     } catch (error) {
@@ -3416,10 +2845,8 @@ function SymposiumExperience({
       profilesRef.current = previousProfiles;
       setCurrentProfile(previousProfile);
       setProfiles(previousProfiles);
-      replaceItems(previousItems);
-      persistLocalSnapshot(previousItems, previousProfiles, previousProfile, {
-        broadcastProfileHandles: [updatedProfile.handle]
-      });
+      inquiryController.projectProfile(previousProfile, { persist: false });
+      persistProfileSnapshot([updatedProfile.handle]);
       setSyncStatus("Profile settings could not sync");
     }
   };
@@ -3497,299 +2924,9 @@ function SymposiumExperience({
     setEntryMode("approach");
   };
 
-  const applyAction = async (itemId: string, action: PostAction, options: ViewActionOptions = {}) => {
-    const isViewAction = action === "read";
-    if (isViewAction && !claimClientView("post", itemId)) return;
+  const applyAction = inquiryController.applyAction;
 
-    const actorHandle = currentProfile.handle;
-    if (isViewAction) {
-      const synced = await recordPassiveView("post", itemId, null, actorHandle, options);
-      if (synced?.item) mergeLiveItem(synced.item);
-      else if (synced?.itemId && synced.metrics) mergeLiveMetricPatch(synced);
-      else releaseClientViewClaim("post", itemId);
-      return;
-    }
-    const actionKey = `${itemId}:${action}:${actorHandle}`;
-    const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
-    actionVersionsRef.current[actionKey] = version;
-    const mutationKey = createClientMutationId("post-action");
-
-    const previousItems = itemsRef.current;
-    let actionApplied = false;
-    let desiredActive: boolean | undefined;
-    let protectedMetricState: ProtectedActionMetricState | undefined;
-    let previousCanonicalActivity: CanonicalActionActivityContract | undefined;
-    const optimisticItems = previousItems.map((item) => {
-      if (item.id !== itemId) return item;
-      if (isDeletedPost(item)) return item;
-      actionApplied = true;
-      const nextItem = mutateItemForActor(item, action, actorHandle, profile.handle);
-      protectedMetricState = actionMetricStateFromValues(item.metrics, nextItem.metrics, action);
-      if (action === "save") desiredActive = isSavedBy(nextItem, actorHandle, profile.handle);
-      if (action === "signal") desiredActive = hasHandle(nextItem.signaledBy, actorHandle);
-      if (action === "fork") desiredActive = hasHandle(nextItem.forkedBy, actorHandle);
-      return nextItem;
-    });
-
-    if (!actionApplied) {
-      if (isViewAction) releaseClientViewClaim("post", itemId);
-      return;
-    }
-    itemMutationCoordinatorRef.current.begin(itemId);
-    setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
-    if (!isViewAction && desiredActive !== undefined) {
-      previousCanonicalActivity = stageOptimisticCanonicalActivity(
-        "post",
-        itemId,
-        itemId,
-        actorHandle,
-        action as ToggleActionContract,
-        desiredActive
-      );
-    }
-
-    replaceItems(optimisticItems);
-    persistLocalSnapshot(optimisticItems, profilesRef.current);
-
-    try {
-      const data = await symposiumApi.request<{ item: InquiryItem; activity?: unknown }>(
-        `/api/posts/${itemId}/actions`,
-        {
-        method: "POST",
-        idempotencyKey: mutationKey,
-        body: { action, actorHandle, active: desiredActive, trigger: options.trigger, surface: options.surface }
-        }
-      );
-      if (actionVersionsRef.current[actionKey] !== version) {
-        const latestActive = protectedDesiredActionState(actionKey);
-        if (latestActive !== undefined) {
-          void symposiumApi.request(`/api/posts/${itemId}/actions`, {
-            method: "POST",
-            idempotencyKey: createClientMutationId("post-action-converge"),
-            body: { action, actorHandle, active: latestActive, trigger: options.trigger, surface: options.surface }
-          }).catch(() => undefined);
-        }
-        return;
-      }
-
-      const committedActive = itemActionActive(data.item, action, actorHandle);
-      if (desiredActive !== undefined && committedActive !== desiredActive) {
-        setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
-        setSyncStatus("Action syncing");
-        return;
-      }
-
-      const canonicalActivity = isCanonicalActionActivity(data.activity) ? data.activity : null;
-      if (canonicalActivity && !acceptCanonicalActivity(canonicalActivity)) {
-        setSyncStatus("Action synced");
-        return;
-      }
-
-      const committedItems = itemsRef.current.map((item) =>
-        item.id === itemId
-          ? reconcileCommittedItem(data.item, item, actorHandle)
-          : item
-      );
-      replaceItems(committedItems);
-      persistLocalSnapshot(committedItems, profilesRef.current);
-      setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
-      if (!canonicalActivity) {
-        if (!isViewAction) {
-          pendingCanonicalActionKeysRef.current.delete(
-            canonicalActivityKey({
-              subjectType: "post",
-              subjectId: itemId,
-              actorHandle,
-              action: action as ToggleActionContract
-            })
-          );
-        }
-        touchProfileAction(itemId, action, actorHandle);
-      }
-      setSyncStatus("Action synced");
-    } catch {
-      if (actionVersionsRef.current[actionKey] !== version) return;
-      if (
-        !isViewAction &&
-        canonicalActionWasCommitted(
-          "post",
-          itemId,
-          actorHandle,
-          action as ToggleActionContract,
-          desiredActive,
-          previousCanonicalActivity
-        )
-      ) {
-        clearDesiredActionState(actionKey);
-        setSyncStatus("Action synced");
-        return;
-      }
-      clearDesiredActionState(actionKey);
-      if (isViewAction) releaseClientViewClaim("post", itemId);
-      if (!isViewAction) {
-        restoreOptimisticCanonicalActivity(
-          "post",
-          itemId,
-          actorHandle,
-          action as ToggleActionContract,
-          previousCanonicalActivity
-        );
-      }
-      replaceItems(previousItems);
-      persistLocalSnapshot(previousItems, profilesRef.current);
-      setSyncStatus("Action could not sync");
-    } finally {
-      itemMutationCoordinatorRef.current.complete(itemId);
-    }
-  };
-
-  const applyCommentAction = async (
-    itemId: string,
-    commentId: string,
-    action: CommentAction,
-    options: ViewActionOptions = {}
-  ) => {
-    const isViewAction = action === "read";
-    if (isViewAction && !claimClientView("comment", commentId)) return;
-
-    const actorHandle = currentProfile.handle;
-    if (isViewAction) {
-      const synced = await recordPassiveView("comment", itemId, commentId, actorHandle, options);
-      if (synced?.item) mergeLiveItem(synced.item);
-      else if (synced?.itemId && synced.metrics) mergeLiveMetricPatch(synced);
-      else releaseClientViewClaim("comment", commentId);
-      return;
-    }
-    const actionKey = `${itemId}:${commentId}:${action}:${actorHandle}`;
-    const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
-    actionVersionsRef.current[actionKey] = version;
-    const mutationKey = createClientMutationId("comment-action");
-
-    const previousItems = itemsRef.current;
-    let actionApplied = false;
-    let desiredActive: boolean | undefined;
-    let protectedMetricState: ProtectedActionMetricState | undefined;
-    let previousCanonicalActivity: CanonicalActionActivityContract | undefined;
-    const optimisticItems = previousItems.map((item) => {
-      if (item.id !== itemId) return item;
-      const mapped = mapCommentTree(item.comments, commentId, (comment) => {
-        const nextComment = mutateCommentForActor(comment, action, actorHandle);
-        protectedMetricState = actionMetricStateFromValues(
-          { ...commentMetricsFallback, ...(comment.metrics ?? {}) },
-          { ...commentMetricsFallback, ...(nextComment.metrics ?? {}) },
-          action
-        );
-        return nextComment;
-      });
-      if (!mapped.updated) return item;
-      actionApplied = true;
-      desiredActive = commentActionActive(mapped.updated, action, actorHandle);
-      return { ...item, comments: mapped.comments };
-    });
-
-    if (!actionApplied) {
-      if (isViewAction) releaseClientViewClaim("comment", commentId);
-      return;
-    }
-    itemMutationCoordinatorRef.current.begin(itemId);
-    setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
-    if (!isViewAction && desiredActive !== undefined) {
-      previousCanonicalActivity = stageOptimisticCanonicalActivity(
-        "comment",
-        commentId,
-        itemId,
-        actorHandle,
-        action as ToggleActionContract,
-        desiredActive
-      );
-    }
-    replaceItems(optimisticItems);
-    persistLocalSnapshot(optimisticItems, profilesRef.current);
-
-    try {
-      const data = await symposiumApi.request<{ item: InquiryItem; activity?: unknown }>(
-        `/api/posts/${itemId}/comments/${commentId}/actions`,
-        {
-        method: "POST",
-        idempotencyKey: mutationKey,
-        body: { action, actorHandle, active: desiredActive, trigger: options.trigger, surface: options.surface }
-        }
-      );
-      if (actionVersionsRef.current[actionKey] !== version) return;
-
-      const committedComment = findCommentById(data.item.comments, commentId);
-      const committedActive = committedComment
-        ? commentActionActive(committedComment, action, actorHandle)
-        : undefined;
-      if (desiredActive !== undefined && committedActive !== desiredActive) {
-        setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
-        setSyncStatus("Comment action syncing");
-        return;
-      }
-
-      const canonicalActivity = isCanonicalActionActivity(data.activity) ? data.activity : null;
-      if (canonicalActivity && !acceptCanonicalActivity(canonicalActivity)) {
-        setSyncStatus("Comment action synced");
-        return;
-      }
-
-      const committedItems = itemsRef.current.map((item) =>
-        item.id === itemId
-          ? reconcileCommittedItem(data.item, item, actorHandle)
-          : item
-      );
-      replaceItems(committedItems);
-      persistLocalSnapshot(committedItems, profilesRef.current);
-      setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
-      if (!canonicalActivity) {
-        if (!isViewAction) {
-          pendingCanonicalActionKeysRef.current.delete(
-            canonicalActivityKey({
-              subjectType: "comment",
-              subjectId: commentId,
-              actorHandle,
-              action: action as ToggleActionContract
-            })
-          );
-        }
-        touchProfileCommentAction(itemId, commentId, action, actorHandle);
-      }
-      setSyncStatus("Comment action synced");
-    } catch {
-      if (actionVersionsRef.current[actionKey] !== version) return;
-      if (
-        !isViewAction &&
-        canonicalActionWasCommitted(
-          "comment",
-          commentId,
-          actorHandle,
-          action as ToggleActionContract,
-          desiredActive,
-          previousCanonicalActivity
-        )
-      ) {
-        clearDesiredActionState(actionKey);
-        setSyncStatus("Comment action synced");
-        return;
-      }
-      clearDesiredActionState(actionKey);
-      if (isViewAction) releaseClientViewClaim("comment", commentId);
-      if (!isViewAction) {
-        restoreOptimisticCanonicalActivity(
-          "comment",
-          commentId,
-          actorHandle,
-          action as ToggleActionContract,
-          previousCanonicalActivity
-        );
-      }
-      replaceItems(previousItems);
-      persistLocalSnapshot(previousItems, profilesRef.current);
-      setSyncStatus("Comment action could not sync");
-    } finally {
-      itemMutationCoordinatorRef.current.complete(itemId);
-    }
-  };
+  const applyCommentAction = inquiryController.applyCommentAction;
 
   const savePostEdit = async (
     itemId: string,
@@ -3803,93 +2940,12 @@ function SymposiumExperience({
       opportunity?: OpportunityPostInputContract;
     }
   ) => {
-    const cleanTitle = draft.title.trim();
-    const cleanBody = draft.body.trim();
-    const previousItems = itemsRef.current;
-    const existing = previousItems.find((item) => item.id === itemId);
-    if (!existing || isDeletedPost(existing)) return;
-    if (!cleanBody || postTitlePolicyError(existing, cleanTitle)) return;
-    itemMutationCoordinatorRef.current.begin(itemId);
-    const editedAt = new Date().toISOString();
-    const optimisticItems = previousItems.map((item) =>
-      item.id === itemId
-        ? {
-            ...item,
-            title: cleanTitle,
-            body: cleanBody,
-            document: draft.document,
-            excerpt: cleanBody,
-            claims: [cleanBody],
-            attachments: draft.attachments,
-            quote: draft.quote ?? undefined,
-            patronage: draft.patronage
-              ? { ...draft.patronage, raisedMinorUnits: existing.patronage?.raisedMinorUnits ?? 0, supporterCount: existing.patronage?.supporterCount ?? 0, topSupporters: existing.patronage?.topSupporters ?? [] }
-              : existing.patronage,
-            opportunity: draft.opportunity
-              ? { ...draft.opportunity, applicationCount: existing.opportunity?.applicationCount ?? 0 }
-              : existing.opportunity,
-            editedAt
-          }
-        : item
-    );
-
-    replaceItems(optimisticItems);
-    persistLocalSnapshot(optimisticItems, profilesRef.current);
-    setSyncStatus("Saving post edit");
-
-    try {
-      const data = await symposiumApi.request<{ item: InquiryItem }>(`/api/posts/${itemId}`, {
-        method: "PATCH",
-        idempotencyKey: createClientMutationId("post-update"),
-        body: {
-          title: cleanTitle,
-          body: cleanBody,
-          document: draft.document,
-          actorHandle: currentProfile.handle,
-          expectedEditedAt: existing.editedAt ?? null,
-          attachmentIds: draft.attachments.map((attachment) => attachment.id),
-          patronage: draft.patronage,
-          opportunity: draft.opportunity,
-          quoteSource: !draft.quote
-            ? existing.quote ? null : undefined
-            : !existing.quote ||
-                existing.quote.sourceType !== draft.quote.sourceType ||
-                existing.quote.sourceId !== draft.quote.sourceId
-              ? { sourceType: draft.quote.sourceType, sourceId: draft.quote.sourceId }
-              : undefined
-        }
-      });
-      const committedItems = itemsRef.current.map((item) =>
-        item.id === itemId ? reconcileCommittedItem(data.item, item) : item
-      );
-      replaceItems(committedItems);
-      persistLocalSnapshot(committedItems, profilesRef.current);
+    if (await inquiryController.savePostEdit(itemId, draft)) {
       setEditingPost(null);
-      setSyncStatus("Post edited");
-    } catch {
-      replaceItems(previousItems);
-      persistLocalSnapshot(previousItems, profilesRef.current);
-      setSyncStatus("Post edit could not sync");
-    } finally {
-      itemMutationCoordinatorRef.current.complete(itemId);
     }
   };
 
-  const { deletePost, deleteComment } = createContentDeletionController({
-    itemsRef,
-    communitiesRef,
-    actorHandle: currentProfile.handle,
-    beginMutation: itemMutationCoordinatorRef.current.begin,
-    completeMutation: itemMutationCoordinatorRef.current.complete,
-    replaceItems,
-    persistItems: (nextItems) => persistLocalSnapshot(nextItems, profilesRef.current),
-    reconcileItem: reconcileCommittedItem,
-    clearPostEditor: () => setEditingPost(null),
-    clearCommentEditor: (itemId, commentId) => setEditingComment((current) =>
-      current?.itemId === itemId && current.commentId === commentId ? null : current
-    ),
-    setStatus: setSyncStatus
-  });
+  const { deletePost, deleteComment } = inquiryController;
 
   const saveCommentEdit = async (
     itemId: string,
@@ -3899,75 +2955,15 @@ function SymposiumExperience({
     attachments: InquiryAttachment[],
     quote: InquiryComment["quote"] | null
   ) => {
-    const cleanBody = body.trim();
-    if (!cleanBody) return;
-
-    const previousItems = itemsRef.current;
-    const existing = previousItems.find((item) => item.id === itemId);
-    const existingComment = existing ? findCommentById(existing.comments, commentId) : undefined;
-    if (
-      !existing ||
-      !existingComment ||
-      isDeletedComment(existingComment) ||
-      cleanHandle(existingComment.authorHandle ?? existingComment.author) !== currentProfile.handle
-    ) {
-      return;
-    }
-
-    itemMutationCoordinatorRef.current.begin(itemId);
-    const editedAt = new Date().toISOString();
-    const optimisticItems = previousItems.map((item) => {
-      if (item.id !== itemId) return item;
-      const mapped = mapCommentTree(item.comments, commentId, (comment) => ({
-        ...comment,
-        body: cleanBody,
-        document,
-        attachments,
-        quote: quote ?? undefined,
-        editedAt
-      }));
-      return mapped.updated ? { ...item, comments: mapped.comments } : item;
-    });
-
-    replaceItems(optimisticItems);
-    persistLocalSnapshot(optimisticItems, profilesRef.current);
-    setSyncStatus("Saving comment edit");
-
-    try {
-      const data = await symposiumApi.request<{ item: InquiryItem }>(
-        `/api/posts/${itemId}/comments/${commentId}`,
-        {
-        method: "PATCH",
-        idempotencyKey: createClientMutationId("comment-update"),
-        body: {
-          body: cleanBody,
-          document,
-          actorHandle: currentProfile.handle,
-          expectedEditedAt: existingComment.editedAt ?? null,
-          attachmentIds: attachments.map((attachment) => attachment.id),
-          quoteSource: !quote
-            ? existingComment.quote ? null : undefined
-            : !existingComment.quote ||
-                existingComment.quote.sourceType !== quote.sourceType ||
-                existingComment.quote.sourceId !== quote.sourceId
-              ? { sourceType: quote.sourceType, sourceId: quote.sourceId }
-              : undefined
-        }
-        }
-      );
-      const committedItems = itemsRef.current.map((item) =>
-        item.id === itemId ? reconcileCommittedItem(data.item, item) : item
-      );
-      replaceItems(committedItems);
-      persistLocalSnapshot(committedItems, profilesRef.current);
+    if (await inquiryController.saveCommentEdit({
+      itemId,
+      commentId,
+      body,
+      document,
+      attachments,
+      quote
+    })) {
       setEditingComment(null);
-      setSyncStatus("Comment edited");
-    } catch {
-      replaceItems(previousItems);
-      persistLocalSnapshot(previousItems, profilesRef.current);
-      setSyncStatus("Comment edit could not sync");
-    } finally {
-      itemMutationCoordinatorRef.current.complete(itemId);
     }
   };
 

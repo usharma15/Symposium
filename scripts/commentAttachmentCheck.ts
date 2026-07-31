@@ -82,11 +82,11 @@ const deletion = tombstoneCommentInItem(itemWithComment, commentId, new Date(1).
 assert.deepEqual(deletion.deletedComment?.attachments, []);
 
 const root = process.cwd();
-const [commentRepository, postRepository, maintenance, controller, commentViews, localCommentRoute, localAttachmentStore] = await Promise.all([
+const [commentRepository, postRepository, maintenance, inquiryController, commentViews, localCommentRoute, localAttachmentStore] = await Promise.all([
   readFile(path.join(root, "apps/api/src/repository/comments.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/repository/posts.ts"), "utf8"),
   readFile(path.join(root, "apps/api/src/services/maintenance.ts"), "utf8"),
-  readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8"),
+  readFile(path.join(root, "features/inquiry/useInquiryController.ts"), "utf8"),
   readFile(path.join(root, "features/comments/CommentThread.tsx"), "utf8"),
   readFile(path.join(root, "app/api/posts/[id]/comments/[commentId]/route.ts"), "utf8"),
   readFile(path.join(root, "lib/localAttachmentStore.ts"), "utf8")
@@ -98,7 +98,7 @@ assert.match(
   maintenance,
   /owner_type IN \('post', 'comment', 'message', 'note', 'note_comment', 'opportunity_application'\)/
 );
-assert.match(controller, /attachmentIds: attachments\.map/);
+assert.match(inquiryController, /attachmentIds: attachments\.map/);
 assert.match(commentViews, /<AttachmentCarousel/);
 assert.match(localCommentRoute, /existingComment\.editedAt \?\? null/);
 assert.match(localAttachmentStore, /record\.actorHandle !== input\.actorHandle/);
