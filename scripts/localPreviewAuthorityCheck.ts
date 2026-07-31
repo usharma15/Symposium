@@ -1,12 +1,33 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { access, readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   assertLocalPreviewPersistenceAvailable,
   selectNextPersistenceMode
 } from "@/lib/runtimeSafety";
+
+const sourceExtensions = new Set([".js", ".jsx", ".mjs", ".ts", ".tsx"]);
+
+const collectSourceFiles = async (repositoryRoot: string, roots: string[]) => {
+  const files: string[] = [];
+  const visit = async (relativeDirectory: string): Promise<void> => {
+    const entries = await readdir(path.join(repositoryRoot, relativeDirectory), {
+      withFileTypes: true
+    });
+    for (const entry of entries) {
+      const relativePath = path.join(relativeDirectory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(relativePath);
+      } else if (entry.isFile() && sourceExtensions.has(path.extname(entry.name))) {
+        files.push(relativePath.split(path.sep).join("/"));
+      }
+    }
+  };
+  await Promise.all(roots.map(visit));
+  return files.sort();
+};
 
 const main = async () => {
   const repositoryRoot = process.cwd();
@@ -45,12 +66,15 @@ const main = async () => {
     nodeEnv: "development"
   }), /Direct Postgres access/);
 
-  const localPreviewStoreImport = `${["@", "lib", "localPreviewStore"].join("/")}[\"']`;
-  const runtimeImporters = execFileSync(
-    "rg",
-    ["-l", localPreviewStoreImport, "app", "features", "lib", "scripts"],
-    { cwd: repositoryRoot, encoding: "utf8" }
-  ).trim().split("\n").filter(Boolean).sort();
+  const runtimeSourceFiles = await collectSourceFiles(repositoryRoot, ["app", "features", "lib", "scripts"]);
+  const runtimeSources = await Promise.all(runtimeSourceFiles.map(async (file) => ({
+    file,
+    source: await readFile(path.join(repositoryRoot, file), "utf8")
+  })));
+  const localPreviewStoreImport = /@\/lib\/localPreviewStore["']/;
+  const runtimeImporters = runtimeSources
+    .filter(({ source: candidate }) => localPreviewStoreImport.test(candidate))
+    .map(({ file }) => file);
   assert.deepEqual(runtimeImporters, [
     "app/api/auth/sync/route.ts",
     "app/api/bootstrap/route.ts",
@@ -69,13 +93,10 @@ const main = async () => {
     "scripts/localPersistenceRaceCheck.ts"
   ]);
 
-  const featureSearch = spawnSync(
-    "rg",
-    ["-l", "localPreviewStore", "features"],
-    { cwd: repositoryRoot, encoding: "utf8" }
-  );
-  assert.equal(featureSearch.status, 1, featureSearch.stderr || featureSearch.stdout);
-  assert.equal(featureSearch.stdout.trim(), "");
+  const featureImporters = runtimeSources
+    .filter(({ file, source: candidate }) => file.startsWith("features/") && candidate.includes("localPreviewStore"))
+    .map(({ file }) => file);
+  assert.deepEqual(featureImporters, []);
 
   const authSyncSource = await readFile(path.join(repositoryRoot, "app/api/auth/sync/route.ts"), "utf8");
   assert.ok(
