@@ -41,11 +41,9 @@ import {
 } from "react";
 import type {
   ConversationParticipantContract,
-  ConversationPageContract,
   ConversationSummaryContract,
   InquiryAttachmentContract,
-  MessageContract,
-  MessagePageContract
+  MessageContract
 } from "@/packages/contracts/src";
 import type { ResearchProfile } from "@/lib/mockData";
 import {
@@ -55,11 +53,7 @@ import {
 } from "@/lib/attachmentRules";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { profileInitials } from "@/features/identity/profilePresentation";
-import {
-  createClientMutationId,
-  SymposiumApiError,
-  symposiumApi
-} from "@/features/api/symposiumApiClient";
+import { createClientMutationId } from "@/features/api/symposiumApiClient";
 import {
   browserRecoveryCoordinator
 } from "@/features/recovery/browserRecoveryCoordinator";
@@ -78,13 +72,25 @@ import {
 import {
   createMessageDraftClientVersion,
   emptyMessageDraftState,
-  parseStoredMessageDraft,
   reduceMessageDraft,
   storedMessageDraftFromState,
   type MessageDraftAction,
-  type MessageDraftState,
-  type StoredMessageDraft
+  type MessageDraftState
 } from "@/features/messages/messageDraftState";
+import {
+  conversationDraftFromConflict,
+  messagingGateway,
+  missingMessagingResource,
+  retryableMessagingFailure,
+  type ConversationDraftSnapshot
+} from "@/features/messages/messagingGateway";
+import {
+  persistFailedMessageDraft,
+  readLocalMessageDraft,
+  removeLocalMessageDraft,
+  writeLocalMessageDraft,
+  type FailedSendDraft
+} from "@/features/messages/messageDraftStorage";
 import {
   attachmentMatchesMessageMediaKind,
   messageBodyLinks,
@@ -132,12 +138,6 @@ const mediaKinds: Array<{ id: MessageMediaKind; label: string; icon: ReactNode }
   { id: "starred", label: "Starred", icon: <Star size={14} /> }
 ];
 
-const withActor = (path: string, actorHandle: string) => {
-  const url = new URL(path, "https://symposium.invalid");
-  url.searchParams.set("actorHandle", actorHandle);
-  return `${url.pathname}?${url.searchParams.toString()}`;
-};
-
 const displayTime = (value: string) => {
   const date = new Date(value);
   const today = new Date();
@@ -162,36 +162,7 @@ const conversationName = (conversation: ConversationSummaryContract, actorHandle
     ? conversation.title ?? "Private group"
     : conversationPeer(conversation, actorHandle)?.name ?? "Direct message";
 
-const messageAttachmentUrl = (attachment: InquiryAttachmentContract, actorHandle: string) =>
-  attachment.url ?? `/api/message-attachments/${encodeURIComponent(attachment.id)}?actorHandle=${encodeURIComponent(actorHandle)}`;
-
-const localDraftKey = (actorHandle: string, conversationId: string) =>
-  `symposium:message-draft:${cleanHandle(actorHandle)}:${conversationId}`;
-
-const readLocalDraft = (actorHandle: string, conversationId: string) => {
-  try {
-    return parseStoredMessageDraft(window.localStorage.getItem(localDraftKey(actorHandle, conversationId)));
-  } catch {
-    return null;
-  }
-};
-
-const removeLocalDraft = (actorHandle: string, conversationId: string) => {
-  try {
-    window.localStorage.removeItem(localDraftKey(actorHandle, conversationId));
-  } catch {
-    // In-memory draft state remains usable when browser storage is unavailable.
-  }
-};
-
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Messaging could not sync.";
-const retryableMessagingFailure = (error: unknown) =>
-  !(error instanceof SymposiumApiError) ||
-  error.status === null ||
-  error.status === 408 ||
-  error.status === 425 ||
-  error.status === 429 ||
-  (error.status !== null && error.status >= 500);
 const messagingLiveEventKey = (event: MessagingLiveEvent) =>
   event.id ?? event.cursor ?? `${event.kind}:${event.subjectId}:${event.createdAt ?? "unknown"}`;
 
@@ -200,68 +171,8 @@ type PendingMessageAttachment = {
   previewUrl: string;
 };
 
-type FailedSendDraft = {
-  sequence: number;
-  body: string;
-  baseRevision: number;
-  updatedAt: string;
-};
-
 type MessageDraftSyncState = "idle" | "saving" | "saved" | "local";
 type MessageDraftStorageState = "available" | "memory-only";
-
-type ConversationDraftSnapshot = {
-  body: string;
-  revision: number;
-  clientVersion: string | null;
-  updatedAt: string | null;
-};
-
-const persistFailedMessageDraft = ({
-  actorHandle,
-  conversationId,
-  failures,
-  latestDraft
-}: {
-  actorHandle: string;
-  conversationId: string;
-  failures: FailedSendDraft[];
-  latestDraft?: ConversationDraftSnapshot;
-}) => {
-  const orderedFailures = [...failures].sort((left, right) => left.sequence - right.sequence);
-  const failedBody = orderedFailures.map((failure) => failure.body).filter(Boolean).join("\n");
-  if (!failedBody) return true;
-  const existing = readLocalDraft(actorHandle, conversationId);
-  const restored: StoredMessageDraft = {
-    version: 1,
-    body: [failedBody, existing?.body ?? ""].filter(Boolean).join("\n"),
-    clientVersion: createMessageDraftClientVersion(),
-    baseRevision: latestDraft?.revision ?? existing?.baseRevision ?? Math.max(1, ...orderedFailures.map((failure) => failure.baseRevision)),
-    updatedAt: new Date().toISOString(),
-    recovery: existing?.recovery ?? null
-  };
-  try {
-    window.localStorage.setItem(localDraftKey(actorHandle, conversationId), JSON.stringify(restored));
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const conversationDraftFromConflict = (error: unknown): ConversationDraftSnapshot | null => {
-  if (!(error instanceof SymposiumApiError) || error.status !== 409 || !error.payload || typeof error.payload !== "object") return null;
-  const draft = (error.payload as { draft?: unknown }).draft;
-  if (!draft || typeof draft !== "object") return null;
-  const value = draft as Partial<ConversationDraftSnapshot>;
-  if (
-    typeof value.body !== "string" ||
-    !Number.isSafeInteger(value.revision) ||
-    Number(value.revision) < 1 ||
-    (value.clientVersion !== null && typeof value.clientVersion !== "string") ||
-    (value.updatedAt !== null && typeof value.updatedAt !== "string")
-  ) return null;
-  return value as ConversationDraftSnapshot;
-};
 
 const revokePendingAttachment = (entry: PendingMessageAttachment) => {
   if (entry.previewUrl.startsWith("blob:")) URL.revokeObjectURL(entry.previewUrl);
@@ -269,10 +180,7 @@ const revokePendingAttachment = (entry: PendingMessageAttachment) => {
 
 const discardPendingAttachment = (entry: PendingMessageAttachment, actorHandle: string) => {
   revokePendingAttachment(entry);
-  return symposiumApi.request(`/api/attachments/${encodeURIComponent(entry.attachment.id)}?actorHandle=${encodeURIComponent(actorHandle)}`, {
-    method: "DELETE",
-    body: { actorHandle }
-  }).catch(() => undefined);
+  return messagingGateway.discardAttachment(entry.attachment.id, actorHandle).catch(() => undefined);
 };
 
 const pendingPreviewAttachments = (entries: PendingMessageAttachment[]) =>
@@ -281,7 +189,7 @@ const pendingPreviewAttachments = (entries: PendingMessageAttachment[]) =>
 const messagePreviewAttachments = (attachments: InquiryAttachmentContract[], actorHandle: string) =>
   attachments.map((attachment) => ({
     ...attachment,
-    url: messageAttachmentUrl(attachment, actorHandle)
+    url: messagingGateway.attachmentUrl(attachment, actorHandle)
   }));
 
 type MessageAttachmentPreview = {
@@ -329,7 +237,7 @@ function AttachmentTile({
   actorHandle: string;
   onPreview: () => void;
 }) {
-  const url = messageAttachmentUrl(attachment, actorHandle);
+  const url = messagingGateway.attachmentUrl(attachment, actorHandle);
   if (attachment.kind === "image") {
     return (
       <button className="message-attachment message-attachment-image" type="button" title={`Preview ${attachment.fileName}`} onClick={onPreview}>
@@ -651,8 +559,7 @@ function NewConversationPanel({
     setResults([]);
     setLoading(true);
     const timer = window.setTimeout(() => {
-      const parameters = new URLSearchParams({ q: term, limit: "40" });
-      void symposiumApi.request<{ profiles: Record<string, ResearchProfile> }>(`/api/profiles?${parameters.toString()}`, { cache: "no-store" })
+      void messagingGateway.searchProfiles(term)
         .then((data) => {
           if (cancelled) return;
           setResults(rankMessagePeople(Object.values(data.profiles), term, actorHandle));
@@ -804,8 +711,7 @@ function AddPeopleDialog({
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setLoading(true);
-      const parameters = new URLSearchParams({ q: term, limit: "40", actorHandle });
-      void symposiumApi.request<{ profiles: Record<string, ResearchProfile> }>(`/api/profiles?${parameters.toString()}`, { cache: "no-store" })
+      void messagingGateway.searchProfiles(term, 40, actorHandle)
         .then((data) => {
           if (cancelled) return;
           setResults(rankMessagePeople(Object.values(data.profiles).filter(eligible), term, actorHandle));
@@ -1067,10 +973,7 @@ export function MessagingExperience({
       })
     ) return;
     readReceiptInFlightRef.current = true;
-    void symposiumApi.request(`/api/conversations/${encodeURIComponent(conversationId)}/read`, {
-      method: "POST",
-      body: { actorHandle: actor.handle, sequence }
-    }).then(() => {
+    void messagingGateway.markRead(conversationId, actor.handle, sequence).then(() => {
       if (readReceiptConversationRef.current === conversationId && latestReadSequenceRef.current <= sequence) {
         latestReadSequenceRef.current = 0;
       }
@@ -1165,13 +1068,8 @@ export function MessagingExperience({
     if (!append) conversationListEpochRef.current = requestEpoch;
     const projectionEpoch = conversationProjectionEpochRef.current;
     const cursor = append ? conversationCursor : null;
-    const parameters = new URLSearchParams({ limit: quick ? "8" : "24" });
-    if (cursor) parameters.set("cursor", cursor);
     try {
-      const page = await symposiumApi.request<ConversationPageContract>(
-        withActor(`/api/conversations?${parameters.toString()}`, actor.handle),
-        { cache: "no-store" }
-      );
+      const page = await messagingGateway.listConversations(actor.handle, quick ? 8 : 24, cursor);
       if (requestEpoch !== conversationListEpochRef.current) return;
       const projectionChanged = projectionEpoch !== conversationProjectionEpochRef.current;
       setConversations((current) => projectionChanged
@@ -1205,13 +1103,13 @@ export function MessagingExperience({
     if (options.older && !messageCursor) return;
     if (options.older) setLoadingOlder(true);
     else if (!options.quiet) setConversationLoading(true);
-    const parameters = new URLSearchParams({ limit: quick ? "30" : "50" });
-    if (options.older && messageCursor) parameters.set("cursor", messageCursor);
     const priorScrollHeight = options.older ? historyRef.current?.scrollHeight ?? 0 : 0;
     try {
-      const page = await symposiumApi.request<MessagePageContract>(
-        withActor(`/api/conversations/${encodeURIComponent(conversationId)}/messages?${parameters.toString()}`, actor.handle),
-        { cache: "no-store" }
+      const page = await messagingGateway.getMessages(
+        conversationId,
+        actor.handle,
+        quick ? 30 : 50,
+        options.older ? messageCursor : null
       );
       if (requestEpoch !== conversationLoadEpochRef.current || selectedRef.current !== conversationId) return;
       if (
@@ -1223,7 +1121,7 @@ export function MessagingExperience({
       }
       setConversation(page.conversation);
       if (!draftServerHydratedRef.current) {
-        const local = readLocalDraft(actor.handle, conversationId);
+        const local = readLocalMessageDraft(actor.handle, conversationId);
         const hydratedDraft = applyDraftAction({
           type: "select",
           conversationId,
@@ -1279,10 +1177,7 @@ export function MessagingExperience({
     const requestActorHandle = actor.handle;
     const requestGeneration = sendSessionRef.current.generation;
     try {
-      const result = await symposiumApi.request<{ conversation: ConversationSummaryContract }>(
-        withActor(`/api/conversations/${encodeURIComponent(conversationId)}`, requestActorHandle),
-        { cache: "no-store" }
-      );
+      const result = await messagingGateway.getConversation(conversationId, requestActorHandle);
       if (
         conversationSummaryEpochRef.current.get(conversationId) !== requestEpoch ||
         sendSessionRef.current.actorHandle !== requestActorHandle ||
@@ -1314,7 +1209,7 @@ export function MessagingExperience({
         sendSessionRef.current.actorHandle !== requestActorHandle ||
         sendSessionRef.current.generation !== requestGeneration
       ) return;
-      if (loadError instanceof SymposiumApiError && loadError.status === 404) {
+      if (missingMessagingResource(loadError)) {
         conversationSummaryRetryAttemptsRef.current.delete(conversationId);
         conversationListEpochRef.current += 1;
         setConversations((current) => current.filter((entry) => entry.id !== conversationId));
@@ -1528,7 +1423,7 @@ export function MessagingExperience({
       ? (failedSendDraftsRef.current.get(failedConversationKey) ?? []).sort((left, right) => left.sequence - right.sequence)
       : [];
     const failedBody = failedDrafts.map((failure) => failure.body).filter(Boolean).join("\n");
-    const storedLocal = readLocalDraft(actor.handle, selectedConversationId);
+    const storedLocal = readLocalMessageDraft(actor.handle, selectedConversationId);
     const latestFailedDraft = failedConversationKey
       ? latestSendDraftRef.current.get(selectedConversationId) ?? latestSendDraftRef.current.get(failedConversationKey)
       : null;
@@ -1643,7 +1538,7 @@ export function MessagingExperience({
     const summary = conversations.find((entry) => entry.id === selectedConversationId);
     if (!summary) return;
     if (!draftServerHydratedRef.current) {
-      const local = readLocalDraft(actor.handle, selectedConversationId);
+      const local = readLocalMessageDraft(actor.handle, selectedConversationId);
       const hydratedDraft = applyDraftAction({
         type: "select",
         conversationId: selectedConversationId,
@@ -1685,16 +1580,13 @@ export function MessagingExperience({
       sendSessionRef.current.generation === requestGeneration;
     if (selectedRef.current === conversationId) setDraftSyncState("saving");
     try {
-      const saved = await symposiumApi.request<{
-        conflict?: false;
-        draft?: ConversationDraftSnapshot;
-        body?: string;
-        updatedAt?: string | null;
-      }>(`/api/conversations/${encodeURIComponent(conversationId)}/draft`, {
-        method: "PATCH",
-        idempotencyKey: createClientMutationId("message-draft-save"),
-        body: { actorHandle: requestActorHandle, body, expectedRevision, clientVersion }
-      });
+      const saved = await messagingGateway.saveDraft(
+        conversationId,
+        requestActorHandle,
+        body,
+        expectedRevision,
+        clientVersion
+      );
       if (!ownsDraftSurface()) return;
       draftRetryAttemptRef.current = 0;
       const savedDraft = saved.draft ?? {
@@ -1776,13 +1668,10 @@ export function MessagingExperience({
     if (draftRetryTimerRef.current !== null) window.clearTimeout(draftRetryTimerRef.current);
     draftRetryTimerRef.current = null;
     draftRetryAttemptRef.current = 0;
-    const storageKey = localDraftKey(actor.handle, selectedConversationId);
     const storedDraft = storedMessageDraftFromState(draftState);
-    try {
-      if (storedDraft) window.localStorage.setItem(storageKey, JSON.stringify(storedDraft));
-      else window.localStorage.removeItem(storageKey);
+    if (writeLocalMessageDraft(actor.handle, selectedConversationId, storedDraft)) {
       setDraftStorageState("available");
-    } catch {
+    } else {
       // The in-memory editor remains authoritative when browser storage is full or unavailable.
       setDraftStorageState("memory-only");
     }
@@ -1844,11 +1733,7 @@ export function MessagingExperience({
 
   const createGroup = async (title: string, handles: string[]) => {
     try {
-      const result = await symposiumApi.request<{ conversationId: string }>("/api/conversations/groups", {
-        method: "POST",
-        idempotencyKey: createClientMutationId("conversation-group"),
-        body: { actorHandle: actor.handle, title, inviteeHandles: handles }
-      });
+      const result = await messagingGateway.createGroup(actor.handle, title, handles);
       setNewConversationOpen(false);
       selectConversation(result.conversationId);
       await loadConversations(false);
@@ -1935,23 +1820,19 @@ export function MessagingExperience({
     setDraftSyncState("idle");
     setPendingAttachments([]);
     setAttachmentPreview(null);
-    removeLocalDraft(sendActorHandle, sendConversationId);
+    removeLocalMessageDraft(sendActorHandle, sendConversationId);
     const performSend = async () => {
       try {
         const directRecipient = !messageIdPattern.test(sendConversationId)
           ? cleanHandle(sendConversationId.replace(/^direct:/, ""))
           : undefined;
-        const data = await symposiumApi.request<{ message: MessageContract; draft?: ConversationDraftSnapshot }>("/api/messages", {
-          method: "POST",
-          idempotencyKey: createClientMutationId("message-send"),
-          body: {
-            actorHandle: sendActorHandle,
-            ...(directRecipient ? { recipientHandle: directRecipient } : { conversationId: sendConversationId }),
-            body: originalDraft.trim(),
-            attachmentIds,
-            draftRevision: originalDraftRevision,
-            draftClientVersion: originalDraftClientVersion
-          }
+        const data = await messagingGateway.sendMessage({
+          actorHandle: sendActorHandle,
+          ...(directRecipient ? { recipientHandle: directRecipient } : { conversationId: sendConversationId }),
+          body: originalDraft.trim(),
+          attachmentIds,
+          draftRevision: originalDraftRevision,
+          draftClientVersion: originalDraftClientVersion
         });
         const serverDraft = data.draft ?? {
           body: "",
@@ -2073,9 +1954,7 @@ export function MessagingExperience({
 
   const star = async (message: MessageContract) => {
     try {
-      await symposiumApi.request(`/api/conversations/${message.conversationId}/messages/${message.id}/star`, {
-        method: "POST", body: { actorHandle: actor.handle, active: !message.starred }
-      });
+      await messagingGateway.setStarred(message, actor.handle, !message.starred);
       markMessageProjectionChanged(message.conversationId);
       markConversationProjectionChanged(message.conversationId);
       const active = !message.starred;
@@ -2098,9 +1977,7 @@ export function MessagingExperience({
   const edit = async (message: MessageContract, body: string) => {
     if (!body || body === message.body) return true;
     try {
-      const data = await symposiumApi.request<{ message: MessageContract }>(`/api/conversations/${message.conversationId}/messages/${message.id}`, {
-        method: "PATCH", body: { actorHandle: actor.handle, body, expectedRevision: message.revision }
-      });
+      const data = await messagingGateway.editMessage(message, actor.handle, body);
       updateMessage(data.message);
       return true;
     } catch (actionError) {
@@ -2112,9 +1989,7 @@ export function MessagingExperience({
   const removeMessage = async (message: MessageContract, mode: "self" | "everyone") => {
     if (!window.confirm(mode === "everyone" ? "Unsend this message for everyone?" : "Delete this message for you?")) return;
     try {
-      const data = await symposiumApi.request<{ message?: MessageContract }>(`/api/conversations/${message.conversationId}/messages/${message.id}`, {
-        method: "DELETE", body: { actorHandle: actor.handle, mode, expectedRevision: mode === "everyone" ? message.revision : undefined }
-      });
+      const data = await messagingGateway.deleteMessage(message, actor.handle, mode);
       if (mode === "self") {
         markMessageProjectionChanged(message.conversationId);
         markConversationProjectionChanged(message.conversationId);
@@ -2131,9 +2006,7 @@ export function MessagingExperience({
   const changePreference = async (preference: { muted?: boolean; pinned?: boolean }) => {
     if (!conversation) return;
     try {
-      await symposiumApi.request(`/api/conversations/${conversation.id}/preferences`, {
-        method: "PATCH", body: { actorHandle: actor.handle, ...preference }
-      });
+      await messagingGateway.changePreferences(conversation.id, actor.handle, preference);
       const updated = { ...conversation, ...preference };
       markConversationProjectionChanged(conversation.id);
       setConversation(updated);
@@ -2146,13 +2019,13 @@ export function MessagingExperience({
   const clearChat = async () => {
     if (!conversation || !window.confirm("Clear all of this chat's current messages and attachments for you? This cannot be undone.")) return;
     try {
-      await symposiumApi.request(`/api/conversations/${conversation.id}/clear`, { method: "POST", body: { actorHandle: actor.handle } });
+      await messagingGateway.clearConversation(conversation.id, actor.handle);
       markMessageProjectionChanged(conversation.id);
       markConversationProjectionChanged(conversation.id);
       setMessages([]);
       setHistoryContextMessageId(null);
       applyDraftAction({ type: "clear", conversationId: conversation.id });
-      removeLocalDraft(actor.handle, conversation.id);
+      removeLocalMessageDraft(actor.handle, conversation.id);
       await loadConversations(false);
     } catch (actionError) { setError(errorText(actionError)); }
   };
@@ -2160,11 +2033,11 @@ export function MessagingExperience({
   const deleteChat = async () => {
     if (!conversation || !window.confirm("Delete this chat for you? It will stay hidden until you deliberately start a new connection.")) return;
     try {
-      await symposiumApi.request(`/api/conversations/${conversation.id}`, { method: "DELETE", body: { actorHandle: actor.handle } });
+      await messagingGateway.deleteConversation(conversation.id, actor.handle);
       conversationListEpochRef.current += 1;
       markConversationProjectionChanged(conversation.id);
       markMessageProjectionChanged(conversation.id);
-      removeLocalDraft(actor.handle, conversation.id);
+      removeLocalMessageDraft(actor.handle, conversation.id);
       setConversations((current) => current.filter((entry) => entry.id !== conversation.id));
       selectConversation(null);
       await loadConversations(false);
@@ -2186,7 +2059,7 @@ export function MessagingExperience({
     const active = !conversation?.blockedByViewer;
     if (active && !window.confirm(`Block ${currentPeer?.name ?? target}? They will not be able to message you directly or add you to groups. Messages in groups you already share will remain visible.`)) return;
     try {
-      await symposiumApi.request("/api/blocks", { method: "POST", body: { actorHandle: actor.handle, targetHandle: target, active } });
+      await messagingGateway.setBlocked(actor.handle, target, active);
       if (conversation) setConversation({ ...conversation, blockedByViewer: active });
     } catch (actionError) { setError(errorText(actionError)); }
   };
@@ -2202,9 +2075,13 @@ export function MessagingExperience({
     searchLoadEpochRef.current = requestEpoch;
     setSearchLoading(true);
     try {
-      const parameters = new URLSearchParams({ query: searchQuery.trim(), limit: "24" });
-      if (append && searchCursor) parameters.set("cursor", searchCursor);
-      const result = await symposiumApi.request<{ messages: MessageContract[]; nextCursor: string | null }>(withActor(`/api/conversations/${conversationId}/search?${parameters}`, actor.handle), { cache: "no-store" });
+      const result = await messagingGateway.searchMessages(
+        conversationId,
+        actor.handle,
+        searchQuery.trim(),
+        24,
+        append ? searchCursor : null
+      );
       if (requestEpoch !== searchLoadEpochRef.current || selectedRef.current !== conversationId) return;
       setSearchResults((current) => append && current
         ? [...current, ...result.messages.filter((message) => !current.some((entry) => entry.id === message.id))]
@@ -2229,12 +2106,7 @@ export function MessagingExperience({
     }
     try {
       const cursor = append && mediaKind === kind ? mediaCursor : null;
-      const parameters = new URLSearchParams({ limit: "24" });
-      if (cursor) parameters.set("cursor", cursor);
-      const endpoint = kind === "starred"
-        ? `/api/conversations/${conversationId}/starred?${parameters.toString()}`
-        : `/api/conversations/${conversationId}/search?kind=${encodeURIComponent(kind)}&${parameters.toString()}`;
-      const result = await symposiumApi.request<{ messages: MessageContract[]; nextCursor: string | null }>(withActor(endpoint, actor.handle), { cache: "no-store" });
+      const result = await messagingGateway.discoverMessages(conversationId, actor.handle, kind, 24, cursor);
       if (requestEpoch !== mediaLoadEpochRef.current || selectedRef.current !== conversationId) return;
       setMediaResults((current) => append
         ? [...current, ...result.messages.filter((message) => !current.some((entry) => entry.id === message.id))]
@@ -2254,10 +2126,7 @@ export function MessagingExperience({
   const addPeople = async (handles: string[]) => {
     if (!conversation || conversation.kind !== "group" || !handles.length) return false;
     try {
-      await symposiumApi.request(`/api/conversations/${conversation.id}/participants`, {
-        method: "POST",
-        body: { actorHandle: actor.handle, handles }
-      });
+      await messagingGateway.addParticipants(conversation.id, actor.handle, handles);
       await loadConversation(conversation.id, { quiet: true });
       return true;
     } catch (actionError) {
@@ -2278,9 +2147,7 @@ export function MessagingExperience({
     if (!conversation) return;
     if (role === "owner" && !window.confirm(`Transfer ownership of ${conversationName(conversation, actor.handle)} to ${handle}? You will remain an administrator.`)) return;
     try {
-      await symposiumApi.request(`/api/conversations/${conversation.id}/participants/${encodeURIComponent(handle)}`, {
-        method: "PATCH", body: { actorHandle: actor.handle, role }
-      });
+      await messagingGateway.updateParticipantRole(conversation.id, actor.handle, handle, role);
       await loadConversation(conversation.id, { quiet: true });
     } catch (actionError) { setError(errorText(actionError)); }
   };
@@ -2288,9 +2155,7 @@ export function MessagingExperience({
   const removeParticipant = async (handle: string, name: string) => {
     if (!conversation || !window.confirm(`Remove ${name} from this group? They will retain earlier history but receive no later messages.`)) return;
     try {
-      await symposiumApi.request(`/api/conversations/${conversation.id}/participants/${encodeURIComponent(handle)}`, {
-        method: "DELETE", body: { actorHandle: actor.handle }
-      });
+      await messagingGateway.removeParticipant(conversation.id, actor.handle, handle);
       setConversation((current) => current?.id === conversation.id ? withoutConversationParticipant(current, handle) : current);
       setConversations((current) => current.map((entry) => entry.id === conversation.id ? withoutConversationParticipant(entry, handle) : entry));
       await loadConversation(conversation.id, { quiet: true });
@@ -2301,11 +2166,8 @@ export function MessagingExperience({
     if (!conversation || conversation.kind !== "group" || conversation.role === "owner") return;
     if (!window.confirm(`Leave ${conversationName(conversation, actor.handle)}? You will need to be added again to rejoin.`)) return;
     try {
-      await symposiumApi.request(`/api/conversations/${conversation.id}/leave`, {
-        method: "POST",
-        body: { actorHandle: actor.handle }
-      });
-      removeLocalDraft(actor.handle, conversation.id);
+      await messagingGateway.leaveConversation(conversation.id, actor.handle);
+      removeLocalMessageDraft(actor.handle, conversation.id);
       selectConversation(null);
       await loadConversations(false);
     } catch (actionError) { setError(errorText(actionError)); }
@@ -2332,10 +2194,7 @@ export function MessagingExperience({
       conversationLoadEpochRef.current = requestEpoch;
       const projectionEpoch = messageProjectionEpochByConversationRef.current.get(conversationId) ?? 0;
       try {
-        const page = await symposiumApi.request<MessagePageContract>(
-          withActor(`/api/conversations/${conversationId}/messages/${messageId}/context`, actor.handle),
-          { cache: "no-store" }
-        );
+        const page = await messagingGateway.getMessageContext(conversationId, messageId, actor.handle);
         if (requestEpoch !== conversationLoadEpochRef.current || selectedRef.current !== conversationId) return;
         const latestProjectionEpoch = messageProjectionEpochByConversationRef.current.get(conversationId) ?? 0;
         if (projectionEpoch !== latestProjectionEpoch && attempt < 2) {

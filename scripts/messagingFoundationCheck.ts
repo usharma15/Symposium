@@ -390,6 +390,9 @@ const main = async () => {
   const attachmentRoutes = readFileSync("apps/api/src/routes/attachmentRoutes.ts", "utf8");
   const attachmentClient = readFileSync("features/attachments/attachmentUploadClient.ts", "utf8");
   const client = readFileSync("features/messages/MessagesSection.tsx", "utf8");
+  const gateway = readFileSync("features/messages/messagingGateway.ts", "utf8");
+  const draftStorage = readFileSync("features/messages/messageDraftStorage.ts", "utf8");
+  const messageAuthority = [client, gateway, draftStorage].join("\n");
   const unreadButton = readFileSync("features/messages/MessagesUnreadButton.tsx", "utf8");
   const eventRoutes = readFileSync("apps/api/src/routes/eventRoutes.ts", "utf8");
   const events = readFileSync("apps/api/src/services/events.ts", "utf8");
@@ -459,7 +462,7 @@ const main = async () => {
   assert.match(migration, /WHERE status = 'invited'/);
   assert.match(migration, /DELETE FROM notifications WHERE kind = 'group_invite'/);
   assert.match(client, /Math\.min\(textarea\.scrollHeight, 288\)/);
-  assert.match(client, /symposium:message-draft/);
+  assert.match(messageAuthority, /symposium:message-draft/);
   assert.match(client, /preserveLocal: draftStateRef\.current\.dirty/);
   assert.match(client, /draftSaveTimerRef/);
   assert.match(client, /conversationLoadEpochRef/);
@@ -469,7 +472,7 @@ const main = async () => {
   assert.match(client, /loadConversationSummary\(conversationId\)/);
   assert.match(client, /mergeConversationPageAfterProjectionChange/);
   assert.match(client, /projectionEpoch !== \(messageProjectionEpochByConversationRef\.current\.get\(conversationId\) \?\? 0\)/);
-  assert.match(client, /message-draft-save/);
+  assert.match(messageAuthority, /message-draft-save/);
   assert.match(client, /draftRetryAttemptRef/);
   assert.match(client, /Held in this tab · cloud sync pending/);
   assert.match(client, /setSearchResults\(\(current\) => current\?\.map\(updateStar\) \?\? current\)/);
@@ -481,7 +484,7 @@ const main = async () => {
   assert.match(client, /liveEvent\.kind === "conversation\.draft\.updated" \|\| liveEvent\.kind === "conversation\.read"/);
   assert.match(client, /Transfer ownership/);
   assert.match(client, /Leave group/);
-  assert.match(client, /messages\/\$\{messageId\}\/context/);
+  assert.match(messageAuthority, /messages\/\$\{messageId\}\/context/);
   assert.match(client, /Return to latest/);
   assert.match(client, /className="message-attachment message-attachment-video"/);
   assert.doesNotMatch(client, /\}, 80\)/);

@@ -204,6 +204,18 @@ const main = async () => {
     path.join(root, "features/live-sync/useCrossTabItemTransport.ts"),
     "utf8"
   );
+  const messagingViewSource = await readFile(
+    path.join(root, "features/messages/MessagesSection.tsx"),
+    "utf8"
+  );
+  const messagingGatewaySource = await readFile(
+    path.join(root, "features/messages/messagingGateway.ts"),
+    "utf8"
+  );
+  const messageDraftStorageSource = await readFile(
+    path.join(root, "features/messages/messageDraftStorage.ts"),
+    "utf8"
+  );
   assert.match(
     symposiumSource,
     /useSymposiumViewController/,
@@ -248,6 +260,40 @@ const main = async () => {
     symposiumSource,
     /fetch\(\s*["'`]\/api\//,
     "Same-origin API request semantics must remain owned by features/api."
+  );
+  assert.match(
+    messagingViewSource,
+    /messagingGateway/,
+    "Messaging presentation must consume the typed Messaging transport authority."
+  );
+  assert.doesNotMatch(
+    messagingViewSource,
+    /\bsymposiumApi\.(?:request|configure)|["'`]\/api\//,
+    "Messaging presentation must not construct raw API requests or route paths."
+  );
+  assert.doesNotMatch(
+    messagingViewSource,
+    /localStorage|symposium:message-draft/,
+    "Messaging presentation must not own browser draft persistence."
+  );
+  for (const operation of [
+    "listConversations",
+    "getMessages",
+    "saveDraft",
+    "sendMessage",
+    "searchMessages",
+    "discoverMessages",
+    "getMessageContext"
+  ]) {
+    assert.ok(
+      messagingGatewaySource.includes(operation),
+      `${operation} must remain owned by the Messaging gateway.`
+    );
+  }
+  assert.match(
+    messageDraftStorageSource,
+    /symposium:message-draft/,
+    "Browser message draft persistence must remain owned by messageDraftStorage."
   );
   assert.match(
     symposiumSource,
