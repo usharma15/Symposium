@@ -130,6 +130,55 @@ test.describe("returning browser session", () => {
     clean();
   });
 
+  test("keeps profile activity, social navigation, and follow state authoritative across reload", async ({ page }) => {
+    const clean = watchDiagnostics(page);
+    const profileActivityResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "GET"
+        && url.pathname.startsWith("/api/profiles/")
+        && url.pathname.endsWith("/activity");
+    });
+    await page.goto("/profiles/plato");
+    expect((await profileActivityResponse).ok()).toBe(true);
+    await expect(page.getByRole("heading", { name: "Plato" })).toBeVisible();
+    await expect(page.locator('section[aria-label="Plato profile feed"]')).toHaveAttribute("aria-busy", "false");
+
+    const activityTotals = page.locator('[aria-label="Plato activity totals"]');
+    await activityTotals.getByText("Likes", { exact: true }).click();
+    await expect(page).toHaveURL(/\/profiles\/plato\/likes$/);
+    await expect(activityTotals.locator("a.active")).toContainText("Likes");
+
+    const socialGraph = page.locator('[aria-label="Plato social graph"]');
+    await socialGraph.getByText("Followers", { exact: true }).click();
+    await expect(page).toHaveURL(/\/profiles\/plato\/followers$/);
+    await expect(page.locator('section[aria-label="Followers"]')).toBeVisible();
+    await page.getByRole("button", { name: "Close" }).click();
+
+    const followButton = page.getByRole("button", { name: "Follow", exact: true });
+    const followResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "POST"
+        && url.pathname.endsWith("/follow");
+    });
+    await followButton.click();
+    expect((await followResponse).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Following", exact: true })).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Plato" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Following", exact: true })).toBeVisible();
+
+    const unfollowResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "DELETE"
+        && url.pathname.endsWith("/follow");
+    });
+    await page.getByRole("button", { name: "Following", exact: true }).click();
+    expect((await unfollowResponse).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Follow", exact: true })).toBeVisible();
+    clean();
+  });
+
   test("creates, edits, and durably reloads a titleless Thought", async ({ page, browser }) => {
     const clean = watchDiagnostics(page);
     const initial = "Browser proof: titleless Thought creation persists.";

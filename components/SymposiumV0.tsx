@@ -12,7 +12,6 @@ import {
   UserRound
 } from "lucide-react";
 import {
-  getProfileForName,
   inquiryItems,
   profile,
   rooms,
@@ -21,22 +20,16 @@ import {
   type InquiryAttachment,
   type InquiryComment,
   type InquiryItem,
-  type ResearchCommunity,
   type ResearchProfile,
   type RoomId
 } from "@/lib/mockData";
-import type { CommentAction, PostAction } from "@/lib/dataStore";
+import type { PostAction } from "@/lib/dataStore";
 import type {
   AssistantMessageInputContract,
-  CanonicalActionActivityContract,
   OpportunityPostInputContract,
   PatronageProposalInputContract,
   PostPageQueryContract,
-  ProfileActivityCountsContract,
-  ProfileAuthoredCommentActivityContract,
-  ProfileActivityResponseContract,
   SearchResponseContract,
-  ToggleActionContract,
   VersionedDocumentContract
 } from "@/packages/contracts/src";
 import {
@@ -48,29 +41,11 @@ import {
   normalizeSearchPhrase
 } from "@/lib/symposiumCore";
 import {
-  applyProfileActivityActionTotalTransition,
-  canonicalActionState,
-  canonicalActivityKey,
-  createLocalCanonicalActivity,
   emptyProfileActivityCounts,
-  isCanonicalActionActivity,
-  mergeCanonicalActivities,
-  profileItemIsInActivityScope,
-  reconcileCanonicalActivityRefresh
+  isCanonicalActionActivity
 } from "@/lib/profileActivity";
-import {
-  isCrossTabItemMessage,
-  type CrossTabItemMessage
-} from "@/features/live-sync/crossTabItemSync";
-import { createItemMutationCoordinator } from "@/features/mutations/itemMutationCoordinator";
-import { compareEntityRevisions } from "@/features/live-sync/entityRevision";
-import {
-  createFollowMutationCoordinator,
-  type RevisionedFollowRecord
-} from "@/features/live-sync/followMutationCoordinator";
 import { useCrossTabItemTransport } from "@/features/live-sync/useCrossTabItemTransport";
 import { useLiveEventStream } from "@/features/live-sync/useLiveEventStream";
-import { useCoalescedRefresh } from "@/features/live-sync/useCoalescedRefresh";
 import {
   contentAnalyticsInvalidationFromLiveEvent,
   contentAnalyticsSyncChannel,
@@ -87,7 +62,6 @@ import {
 import {
   createClientMutationId,
   createRetryMutationRegistry,
-  shouldRetainRetryMutation,
   symposiumApi
 } from "@/features/api/symposiumApiClient";
 import {
@@ -105,8 +79,6 @@ import {
   type ViewSnapshot
 } from "@/features/navigation/viewState";
 import { useSymposiumViewController } from "@/features/navigation/useSymposiumViewController";
-import { selectActiveProfile } from "@/features/identity/selectActiveProfile";
-import { persistCachedIdentity, readCachedIdentity } from "@/features/identity/cachedIdentity";
 import { useInquiryController } from "@/features/inquiry/useInquiryController";
 import {
   buildPostAttachmentMetadata,
@@ -166,20 +138,22 @@ import { selectVisibleFeedItems } from "@/features/feeds/feedVisibility";
 import {
   ProfileSettingsModal,
   ProfileView,
-  commentTimestampScore,
-  type ProfileActivityKind,
-  type ProfileCommentActivityKind,
-  type ProfileSettingsDraft,
-  type ProfileSocialLists,
   type ProfileTab
 } from "@/features/profiles/ProfileViews";
-import { profileAvatarForPersistence } from "@/features/profiles/profilePersistence";
 import {
-  persistCachedProfileActivity,
-  persistCachedProfileSocial,
-  readCachedProfileActivity,
-  readCachedProfileSocial
-} from "@/features/profiles/profileReadCache";
+  profileActivityActionsForScope,
+  profileActivityScopeIncludesComments,
+  profileTabUsesAuthoredPosts
+} from "@/features/profiles/profileActivityModel";
+import type { ProfileSettingsDraft } from "@/features/profiles/profileTypes";
+import type {
+  ProfileEnvironmentPort,
+  ProfileInquiryPort
+} from "@/features/profiles/profileControllerPorts";
+import {
+  useProfileController,
+  type ProfileFollowRecord
+} from "@/features/profiles/useProfileController";
 import {
   CommunitiesStage
 } from "@/features/communities/CommunityViews";
@@ -205,10 +179,7 @@ import {
   resolvePresentedEntryMode,
   shouldCompleteEntryAfterAccountSync
 } from "@/features/entrance/browserSession";
-import {
-  cachedBootstrapItemLimit,
-  readCachedBootstrapSnapshot
-} from "@/features/bootstrap/cachedBootstrap";
+import { cachedBootstrapItemLimit } from "@/features/bootstrap/cachedBootstrap";
 import {
   assistantBackdropRender,
   communityRenders,
@@ -226,15 +197,10 @@ type EditingCommentTarget = {
   commentId: string;
 };
 
-type ProfileFollowRecord = RevisionedFollowRecord;
 type SearchResults = {
   titleMatches: InquiryItem[];
   contentMatches: InquiryItem[];
   profileMatches: ResearchProfile[];
-};
-type ProfileFollowResponse = {
-  following?: ProfileFollowRecord[];
-  followers?: ProfileFollowRecord[];
 };
 
 type AttachmentPreviewTarget = {
@@ -243,7 +209,6 @@ type AttachmentPreviewTarget = {
   attachmentId: string;
 };
 
-type ProfileSyncEntity = ResearchProfile & { id: string };
 type LiveEventPayload = {
   [key: string]: unknown;
   item?: unknown;
@@ -257,55 +222,6 @@ type LiveEventPayload = {
   metrics?: Partial<InquiryItem["metrics"]>;
   revision?: number;
 };
-
-type ProfileActivityPageScope = "all" | "comments" | "reshares" | "likes" | "saved";
-type ProfileActivityPageState = {
-  loaded: boolean;
-  loading: boolean;
-  nextCursor: string | null;
-  commentsNextCursor: string | null;
-  stale?: boolean;
-};
-type ProfileActivitySnapshot = {
-  entries: CanonicalActionActivityContract[];
-  loaded: boolean;
-  nextCursor: string | null;
-  pages: Partial<Record<ProfileActivityPageScope, ProfileActivityPageState>>;
-  hiddenCommunityCounts: ProfileActivityCountsContract;
-  totals?: ProfileActivityCountsContract;
-};
-
-const profileActivityScopeForTab = (tab: ProfileTab): ProfileActivityPageScope => {
-  if (tab === "comments" || tab === "reshares" || tab === "likes" || tab === "saved") return tab;
-  return "all";
-};
-
-const profileActivityActionsForScope = (scope: ProfileActivityPageScope): ToggleActionContract[] => {
-  if (scope === "likes") return ["signal"];
-  if (scope === "saved") return ["save"];
-  if (scope === "reshares" || scope === "all") return ["fork"];
-  return [];
-};
-
-const profileActivityCommentModeForScope = (scope: ProfileActivityPageScope): "all" | "none" => {
-  if (scope === "all" || scope === "comments") return "all";
-  return "none";
-};
-
-const profileActivityScopeIncludesComments = (scope: ProfileActivityPageScope) =>
-  profileActivityCommentModeForScope(scope) !== "none";
-
-const profileTabUsesAuthoredPosts = (tab: ProfileTab) =>
-  tab === "all" || tab === "papers" || tab === "thoughts" || tab === "proposals" ||
-  tab === "opportunities" || tab === "reshares";
-
-const emptyProfileActivitySnapshot = (): ProfileActivitySnapshot => ({
-  entries: [],
-  loaded: false,
-  nextCursor: null,
-  pages: {},
-  hiddenCommunityCounts: emptyProfileActivityCounts()
-});
 
 type SymposiumLiveEvent = {
   id?: string;
@@ -411,12 +327,6 @@ const isLiveResearchProfile = (value: unknown): value is ResearchProfile =>
   typeof (value as ResearchProfile).handle === "string" &&
   typeof (value as ResearchProfile).name === "string" &&
   Array.isArray((value as ResearchProfile).fields);
-
-const isCrossTabProfileMessage = (value: unknown): value is CrossTabItemMessage<ProfileSyncEntity> =>
-  isCrossTabItemMessage<ProfileSyncEntity>(value);
-
-const profileSyncEntity = (person: ResearchProfile): ProfileSyncEntity => ({ ...person, id: person.handle });
-const researchProfileFromSyncEntity = ({ id: _id, ...person }: ProfileSyncEntity): ResearchProfile => person;
 
 const localPreviewAuth: SymposiumAuthState = {
   clerkEnabled: false,
@@ -546,10 +456,40 @@ function SymposiumExperience({
     selectedProfileName,
     workspaceView
   } = viewState;
-  const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
-  const [currentProfile, setCurrentProfile] = useState<ResearchProfile>(profile);
-  const [followingHandles, setFollowingHandles] = useState<string[]>([]);
-  const [profileSocialLists, setProfileSocialLists] = useState<Record<string, ProfileSocialLists>>({});
+  const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
+  const [authError, setAuthError] = useState("");
+  const retryMutationRegistryRef = useRef(createRetryMutationRegistry());
+  const profileEnvironmentRef = useRef<ProfileEnvironmentPort | null>(null);
+  const profileInquiryRef = useRef<ProfileInquiryPort | null>(null);
+  const profileController = useProfileController({
+    activeTab: profileActiveTab,
+    environmentRef: profileEnvironmentRef,
+    inquiryRef: profileInquiryRef,
+    localPreview: !liveBackendUrl,
+    onStatus: setSyncStatus,
+    readsEnabled: entryMode === "complete" && readSessionReady,
+    retryMutation: {
+      acquire: (scope, fingerprint) =>
+        retryMutationRegistryRef.current.acquire(scope, fingerprint),
+      clear: (fingerprintKey) =>
+        retryMutationRegistryRef.current.clear(fingerprintKey)
+    },
+    selectedProfileName,
+    socialHydrationEnabled:
+      signedIn ||
+      (!clerkEnabled && entryMode === "complete" && readSessionReady)
+  });
+  const {
+    activity: profileActivity,
+    currentProfile,
+    currentProfileRef,
+    followingHandles,
+    profiles,
+    profilesRef,
+    selectedProfile,
+    selectedProfileHandle,
+    socialLists: profileSocialLists
+  } = profileController;
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
   const [communitiesExpanded, setCommunitiesExpanded] = useState(false);
   const [communityQuery, setCommunityQuery] = useState("");
@@ -567,6 +507,15 @@ function SymposiumExperience({
     selectedCommunityFeedView,
     setSelectedCommunityFeedView
   } = useCommunityState(currentProfile.handle, selectedCommunityId);
+  profileEnvironmentRef.current = {
+    applyBootstrap: ({ communities: incomingCommunities, communityCalls: incomingCalls }) => {
+      if (incomingCommunities?.length) {
+        communitiesRef.current = incomingCommunities;
+        setCommunities(incomingCommunities);
+      }
+      if (incomingCalls) setCommunityCalls(incomingCalls);
+    }
+  };
   const [tabletOpen, setTabletOpen] = useState(initialRoute.kind === "assistant");
   const [assistantOriginContext, setAssistantOriginContext] = useState<
     NonNullable<AssistantMessageInputContract["context"]> | null
@@ -593,41 +542,17 @@ function SymposiumExperience({
   const [searchLoading, setSearchLoading] = useState(false);
   const [communitySearchResultIds, setCommunitySearchResultIds] = useState<string[] | null>(null);
   const [communitySearchLoading, setCommunitySearchLoading] = useState(false);
-  const [profileActivityRevision, setProfileActivityRevision] = useState(0);
-  const [profileActivityByHandle, setProfileActivityByHandle] = useState<
-    Record<string, ProfileActivitySnapshot>
-  >({});
-  const [profileActivityErrors, setProfileActivityErrors] = useState<Record<string, boolean>>({});
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [editingComment, setEditingComment] = useState<EditingCommentTarget | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewTarget | null>(null);
   const [postAttachmentViewContext, setPostAttachmentViewContext] = useState<PdfAttachmentViewContext | null>(null);
   const [attachmentPreviewViewContext, setAttachmentPreviewViewContext] = useState<PdfAttachmentViewContext | null>(null);
-  const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
-  const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
-  const [authError, setAuthError] = useState("");
-  const profilesRef = useRef(profiles);
-  const currentProfileRef = useRef(currentProfile);
-  const selectedProfileNameRef = useRef(selectedProfileName);
   const selectedItemIdRef = useRef(selectedItemId);
   const selectedItemFallbackRef = useRef<InquiryItem | null>(null);
   const selectedCommentIdRef = useRef(selectedCommentId);
   const connectionSyncStatusRef = useRef<string>(liveStatus.loading);
   const commentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const visibleCommentSegmentStacksRef = useRef<CommentSegmentStacks>({});
-  const activityRecencyRef = useRef(activityRecency);
-  const profileActivityByHandleRef = useRef(profileActivityByHandle);
-  const profileActivityInFlightRef = useRef<Record<string, Promise<void> | undefined>>({});
-  const canonicalActionRevisionRef = useRef<Record<string, number>>({});
-  const pendingCanonicalActionKeysRef = useRef(new Set<string>());
-  const profileActivityRequestRef = useRef<Record<string, number>>({});
-  const profileActivityCacheHydrationRef = useRef(new Set<string>());
-  const retryMutationRegistryRef = useRef(createRetryMutationRegistry());
-  const pendingActivityRecencyRef = useRef<Record<string, number>>({});
-  const profileMutationCoordinatorRef = useRef(createItemMutationCoordinator<ProfileSyncEntity>());
-  const followMutationCoordinatorRef = useRef(createFollowMutationCoordinator());
-  const lastPersistedProfilesRef = useRef<ProfileSyncEntity[]>([]);
-  const authenticatedProfileHandleRef = useRef<string | null>(null);
   const entranceStartedAtRef = useRef<number | null>(null);
   const entryModeRef = useRef(entryMode);
   entryModeRef.current = entryMode;
@@ -648,21 +573,24 @@ function SymposiumExperience({
         retryMutationRegistryRef.current.clear(fingerprintKey)
     },
     activity: {
-      acceptCanonical: (activity) => acceptCanonicalActivity(activity),
-      committed: (...args) => canonicalActionWasCommitted(...args),
+      acceptCanonical: profileActivity.acceptCanonical,
+      committed: profileActivity.committed,
       finishWithoutCanonical: (subjectType, subjectId, actorHandle, action) =>
-        pendingCanonicalActionKeysRef.current.delete(
-          canonicalActivityKey({ subjectType, subjectId, actorHandle, action })
+        profileActivity.finishWithoutCanonical(
+          subjectType,
+          subjectId,
+          actorHandle,
+          action
         ),
-      restore: (...args) => restoreOptimisticCanonicalActivity(...args),
-      stage: (...args) => stageOptimisticCanonicalActivity(...args),
-      touchComment: (...args) => touchProfileCommentAction(...args),
-      touchPost: (...args) => touchProfileAction(...args)
+      restore: profileActivity.restore,
+      stage: profileActivity.stage,
+      touchComment: profileActivity.touchComment,
+      touchPost: profileActivity.touchPost
     },
-    onProfilesDiscovered: (incoming) => mergeDiscoveredProfiles(incoming),
+    onProfilesDiscovered: profileController.mergeDiscoveredProfiles,
     onStaleLiveState: () => scheduleLiveRefresh(),
     onStatus: setSyncStatus,
-    onTouchItem: (itemId) => touchActivity(itemId),
+    onTouchItem: profileActivity.touchItem,
     clearPostEditor: () => setEditingPost(null),
     clearCommentEditor: (itemId, commentId) =>
       setEditingComment((current) =>
@@ -677,6 +605,23 @@ function SymposiumExperience({
     items,
     itemsRef
   } = inquiryController;
+  profileInquiryRef.current = {
+    beginRefresh: () => {
+      const snapshot = inquiryController.captureRefresh();
+      return (incomingItems, actorHandle) => {
+        inquiryController.commitRefresh(incomingItems, actorHandle, snapshot);
+      };
+    },
+    findItem: (itemId) =>
+      itemsRef.current.find((candidate) => candidate.id === itemId),
+    hydrateCachedSnapshot: inquiryController.hydrateCachedSnapshot,
+    loadPostPage: inquiryController.loadPostPage,
+    loadPostSubjects: inquiryController.loadPostSubjects,
+    mergeBoundedRead: (data, options) =>
+      inquiryController.mergeBoundedRead(data, options),
+    persistSnapshot: inquiryController.persistSnapshot,
+    projectProfile: inquiryController.projectProfile
+  };
   const closeAttachmentPreview = useDedicatedAttachmentViewer(items, setAttachmentPreview);
 
   const activeRoomData = getRoom(activeRoom);
@@ -737,35 +682,13 @@ function SymposiumExperience({
     : undefined;
   const resolveComposerQuoteLink: QuoteLinkResolver = (link, owner) =>
     resolveQuoteLink(itemsRef.current, link, owner);
+  const selectedProfileActivityScope = profileActivity.selectedScope;
+  const selectedProfileActivitySnapshot = profileActivity.selectedSnapshot;
+  const selectedProfileActivityPage = profileActivity.selectedPage;
+  const findProfile = profileController.findProfile;
   const profileList = useMemo(() => Object.values(profiles), [profiles]);
-  const findProfile = (nameOrHandle: string) =>
-    profileList.find((person) => person.handle === nameOrHandle) ??
-    profileList.find((person) => person.name === nameOrHandle) ??
-    getProfileForName(nameOrHandle);
-  const selectedProfile = selectedProfileName ? findProfile(selectedProfileName) : null;
-  const selectedProfileHandle = selectedProfileName
-    ? selectedProfile?.handle ?? cleanHandle(selectedProfileName)
-    : null;
-  const selectedProfileActivityScope = profileActivityScopeForTab(profileActiveTab);
-  const selectedProfileActivitySnapshot = selectedProfileHandle
-    ? profileActivityByHandle[selectedProfileHandle]
-    : undefined;
-  const selectedProfileActivityPage = selectedProfileActivitySnapshot?.pages[selectedProfileActivityScope];
 
   useSymposiumRenderPreload(themePreloadRenders, activeShellRender);
-
-
-  useEffect(() => {
-    profilesRef.current = profiles;
-  }, [profiles]);
-
-  useEffect(() => {
-    profileActivityByHandleRef.current = profileActivityByHandle;
-  }, [profileActivityByHandle]);
-
-  useEffect(() => {
-    currentProfileRef.current = currentProfile;
-  }, [currentProfile]);
 
   useEffect(() => {
     if (isPersistentSyncStatus(syncStatus)) {
@@ -788,11 +711,6 @@ function SymposiumExperience({
     );
   };
 
-
-  useEffect(() => {
-    selectedProfileNameRef.current = selectedProfileName;
-  }, [selectedProfileName]);
-
   useEffect(() => {
     selectedItemIdRef.current = selectedItemId;
   }, [selectedItemId]);
@@ -805,37 +723,7 @@ function SymposiumExperience({
     commentSegmentStacksRef.current = commentSegmentStacks;
   }, [commentSegmentStacks]);
 
-  useEffect(() => {
-    activityRecencyRef.current = activityRecency;
-  }, [activityRecency]);
-
   const getPublishedRecency = (item: InquiryItem) => itemTimestampScore(item);
-  const profileActivityKey = (handle: string, action: PostAction, itemId: string) =>
-    `profile:${cleanHandle(handle)}:${action}:${itemId}`;
-  const profileCommentActivityKey = (
-    handle: string,
-    action: Exclude<ProfileCommentActivityKind, "comments">,
-    itemId: string,
-    commentId: string
-  ) => `profile:${cleanHandle(handle)}:${action}:${itemId}:comment:${commentId}`;
-  const getProfileRecency = (item: InquiryItem, handle: string, kind: ProfileActivityKind) => {
-    if (kind === "authored") return getPublishedRecency(item);
-    if (kind === "comments") return activityRecency[item.id] ?? getPublishedRecency(item);
-    return activityRecency[profileActivityKey(handle, kind, item.id)] ?? getPublishedRecency(item);
-  };
-  const getProfileCommentRecency = (
-    item: InquiryItem,
-    comment: InquiryComment,
-    handle: string,
-    kind: ProfileCommentActivityKind
-  ) => {
-    if (kind === "comments" || !comment.id) {
-      return commentTimestampScore(comment) || getPublishedRecency(item);
-    }
-
-    const fallbackRecency = commentTimestampScore(comment) || getPublishedRecency(item);
-    return activityRecency[profileCommentActivityKey(handle, kind, item.id, comment.id)] ?? fallbackRecency;
-  };
   const sortByPublishedRecency = (nextItems: InquiryItem[]) =>
     [...nextItems].sort((a, b) => getPublishedRecency(b) - getPublishedRecency(a));
 
@@ -885,49 +773,6 @@ function SymposiumExperience({
     };
   }, [activeRoom, feedScope, officeMode, selectedCommunityId]);
 
-  const persistProfileSnapshot = (
-    broadcastProfileHandles: string[] = []
-  ) => {
-    inquiryController.persistSnapshot();
-    const profileEntities = Object.values(profilesRef.current).map(profileSyncEntity);
-    const profileMessages = profileMutationCoordinatorRef.current.publishChanges(
-      profileEntities,
-      lastPersistedProfilesRef.current,
-      broadcastProfileHandles
-    );
-    lastPersistedProfilesRef.current = profileEntities;
-    for (const message of profileMessages) {
-      publishCrossTabProfile(message);
-    }
-  };
-
-  const publishCrossTabProfile = useCrossTabItemTransport<CrossTabItemMessage<ProfileSyncEntity>>({
-    channelName: "symposium-profile-sync-v1",
-    isMessage: isCrossTabProfileMessage,
-    onMessage: (message) => {
-      const currentEntities = Object.values(profilesRef.current).map(profileSyncEntity);
-      const received = profileMutationCoordinatorRef.current.receive(message, currentEntities);
-      if (!received.accepted) return;
-      const nextProfiles = Object.fromEntries(
-        received.items.map((entity) => [entity.handle, researchProfileFromSyncEntity(entity)])
-      );
-      const currentHandle = currentProfileRef.current.handle;
-      const previousCurrent = profilesRef.current[currentHandle];
-      const nextCurrent = nextProfiles[currentHandle] ?? currentProfileRef.current;
-      profilesRef.current = nextProfiles;
-      currentProfileRef.current = nextCurrent;
-      setProfiles(nextProfiles);
-      setCurrentProfile(nextCurrent);
-      lastPersistedProfilesRef.current = received.items;
-
-      if (JSON.stringify(previousCurrent) !== JSON.stringify(nextCurrent)) {
-        inquiryController.projectProfile(nextCurrent, { persist: false });
-      }
-      inquiryController.persistSnapshot();
-    },
-    storageKey: "symposium-cross-tab-profile"
-  });
-
   const publishContentAnalyticsInvalidation =
     useCrossTabItemTransport<ContentAnalyticsInvalidation>({
       channelName: contentAnalyticsSyncChannel,
@@ -935,152 +780,6 @@ function SymposiumExperience({
       onMessage: dispatchContentAnalyticsInvalidation,
       storageKey: contentAnalyticsSyncStorageKey
     });
-
-  useEffect(() => {
-    const handleStorage = (event: StorageEvent) => {
-      if (!event.key || !event.newValue) return;
-      if (
-        event.key.startsWith("symposium-following-") &&
-        !event.key.startsWith("symposium-following-lease:")
-      ) {
-        const handle = event.key.slice("symposium-following-".length);
-        try {
-          const storedHandles = (JSON.parse(event.newValue) as string[]).map(cleanHandle).filter(Boolean);
-          const nextHandles = followMutationCoordinatorRef.current.protectFollowing(handle, storedHandles);
-          setProfileSocialLists((current) => ({
-            ...current,
-            [handle]: { following: nextHandles, followers: current[handle]?.followers ?? [] }
-          }));
-          if (handle === currentProfileRef.current.handle) setFollowingHandles(nextHandles);
-        } catch {
-          // Ignore malformed following state.
-        }
-        return;
-      }
-      if (event.key === "symposium-local-snapshot") {
-        const snapshot = readCachedBootstrapSnapshot(window.localStorage);
-        if (!snapshot) return;
-        if (snapshot.communities?.length) {
-          communitiesRef.current = snapshot.communities;
-          setCommunities(snapshot.communities);
-        }
-        const currentHandle = currentProfileRef.current.handle;
-        const previousCurrent = profilesRef.current[currentHandle];
-        const revisionSafeProfiles = Object.fromEntries(
-          Object.entries(snapshot.profiles).map(([handle, incoming]) => [
-            handle,
-            researchProfileFromSyncEntity(
-              profileMutationCoordinatorRef.current.protectIncomingItem(
-                profileSyncEntity(incoming),
-                profilesRef.current[handle] ? profileSyncEntity(profilesRef.current[handle]) : undefined
-              )
-            )
-          ])
-        );
-        const nextProfiles = revisionSafeProfiles;
-        profilesRef.current = nextProfiles;
-        setProfiles(nextProfiles);
-        const current = nextProfiles[currentHandle];
-        if (current) {
-          currentProfileRef.current = current;
-          setCurrentProfile(current);
-          if (JSON.stringify(previousCurrent) !== JSON.stringify(current)) {
-            inquiryController.projectProfile(current, { persist: false });
-          }
-        }
-        return;
-      }
-    };
-
-    window.addEventListener("storage", handleStorage);
-
-    return () => {
-      window.removeEventListener("storage", handleStorage);
-    };
-  }, []);
-
-  const followingStorageKey = (handle: string) => `symposium-following-${handle}`;
-
-  const readLocalFollowing = (handle: string) => {
-    try {
-      const raw = window.localStorage.getItem(followingStorageKey(handle));
-      const parsed = raw ? (JSON.parse(raw) as string[]) : [];
-      return parsed.map(cleanHandle).filter(Boolean);
-    } catch {
-      return [];
-    }
-  };
-
-  const persistLocalFollowing = (handle: string, handles: string[]) => {
-    window.localStorage.setItem(
-      followingStorageKey(handle),
-      JSON.stringify(Array.from(new Set(handles.map(cleanHandle).filter(Boolean))))
-    );
-  };
-
-  const applySocialLists = (handle: string, lists: ProfileSocialLists, persist = true) => {
-    const normalizedHandle = cleanHandle(handle);
-    const normalizedLists = {
-      following: Array.from(new Set(lists.following.map(cleanHandle).filter((candidate) => candidate !== "@"))),
-      followers: Array.from(new Set(lists.followers.map(cleanHandle).filter((candidate) => candidate !== "@")))
-    };
-    setProfileSocialLists((current) => ({
-      ...current,
-      [normalizedHandle]: normalizedLists
-    }));
-    if (persist) {
-      persistCachedProfileSocial(window.localStorage, {
-        viewerHandle: currentProfileRef.current.handle,
-        targetHandle: normalizedHandle,
-        lists: normalizedLists
-      });
-    }
-  };
-
-  const captureFollowRevisions = (data: ProfileFollowResponse) => {
-    for (const record of [...(data.following ?? []), ...(data.followers ?? [])]) {
-      followMutationCoordinatorRef.current.observe({
-        ...record,
-        followerHandle: cleanHandle(String(record.followerHandle ?? "")),
-        followingHandle: cleanHandle(String(record.followingHandle ?? ""))
-      });
-    }
-  };
-
-  const socialListsFromResponse = (data: ProfileFollowResponse, ownerHandle: string): ProfileSocialLists => {
-    const coordinator = followMutationCoordinatorRef.current;
-    const normalizedOwner = cleanHandle(ownerHandle);
-    const following = Array.from(
-      new Set(
-        (data.following ?? []).flatMap((follow) => {
-          const normalized = {
-            ...follow,
-            followerHandle: cleanHandle(String(follow.followerHandle ?? "")),
-            followingHandle: cleanHandle(String(follow.followingHandle ?? ""))
-          };
-          if (!coordinator.observe(normalized) || normalized.status !== "active") return [];
-          return normalized.followingHandle ? [normalized.followingHandle] : [];
-        })
-      )
-    );
-    const followers = Array.from(
-      new Set(
-        (data.followers ?? []).flatMap((follow) => {
-          const normalized = {
-            ...follow,
-            followerHandle: cleanHandle(String(follow.followerHandle ?? "")),
-            followingHandle: cleanHandle(String(follow.followingHandle ?? ""))
-          };
-          if (!coordinator.observe(normalized) || normalized.status !== "active") return [];
-          return normalized.followerHandle ? [normalized.followerHandle] : [];
-        })
-      )
-    );
-    return {
-      following: coordinator.protectFollowing(normalizedOwner, following),
-      followers: coordinator.protectFollowers(normalizedOwner, followers)
-    };
-  };
 
   const markLiveDataConnected = () => {
     connectionSyncStatusRef.current = liveStatus.connected;
@@ -1105,208 +804,14 @@ function SymposiumExperience({
     );
   };
 
-  const mergeDiscoveredProfiles = (
-    incomingProfiles: Record<string, ResearchProfile>
-  ) => {
-    const nextProfiles = { ...profilesRef.current };
-    for (const [rawHandle, incoming] of Object.entries(incomingProfiles)) {
-      const handle = cleanHandle(rawHandle);
-      if (!handle || handle === "@") continue;
-      const current = nextProfiles[handle];
-      const protectedEntity = profileMutationCoordinatorRef.current.protectIncomingItem(
-        profileSyncEntity({ ...incoming, handle }),
-        current ? profileSyncEntity(current) : undefined
-      );
-      nextProfiles[handle] = researchProfileFromSyncEntity(protectedEntity);
-    }
-    profilesRef.current = nextProfiles;
-    setProfiles(nextProfiles);
-    return nextProfiles;
-  };
-
-  const refreshData = async (preferredHandle = currentProfile.handle) => {
-    const mutationSnapshot = inquiryController.captureRefresh();
-    const data = await symposiumApi.request<{
-      items: InquiryItem[];
-      profiles: Record<string, ResearchProfile>;
-      communities?: ResearchCommunity[];
-      communityCalls?: typeof communityCalls;
-      defaultProfile: ResearchProfile;
-    }>(`/api/bootstrap?actorHandle=${encodeURIComponent(preferredHandle)}`, { cache: "no-store" });
-    const incomingProfiles = Object.keys(data.profiles).length
-      ? data.profiles
-      : { [data.defaultProfile.handle]: data.defaultProfile };
-    let loadedProfiles = { ...profilesRef.current, ...incomingProfiles };
-    loadedProfiles = Object.fromEntries(
-      Object.entries(loadedProfiles).map(([handle, incoming]) => [
-        handle,
-        researchProfileFromSyncEntity(
-          profileMutationCoordinatorRef.current.protectIncomingItem(
-            profileSyncEntity(incoming),
-            profilesRef.current[handle] ? profileSyncEntity(profilesRef.current[handle]) : undefined
-          )
-        )
-      ])
-    );
-    const nextProfile = selectActiveProfile({
-      profiles: loadedProfiles,
-      defaultProfile: data.defaultProfile,
-      authenticatedHandle: authenticatedProfileHandleRef.current,
-      authenticatedProfile: currentProfileRef.current,
-      preferredHandle
-    });
-
-    profilesRef.current = loadedProfiles;
-    currentProfileRef.current = nextProfile;
-    const loadedCommunities = data.communities?.length ? data.communities : communitiesRef.current;
-    communitiesRef.current = loadedCommunities;
-    setProfiles(loadedProfiles);
-    setCurrentProfile(nextProfile);
-    setCommunities(loadedCommunities);
-    if (data.communityCalls) setCommunityCalls(data.communityCalls);
-    inquiryController.commitRefresh(data.items, nextProfile.handle, mutationSnapshot);
-    setSyncStatus(liveStatus.connected);
-  };
-
-  const refreshFollowing = async (actorHandle = currentProfile.handle) => {
-    const cached = readLocalFollowing(actorHandle);
-    if (cached.length) setFollowingHandles(cached);
-
-    const data = await symposiumApi.request<ProfileFollowResponse>(
-      `/api/follows?actorHandle=${encodeURIComponent(actorHandle)}`,
-      { cache: "no-store" }
-    );
-    captureFollowRevisions(data);
-    const lists = socialListsFromResponse(data, actorHandle);
-    const remoteHandles = lists.following;
-
-    setFollowingHandles(remoteHandles);
-    applySocialLists(actorHandle, lists);
-    persistLocalFollowing(actorHandle, remoteHandles);
-  };
-
-  const refreshProfileFollows = async (handle: string) => {
-    const normalizedHandle = cleanHandle(handle);
-    if (!normalizedHandle) return;
-
-    const data = await symposiumApi.request<ProfileFollowResponse>(
-      `/api/profiles/${encodeURIComponent(normalizedHandle)}/follows`,
-      { cache: "no-store" }
-    );
-    captureFollowRevisions(data);
-    applySocialLists(normalizedHandle, socialListsFromResponse(data, normalizedHandle));
-  };
-
   const mergeLiveItem = inquiryController.mergeLiveItem;
-
-  const mergeLiveProfile = (incoming: ResearchProfile) => {
-    const handle = cleanHandle(incoming.handle);
-    if (!handle || handle === "@") return false;
-    const current = profilesRef.current[handle];
-    const protectedEntity = profileMutationCoordinatorRef.current.protectIncomingItem(
-      profileSyncEntity({ ...incoming, handle }),
-      current ? profileSyncEntity(current) : undefined
-    );
-    const nextProfile = researchProfileFromSyncEntity(protectedEntity);
-    if (current && JSON.stringify(current) === JSON.stringify(nextProfile)) return false;
-    if ((compareEntityRevisions(nextProfile, current) ?? 0) > 0) {
-      profileMutationCoordinatorRef.current.complete(handle);
-    }
-
-    const nextProfiles = { ...profilesRef.current, [handle]: nextProfile };
-    profilesRef.current = nextProfiles;
-    setProfiles(nextProfiles);
-    if (currentProfileRef.current.handle === handle) {
-      currentProfileRef.current = nextProfile;
-      setCurrentProfile(nextProfile);
-    }
-    inquiryController.projectProfile(nextProfile, { persist: false });
-    persistProfileSnapshot([handle]);
-    return true;
-  };
 
   const mergeBoundedRead = inquiryController.mergeBoundedRead;
   const loadPostPage = inquiryController.loadPostPage;
   const mergeLiveMetricPatch = inquiryController.mergeLiveMetricPatch;
-
-  const mergeLiveFollow = (record: ProfileFollowRecord | undefined, active: boolean) => {
-    const followerHandle = cleanHandle(String(record?.followerHandle ?? ""));
-    const followingHandle = cleanHandle(String(record?.followingHandle ?? ""));
-    if (!followerHandle || !followingHandle || followerHandle === "@" || followingHandle === "@") return;
-    const normalizedRecord = {
-      ...record,
-      followerHandle,
-      followingHandle,
-      status: record?.status ?? (active ? "active" : "none")
-    };
-    if (!followMutationCoordinatorRef.current.observe(normalizedRecord)) return;
-    const canonicalActive = normalizedRecord.status === "active";
-
-    setProfileSocialLists((current) => {
-      const followerLists = current[followerHandle] ?? { following: [], followers: [] };
-      const followingLists = current[followingHandle] ?? { following: [], followers: [] };
-      const nextFollowerFollowing = canonicalActive
-        ? Array.from(new Set([...followerLists.following, followingHandle]))
-        : followerLists.following.filter((handle) => handle !== followingHandle);
-      const nextFollowingFollowers = canonicalActive
-        ? Array.from(new Set([...followingLists.followers, followerHandle]))
-        : followingLists.followers.filter((handle) => handle !== followerHandle);
-
-      return {
-        ...current,
-        [followerHandle]: { ...followerLists, following: nextFollowerFollowing },
-        [followingHandle]: { ...followingLists, followers: nextFollowingFollowers }
-      };
-    });
-
-    if (followerHandle === currentProfileRef.current.handle) {
-      setFollowingHandles((currentHandles) => {
-        const storedHandles = readLocalFollowing(followerHandle);
-        const merged = Array.from(new Set([...currentHandles, ...storedHandles]));
-        const next = canonicalActive
-          ? Array.from(new Set([...merged, followingHandle]))
-          : merged.filter((handle) => handle !== followingHandle);
-        persistLocalFollowing(followerHandle, next);
-        return next;
-      });
-    }
-  };
-
-  const scheduleLiveRefresh = useCoalescedRefresh(() => {
-    const handle = currentProfileRef.current.handle;
-    const selectedKey = selectedProfileNameRef.current;
-    const selected = selectedKey
-      ? profilesRef.current[selectedKey]
-        ?? Object.values(profilesRef.current).find((person) => person.name === selectedKey)
-        ?? getProfileForName(selectedKey)
-      : null;
-    return [refreshData(handle), refreshFollowing(handle), refreshProfileActivity(handle, handle, "all", false, true),
-      ...(selected?.handle ? [
-        refreshProfileFollows(selected.handle),
-        refreshProfileActivity(selected.handle, handle, profileActivityScopeForTab(profileActiveTab), false, true)
-      ] : [])];
-  });
-
-  const scheduleProfileActivityRefresh = useCoalescedRefresh(() => {
-    const viewerHandle = currentProfileRef.current.handle;
-    const selectedKey = selectedProfileNameRef.current;
-    const selected = selectedKey
-      ? profilesRef.current[selectedKey]
-        ?? Object.values(profilesRef.current).find((person) => person.name === selectedKey)
-        ?? getProfileForName(selectedKey)
-      : null;
-    const requests = [refreshProfileActivity(viewerHandle, viewerHandle, "all", false, true)];
-    if (selected?.handle && cleanHandle(selected.handle) !== cleanHandle(viewerHandle)) {
-      requests.push(refreshProfileActivity(
-        selected.handle,
-        viewerHandle,
-        profileActivityScopeForTab(profileActiveTab),
-        false,
-        true
-      ));
-    }
-    return requests;
-  });
+  const scheduleLiveRefresh = profileController.scheduleLiveRefresh;
+  const scheduleProfileActivityRefresh =
+    profileController.scheduleActivityRefresh;
 
   const invalidateLiveQuotedSource = inquiryController.invalidateLiveQuotedSource;
 
@@ -1382,11 +887,14 @@ function SymposiumExperience({
     }
 
     if (payload.follow || event.kind === "profile.followed" || event.kind === "profile.unfollowed") {
-      mergeLiveFollow(payload.follow, event.kind !== "profile.unfollowed");
+      profileController.mergeLiveFollow(
+        payload.follow,
+        event.kind !== "profile.unfollowed"
+      );
     }
 
     if (event.kind === "profile.updated" && isLiveResearchProfile(payload.profile)) {
-      mergeLiveProfile(payload.profile);
+      profileController.mergeLiveProfile(payload.profile);
       return;
     }
 
@@ -1397,7 +905,12 @@ function SymposiumExperience({
         return;
       }
       const canonicalActivity = isCanonicalActionActivity(payload.activity) ? payload.activity : null;
-      if (canonicalActivity && !acceptCanonicalActivity(canonicalActivity)) return;
+      if (
+        canonicalActivity &&
+        !profileActivity.acceptCanonical(canonicalActivity)
+      ) {
+        return;
+      }
       if (
         !canonicalActivity &&
         action &&
@@ -1413,7 +926,7 @@ function SymposiumExperience({
             commentId: payload.commentId,
             item: payload.item
           })) return;
-          touchProfileCommentAction(
+          profileActivity.touchComment(
             payload.item.id,
             payload.commentId,
             action,
@@ -1426,7 +939,7 @@ function SymposiumExperience({
             actorHandle: currentProfileRef.current.handle,
             item: payload.item
           })) return;
-          touchProfileAction(
+          profileActivity.touchPost(
             payload.item.id,
             action,
             currentProfileRef.current.handle,
@@ -1478,18 +991,6 @@ function SymposiumExperience({
     resetHistory();
   };
 
-  const hydrateCachedBootstrap = (storedProfileHandle: string | null) => {
-    const cached = inquiryController.hydrateCachedSnapshot(storedProfileHandle);
-    profilesRef.current = cached.profiles;
-    currentProfileRef.current = cached.currentProfile;
-    if (cached.communities?.length) {
-      communitiesRef.current = cached.communities;
-      setCommunities(cached.communities);
-    }
-    setProfiles(cached.profiles);
-    setCurrentProfile(cached.currentProfile);
-  };
-
   useLiveEventStream<SymposiumLiveEvent>({
     authSessionKey: authLoaded ? (isSignedIn ? userId ?? "signed-in" : "anonymous") : "loading",
     backendUrl: liveBackendUrl,
@@ -1511,17 +1012,8 @@ function SymposiumExperience({
     } else if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
       setTheme("night");
     }
-    try {
-      const storedActivityRecency = JSON.parse(
-        window.localStorage.getItem("symposium-activity-recency") ?? "{}"
-      ) as Record<string, number>;
-      activityRecencyRef.current = storedActivityRecency;
-      setActivityRecency(storedActivityRecency);
-    } catch {
-      activityRecencyRef.current = {};
-      setActivityRecency({});
-    }
-    hydrateCachedBootstrap(storedProfileHandle);
+    profileActivity.hydrateLocalRecency();
+    profileController.hydrateCachedBootstrap(storedProfileHandle);
     const sessionEntryMode = entryModeForBrowserSession(shouldPlayEntrance);
     setEntryMode(sessionEntryMode);
     if (sessionEntryMode === "approach") entranceStartedAtRef.current = Date.now();
@@ -1532,36 +1024,11 @@ function SymposiumExperience({
     setBrowserReadStateHydrated(true);
 
     if (!clerkEnabled) {
-      refreshData(storedProfileHandle ?? undefined).catch(() => {
+      profileController.refreshData(storedProfileHandle ?? undefined).catch(() => {
         setSyncStatus("Using seed data");
       });
     }
   }, [shouldPlayEntrance]);
-
-  useEffect(() => {
-    if (!signedIn || !currentProfile.handle) return;
-
-    let cancelled = false;
-    const cached = readLocalFollowing(currentProfile.handle);
-    setFollowingHandles(cached);
-    applySocialLists(currentProfile.handle, {
-      following: cached,
-      followers: profileSocialLists[currentProfile.handle]?.followers ?? []
-    });
-
-    refreshFollowing(currentProfile.handle).catch(() => {
-      if (!cancelled) setFollowingHandles(cached);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentProfile.handle, signedIn]);
-
-  useEffect(() => {
-    if (!readSessionReady || !selectedProfile?.handle) return;
-    void refreshProfileFollows(selectedProfile.handle);
-  }, [readSessionReady, selectedProfile?.handle]);
 
   useEffect(() => {
     if (entryMode !== "approach" || shouldPlayEntrance !== true) return undefined;
@@ -1589,7 +1056,7 @@ function SymposiumExperience({
     if (!isSignedIn) {
       setSignedIn(false);
       setSyncedClerkUserId(null);
-      authenticatedProfileHandleRef.current = null;
+      profileController.clearAuthenticatedIdentity();
       window.localStorage.removeItem("symposium-auth-handle");
       window.localStorage.removeItem("symposium-auth-records");
       return;
@@ -1598,42 +1065,31 @@ function SymposiumExperience({
     if (!userId || syncedClerkUserId === userId) return;
 
     let cancelled = false;
-    const cachedIdentity = readCachedIdentity(window.localStorage, userId);
+    const cachedIdentity = profileController.hydrateCachedIdentity(userId);
     if (cachedIdentity) {
-      authenticatedProfileHandleRef.current = cachedIdentity.handle;
-      currentProfileRef.current = cachedIdentity;
-      const cachedProfiles = { ...profilesRef.current, [cachedIdentity.handle]: cachedIdentity };
-      profilesRef.current = cachedProfiles;
-      setProfiles(cachedProfiles);
-      setCurrentProfile(cachedIdentity);
       setSignedIn(true);
     }
 
     const syncAccount = async () => {
       setSyncStatus("Syncing account");
       setAuthError("");
-      const data = await symposiumApi.request<{ profile: ResearchProfile }>("/api/auth/sync", {
-        method: "POST"
-      });
+      const syncedProfile =
+        await profileController.syncAuthenticatedAccount(userId);
       if (cancelled) return;
 
-      authenticatedProfileHandleRef.current = data.profile.handle;
-      currentProfileRef.current = data.profile;
-      const nextProfiles = { ...profilesRef.current, [data.profile.handle]: data.profile };
-      profilesRef.current = nextProfiles;
-      setProfiles(nextProfiles);
-      setCurrentProfile(data.profile);
       setSignedIn(true);
       setSyncedClerkUserId(userId);
-      persistCachedIdentity(window.localStorage, userId, data.profile);
       if (shouldCompleteEntryAfterAccountSync(entryModeRef.current)) {
         setEntryMode("complete");
         applyInitialRouteState();
       }
       window.sessionStorage.setItem("symposium-entry-complete", "true");
-      window.localStorage.setItem("symposium-profile-handle", data.profile.handle);
+      window.localStorage.setItem(
+        "symposium-profile-handle",
+        syncedProfile.handle
+      );
       setSyncStatus("Signed in");
-      void refreshData(data.profile.handle).catch(() => {
+      void profileController.refreshData(syncedProfile.handle).catch(() => {
         if (!cancelled) setSyncStatus("Using cached data");
       });
     };
@@ -1658,498 +1114,6 @@ function SymposiumExperience({
   useEffect(() => {
     window.localStorage.setItem("symposium-theme", theme);
   }, [theme]);
-
-
-  const persistActivityRecency = (next: Record<string, number>) => {
-    activityRecencyRef.current = next;
-    window.localStorage.setItem("symposium-activity-recency", JSON.stringify(next));
-  };
-
-  const recordActivityRecency = (updates: Record<string, number>, deferForProfile = false) => {
-    const cleanUpdates = Object.fromEntries(
-      Object.entries(updates).filter(([, value]) => Number.isFinite(value))
-    ) as Record<string, number>;
-    if (!Object.keys(cleanUpdates).length) return;
-
-    if (deferForProfile) {
-      pendingActivityRecencyRef.current = { ...pendingActivityRecencyRef.current, ...cleanUpdates };
-      persistActivityRecency({ ...activityRecencyRef.current, ...pendingActivityRecencyRef.current });
-      return;
-    }
-
-    const pendingUpdates = pendingActivityRecencyRef.current;
-    pendingActivityRecencyRef.current = {};
-    setActivityRecency((current) => {
-      const next = { ...current, ...pendingUpdates, ...cleanUpdates };
-      persistActivityRecency(next);
-      return next;
-    });
-  };
-
-  const flushPendingActivityRecency = () => {
-    const pendingUpdates = pendingActivityRecencyRef.current;
-    if (!Object.keys(pendingUpdates).length) {
-      setProfileActivityRevision((revision) => revision + 1);
-      return;
-    }
-
-    pendingActivityRecencyRef.current = {};
-    setActivityRecency((current) => {
-      const next = { ...current, ...pendingUpdates };
-      persistActivityRecency(next);
-      return next;
-    });
-    setProfileActivityRevision((revision) => revision + 1);
-  };
-
-  const touchActivity = (itemId: string, timestamp = Date.now()) => {
-    recordActivityRecency({ [itemId]: timestamp });
-  };
-
-  const touchProfileAction = (itemId: string, action: PostAction, handle = currentProfile.handle, timestamp = Date.now()) => {
-    if (action === "read") return;
-    recordActivityRecency(
-      { [profileActivityKey(handle, action, itemId)]: timestamp },
-      Boolean(selectedProfileNameRef.current)
-    );
-  };
-
-  const touchProfileCommentAction = (
-    itemId: string,
-    commentId: string,
-    action: CommentAction,
-    handle = currentProfile.handle,
-    timestamp = Date.now()
-  ) => {
-    if (action === "read") return;
-    recordActivityRecency(
-      { [profileCommentActivityKey(handle, action, itemId, commentId)]: timestamp },
-      Boolean(selectedProfileNameRef.current)
-    );
-  };
-
-  const setProfileActivitySnapshot = (handle: string, snapshot: ProfileActivitySnapshot) => {
-    const clean = cleanHandle(handle);
-    const next = { ...profileActivityByHandleRef.current, [clean]: snapshot };
-    profileActivityByHandleRef.current = next;
-    setProfileActivityByHandle(next);
-  };
-
-  const canonicalActivityRecencyUpdate = (activity: CanonicalActionActivityContract) => {
-    if (!activity.active) return null;
-    const timestamp = Date.parse(activity.occurredAt);
-    if (!Number.isFinite(timestamp)) return null;
-    if (activity.subjectType === "comment") {
-      return {
-        [profileCommentActivityKey(
-          activity.actorHandle,
-          activity.action,
-          activity.postId,
-          activity.subjectId
-        )]: timestamp
-      };
-    }
-    return { [profileActivityKey(activity.actorHandle, activity.action, activity.postId)]: timestamp };
-  };
-
-  const recordCanonicalActivityRecency = (activity: CanonicalActionActivityContract) => {
-    const update = canonicalActivityRecencyUpdate(activity);
-    if (update) recordActivityRecency(update, Boolean(selectedProfileNameRef.current));
-  };
-
-  const profileReshareAddsToAll = (activity: CanonicalActionActivityContract) => {
-    if (activity.action !== "fork") return false;
-    const item = itemsRef.current.find((candidate) => candidate.id === activity.postId);
-    return Boolean(item && profileItemIsInActivityScope(item));
-  };
-
-  const acceptCanonicalActivity = (activity: CanonicalActionActivityContract) => {
-    const key = canonicalActivityKey(activity);
-    const currentRevision = canonicalActionRevisionRef.current[key] ?? 0;
-    if (activity.revision < currentRevision) return false;
-
-    pendingCanonicalActionKeysRef.current.delete(key);
-    canonicalActionRevisionRef.current[key] = activity.revision;
-    const handle = cleanHandle(activity.actorHandle);
-    const current = profileActivityByHandleRef.current[handle]
-      ?? emptyProfileActivitySnapshot();
-    const previous = canonicalActionState(
-      current.entries,
-      activity.subjectType,
-      activity.subjectId,
-      handle,
-      activity.action
-    );
-    setProfileActivitySnapshot(handle, {
-      ...current,
-      entries: mergeCanonicalActivities(current.entries, [activity]),
-      totals: current.totals
-        ? applyProfileActivityActionTotalTransition(
-            current.totals,
-            activity.action,
-            previous?.active ?? false,
-            activity.active,
-            profileReshareAddsToAll(activity)
-          )
-        : undefined
-    });
-    recordCanonicalActivityRecency(activity);
-    return true;
-  };
-
-  const replaceCanonicalProfileActivity = (
-    handle: string,
-    scope: ProfileActivityPageScope,
-    requestedActions: ToggleActionContract[],
-    response: ProfileActivityResponseContract,
-    requestStartRevisions: Record<string, number>,
-    append = false,
-    stale = false
-  ) => {
-    const clean = cleanHandle(handle);
-    const current = profileActivityByHandleRef.current[clean] ?? emptyProfileActivitySnapshot();
-    const actionSet = new Set(requestedActions);
-    const currentScopeEntries = current.entries.filter((activity) => actionSet.has(activity.action));
-    const retainedEntries = current.entries.filter((activity) => !actionSet.has(activity.action));
-    const reconciledScopeEntries = reconcileCanonicalActivityRefresh({
-      current: currentScopeEntries,
-      incoming: append ? mergeCanonicalActivities(currentScopeEntries, response.entries) : response.entries,
-      pendingKeys: pendingCanonicalActionKeysRef.current,
-      currentRevisions: canonicalActionRevisionRef.current,
-      requestStartRevisions
-    });
-    const entries = mergeCanonicalActivities(retainedEntries, reconciledScopeEntries);
-    const finalScopeKeys = new Set(reconciledScopeEntries.map(canonicalActivityKey));
-    for (const activity of currentScopeEntries) {
-      const key = canonicalActivityKey(activity);
-      if (!finalScopeKeys.has(key)) delete canonicalActionRevisionRef.current[key];
-    }
-    const recencyUpdates: Record<string, number> = {};
-    for (const activity of response.entries) {
-      const key = canonicalActivityKey(activity);
-      canonicalActionRevisionRef.current[key] = Math.max(
-        canonicalActionRevisionRef.current[key] ?? 0,
-        activity.revision
-      );
-      Object.assign(recencyUpdates, canonicalActivityRecencyUpdate(activity));
-    }
-    recordActivityRecency(recencyUpdates, Boolean(selectedProfileNameRef.current));
-    setProfileActivitySnapshot(clean, {
-      ...current,
-      entries,
-      loaded: true,
-      nextCursor: scope === "all" ? response.nextCursor : current.nextCursor,
-      pages: {
-        ...current.pages,
-        [scope]: {
-          loaded: true,
-          loading: false,
-          nextCursor: response.nextCursor,
-          commentsNextCursor: response.commentsNextCursor ?? null,
-          stale
-        }
-      },
-      hiddenCommunityCounts: response.hiddenCommunityCounts ?? current.hiddenCommunityCounts,
-      totals: response.totals ?? current.totals
-    });
-  };
-
-  const refreshProfileActivity = (
-    handle: string,
-    actorHandle = currentProfileRef.current.handle,
-    scope: ProfileActivityPageScope = "all",
-    append = false,
-    forceSummary = false
-  ) => {
-    const clean = cleanHandle(handle);
-    const cleanActor = cleanHandle(actorHandle);
-    if (!clean || clean === "@") return Promise.resolve();
-    const existingSnapshot = profileActivityByHandleRef.current[clean] ?? emptyProfileActivitySnapshot();
-    const existingPage = existingSnapshot.pages[scope];
-    const configuredActions = profileActivityActionsForScope(scope);
-    const commentMode = profileActivityCommentModeForScope(scope);
-    const includeComments = commentMode !== "none";
-    const startCursor = append ? existingPage?.nextCursor ?? null : null;
-    const commentsCursor = append ? existingPage?.commentsNextCursor ?? null : null;
-    const requestedActions = append && !startCursor ? [] : configuredActions;
-    const requestComments = includeComments && (!append || Boolean(commentsCursor));
-    const requestSummary = !append && (forceSummary || !existingSnapshot.totals);
-    if (append && !requestedActions.length && !requestComments) return Promise.resolve();
-    const inFlightKey = `${clean}:${cleanActor}:${scope}:${startCursor ?? "actions-end"}:${commentsCursor ?? "comments-end"}`;
-    const existingRequest = profileActivityInFlightRef.current[inFlightKey];
-    if (existingRequest) return existingRequest;
-    const requestKey = `${clean}:${scope}`;
-    const requestId = (profileActivityRequestRef.current[requestKey] ?? 0) + 1;
-    profileActivityRequestRef.current[requestKey] = requestId;
-    setProfileActivitySnapshot(clean, {
-      ...existingSnapshot,
-      pages: {
-        ...existingSnapshot.pages,
-        [scope]: {
-          loaded: existingPage?.loaded ?? false,
-          loading: true,
-          nextCursor: existingPage?.nextCursor ?? null,
-          commentsNextCursor: existingPage?.commentsNextCursor ?? null
-        }
-      }
-    });
-    setProfileActivityErrors((current) => {
-      if (!current[clean]) return current;
-      const next = { ...current };
-      delete next[clean];
-      return next;
-    });
-
-    const request = (async () => {
-      const requestStartRevisions = { ...canonicalActionRevisionRef.current };
-      const params = new URLSearchParams({
-        limit: "50",
-        actorHandle: cleanActor,
-        actions: requestedActions.join(","),
-        includeComments: String(requestComments),
-        includeSummary: String(requestSummary)
-      });
-      if (startCursor) params.set("cursor", startCursor);
-      if (commentsCursor) params.set("commentsCursor", commentsCursor);
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 15_000);
-      let data: Partial<ProfileActivityResponseContract>;
-      try {
-        data = await symposiumApi.request<Partial<ProfileActivityResponseContract>>(
-          `/api/profiles/${encodeURIComponent(clean)}/activity?${params.toString()}`,
-          { cache: "no-store", signal: controller.signal }
-        );
-      } finally {
-        window.clearTimeout(timeout);
-      }
-
-      const entries = (data.entries ?? []).filter(isCanonicalActionActivity);
-      const authoredComments = (data.authoredComments ?? []).filter(
-        (activity): activity is ProfileAuthoredCommentActivityContract =>
-          Boolean(
-            activity &&
-            typeof activity.commentId === "string" &&
-            typeof activity.postId === "string" &&
-            typeof activity.occurredAt === "string" &&
-            Number.isFinite(Date.parse(activity.occurredAt))
-          )
-      );
-      const hydrateSubjects = async (
-        postIds: string[],
-        commentIds: string[]
-      ) => inquiryController.loadPostSubjects(postIds, commentIds, cleanActor);
-      if (data.items?.length || data.profiles) {
-        mergeBoundedRead({
-          items: data.items ?? [],
-          profiles: data.profiles ?? {}
-        });
-      } else {
-        await Promise.all([
-          hydrateSubjects(
-            entries.map((entry) => entry.postId),
-            entries.filter((entry) => entry.subjectType === "comment").map((entry) => entry.subjectId)
-          ),
-          hydrateSubjects(
-            authoredComments.map((activity) => activity.postId),
-            authoredComments.map((activity) => activity.commentId)
-          )
-        ]);
-      }
-
-      if (profileActivityRequestRef.current[requestKey] !== requestId) return;
-      const canonicalResponse = {
-        entries,
-        nextCursor: typeof data.nextCursor === "string" ? data.nextCursor : null,
-        authoredComments,
-        commentsNextCursor: typeof data.commentsNextCursor === "string" ? data.commentsNextCursor : null,
-        hiddenCommunityCounts: data.hiddenCommunityCounts ?? existingSnapshot?.hiddenCommunityCounts ?? emptyProfileActivityCounts(),
-        totals: data.totals ?? existingSnapshot?.totals,
-        items: data.items,
-        profiles: data.profiles
-      } as ProfileActivityResponseContract;
-      replaceCanonicalProfileActivity(clean, scope, requestedActions, canonicalResponse, requestStartRevisions, append);
-      if (!append && (canonicalResponse.items || canonicalResponse.profiles)) {
-        persistCachedProfileActivity(window.localStorage, {
-          viewerHandle: cleanActor,
-          targetHandle: clean,
-          scope,
-          response: canonicalResponse
-        });
-      }
-    })().catch((error) => {
-      if (profileActivityRequestRef.current[requestKey] === requestId) {
-        setProfileActivityErrors((current) => ({ ...current, [clean]: true }));
-        const latest = profileActivityByHandleRef.current[clean] ?? emptyProfileActivitySnapshot();
-        setProfileActivitySnapshot(clean, {
-          ...latest,
-          pages: {
-            ...latest.pages,
-            [scope]: {
-              loaded: latest.pages[scope]?.loaded ?? false,
-              loading: false,
-              nextCursor: latest.pages[scope]?.nextCursor ?? null,
-              commentsNextCursor: latest.pages[scope]?.commentsNextCursor ?? null
-            }
-          }
-        });
-      }
-      throw error;
-    });
-
-    const trackedRequest = request.finally(() => {
-      if (profileActivityInFlightRef.current[inFlightKey] === trackedRequest) {
-        delete profileActivityInFlightRef.current[inFlightKey];
-      }
-    });
-    profileActivityInFlightRef.current[inFlightKey] = trackedRequest;
-    return trackedRequest;
-  };
-
-  const stageOptimisticCanonicalActivity = (
-    subjectType: "post" | "comment",
-    subjectId: string,
-    postId: string,
-    actorHandle: string,
-    action: ToggleActionContract,
-    active: boolean
-  ) => {
-    const handle = cleanHandle(actorHandle);
-    const current = profileActivityByHandleRef.current[handle]
-      ?? emptyProfileActivitySnapshot();
-    const previous = canonicalActionState(current.entries, subjectType, subjectId, handle, action);
-    const key = canonicalActivityKey({ subjectType, subjectId, actorHandle: handle, action });
-    pendingCanonicalActionKeysRef.current.add(key);
-    const optimistic = {
-      ...createLocalCanonicalActivity({ subjectType, subjectId, postId, actorHandle: handle, action, active }),
-      revision: previous?.revision ?? 1
-    };
-    setProfileActivitySnapshot(handle, {
-      ...current,
-      entries: mergeCanonicalActivities(current.entries, [optimistic]),
-      totals: current.totals
-        ? applyProfileActivityActionTotalTransition(
-            current.totals,
-            action,
-            previous?.active ?? false,
-            active,
-            profileReshareAddsToAll(optimistic)
-          )
-        : undefined
-    });
-    return previous;
-  };
-
-  const restoreOptimisticCanonicalActivity = (
-    subjectType: "post" | "comment",
-    subjectId: string,
-    actorHandle: string,
-    action: ToggleActionContract,
-    previous: CanonicalActionActivityContract | undefined
-  ) => {
-    const handle = cleanHandle(actorHandle);
-    const current = profileActivityByHandleRef.current[handle];
-    if (!current) return;
-    const key = canonicalActivityKey({ subjectType, subjectId, actorHandle: handle, action });
-    pendingCanonicalActionKeysRef.current.delete(key);
-    const optimistic = canonicalActionState(current.entries, subjectType, subjectId, handle, action);
-    const subjectActivity = optimistic ?? previous;
-    const entries = current.entries.filter((activity) => canonicalActivityKey(activity) !== key);
-    if (previous) entries.push(previous);
-    setProfileActivitySnapshot(handle, {
-      ...current,
-      entries: mergeCanonicalActivities([], entries),
-      totals: current.totals
-        ? applyProfileActivityActionTotalTransition(
-            current.totals,
-            action,
-            optimistic?.active ?? false,
-            previous?.active ?? false,
-            subjectActivity ? profileReshareAddsToAll(subjectActivity) : false
-          )
-        : undefined
-    });
-  };
-
-  const canonicalActionWasCommitted = (
-    subjectType: "post" | "comment",
-    subjectId: string,
-    actorHandle: string,
-    action: ToggleActionContract,
-    desiredActive: boolean | undefined,
-    previous: CanonicalActionActivityContract | undefined
-  ) => {
-    if (desiredActive === undefined) return false;
-    const handle = cleanHandle(actorHandle);
-    const current = canonicalActionState(
-      profileActivityByHandleRef.current[handle]?.entries ?? [],
-      subjectType,
-      subjectId,
-      handle,
-      action
-    );
-    const revision = canonicalActionRevisionRef.current[
-      canonicalActivityKey({ subjectType, subjectId, actorHandle: handle, action })
-    ] ?? 0;
-    return current?.active === desiredActive && revision > (previous?.revision ?? 0);
-  };
-
-  useLayoutEffect(() => {
-    if (entryMode !== "complete" || !readSessionReady || !selectedProfile?.handle) return;
-    const targetHandle = cleanHandle(selectedProfile.handle);
-    const viewerHandle = cleanHandle(currentProfile.handle);
-    const scope = profileActivityScopeForTab(profileActiveTab);
-    const cacheKey = `${viewerHandle}:${targetHandle}:${scope}`;
-    if (profileActivityCacheHydrationRef.current.has(cacheKey)) return;
-    profileActivityCacheHydrationRef.current.add(cacheKey);
-
-    const social = readCachedProfileSocial(window.localStorage, { viewerHandle, targetHandle });
-    if (social && !profileSocialLists[targetHandle]) applySocialLists(targetHandle, social, false);
-
-    const currentPage = profileActivityByHandleRef.current[targetHandle]?.pages[scope];
-    if (currentPage?.loaded) return;
-    const cached = readCachedProfileActivity(window.localStorage, { viewerHandle, targetHandle, scope });
-    if (!cached) return;
-    mergeBoundedRead({ items: cached.items ?? [], profiles: cached.profiles ?? {} }, { persist: false });
-    replaceCanonicalProfileActivity(
-      targetHandle,
-      scope,
-      profileActivityActionsForScope(scope),
-      cached,
-      {},
-      false,
-      true
-    );
-  }, [
-    currentProfile.handle,
-    entryMode,
-    profileActiveTab,
-    profileSocialLists,
-    readSessionReady,
-    selectedProfile?.handle
-  ]);
-
-  useEffect(() => {
-    if (entryMode !== "complete" || !readSessionReady || !currentProfile.handle) return;
-    if (selectedProfile?.handle) return;
-    const page = profileActivityByHandleRef.current[currentProfile.handle]?.pages.all;
-    if (page?.loaded && !page.stale) return;
-    void refreshProfileActivity(currentProfile.handle, currentProfile.handle, "all").catch(() => undefined);
-  }, [currentProfile.handle, entryMode, readSessionReady, selectedProfile?.handle]);
-
-  useEffect(() => {
-    if (entryMode !== "complete" || !readSessionReady || !selectedProfile?.handle) return;
-    const scope = profileActivityScopeForTab(profileActiveTab);
-    const page = profileActivityByHandleRef.current[selectedProfile.handle]?.pages[scope];
-    if (page?.loaded && !page.stale) return;
-    void refreshProfileActivity(
-      selectedProfile.handle,
-      currentProfile.handle,
-      scope,
-      false,
-      Boolean(page?.stale)
-    ).catch(() => undefined);
-  }, [currentProfile.handle, entryMode, profileActiveTab, readSessionReady, selectedProfile?.handle]);
-
   useEffect(() => {
     if (entryMode !== "complete" || !readSessionReady || !activeFeedRequest) return;
     if (selectedItemId || applicationReviewPostId || selectedProfileName || messagesOpen) return;
@@ -2185,22 +1149,6 @@ function SymposiumExperience({
       cancelled = true;
     };
   }, [applicationReviewPostId, currentProfile.handle, readSessionReady, selectedItem?.detailLoaded, selectedItemId]);
-
-  useEffect(() => {
-    if (!readSessionReady || !selectedProfileHandle || selectedProfileHandle === "@") return;
-    const stored = profilesRef.current[selectedProfileHandle];
-    if (stored) return;
-    let cancelled = false;
-    void symposiumApi.request<{ profile: ResearchProfile }>(
-      `/api/profiles/${encodeURIComponent(selectedProfileHandle)}`,
-      { cache: "no-store" }
-    ).then((data) => {
-      if (!cancelled) mergeBoundedRead({ items: [], profiles: { [data.profile.handle]: data.profile } });
-    }).catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [readSessionReady, selectedProfileHandle]);
 
   useEffect(() => {
     if (!readSessionReady || !selectedProfileHandle || selectedProfileHandle === "@") return;
@@ -2394,7 +1342,7 @@ function SymposiumExperience({
     const isAssistantCollapse = collapsedAssistantThreadId !== undefined;
     assistantCollapseThreadIdRef.current = undefined;
     dismissTransientSyncStatus();
-    if (snapshot.selectedProfileName) flushPendingActivityRecency();
+    if (snapshot.selectedProfileName) profileActivity.flushPendingRecency();
     const restoredSegmentStacks = cloneCommentSegmentStacks(snapshot.commentSegmentStacks ?? {});
     commentSegmentStacksRef.current = restoredSegmentStacks;
     visibleCommentSegmentStacksRef.current = {};
@@ -2453,7 +1401,7 @@ function SymposiumExperience({
     scrollY: number | null = 0
   ) => {
     dismissTransientSyncStatus();
-    if (next.selectedProfileName) flushPendingActivityRecency();
+    if (next.selectedProfileName) profileActivity.flushPendingRecency();
     const currentSnapshot = snapshotView();
     let nextSnapshot = nextViewSnapshot(currentSnapshot, next, scrollY);
     if (next.selectedItemId !== undefined && next.selectedItemId !== selectedItemId) {
@@ -2519,7 +1467,7 @@ function SymposiumExperience({
   };
 
   const openProfile = (profileKey: string) => {
-    flushPendingActivityRecency();
+    profileActivity.flushPendingRecency();
     navigateView({ selectedProfileName: profileKey, profileSocialView: null, profileTab: "all", selectedItemId: null, selectedCommentId: null });
   };
 
@@ -2530,7 +1478,7 @@ function SymposiumExperience({
 
   const changeProfileTab = (tab: ProfileTab) => {
     if (profileActiveTab === tab && !profileSocialView) return;
-    flushPendingActivityRecency();
+    profileActivity.flushPendingRecency();
     navigateView({ profileSocialView: null, profileTab: tab }, null);
   };
   const toggleTablet = () => {
@@ -2684,21 +1632,13 @@ function SymposiumExperience({
   };
 
   const enterLocalPreview = () => {
-    const fallbackProfiles = Object.keys(profiles).length ? profiles : { [profile.handle]: profile };
-    const previewProfile =
-      fallbackProfiles[currentProfile.handle] ?? fallbackProfiles[profile.handle] ?? currentProfile ?? profile;
-
-    profilesRef.current = fallbackProfiles;
-    currentProfileRef.current = previewProfile;
-    setProfiles(fallbackProfiles);
-    setCurrentProfile(previewProfile);
+    const previewProfile = profileController.enterLocalPreview();
     setSignedIn(true);
     setAuthError("");
     setEntryMode("complete");
     applyInitialRouteState();
     window.sessionStorage.setItem("symposium-entry-complete", "true");
     window.localStorage.setItem("symposium-profile-handle", previewProfile.handle);
-    inquiryController.persistSnapshot();
     setSyncStatus("Local preview");
   };
 
@@ -2779,136 +1719,19 @@ function SymposiumExperience({
   };
 
   const saveProfileSettings = async (draft: ProfileSettingsDraft) => {
-    const previousProfile = currentProfileRef.current;
-    const previousProfiles = profilesRef.current;
-    const cleanName = draft.name.trim() || currentProfile.name;
-    const updatedProfile: ResearchProfile = {
-      ...currentProfile,
-      name: cleanName,
-      avatarUrl: draft.avatarUrl?.trim() || undefined,
-      bio: (draft.bio.trim() || currentProfile.bio).slice(0, 200),
-      likesPublic: draft.likesPublic,
-      resharesPublic: draft.resharesPublic
-    };
-    const nextProfiles = { ...profiles, [updatedProfile.handle]: updatedProfile };
-
-    profileMutationCoordinatorRef.current.begin(updatedProfile.handle);
-    currentProfileRef.current = updatedProfile;
-    profilesRef.current = nextProfiles;
-    setCurrentProfile(updatedProfile);
-    setProfiles(nextProfiles);
-    inquiryController.projectProfile(updatedProfile);
-    if (selectedProfileName === currentProfile.name || selectedProfileName === currentProfile.handle) {
-      setViewField("selectedProfileName", updatedProfile.handle);
+    if (
+      selectedProfileName === currentProfile.name ||
+      selectedProfileName === currentProfile.handle
+    ) {
+      setViewField("selectedProfileName", currentProfile.handle);
     }
-    setSyncStatus("Saving profile settings");
-    const profilePayload = {
-      name: updatedProfile.name,
-      handle: updatedProfile.handle,
-      email: updatedProfile.email,
-      avatarUrl: profileAvatarForPersistence(updatedProfile.avatarUrl),
-      likesPublic: updatedProfile.likesPublic,
-      resharesPublic: updatedProfile.resharesPublic,
-      role: updatedProfile.role,
-      location: updatedProfile.location,
-      bio: updatedProfile.bio,
-      fields: updatedProfile.fields
-    };
-    const mutation = retryMutationKey("profile-upsert", JSON.stringify(profilePayload));
-
-    try {
-      const data = await symposiumApi.request<{ profile: ResearchProfile }>("/api/profiles", {
-        method: "POST",
-        idempotencyKey: mutation.idempotencyKey,
-        body: profilePayload
-      });
-      clearRetryMutationKey(mutation.fingerprintKey);
-      const committedEntity = profileMutationCoordinatorRef.current.protectIncomingItem(
-        profileSyncEntity({ ...updatedProfile, ...data.profile }),
-        profileSyncEntity(updatedProfile)
-      );
-      profileMutationCoordinatorRef.current.complete(updatedProfile.handle);
-      const committedProfile = researchProfileFromSyncEntity(committedEntity);
-      const committedProfiles = { ...nextProfiles, [committedProfile.handle]: committedProfile };
-      currentProfileRef.current = committedProfile;
-      profilesRef.current = committedProfiles;
-      setCurrentProfile(committedProfile);
-      setProfiles(committedProfiles);
-      inquiryController.projectProfile(committedProfile, { persist: false });
-      persistProfileSnapshot([committedProfile.handle]);
+    const committedProfile = await profileController.saveSettings(draft);
+    if (committedProfile) {
       setSettingsOpen(false);
-      setSyncStatus("Profile settings saved");
-    } catch (error) {
-      if (!shouldRetainRetryMutation(error)) clearRetryMutationKey(mutation.fingerprintKey);
-      profileMutationCoordinatorRef.current.complete(updatedProfile.handle);
-      currentProfileRef.current = previousProfile;
-      profilesRef.current = previousProfiles;
-      setCurrentProfile(previousProfile);
-      setProfiles(previousProfiles);
-      inquiryController.projectProfile(previousProfile, { persist: false });
-      persistProfileSnapshot([updatedProfile.handle]);
-      setSyncStatus("Profile settings could not sync");
     }
   };
 
-  const toggleFollow = async (targetHandle: string) => {
-    const normalizedTarget = cleanHandle(targetHandle);
-    if (!normalizedTarget || normalizedTarget === currentProfile.handle) return;
-
-    const wasFollowing = followingHandles.includes(normalizedTarget);
-    const previousHandles = followingHandles;
-    const nextHandles = wasFollowing
-      ? previousHandles.filter((handle) => handle !== normalizedTarget)
-      : Array.from(new Set([...previousHandles, normalizedTarget]));
-    const currentSocial = profileSocialLists[currentProfile.handle] ?? { following: previousHandles, followers: [] };
-    const targetSocial = profileSocialLists[normalizedTarget] ?? { following: [], followers: [] };
-    const nextTargetFollowers = wasFollowing
-      ? targetSocial.followers.filter((handle) => handle !== currentProfile.handle)
-      : Array.from(new Set([...targetSocial.followers, currentProfile.handle]));
-    const mutation = followMutationCoordinatorRef.current.begin(
-      currentProfile.handle,
-      normalizedTarget,
-      !wasFollowing
-    );
-    const idempotencyKey = createClientMutationId(wasFollowing ? "profile-unfollow" : "profile-follow");
-
-    setFollowingHandles(nextHandles);
-    applySocialLists(currentProfile.handle, { ...currentSocial, following: nextHandles });
-    applySocialLists(normalizedTarget, { ...targetSocial, followers: nextTargetFollowers });
-    persistLocalFollowing(currentProfile.handle, nextHandles);
-    setSyncStatus(wasFollowing ? "Unfollowing profile" : "Following profile");
-
-    try {
-      const data = await symposiumApi.request<{ follow?: ProfileFollowRecord }>(
-        `/api/profiles/${encodeURIComponent(normalizedTarget)}/follow`,
-        {
-        method: wasFollowing ? "DELETE" : "POST",
-        idempotencyKey,
-        body: { actorHandle: currentProfile.handle }
-        }
-      );
-      if (data.follow) {
-        const normalizedFollow = {
-          ...data.follow,
-          followerHandle: cleanHandle(String(data.follow.followerHandle ?? currentProfile.handle)),
-          followingHandle: cleanHandle(String(data.follow.followingHandle ?? normalizedTarget))
-        };
-        followMutationCoordinatorRef.current.complete(mutation, normalizedFollow);
-        mergeLiveFollow(normalizedFollow, normalizedFollow.status === "active");
-      }
-      setSyncStatus(wasFollowing ? "Profile unfollowed" : "Following profile");
-    } catch {
-      if (!followMutationCoordinatorRef.current.fail(mutation)) {
-        setSyncStatus("Follow state synced");
-        return;
-      }
-      setFollowingHandles(previousHandles);
-      applySocialLists(currentProfile.handle, { ...currentSocial, following: previousHandles });
-      applySocialLists(normalizedTarget, { ...targetSocial });
-      persistLocalFollowing(currentProfile.handle, previousHandles);
-      setSyncStatus("Follow could not sync");
-    }
-  };
+  const toggleFollow = profileController.toggleFollow;
 
   const signOut = async () => {
     await auth.signOut().catch(() => undefined);
@@ -2984,7 +1807,7 @@ function SymposiumExperience({
     if (targetItem && !isDeletedPost(targetItem)) {
       void applyAction(id, "read", {
         trigger: "click",
-        surface: sourceSurface ?? (selectedProfileNameRef.current ? "profile" : "feed")
+        surface: sourceSurface ?? (selectedProfileName ? "profile" : "feed")
       });
     }
   };
@@ -3536,13 +2359,13 @@ function SymposiumExperience({
             profiles={profiles}
             socialLists={profileSocialLists[selectedProfile.handle] ?? { following: [], followers: [] }}
             socialView={profileSocialView}
-            getProfileRecency={getProfileRecency}
-            getProfileCommentRecency={getProfileCommentRecency}
+            getProfileRecency={profileActivity.getProfileRecency}
+            getProfileCommentRecency={profileActivity.getProfileCommentRecency}
             activeTab={profileActiveTab}
-            activityRevision={profileActivityRevision}
+            activityRevision={profileActivity.activityRevision}
             canonicalActivities={selectedProfileActivitySnapshot?.entries ?? []}
             canonicalActivityLoaded={selectedProfileActivityPage?.loaded ?? false}
-            canonicalActivityError={Boolean(profileActivityErrors[selectedProfile.handle])}
+            canonicalActivityError={Boolean(profileActivity.activityErrors[selectedProfile.handle])}
             canonicalActivityComplete={Boolean(
               selectedProfileActivityPage?.loaded &&
               (!profileActivityActionsForScope(selectedProfileActivityScope).length || !selectedProfileActivityPage.nextCursor) &&
@@ -3562,7 +2385,7 @@ function SymposiumExperience({
             onOpenCommunity={openCommunity}
             onActiveTabChange={changeProfileTab}
             onRetryActivity={() => {
-              void refreshProfileActivity(
+              void profileActivity.refresh(
                 selectedProfile.handle,
                 currentProfile.handle,
                 selectedProfileActivityScope,
@@ -3573,7 +2396,7 @@ function SymposiumExperience({
             onLoadMoreActivity={() => {
               const tasks: Promise<unknown>[] = [];
               if (selectedProfileActivityPage?.nextCursor || selectedProfileActivityPage?.commentsNextCursor) {
-                tasks.push(refreshProfileActivity(
+                tasks.push(profileActivity.refresh(
                   selectedProfile.handle,
                   currentProfile.handle,
                   selectedProfileActivityScope,

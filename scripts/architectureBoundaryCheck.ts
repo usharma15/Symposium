@@ -98,6 +98,14 @@ const main = async () => {
     path.join(root, "features/inquiry/useInquiryController.ts"),
     "utf8"
   );
+  const profileControllerSource = await readFile(
+    path.join(root, "features/profiles/useProfileController.ts"),
+    "utf8"
+  );
+  const profileActivityControllerSource = await readFile(
+    path.join(root, "features/profiles/useProfileActivityController.ts"),
+    "utf8"
+  );
   assert.match(
     symposiumSource,
     /useSymposiumViewController/,
@@ -122,6 +130,11 @@ const main = async () => {
     symposiumSource,
     /useInquiryController/,
     "Symposium inquiry state must remain owned by the inquiry controller."
+  );
+  assert.equal(
+    symposiumSource.match(/useProfileController\(\{/g)?.length ?? 0,
+    1,
+    "Symposium profile and social state must have one controller authority."
   );
   for (const retiredShellAuthority of [
     /\/api\/posts(?:[/?`"]|\$\{)/,
@@ -149,6 +162,59 @@ const main = async () => {
     assert.ok(
       inquiryControllerSource.includes(controllerAuthority),
       `${controllerAuthority} must remain composed by the inquiry controller.`
+    );
+  }
+  for (const retiredProfileShellAuthority of [
+    /\/api\/bootstrap/,
+    /\/api\/auth\/sync/,
+    /\/api\/follows/,
+    /\/api\/profiles/,
+    /profileMutationCoordinatorRef/,
+    /followMutationCoordinatorRef/,
+    /profileActivityByHandle/,
+    /setFollowingHandles/,
+    /setSocialLists/,
+    /persistCachedProfileSocial/,
+    /readCachedProfileSocial/
+  ]) {
+    assert.doesNotMatch(
+      symposiumSource,
+      retiredProfileShellAuthority,
+      `Retired profile authority returned to SymposiumV0.tsx: ${retiredProfileShellAuthority}.`
+    );
+  }
+  assert.equal(
+    symposiumSource.match(/symposiumApi\.request</g)?.length ?? 0,
+    2,
+    "Only the two discovery search requests may remain in the shell before C4."
+  );
+  for (const profileAuthority of [
+    "createItemMutationCoordinator",
+    "createFollowMutationCoordinator",
+    "useCrossTabItemTransport",
+    "persistCachedProfileSocial",
+    "readCachedProfileSocial",
+    '"/api/profiles"',
+    '"/api/auth/sync"',
+    "`/api/bootstrap?",
+    "`/api/follows?",
+    "`/api/profiles/${encodeURIComponent(normalizedHandle)}/follows`",
+    "`/api/profiles/${encodeURIComponent(normalizedTarget)}/follow`"
+  ]) {
+    assert.ok(
+      profileControllerSource.includes(profileAuthority),
+      `${profileAuthority} must remain owned by the profile controller.`
+    );
+  }
+  for (const activityAuthority of [
+    "persistCachedProfileActivity",
+    "readCachedProfileActivity",
+    "const requestKey = `${clean}:${scope}`",
+    "`/api/profiles/${encodeURIComponent(clean)}/activity?"
+  ]) {
+    assert.ok(
+      profileActivityControllerSource.includes(activityAuthority),
+      `${activityAuthority} must remain owned by the profile activity controller.`
     );
   }
   for (const infrastructureImport of [
@@ -203,6 +269,7 @@ const main = async () => {
     "shell and feature dependency boundaries",
     "controller transport and API isolation",
     "single inquiry read, mutation, reconciliation, cross-tab, and persistence authority",
+    "single profile, social, follow, activity, cross-tab, and persistence authority",
     "extracted feature ownership",
     "acyclic feature dependencies"
   ]);

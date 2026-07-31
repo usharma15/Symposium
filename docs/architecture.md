@@ -124,17 +124,29 @@ Optimistic action membership and metrics use a clock-independent action-state gu
 
 The client collection is normalized into `byId` plus stable order before it reaches the shell. Synchronous refs and React state are updated through one entity-store boundary, so mutation handlers, live events, bootstrap replacement, persistence, and rendering cannot maintain divergent copies. `features/inquiry/useInquiryController.ts` is the inquiry authority that composes that entity store with bounded post reads, optimistic post/comment commands, mutation ordering, action reconciliation, passive-view deduplication, live input, cross-tab delivery, and cached snapshot persistence. Mutation ordering remains implemented by `features/mutations/itemMutationCoordinator.ts`; action reconciliation remains implemented by `features/live-sync/inquiryActionReconciler.ts`. The shell invokes typed inquiry commands and routes global live events, but it cannot read or mutate `/api/posts`, replace the inquiry collection, publish item messages, or persist item snapshots directly.
 
+`features/profiles/useProfileController.ts` is the profile and social authority.
+It composes profile/bootstrap reads, authenticated identity projection, settings
+writes, following state, follow mutation ordering, social-list caching,
+revision-safe live merges, and ordered cross-tab profile delivery.
+`features/profiles/useProfileActivityController.ts` is its activity subauthority:
+it owns scoped cursor state, request deduplication and stale-response rejection,
+bounded subject hydration, viewer-scoped caching, optimistic action totals, and
+canonical live convergence. The shell supplies narrow typed inquiry and
+community bridges and routes global live events, but it cannot request
+bootstrap, authentication sync, profiles, follows, or profile activity
+directly.
+
 Profiles reuse the same collection coordinator and ordered browser transport as inquiry items. Follow relationships use a relationship-specific coordinator that tracks the pending desired state and the last authoritative relationship revision, so refreshes and delayed events cannot reverse a follow or unfollow while its request is outstanding. Profile, follow, post, comment, and action writes all use the shared JSON API client and idempotency-key policy.
 
 ## Frontend ownership
 
-`SymposiumV0.tsx` is the application orchestrator: authentication lifecycle, global live-event routing, cross-domain composition, and invocation of typed feature commands. Canonical view state belongs to `useSymposiumViewController`; inquiry reads, writes, live/cross-tab convergence, and item persistence belong to `useInquiryController`. HTTP normalization, retry identities, SSE lifecycle, mutation ordering, and reconciliation remain delegated to shared infrastructure. Rendering and feature policy are owned below it:
+`SymposiumV0.tsx` is the application orchestrator: authentication lifecycle, global live-event routing, cross-domain composition, and invocation of typed feature commands. Canonical view state belongs to `useSymposiumViewController`; inquiry reads, writes, live/cross-tab convergence, and item persistence belong to `useInquiryController`; profile, identity projection, follow, social-list, and profile-activity state belong to `useProfileController` and its activity subcontroller. HTTP normalization, retry identities, SSE lifecycle, mutation ordering, and reconciliation remain delegated to shared infrastructure. Rendering and feature policy are owned below it:
 
 - `features/posts`: composers, feed cards, detail views, edit surfaces, post action presentation
 - `features/inquiry`: the typed inquiry entity, read, mutation, convergence, cross-tab, and persistence authority
 - `features/comments`: discussion trees, reply-window paging, comment ownership and actions
 - `features/attachments`: metadata generation, carousel, document/media previews, continuous virtualized PDF.js and DOCX reading surfaces, attachment-scoped reading/translation sessions shared across preview/modal/fullscreen, scroll-derived active-page context, parallel reconstructed translation pages for extracted and scanned documents, selectable PDF text, zoom and fullscreen
-- `features/profiles`: activity projection, privacy-aware tabs, social graph and settings
+- `features/profiles`: the typed profile, identity projection, social graph, follow, activity, cross-tab, cache, and settings authority plus privacy-aware views
 - `features/communities`, `features/rooms`, `features/workspace`, `features/messages`, `features/search`: their respective surfaces
 - `features/assistant`: one mounted conversation controller plus bounded presentation modules for the shell, transcript messages, Evidence Map citation staging, Context Dock inspection, Quick Note persistence, and thread administration; those modules do not create competing assistant state owners
 - `features/entities`, `features/live-sync`, `features/navigation`, `features/actions`: shared client invariants and contracts

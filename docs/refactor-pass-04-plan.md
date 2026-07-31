@@ -23,14 +23,13 @@ This is the execution charter for the next pass. It deliberately sets a
 material result threshold. Another few-hundred-line cleanup is useful work,
 but it is not this pass.
 
-> **Current execution addendum, July 30, 2026:** checkpoint 05 is released at
-> `b0ce00548a29e2111d74c4e90acb9bcf27404bf0` with 476 files / 125,725
-> physical / 117,682 nonblank. It is green but explicitly incomplete, 10,726
-> physical lines above the Pass 04 ceiling. The next authority replacement is
-> prepared in
-> [`refactor-pass-04-checkpoint-06-plan.md`](refactor-pass-04-checkpoint-06-plan.md).
-> The exact checkpoint 05 evidence remains in
-> [`refactor-evidence/pass-04/checkpoint-05.md`](refactor-evidence/pass-04/checkpoint-05.md).
+> **Current execution addendum, July 30, 2026:** checkpoint 08 implements C3
+> profile/social authority at 484 files / 127,359 physical / 119,282 nonblank.
+> It is green but explicitly incomplete, 12,360 physical lines above the Pass
+> 04 ceiling. The user waived LOC optimization for this architecture-first
+> slice; no reduction credit is claimed. The next authority is C4 discovery
+> ownership and final shell retirement. Exact C3 evidence is in
+> [`refactor-evidence/pass-04/checkpoint-08.md`](refactor-evidence/pass-04/checkpoint-08.md).
 
 The threshold is an acceptance gate, not permission to game the count. If
 11,544 safe deletions cannot be proved, the implementation must stop at a

@@ -32,7 +32,10 @@ const shellViews = readFileSync("features/shell/SymposiumShellViews.tsx", "utf8"
 const nextConfig = readFileSync("next.config.mjs", "utf8");
 const profileRepository = readFileSync("apps/api/src/repository/profiles.ts", "utf8");
 const profileActions = readFileSync("apps/api/src/repository/actions.ts", "utf8");
-const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
+const profileActivityController = readFileSync(
+  "features/profiles/useProfileActivityController.ts",
+  "utf8"
+);
 const packageJson = readFileSync("package.json", "utf8");
 const renderBlueprint = readFileSync("render.yaml", "utf8");
 const renderDirectory = "public/symposium-renders";
@@ -102,9 +105,12 @@ assert.equal(avifRenderFiles.length, 22);
 assert.ok(avifRenderBytes < 4 * 1024 * 1024, "Versioned room renders must stay below a 4 MB deployment budget.");
 assert.match(profileActions, /query\.includeSummary[\s\S]*profileActivityCountSummary/);
 assert.match(profileRepository, /listProfileActivitySubjects/);
-assert.match(shell, /const requestSummary = !append && \(forceSummary \|\| !existingSnapshot\.totals\)/);
-assert.match(shell, /includeSummary: String\(requestSummary\)/);
-assert.match(shell, /data\.items\?\.length \|\| data\.profiles/);
+assert.match(
+  profileActivityController,
+  /const requestSummary =[\s\S]*?!append && \(forceSummary \|\| !existingSnapshot\.totals\)/
+);
+assert.match(profileActivityController, /includeSummary: String\(requestSummary\)/);
+assert.match(profileActivityController, /data\.items\?\.length \|\| data\.profiles/);
 
 const measuredCost = createRequestCostState();
 runWithRequestCost(measuredCost, () => {

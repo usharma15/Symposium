@@ -357,6 +357,14 @@ assert.match(
 );
 
 const profileShell = readFileSync(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
+const profileActivityController = readFileSync(
+  path.join(process.cwd(), "features/profiles/useProfileActivityController.ts"),
+  "utf8"
+);
+const profileController = readFileSync(
+  path.join(process.cwd(), "features/profiles/useProfileController.ts"),
+  "utf8"
+);
 const inquiryController = readFileSync(
   path.join(process.cwd(), "features/inquiry/useInquiryController.ts"),
   "utf8"
@@ -378,10 +386,19 @@ for (const scopedPagingBoundary of [
   "const requestKey = `${clean}:${scope}`"
 ]) {
   assert.ok(
-    profileShell.includes(scopedPagingBoundary),
+    profileActivityController.includes(scopedPagingBoundary),
     `Profile activity paging must retain ${scopedPagingBoundary}.`
   );
 }
+assert.match(profileShell, /useProfileController\(\{/);
+assert.doesNotMatch(
+  profileShell,
+  /\/api\/profiles/,
+  "The shell must not regain direct profile activity or profile mutation authority."
+);
+assert.match(profileController, /useProfileActivityController\(\{/);
+assert.match(profileActivityController, /persistCachedProfileActivity/);
+assert.match(profileActivityController, /readCachedProfileActivity/);
 
 const actionRepository = readFileSync(path.join(process.cwd(), "apps/api/src/repository/actions.ts"), "utf8");
 const profileRepository = readFileSync(path.join(process.cwd(), "apps/api/src/repository/profiles.ts"), "utf8");

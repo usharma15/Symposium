@@ -145,6 +145,14 @@ const main = async () => {
   }, 10_001), { following: ["@one"], followers: ["@two"] });
 
   const component = await readFile(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
+  const profileController = await readFile(
+    path.join(process.cwd(), "features/profiles/useProfileController.ts"),
+    "utf8"
+  );
+  const profileActivityController = await readFile(
+    path.join(process.cwd(), "features/profiles/useProfileActivityController.ts"),
+    "utf8"
+  );
   const symposiumPage = await readFile(path.join(process.cwd(), "app/SymposiumPage.tsx"), "utf8");
   const entryViews = await readFile(path.join(process.cwd(), "features/shell/SymposiumShellViews.tsx"), "utf8");
   assert.match(symposiumPage, /cookies\(\)/);
@@ -158,20 +166,41 @@ const main = async () => {
   assert.match(component, /startedAt \+ 5000 - Date\.now\(\)/);
   assert.match(component, /if \(shouldCompleteEntryAfterAccountSync\(entryModeRef\.current\)\) \{/);
   assert.doesNotMatch(component, /\[authLoaded, clerkEnabled, entryMode, isSignedIn, syncedClerkUserId, userId\]/);
-  assert.match(component, /if \(!clerkEnabled\) \{\s+refreshData\(storedProfileHandle \?\? undefined\)/);
-  assert.match(component, /setSignedIn\(true\);[\s\S]*void refreshData\(data\.profile\.handle\)/);
-  assert.doesNotMatch(component, /await refreshData\(data\.profile\.handle\)/);
+  assert.match(
+    component,
+    /if \(!clerkEnabled\) \{\s+profileController\.refreshData\(storedProfileHandle \?\? undefined\)/
+  );
+  assert.match(
+    component,
+    /setSignedIn\(true\);[\s\S]*void profileController\.refreshData\(syncedProfile\.handle\)/
+  );
+  assert.doesNotMatch(
+    component,
+    /await profileController\.refreshData\(syncedProfile\.handle\)/
+  );
   assert.match(component, /entranceStartedAtRef\.current = Date\.now\(\);\s+replayEntrance\(\);\s+setEntryMode\("approach"\);/);
   assert.match(component, /const presentedEntryMode = resolvePresentedEntryMode\(/);
-  assert.match(component, /profileActivityInFlightRef/);
-  assert.match(component, /readCachedProfileActivity/);
-  assert.match(component, /page\?\.loaded && !page\.stale/);
-  assert.match(component, /if \(selectedProfile\?\.handle\) return;/);
+  assert.match(profileActivityController, /inFlightRef/);
+  assert.match(profileActivityController, /readCachedProfileActivity/);
+  assert.match(profileActivityController, /page\?\.loaded && !page\.stale/);
+  assert.match(
+    profileActivityController,
+    /input\.selectedProfile\?\.handle\) \{\s+return;/
+  );
   assert.match(component, /const readSessionReady = browserReadStateHydrated &&/);
   assert.match(component, /setBrowserReadStateHydrated\(true\);\s+if \(!clerkEnabled\)/);
-  assert.match(component, /const cachedIdentity = readCachedIdentity\(window\.localStorage, userId\)/);
-  assert.match(component, /persistCachedIdentity\(window\.localStorage, userId, data\.profile\)/);
-  assert.match(component, /window\.setTimeout\(\(\) => controller\.abort\(\), 15_000\)/);
+  assert.match(profileController, /const cachedIdentity = readCachedIdentity\(window\.localStorage, userId\)/);
+  assert.match(profileController, /persistCachedIdentity\(window\.localStorage, userId, data\.profile\)/);
+  assert.match(
+    component,
+    /socialHydrationEnabled:[\s\S]*signedIn \|\|[\s\S]*!clerkEnabled && entryMode === "complete" && readSessionReady/
+  );
+  assert.match(
+    profileController,
+    /if \(!input\.socialHydrationEnabled \|\| !currentProfile\.handle\) return;/
+  );
+  assert.match(profileController, /if \(inputRef\.current\.localPreview\) return;/);
+  assert.match(profileActivityController, /window\.setTimeout\(\(\) => controller\.abort\(\), 15_000\)/);
   assert.match(component, /canonicalActivityError=/);
   assert.match(entryViews, /className={`entry-image \$\{playApproach \? "approaching" : "stationary"\}`}/);
   assert.doesNotMatch(entryViews, /\{playApproach \? <Image/);
@@ -193,7 +222,8 @@ const main = async () => {
     "single authenticated bootstrap request",
     "persisted-viewer read hydration gate",
     "exact-Clerk-user cached identity isolation",
-    "bounded viewer-scoped profile read projections"
+    "bounded viewer-scoped profile read projections",
+    "returning local-preview social hydration"
   ]);
 };
 
