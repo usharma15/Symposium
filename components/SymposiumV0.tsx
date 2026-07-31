@@ -29,7 +29,6 @@ import type {
   OpportunityPostInputContract,
   PatronageProposalInputContract,
   PostPageQueryContract,
-  SearchResponseContract,
   VersionedDocumentContract
 } from "@/packages/contracts/src";
 import {
@@ -37,8 +36,7 @@ import {
   findCommentInTree,
   isDeletedComment,
   isDeletedPost,
-  itemTimestampScore,
-  normalizeSearchPhrase
+  itemTimestampScore
 } from "@/lib/symposiumCore";
 import {
   emptyProfileActivityCounts,
@@ -130,10 +128,7 @@ import {
 } from "@/features/quotes/QuoteViews";
 import { resolveQuoteLink, type QuoteLinkResolver } from "@/features/quotes/quoteLinks";
 import { resolveLocalContentQuote } from "@/lib/contentQuotes";
-import {
-  postContextLabel,
-  publicPostTitle
-} from "@/lib/postSemantics";
+import { postContextLabel } from "@/lib/postSemantics";
 import { selectVisibleFeedItems } from "@/features/feeds/feedVisibility";
 import {
   ProfileSettingsModal,
@@ -157,8 +152,8 @@ import {
 import {
   CommunitiesStage
 } from "@/features/communities/CommunityViews";
-import { searchableContentText } from "@/features/discovery/discoveryPolicy";
-import { canParticipateInCommunity, communityPostIsExternallyDiscoverable } from "@/features/communities/communityPolicy";
+import { useDiscoveryController } from "@/features/discovery/useDiscoveryController";
+import { canParticipateInCommunity } from "@/features/communities/communityPolicy";
 import { useCommunityState } from "@/features/communities/useCommunityState";
 import { createCommunityController } from "@/features/communities/communityController";
 import { CommunityGovernanceProvider } from "@/features/communities/CommunityGovernanceContext";
@@ -195,12 +190,6 @@ type EntryMode = "loading" | "approach" | "auth" | "complete";
 type EditingCommentTarget = {
   itemId: string;
   commentId: string;
-};
-
-type SearchResults = {
-  titleMatches: InquiryItem[];
-  contentMatches: InquiryItem[];
-  profileMatches: ResearchProfile[];
 };
 
 type AttachmentPreviewTarget = {
@@ -524,7 +513,6 @@ function SymposiumExperience({
   const [composerOpen, setComposerOpen] = useState(false);
   const [quoteSelection, setQuoteSelection] = useState<QuoteSelection | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
   const [messagesQuickOpen, setMessagesQuickOpen] = useState(false);
   const [quickConversationId, setQuickConversationId] = useState<string | null>(null);
   const [messagingEvents, setMessagingEvents] = useState<SymposiumLiveEvent[]>([]);
@@ -537,11 +525,6 @@ function SymposiumExperience({
   } | null>(null);
   const [workspaceTabletDocument, setWorkspaceTabletDocument] = useState<WorkspaceDocument | null>(null);
   const [notificationEvents, setNotificationEvents] = useState<SymposiumLiveEvent[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [remoteSearchResults, setRemoteSearchResults] = useState<SearchResults | null>(null);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [communitySearchResultIds, setCommunitySearchResultIds] = useState<string[] | null>(null);
-  const [communitySearchLoading, setCommunitySearchLoading] = useState(false);
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [editingComment, setEditingComment] = useState<EditingCommentTarget | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewTarget | null>(null);
@@ -665,6 +648,25 @@ function SymposiumExperience({
     : null;
 
   const activeItems = useMemo(() => items.filter((item) => !isDeletedPost(item)), [items]);
+  const discoveryController = useDiscoveryController({
+    actorHandle: currentProfile.handle,
+    activeRoom,
+    communityId: selectedCommunityId,
+    communityQuery: selectedCommunityFeedView.query,
+    items: activeItems,
+    mergeBoundedRead: inquiryController.mergeBoundedRead,
+    profiles
+  });
+  const {
+    communityResultIds: communitySearchResultIds,
+    communitySearchLoading,
+    loading: searchLoading,
+    open: searchOpen,
+    query: searchQuery,
+    results: searchResults,
+    setOpen: setSearchOpen,
+    setQuery: setSearchQuery
+  } = discoveryController;
   const editingPostItem = editingPost ? items.find((item) => item.id === editingPost.id) ?? editingPost : null;
   const editingCommentItem = editingComment ? items.find((item) => item.id === editingComment.itemId) ?? null : null;
   const editingCommentValue =
@@ -686,7 +688,6 @@ function SymposiumExperience({
   const selectedProfileActivitySnapshot = profileActivity.selectedSnapshot;
   const selectedProfileActivityPage = profileActivity.selectedPage;
   const findProfile = profileController.findProfile;
-  const profileList = useMemo(() => Object.values(profiles), [profiles]);
 
   useSymposiumRenderPreload(themePreloadRenders, activeShellRender);
 
@@ -806,7 +807,6 @@ function SymposiumExperience({
 
   const mergeLiveItem = inquiryController.mergeLiveItem;
 
-  const mergeBoundedRead = inquiryController.mergeBoundedRead;
   const loadPostPage = inquiryController.loadPostPage;
   const mergeLiveMetricPatch = inquiryController.mergeLiveMetricPatch;
   const scheduleLiveRefresh = profileController.scheduleLiveRefresh;
@@ -1157,91 +1157,6 @@ function SymposiumExperience({
     if (feedPagesRef.current[key]?.initialized) return;
     void loadPostPage(key, { authorHandle: selectedProfileHandle, limit: 24 }).catch(() => undefined);
   }, [profileActiveTab, readSessionReady, selectedProfileHandle]);
-
-  useEffect(() => {
-    const query = searchQuery.trim();
-    if (!searchOpen || !query) {
-      setRemoteSearchResults(null);
-      setSearchLoading(false);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      setSearchLoading(true);
-      const parameters = new URLSearchParams({
-        q: query,
-        limit: "16",
-        actorHandle: currentProfile.handle
-      });
-      void symposiumApi.request<SearchResponseContract>(
-        `/api/search?${parameters.toString()}`,
-        { cache: "no-store" }
-      ).then((data) => {
-        if (cancelled) return;
-        mergeBoundedRead({
-          items: data.posts,
-          profiles: Object.fromEntries(data.profiles.map((person) => [person.handle, person]))
-        });
-        const normalized = normalizeSearchPhrase(query);
-        const titleMatches = data.posts.filter((item) => normalizeSearchPhrase(publicPostTitle(item)).includes(normalized));
-        const titleIds = new Set(titleMatches.map((item) => item.id));
-        setRemoteSearchResults({
-          titleMatches,
-          contentMatches: data.posts.filter((item) => !titleIds.has(item.id)),
-          profileMatches: data.profiles
-        });
-      }).catch(() => {
-        if (!cancelled) setRemoteSearchResults(null);
-      }).finally(() => {
-        if (!cancelled) setSearchLoading(false);
-      });
-    }, 250);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [currentProfile.handle, searchOpen, searchQuery]);
-
-  useEffect(() => {
-    const query = selectedCommunityFeedView.query.trim();
-    if (activeRoom !== "communities" || !selectedCommunityId || !query) {
-      setCommunitySearchResultIds(null);
-      setCommunitySearchLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setCommunitySearchResultIds(null);
-    const timer = window.setTimeout(() => {
-      setCommunitySearchLoading(true);
-      const parameters = new URLSearchParams({
-        q: query,
-        limit: "50",
-        communityId: selectedCommunityId,
-        actorHandle: currentProfile.handle
-      });
-      void symposiumApi.request<SearchResponseContract>(
-        `/api/search?${parameters.toString()}`,
-        { cache: "no-store" }
-      ).then((data) => {
-        if (cancelled) return;
-        mergeBoundedRead({
-          items: data.posts,
-          profiles: Object.fromEntries(data.profiles.map((person) => [person.handle, person]))
-        });
-        setCommunitySearchResultIds(data.posts.map((item) => item.id));
-      }).catch(() => {
-        if (!cancelled) setCommunitySearchResultIds(null);
-      }).finally(() => {
-        if (!cancelled) setCommunitySearchLoading(false);
-      });
-    }, 250);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [activeRoom, currentProfile.handle, selectedCommunityFeedView.query, selectedCommunityId]);
 
   const updateCommentSegmentStack = (key: string, stack: string[]) => {
     setViewField("commentSegmentStacks", (current) => {
@@ -1881,27 +1796,6 @@ function SymposiumExperience({
       };
     }
     if (searchOpen) {
-      const term = normalizeSearchPhrase(searchQuery);
-      const searchableItems = activeItems.filter(communityPostIsExternallyDiscoverable);
-      const localTitleMatches = term
-        ? sortByPublishedRecency(searchableItems.filter((item) => normalizeSearchPhrase(publicPostTitle(item)).includes(term)))
-        : [];
-      const localTitleIds = new Set(localTitleMatches.map((item) => item.id));
-      const localContentMatches = term
-        ? sortByPublishedRecency(searchableItems.filter((item) =>
-            !localTitleIds.has(item.id) && normalizeSearchPhrase(searchableContentText(item)).includes(term)
-          ))
-        : [];
-      const localProfileMatches = term
-        ? profileList.filter((person) =>
-            normalizeSearchPhrase([person.name, person.handle, person.role, person.location, person.bio, ...person.fields].join(" ")).includes(term)
-          ).slice(0, 8)
-        : [];
-      const visibleSearchResults = remoteSearchResults ?? {
-        titleMatches: localTitleMatches,
-        contentMatches: localContentMatches,
-        profileMatches: localProfileMatches
-      };
       return {
         surface: "search",
         route: "/search",
@@ -1909,18 +1803,18 @@ function SymposiumExperience({
         summary: "The global Symposium search overlay is open.",
         content: trimContent([
           searchQuery.trim() ? `Current search query: ${searchQuery.trim()}` : "No search query has been entered yet.",
-          visibleSearchResults.titleMatches.length || visibleSearchResults.contentMatches.length
+          searchResults.titleMatches.length || searchResults.contentMatches.length
             ? [
                 "Visible post results:",
-                ...[...visibleSearchResults.titleMatches, ...visibleSearchResults.contentMatches]
+                ...[...searchResults.titleMatches, ...searchResults.contentMatches]
                   .slice(0, 16)
                   .map(tabletItemLine)
               ].join("\n\n")
             : "No post results are currently visible.",
-          visibleSearchResults.profileMatches.length
+          searchResults.profileMatches.length
             ? [
                 "Visible researcher results:",
-                ...visibleSearchResults.profileMatches.slice(0, 8).map((person) =>
+                ...searchResults.profileMatches.slice(0, 8).map((person) =>
                   `${person.name} (${person.handle}) · ${person.role}\n${person.bio}`
                 )
               ].join("\n\n")
@@ -1928,8 +1822,8 @@ function SymposiumExperience({
         ].join("\n\n")),
         metadata: {
           query: searchQuery.trim(),
-          postResultCount: visibleSearchResults.titleMatches.length + visibleSearchResults.contentMatches.length,
-          profileResultCount: visibleSearchResults.profileMatches.length,
+          postResultCount: searchResults.titleMatches.length + searchResults.contentMatches.length,
+          profileResultCount: searchResults.profileMatches.length,
           loading: searchLoading
         }
       };
@@ -2121,37 +2015,6 @@ function SymposiumExperience({
     assistantThreadId,
     replaceCanonicalRoute
   ]);
-
-  const localSearchResults = useMemo<SearchResults>(() => {
-    const term = normalizeSearchPhrase(searchQuery);
-    if (!term) return { titleMatches: [] as InquiryItem[], contentMatches: [] as InquiryItem[], profileMatches: [] as ResearchProfile[] };
-    const searchableItems = activeItems.filter(communityPostIsExternallyDiscoverable);
-
-    const titleMatches = sortByPublishedRecency(
-      searchableItems.filter((item) => normalizeSearchPhrase(publicPostTitle(item)).includes(term))
-    );
-    const titleIds = new Set(titleMatches.map((item) => item.id));
-    const contentMatches = sortByPublishedRecency(
-      searchableItems.filter((item) => !titleIds.has(item.id) && normalizeSearchPhrase(searchableContentText(item)).includes(term))
-    );
-    const profileMatches = profileList
-      .filter((person) =>
-        [person.name, person.handle, person.role, person.location, person.bio, ...person.fields]
-          .join(" ")
-          .toLowerCase()
-          .includes(term)
-      )
-      .slice(0, 8);
-
-    return { titleMatches, contentMatches, profileMatches };
-  }, [activeItems, profileList, searchQuery]);
-  const searchResults = useMemo<SearchResults>(() => {
-    const base = remoteSearchResults ?? localSearchResults;
-    return {
-      ...base,
-      profileMatches: base.profileMatches.map((person) => profiles[cleanHandle(person.handle)] ?? person)
-    };
-  }, [localSearchResults, profiles, remoteSearchResults]);
 
   const presentedEntryMode = resolvePresentedEntryMode({
     entryMode,

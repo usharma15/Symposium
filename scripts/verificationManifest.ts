@@ -38,6 +38,7 @@ export const verificationManifest = [
   stage("recovery:check", "architecture-design-security"),
   stage("provider-cost:check", "architecture-design-security"),
   stage("bounded-read:check", "architecture-design-security"),
+  stage("discovery:check", "architecture-design-security"),
   stage("routing:check", "architecture-design-security"),
   stage("entities:check", "state-sync"),
   stage("entity-revision:check", "state-sync"),

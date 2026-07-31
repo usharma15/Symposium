@@ -23,6 +23,10 @@ const profileActivityController = readFileSync(
   "features/profiles/useProfileActivityController.ts",
   "utf8"
 );
+const discoveryController = readFileSync(
+  "features/discovery/useDiscoveryController.ts",
+  "utf8"
+);
 const cachedBootstrap = readFileSync("features/bootstrap/cachedBootstrap.ts", "utf8");
 const localBootstrap = readFileSync("app/api/bootstrap/route.ts", "utf8");
 const profileProxy = readFileSync("app/api/profiles/route.ts", "utf8");
@@ -82,7 +86,7 @@ assert.match(search, /to_tsvector\('simple', post\.search_text\)/);
 assert.match(search, /visible_posts AS NOT MATERIALIZED/);
 assert.doesNotMatch(search, /getInitialState|getPublicInitialState/);
 assert.doesNotMatch(shell, /\/api\/posts(?:[/?`"]|\$\{)/);
-assert.doesNotMatch(shell, /\/api\/(?:bootstrap|auth\/sync|follows|profiles)/);
+assert.doesNotMatch(shell, /\/api\/(?:bootstrap|auth\/sync|follows|profiles|search)/);
 assert.match(inquiryController, /\/api\/posts\?\$\{parameters\.toString\(\)\}/);
 assert.match(inquiryController, /\/api\/posts\/\$\{encodeURIComponent\(postId\)\}/);
 assert.match(profileController, /\/api\/bootstrap\?actorHandle=/);
@@ -91,9 +95,10 @@ assert.match(
   profileActivityController,
   /\/api\/profiles\/\$\{encodeURIComponent\(clean\)\}\/activity\?\$\{params\.toString\(\)\}/
 );
-assert.match(shell, /\/api\/search\?\$\{parameters\.toString\(\)\}/);
-assert.doesNotMatch(shell, /limit: "500"/);
+assert.match(discoveryController, /\/api\/search\?\$\{parameters\.toString\(\)\}/);
+assert.doesNotMatch(discoveryController, /limit: "500"/);
 assert.match(shell, /useInquiryController/);
+assert.match(shell, /useDiscoveryController/);
 assert.match(inquiryController, /useInquiryEntityStore\(input\.initialItems\)/);
 assert.match(cachedBootstrap, /cachedBootstrapItemLimit = 32/);
 assert.match(localBootstrap, /projectedItems\.slice\(0, 24\)/);

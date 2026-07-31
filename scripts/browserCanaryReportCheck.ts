@@ -9,6 +9,7 @@ const expectedCanaries = [
   "symposium-canary.spec.ts\0keeps Paper and Thought design identities stable across theme and reload",
   "symposium-canary.spec.ts\0keeps the authored-artifact layouts inside desktop and mobile viewports",
   "symposium-canary.spec.ts\0keeps profile activity, social navigation, and follow state authoritative across reload",
+  "symposium-canary.spec.ts\0keeps global and community discovery authoritative across rapid queries",
   "symposium-canary.spec.ts\0creates, edits, and durably reloads a titleless Thought"
 ].sort();
 

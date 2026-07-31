@@ -179,6 +179,60 @@ test.describe("returning browser session", () => {
     clean();
   });
 
+  test("keeps global and community discovery authoritative across rapid queries", async ({ page }) => {
+    const clean = watchDiagnostics(page);
+    await page.goto("/");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    const search = page.getByPlaceholder("Search posts, comments, people");
+    await expect(search).toBeFocused();
+
+    const firstRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return request.method() === "GET"
+        && url.pathname === "/api/search"
+        && url.searchParams.get("q") === "olives";
+    });
+    await search.fill("olives");
+    await firstRequest;
+
+    const finalResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "GET"
+        && url.pathname === "/api/search"
+        && url.searchParams.get("q") === "Einstein Podolsky Rosen"
+        && url.searchParams.get("limit") === "16"
+        && Boolean(url.searchParams.get("actorHandle"));
+    });
+    await search.fill("Einstein Podolsky Rosen");
+    expect((await finalResponse).ok()).toBe(true);
+    const eprResult = page.getByRole("link", {
+      name: /On the Einstein Podolsky Rosen paradox/
+    });
+    await expect(eprResult).toBeVisible();
+    await page.waitForTimeout(400);
+    await expect(search).toHaveValue("Einstein Podolsky Rosen");
+    await expect(eprResult).toBeVisible();
+    await expect(eprResult).toHaveAttribute("href", "/posts/paper-bell-epr");
+
+    await page.goto("/communities/science-rebirth-commons");
+    await expect(page.getByRole("heading", { name: "Science Rebirth Commons" })).toBeVisible();
+    const communitySearch = page.getByPlaceholder("Search this community");
+    const communityResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "GET"
+        && url.pathname === "/api/search"
+        && url.searchParams.get("q") === "glamorous instrument"
+        && url.searchParams.get("communityId") === "science-rebirth-commons"
+        && url.searchParams.get("limit") === "50";
+    });
+    await communitySearch.fill("glamorous instrument");
+    expect((await communityResponse).ok()).toBe(true);
+    await expect(
+      page.getByText(/Not the glamorous instrument\./)
+    ).toBeVisible();
+    clean();
+  });
+
   test("creates, edits, and durably reloads a titleless Thought", async ({ page, browser }) => {
     const clean = watchDiagnostics(page);
     const initial = "Browser proof: titleless Thought creation persists.";

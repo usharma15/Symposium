@@ -1,11 +1,12 @@
 "use client";
 
 import { Search, X } from "lucide-react";
-import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
+import type { InquiryItem } from "@/lib/mockData";
 import { profileInitials as initial } from "@/features/identity/profilePresentation";
 import { kindLabels } from "@/features/posts/PostViews";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { publicPostTitle, publicPostTypeLabel } from "@/lib/postSemantics";
+import type { DiscoverySearchResults } from "@/features/discovery/discoveryModel";
 
 export function SearchModal({
   query,
@@ -18,11 +19,7 @@ export function SearchModal({
 }: {
   query: string;
   setQuery: (query: string) => void;
-  results: {
-    titleMatches: InquiryItem[];
-    contentMatches: InquiryItem[];
-    profileMatches: ResearchProfile[];
-  };
+  results: DiscoverySearchResults;
   loading?: boolean;
   onClose: () => void;
   onOpenPost: (id: string) => void;

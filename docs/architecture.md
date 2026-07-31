@@ -136,18 +136,29 @@ community bridges and routes global live events, but it cannot request
 bootstrap, authentication sync, profiles, follows, or profile activity
 directly.
 
+`features/discovery/useDiscoveryController.ts` is the single global and
+community discovery authority. It owns overlay/query state, debounced and
+abortable search requests, actor- and query-scoped stale-response isolation,
+bounded inquiry/profile merging, community result IDs, local privacy-safe
+fallback, and canonical profile reprojection. Pure title/content
+classification, published-recency fallback ordering, and viewer-scoped result
+keys belong to `features/discovery/discoveryModel.ts`. The shell renders the
+typed result and supplies the inquiry merge port; it cannot request search or
+derive a competing fallback result.
+
 Profiles reuse the same collection coordinator and ordered browser transport as inquiry items. Follow relationships use a relationship-specific coordinator that tracks the pending desired state and the last authoritative relationship revision, so refreshes and delayed events cannot reverse a follow or unfollow while its request is outstanding. Profile, follow, post, comment, and action writes all use the shared JSON API client and idempotency-key policy.
 
 ## Frontend ownership
 
-`SymposiumV0.tsx` is the application orchestrator: authentication lifecycle, global live-event routing, cross-domain composition, and invocation of typed feature commands. Canonical view state belongs to `useSymposiumViewController`; inquiry reads, writes, live/cross-tab convergence, and item persistence belong to `useInquiryController`; profile, identity projection, follow, social-list, and profile-activity state belong to `useProfileController` and its activity subcontroller. HTTP normalization, retry identities, SSE lifecycle, mutation ordering, and reconciliation remain delegated to shared infrastructure. Rendering and feature policy are owned below it:
+`SymposiumV0.tsx` is the application orchestrator: authentication lifecycle, global live-event routing, cross-domain composition, and invocation of typed feature commands. Canonical view state belongs to `useSymposiumViewController`; inquiry reads, writes, live/cross-tab convergence, and item persistence belong to `useInquiryController`; profile, identity projection, follow, social-list, and profile-activity state belong to `useProfileController` and its activity subcontroller; global and community search belongs to `useDiscoveryController`. The shell owns zero direct feature HTTP requests. HTTP normalization, retry identities, SSE lifecycle, mutation ordering, and reconciliation remain delegated to shared infrastructure. Rendering and feature policy are owned below it:
 
 - `features/posts`: composers, feed cards, detail views, edit surfaces, post action presentation
 - `features/inquiry`: the typed inquiry entity, read, mutation, convergence, cross-tab, and persistence authority
 - `features/comments`: discussion trees, reply-window paging, comment ownership and actions
 - `features/attachments`: metadata generation, carousel, document/media previews, continuous virtualized PDF.js and DOCX reading surfaces, attachment-scoped reading/translation sessions shared across preview/modal/fullscreen, scroll-derived active-page context, parallel reconstructed translation pages for extracted and scanned documents, selectable PDF text, zoom and fullscreen
+- `features/discovery`: the typed global/community query, remote/local projection, stale-request, privacy, and bounded-merge authority
 - `features/profiles`: the typed profile, identity projection, social graph, follow, activity, cross-tab, cache, and settings authority plus privacy-aware views
-- `features/communities`, `features/rooms`, `features/workspace`, `features/messages`, `features/search`: their respective surfaces
+- `features/communities`, `features/rooms`, `features/workspace`, `features/messages`, `features/search`: their respective presentation surfaces
 - `features/assistant`: one mounted conversation controller plus bounded presentation modules for the shell, transcript messages, Evidence Map citation staging, Context Dock inspection, Quick Note persistence, and thread administration; those modules do not create competing assistant state owners
 - `features/entities`, `features/live-sync`, `features/navigation`, `features/actions`: shared client invariants and contracts
 - `features/api`: same-origin JSON requests, structured failures, and retry-safe mutation identities
@@ -183,6 +194,7 @@ The notification repository owns page/unread reads and read convergence. Domain 
 11. Add server-authoritative entity revisions and a shared cross-tab mutation coordinator. Complete for posts, comments, profiles, follows, bootstrap, live events, and the current edit/delete mutation envelope.
 12. Extract the client API, live-event, and browser-transport kernels and extend idempotent mutation coverage to profiles and follows. Complete.
 13. Construct the unified Patronage Hall domain. Complete for proposal contracts, creation and editing, Office drafts, exact-revision publication, canonical proposal and contribution-ledger storage, local/live persistence, feed and detail projections, and payment/private-capital feature gates. Provider payment ingestion remains intentionally unopened.
+14. Replace shell-owned global and community discovery. Complete: one typed controller now owns both search requests, query/result state, actor-scoped isolation, abort policy, local fallback, and bounded entity composition.
 
 ## Checkpoint gates
 

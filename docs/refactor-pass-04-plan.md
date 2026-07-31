@@ -23,13 +23,16 @@ This is the execution charter for the next pass. It deliberately sets a
 material result threshold. Another few-hundred-line cleanup is useful work,
 but it is not this pass.
 
-> **Current execution addendum, July 30, 2026:** checkpoint 08 implements C3
-> profile/social authority at 484 files / 127,359 physical / 119,282 nonblank.
-> It is green but explicitly incomplete, 12,360 physical lines above the Pass
-> 04 ceiling. The user waived LOC optimization for this architecture-first
-> slice; no reduction credit is claimed. The next authority is C4 discovery
-> ownership and final shell retirement. Exact C3 evidence is in
-> [`refactor-evidence/pass-04/checkpoint-08.md`](refactor-evidence/pass-04/checkpoint-08.md).
+> **Current execution addendum, July 30, 2026:** checkpoint 09 implements C4
+> discovery authority and removes the final feature requests from the shell.
+> Global and community search now share one typed owner with abortable,
+> actor-scoped requests, privacy-safe local fallback, and bounded entity
+> merging. The exact candidate is 487 tracked source files / 127,886 physical /
+> 119,783 nonblank, 12,887 physical lines above the Pass 04 ceiling; no
+> reduction credit is claimed. The next decision is the final
+> disposition of the remaining application orchestrator, not another global
+> store. Exact C4 evidence is in
+> [`refactor-evidence/pass-04/checkpoint-09.md`](refactor-evidence/pass-04/checkpoint-09.md).
 
 The threshold is an acceptance gate, not permission to game the count. If
 11,544 safe deletions cannot be proved, the implementation must stop at a
@@ -472,7 +475,7 @@ later work cannot silently regain the removed lines.
 - `npm run proof:check`;
 - `npm run loc:baseline`;
 - `npm run loc:check` against the lowered ceiling;
-- six isolated browser canaries with no skip, retry, flake, console error,
+- eight isolated browser canaries with no skip, retry, flake, console error,
   page error, request error, hydration error, or unexpected result;
 - additional authenticated/two-session scenarios for every changed live-sync
   domain;

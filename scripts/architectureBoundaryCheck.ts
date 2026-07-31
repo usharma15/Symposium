@@ -106,6 +106,14 @@ const main = async () => {
     path.join(root, "features/profiles/useProfileActivityController.ts"),
     "utf8"
   );
+  const discoveryControllerSource = await readFile(
+    path.join(root, "features/discovery/useDiscoveryController.ts"),
+    "utf8"
+  );
+  const discoveryModelSource = await readFile(
+    path.join(root, "features/discovery/discoveryModel.ts"),
+    "utf8"
+  );
   assert.match(
     symposiumSource,
     /useSymposiumViewController/,
@@ -185,9 +193,27 @@ const main = async () => {
   }
   assert.equal(
     symposiumSource.match(/symposiumApi\.request</g)?.length ?? 0,
-    2,
-    "Only the two discovery search requests may remain in the shell before C4."
+    0,
+    "The shell must not own direct feature requests after C4."
   );
+  assert.equal(
+    symposiumSource.match(/useDiscoveryController\(\{/g)?.length ?? 0,
+    1,
+    "Symposium discovery state must have one controller authority."
+  );
+  for (const retiredDiscoveryShellAuthority of [
+    /\/api\/search/,
+    /setRemoteSearchResults/,
+    /setCommunitySearchResultIds/,
+    /localSearchResults/,
+    /SearchResponseContract/
+  ]) {
+    assert.doesNotMatch(
+      symposiumSource,
+      retiredDiscoveryShellAuthority,
+      `Retired discovery authority returned to SymposiumV0.tsx: ${retiredDiscoveryShellAuthority}.`
+    );
+  }
   for (const profileAuthority of [
     "createItemMutationCoordinator",
     "createFollowMutationCoordinator",
@@ -215,6 +241,33 @@ const main = async () => {
     assert.ok(
       profileActivityControllerSource.includes(activityAuthority),
       `${activityAuthority} must remain owned by the profile activity controller.`
+    );
+  }
+  for (const discoveryAuthority of [
+    "localDiscoverySearch",
+    "remoteDiscoverySearch",
+    "reprojectDiscoveryProfiles",
+    "new AbortController()",
+    "abortController.abort()",
+    'limit: "16"',
+    'limit: "50"',
+    "inputRef.current.mergeBoundedRead",
+    "`/api/search?${parameters.toString()}`"
+  ]) {
+    assert.ok(
+      discoveryControllerSource.includes(discoveryAuthority),
+      `${discoveryAuthority} must remain owned by the discovery controller.`
+    );
+  }
+  for (const discoveryPolicy of [
+    "communityPostIsExternallyDiscoverable",
+    "searchableContentText",
+    "itemTimestampScore",
+    "reprojectDiscoveryProfiles"
+  ]) {
+    assert.ok(
+      discoveryModelSource.includes(discoveryPolicy),
+      `${discoveryPolicy} must remain owned by the discovery model.`
     );
   }
   for (const infrastructureImport of [
@@ -270,6 +323,7 @@ const main = async () => {
     "controller transport and API isolation",
     "single inquiry read, mutation, reconciliation, cross-tab, and persistence authority",
     "single profile, social, follow, activity, cross-tab, and persistence authority",
+    "single global and community discovery authority",
     "extracted feature ownership",
     "acyclic feature dependencies"
   ]);
