@@ -840,6 +840,7 @@ const main = async () => {
   const repository = readFileSync("apps/api/src/repository/notifications.ts", "utf8");
   const delivery = readFileSync("apps/api/src/services/notificationDelivery.ts", "utf8");
   const panel = readFileSync("features/notifications/NotificationsPanel.tsx", "utf8");
+  const gateway = readFileSync("features/notifications/notificationGateway.ts", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
   const liveController = readFileSync(
     "features/live-sync/useSymposiumLiveController.ts",
@@ -941,14 +942,19 @@ const main = async () => {
 
   assert.match(panel, /requestEpochRef/);
   assert.match(panel, /retryTimerRef/);
-  assert.match(panel, /\/api\/notifications\/unread/);
+  assert.match(panel, /notificationGateway/);
+  assert.doesNotMatch(panel, /\/api\/notifications/);
+  assert.match(gateway, /\/api\/notifications\/unread/);
+  assert.match(gateway, /\/api\/notifications\/preferences/);
+  assert.match(gateway, /\/api\/notifications\/read/);
+  assert.match(gateway, /\/api\/notifications\/archive/);
   assert.match(panel, /useSymposiumRecoveryRefresh/);
   assert.doesNotMatch(panel, /addEventListener\("focus"/);
   assert.doesNotMatch(panel, /addEventListener\("online"/);
   assert.doesNotMatch(panel, /addEventListener\("visibilitychange"/);
   assert.match(panel, /applyNotificationLiveEvent/);
   assert.match(panel, /data-unread-state=\{loadState\}/);
-  assert.match(panel, /keepalive: true/);
+  assert.match(gateway, /keepalive: true/);
   assert.match(panel, /View all notifications/);
   assert.match(panel, /notification\.actionLabel/);
   assert.match(panel, /partitionNotificationInbox/);

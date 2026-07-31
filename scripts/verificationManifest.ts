@@ -71,6 +71,7 @@ export const verificationManifest = [
   stage("messaging:check", "collaboration"),
   stage("messaging-gateway:check", "collaboration"),
   stage("notifications:check", "collaboration"),
+  stage("notification-gateway:check", "collaboration"),
   stage("content-analytics:check", "collaboration"),
   stage("note-revision:check", "collaboration"),
   stage("workspace:check", "collaboration"),

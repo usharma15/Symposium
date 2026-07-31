@@ -1,15 +1,17 @@
 # Historical Symposium Zero-Loss Sublime Engineering Refactor Program
 
-> **Superseded July 31, 2026.** Pass 04 and its LOC gates are retired. This
+> **Reconciled July 31, 2026.** Pass 04 and its LOC gates are retired. This
 > document is retained as historical design and verification evidence, not as
-> a current execution or completion contract. The governing program is
-> `docs/infrastructure-revamp.md`.
+> the current execution or completion contract. Its zero-loss, structural,
+> proof, retirement, and rollback requirements are incorporated selectively by
+> the Passes 1-10 ledger in `docs/infrastructure-revamp.md`; that current ledger
+> is authoritative when this historical document conflicts with it.
 
 ## Document control
 
 | Field | Value |
 | --- | --- |
-| Status | Historical and superseded; LOC gates no longer govern releases or completion |
+| Status | Historical and reconciled; LOC gates are retired, while current structural requirements are dispositioned in `docs/infrastructure-revamp.md` |
 | Prepared | July 29, 2026 |
 | Execution gate | **Satisfied July 29, 2026.** “Local design lab integration” completed at the exact baseline below and the user explicitly authorized the first Ultra pass |
 | Repository | `/Users/udayansharma/Documents/Science Rebirth` |
