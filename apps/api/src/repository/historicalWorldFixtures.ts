@@ -11,6 +11,17 @@ import {
 
 export const historicalWorldFixtureRevision = "historical-world-v2-casual-activity";
 export const historicalWorldAssetFixtureRevision = "historical-world-assets-v1-pdfjs-compatibility";
+export const historicalWorldFixtureRevisions = [
+  historicalWorldFixtureRevision,
+  historicalWorldAssetFixtureRevision
+] as const;
+
+export const historicalWorldFixtureRevisionsApplied = (
+  rows: readonly { id: string }[]
+) => {
+  const applied = new Set(rows.map((row) => row.id));
+  return historicalWorldFixtureRevisions.every((revision) => applied.has(revision));
+};
 
 type FlatComment = InquiryCommentContract & { postId: string; parentId: string | null };
 

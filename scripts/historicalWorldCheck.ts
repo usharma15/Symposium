@@ -10,6 +10,11 @@ import { allHistoricalAssets } from "../lib/historicalWorld/assets";
 import { historicalProfiles } from "../lib/historicalWorld/characters";
 import { historicalCommunities } from "../lib/historicalWorld/communities";
 import { historicalInquiryItems, historicalWorldCounts } from "../lib/historicalWorld/content";
+import {
+  historicalWorldAssetFixtureRevision,
+  historicalWorldFixtureRevision,
+  historicalWorldFixtureRevisionsApplied
+} from "../apps/api/src/repository/historicalWorldFixtures";
 
 const foundationSource = readFileSync(join(process.cwd(), "apps/api/src/repository/foundation.ts"), "utf8");
 
@@ -47,6 +52,18 @@ assert.match(
   /const seedDatabase = async \(\) => \{\s*if \(!hasDatabase\(\)\) return;/,
   "The approved one-time historical replacement must not be disabled by the legacy seed flag."
 );
+assert.equal(historicalWorldFixtureRevisionsApplied([]), false);
+assert.equal(historicalWorldFixtureRevisionsApplied([{ id: historicalWorldFixtureRevision }]), false);
+assert.equal(historicalWorldFixtureRevisionsApplied([
+  { id: historicalWorldFixtureRevision },
+  { id: historicalWorldAssetFixtureRevision }
+]), true);
+assert.equal(historicalWorldFixtureRevisionsApplied([
+  { id: historicalWorldAssetFixtureRevision },
+  { id: historicalWorldFixtureRevision },
+  { id: historicalWorldFixtureRevision },
+  { id: "unrelated-revision" }
+]), true);
 assert.ok(historicalInquiryItems.every((entry) => Number.isFinite(Date.parse(entry.createdAt ?? ""))));
 assert.ok(historicalInquiryItems.every((entry) => !/strategy\s*2032/i.test(`${entry.title} ${entry.body}`)));
 
