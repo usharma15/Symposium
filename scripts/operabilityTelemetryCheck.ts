@@ -41,6 +41,44 @@ assert.deepEqual(nominal.latencyMs, { p50: 420, p95: 420, max: 420 });
 assert.equal(nominal.databaseMs?.p95, 120);
 assert.equal(nominal.lastObservedAt, "2026-08-01T00:00:00.000Z");
 
+resetRequestOperabilityForTests();
+const marginalState = createRequestCostState();
+runWithRequestCost(marginalState, () => recordDatabaseQuery(950));
+const marginalSnapshot = completeRequestCost(marginalState, {
+  method: "GET",
+  route: "/v1/bootstrap",
+  statusCode: 200,
+  responseBytes: 190_000,
+  completedAt: marginalState.startedAt + 700
+});
+recordRequestOperability(marginalSnapshot, at);
+const marginal = getRequestOperabilityStatus(at);
+assert.equal(marginal.status, "nominal");
+assert.equal(marginal.budgetViolations, 1);
+assert.equal(marginal.budgetViolationRequests, 1);
+assert.deepEqual(marginal.degradationThresholds, {
+  budgetViolationRequests: 2,
+  maximumBudgetUtilization: 1.25
+});
+recordRequestOperability(marginalSnapshot, at + 1_000);
+assert.equal(getRequestOperabilityStatus(at + 1_000).status, "degraded");
+
+resetRequestOperabilityForTests();
+const severeState = createRequestCostState();
+runWithRequestCost(severeState, () => recordDatabaseQuery(1_200));
+recordRequestOperability(completeRequestCost(severeState, {
+  method: "GET",
+  route: "/v1/bootstrap",
+  statusCode: 200,
+  responseBytes: 190_000,
+  completedAt: severeState.startedAt + 800
+}), at);
+const severe = getRequestOperabilityStatus(at);
+assert.equal(severe.status, "degraded");
+assert.equal(severe.budgetViolationRequests, 1);
+assert.ok(severe.maximumBudgetUtilization >= 1.25);
+
+resetRequestOperabilityForTests();
 const degradedState = createRequestCostState();
 runWithRequestCost(degradedState, () => recordDatabaseQuery(950, true));
 recordRequestOperability(completeRequestCost(degradedState, {
@@ -56,6 +94,7 @@ assert.equal(degraded.status, "degraded");
 assert.equal(degraded.serverErrors, 1);
 assert.equal(degraded.queryErrors, 1);
 assert.equal(degraded.budgetViolations, 3);
+assert.equal(degraded.budgetViolationRequests, 1);
 assert.ok(degraded.maximumBudgetUtilization > 1);
 assert.equal(degraded.lastProblemAt, "2026-08-01T00:00:01.000Z");
 assert.equal(getRequestOperabilityStatus(at + 16 * 60_000).status, "unobserved");

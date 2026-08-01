@@ -2,6 +2,8 @@ import type { RequestCostSnapshot } from "./requestCosts";
 
 const requestWindowMs = 15 * 60 * 1000;
 const maximumRequestSamples = 512;
+const budgetViolationRequestsForDegraded = 2;
+const severeBudgetUtilization = 1.25;
 
 type RequestOperabilitySample = {
   recordedAt: number;
@@ -22,10 +24,15 @@ export type RequestOperabilityStatus = {
   serverErrors: number;
   queryErrors: number;
   budgetViolations: number;
+  budgetViolationRequests: number;
   latencyMs: { p50: number; p95: number; max: number } | null;
   databaseMs: { p50: number; p95: number; max: number } | null;
   responseBytes: { p50: number; p95: number; max: number } | null;
   maximumBudgetUtilization: number;
+  degradationThresholds: {
+    budgetViolationRequests: number;
+    maximumBudgetUtilization: number;
+  };
   lastObservedAt: string | null;
   lastProblemAt: string | null;
 };
@@ -78,25 +85,39 @@ export const getRequestOperabilityStatus = (now = Date.now()): RequestOperabilit
   const serverErrors = recent.filter((sample) => sample.statusCode >= 500).length;
   const queryErrors = recent.reduce((total, sample) => total + sample.queryErrors, 0);
   const budgetViolations = recent.reduce((total, sample) => total + sample.budgetViolationCount, 0);
+  const budgetViolationRequests = recent.filter((sample) => sample.budgetViolationCount > 0).length;
+  const maximumBudgetUtilization = rounded(Math.max(
+    0,
+    ...recent.map((sample) => sample.maximumBudgetUtilization)
+  ));
   const problems = recent.filter((sample) =>
     sample.statusCode >= 500 || sample.queryErrors > 0 || sample.budgetViolationCount > 0
   );
+  const degraded = serverErrors > 0
+    || queryErrors > 0
+    || budgetViolationRequests >= budgetViolationRequestsForDegraded
+    || maximumBudgetUtilization >= severeBudgetUtilization;
   const lastObservedAt = recent.at(-1)?.recordedAt ?? null;
   const lastProblemAt = problems.at(-1)?.recordedAt ?? null;
   return {
     status: !recent.length
       ? "unobserved"
-      : serverErrors || queryErrors || budgetViolations ? "degraded" : "nominal",
+      : degraded ? "degraded" : "nominal",
     windowMinutes: requestWindowMs / 60_000,
     retainedSampleCapacity: maximumRequestSamples,
     observedRequests: recent.length,
     serverErrors,
     queryErrors,
     budgetViolations,
+    budgetViolationRequests,
     latencyMs: distribution(recent.map((sample) => sample.totalDurationMs)),
     databaseMs: distribution(recent.map((sample) => sample.queryDurationMs)),
     responseBytes: distribution(recent.map((sample) => sample.responseBytes)),
-    maximumBudgetUtilization: rounded(Math.max(0, ...recent.map((sample) => sample.maximumBudgetUtilization))),
+    maximumBudgetUtilization,
+    degradationThresholds: {
+      budgetViolationRequests: budgetViolationRequestsForDegraded,
+      maximumBudgetUtilization: severeBudgetUtilization
+    },
     lastObservedAt: lastObservedAt === null ? null : new Date(lastObservedAt).toISOString(),
     lastProblemAt: lastProblemAt === null ? null : new Date(lastProblemAt).toISOString()
   };

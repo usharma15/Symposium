@@ -7,7 +7,7 @@
 | Baseline | `9bd80cf6bb46b4434a8162b7787e26d34a36fd24` |
 | Scope | Rolling request/live-stream health, repository-owned production watch, and one measured bootstrap critical-path optimization |
 | Product boundary | No schema, product capability, presentation, authorization, persistence, or live-event contract change |
-| Status | Implemented and locally verified; protected-main and exact-SHA production proof pending |
+| Status | Initial implementation released through PR #8 as `c820ab1a25706f1e81524a0c1d2b25eaf9cddca4`; production-discovered alert calibration pending protected release |
 
 ## Measured baseline
 
@@ -21,9 +21,11 @@ baseline before implementation:
 | warm observation 2 | 0.859 s | 431.58 ms | 593.84 ms | 7 | 191,342 bytes |
 
 The measurements are a reproducible spot baseline, not a p50/p95/p99 claim.
-They established that the bootstrap stayed within its existing cost budget but
-still had avoidable serial tail work: required-profile resolution completed
-before independent community-call projection began.
+They established that query count, response size, and wall time remained within
+their budgets, while the first observation's summed database time exceeded the
+900 ms route budget by 7.6%. They also showed avoidable serial tail work:
+required-profile resolution completed before independent community-call
+projection began.
 
 ## Cutover
 
@@ -37,9 +39,11 @@ request body, actor, token, cookie, message, draft, or evidence content.
 
 The API records every completed request-cost snapshot into that bounded owner.
 `/readyz` exposes only the aggregate `nominal`, `degraded`, or `unobserved`
-state and distribution data. A recent server error, database query error, or
-request-budget violation creates a readiness warning without incorrectly
-turning a transient performance problem into process unavailability.
+state and distribution data. Server or database-query errors degrade
+immediately. Request-budget violations remain visible individually; status
+degrades after two violating requests in the window or one sample at 125%
+utilization. This preserves the signal without converting one marginal cold
+sample into a global production failure.
 
 ### Live-stream operability
 
@@ -91,6 +95,20 @@ no speculative repository split or cache was introduced.
   startup priming, idle-safe maintenance, and readiness probe behavior.
 - The canonical verification manifest contains 71 stages and includes the new
   operability gate.
+
+## First release observation
+
+PR #8 merged as `c820ab1a25706f1e81524a0c1d2b25eaf9cddca4`; Vercel and
+Render both reported that exact release. Strict readiness reported all 65
+migrations applied, none pending, and no configuration issues. The deep smoke
+returned the complete public world and every contract probe passed.
+
+The first smoke bootstrap recorded 967.67 ms of summed database time against
+the 900 ms budget while finishing in 747.12 ms wall time. Three subsequent
+observations retained seven queries and the exact 191,342-byte payload, with
+server totals of 400.69 ms, 399.72 ms, and 335.68 ms. That first marginal
+budget observation is the production evidence for the alert calibration above;
+it was not erased or mislabeled as a successful within-budget sample.
 
 ## Limitations
 
