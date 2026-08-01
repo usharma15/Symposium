@@ -136,7 +136,6 @@ const server = readFileSync("apps/api/src/server.ts", "utf8");
 const readiness = readFileSync("apps/api/src/config/readiness.ts", "utf8");
 const eventRoutes = readFileSync("apps/api/src/routes/eventRoutes.ts", "utf8");
 const inquiryReads = readFileSync("apps/api/src/repository/inquiryReads.ts", "utf8");
-const productionWatch = readFileSync(".github/workflows/production-watch.yml", "utf8");
 
 assert.match(server, /recordRequestOperability\(snapshot\)/);
 assert.match(
@@ -149,12 +148,7 @@ assert.match(
   inquiryReads,
   /const \[requiredProfiles, communityCalls\] = await Promise\.all\(\[[\s\S]*listProfilesByHandles[\s\S]*listPublicCommunityCallMap/
 );
-assert.match(productionWatch, /schedule:/);
-assert.match(productionWatch, /\/readyz/);
-assert.match(productionWatch, /EXPECTED_RELEASE/);
-assert.match(productionWatch, /operability\?\.requests\?\.status/);
-assert.doesNotMatch(productionWatch, /\/v1\/bootstrap/, "The scheduled monitor must remain database-idle-safe.");
 
 resetRequestOperabilityForTests();
 resetLiveStreamRegistry();
-console.log("Operability telemetry and production-watch checks passed.");
+console.log("Operability telemetry checks passed.");

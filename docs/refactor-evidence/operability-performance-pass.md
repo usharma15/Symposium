@@ -58,10 +58,11 @@ truncation, pending-live backlog, and socket backpressure/write failures. The
 durable cursor, event visibility, initial replay, heartbeat, live publication,
 and disconnect behavior are unchanged.
 
-### External production watch
+### Retired external production watch
 
-`.github/workflows/production-watch.yml` runs every two hours and on manual
-dispatch. It verifies:
+The GitHub-hosted production watch was retired on August 1, 2026 when the
+repository returned to a direct-main, locally verified operating model. Its
+historical runs verified:
 
 - public web and database-silent readiness HTTP success;
 - five-second availability TTFB ceilings;
@@ -87,8 +88,8 @@ no speculative repository split or cache was introduced.
 
 - `operability:check` proves nominal/degraded/window-expiry behavior,
   percentile calculation, the 512-sample memory bound, live capacity/release,
-  replay/problem counters, privacy-safe output, readiness wiring, scheduled
-  idle safety, and parallel bootstrap tail ownership.
+  replay/problem counters, privacy-safe output, readiness wiring, and parallel
+  bootstrap tail ownership.
 - `live-transport:check` retains the exact 500-listener event-bus contract and
   the existing cursor/replay/recovery matrix.
 - `provider-cost:check` retains request budgets, database timing attribution,

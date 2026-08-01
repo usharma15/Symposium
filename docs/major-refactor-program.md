@@ -6,6 +6,11 @@
 > proof, retirement, and rollback requirements are incorporated selectively by
 > the Passes 1-10 ledger in `docs/infrastructure-revamp.md`; that current ledger
 > is authoritative when this historical document conflicts with it.
+>
+> **Current repository policy (August 1, 2026):** work on `main`, verify
+> locally, commit, and push directly to `origin/main`. Historical topic-branch,
+> pull-request, GitHub Actions, and branch-protection instructions below are
+> superseded and must not be reused without explicit user authorization.
 
 ## Document control
 

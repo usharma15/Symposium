@@ -19,12 +19,17 @@ The program continues only while a pass does at least one of the following:
 
 The program stops when recovery is proven, the shell primarily composes
 features, persistence authorities are coherent, superseded compatibility
-paths are retired, and exact-SHA local/CI/database/browser/production
+paths are retired, and exact-SHA local/database/browser/production
 verification is green. Moving files, renaming equivalent abstractions,
 chasing LOC, or rewriting stable modules after that point is out of scope.
 
 Zero loss of site behavior, persistence, live synchronization, privacy,
 security, accessibility, and recoverability remains the highest-order gate.
+
+The repository operating model is deliberately simple: work on `main`, verify
+locally, commit, and push directly to `origin/main`. Do not introduce topic
+branches, pull-request gates, GitHub Actions workflows, or repository rulesets
+unless the user explicitly reopens that decision.
 
 The historical master program remains evidence, but its retirement was too
 broadly worded. Only its numerical LOC ceiling and any work requiring separate
@@ -60,16 +65,16 @@ Status meanings:
 
 | Master pass | Current status | Source-grounded disposition | Remaining gate |
 | --- | --- | --- | --- |
-| 1. Safety rails, CI, evidence | **Complete** | The canonical manifest contains 72 stages; proof-kernel, isolated Chromium, retained evidence, protected pull requests, scheduled production watch, exact-SHA release checks, and an adversarial authenticated-sync canary harness are established. | Preserve the gate; add a stage only when a new authority needs direct proof. |
+| 1. Local verification and evidence | **Complete for the direct-main workflow** | The canonical manifest, proof-kernel, isolated Chromium, exact-SHA release checks, and authenticated-sync canary harness remain available locally. GitHub Actions, protected pull requests, and the scheduled GitHub production watch were retired on August 1, 2026. | Keep verification local and bounded; add a stage only when a new authority needs direct proof. |
 | 2. Recovery, migration, operations | **Complete** | Migration locking/checksums, fresh and restored Postgres proof, Neon restore, R2/static coherence, browser recovery, fail-closed identity, and 65 migrations are implemented and released. | Keep evidence current during releases; do not introduce distributed fanout without a scaling trigger. |
 | 3. Compatibility and persistence modes | **Complete** | Canonical API, credential-free local preview, and unavailable modes are explicit; `dataStore.ts` and direct-Postgres Next authority are retired; every remaining Next route has a named compatibility, protected-delivery, or local-preview reason. | A retained supported mode is not debt merely because it is large. Reopen only when its caller or product requirement disappears. |
 | 4. Client shell and state ownership | **Substantially complete** | Navigation, inquiry, profile/social, discovery, live delivery, session, recovery, and transient surfaces have typed owners. `SymposiumV0.tsx` is 2,274 lines and primarily composes domain ports. | Final architecture audit must confirm no remaining shell policy is a competing owner. File size alone cannot justify extraction. |
 | 5. Shared content, editor, Workspace, attachments | **Complete for the authorized infrastructure scope** | The audit proved four Workspace consumers constructing 19 operations, including a duplicate document-create envelope in the global composer. `workspaceGateway.ts` now owns document, notebook, publication, discussion, access, and search HTTP contracts; `workspaceSnapshotStorage.ts` owns the actor-scoped private cache. The new authenticated canary directly exercises public and owner-only Workspace delivery through the supported API/SSE paths. Shared editor, attachment, autosave, mutation-epoch, optimistic, and live/cross-tab owners remain unchanged. | Preserve the gateway/cache boundary. The harness is permanent; a real production run still requires two distinct short-lived Clerk sessions and must not be replaced by an auth bypass. |
-| 6. Messaging and Notifications | **Main-integrated; production proof pending** | Messaging is released behind one typed browser gateway and one draft-storage authority. Notifications now has one typed browser gateway for all eight domain operations and nine request shapes; the panel contains no raw route or API-client authority. | Complete exact-main-SHA GitHub CI, Vercel, Render, API, readiness, and authenticated browser proof. |
+| 6. Messaging and Notifications | **Main-integrated; production proof pending** | Messaging is released behind one typed browser gateway and one draft-storage authority. Notifications now has one typed browser gateway for all eight domain operations and nine request shapes; the panel contains no raw route or API-client authority. | Complete exact-main-SHA local, Vercel, Render, API, readiness, and authenticated browser proof. |
 | 7. Assistant substrate | **Product-paused / outside this sequence** | Context identity, evidence, actions, receipts, private persistence, and the three-tool authority boundary are strong; the 1,671-line browser controller still mixes transport and orchestration. | No capability expansion or speculative substrate pass. Reopen only by explicit user direction or a demonstrated Assistant regression/feature requirement. |
-| 8. Backend domains, contracts, and operability | **Bounded operability candidate implemented; release proof pending** | Shared transaction, mutation, receipt, audit, event, attachment, access, and notification kernels exist. The audit found no safe broad `foundation.ts` split, but production measurement found an avoidable serial bootstrap tail and operator-invisible request/live-stream health. The candidate parallelizes independent bootstrap tail reads, adds bounded privacy-safe readiness telemetry, and adds a database-idle-safe scheduled production watch. | Complete full proof and exact-SHA release, record post-release measurements, and execute no further backend split without a new measured failure or feature dependency. |
+| 8. Backend domains, contracts, and operability | **Bounded operability implementation released** | Shared transaction, mutation, receipt, audit, event, attachment, access, and notification kernels exist. The audit found no safe broad `foundation.ts` split, while production measurement justified parallel bootstrap tail reads and bounded privacy-safe readiness telemetry. The GitHub-hosted scheduled watch was retired; the telemetry remains available through readiness and local release checks. | Execute no further backend split without a new measured failure or feature dependency. |
 | 9. Sitewide design-system migration | **Product-blocked / outside this sequence** | No approved sitewide replacement family has been opened. Existing authored-artifact and layered CSS behavior remains protected. | Requires explicit design approval and a separate visual migration. Do not infer authorization from this ledger. |
-| 10. Final retirement and architecture audit | **Closeout pending** | Major compatibility authorities are retired, protected release flow is live, the master ledger is reconciled, and Notifications plus Workspace now have bounded browser authorities. The conditional backend leverage audit and final release proof remain. | Finish the backend audit, reconcile its disposition, record limitations, run final local/browser/database/CI/production proof, then stop. |
+| 10. Final retirement and architecture audit | **Closeout pending** | Major compatibility authorities are retired, the master ledger is reconciled, and Notifications plus Workspace now have bounded browser authorities. The release flow is direct-to-main with local proof. The conditional backend leverage audit and final release proof remain. | Finish the backend audit, reconcile its disposition, record limitations, run final local/browser/database/production proof, then stop. |
 
 The ledger retires neither zero-loss requirements nor evidence merely because
 a pass is old. It also does not turn an audit candidate into authorization to
@@ -99,10 +104,9 @@ The current released production baseline is
 13. one browser Notifications transport authority; and
 14. one browser Workspace HTTP authority plus one actor-scoped snapshot-storage authority.
 
-The present candidate adds bounded request/live-stream operability, a
-repository-owned production watch, and one measured bootstrap critical-path
-optimization. It is not part of the released sequence until protected-main
-integration and exact-SHA production proof complete.
+The released sequence includes bounded request/live-stream operability and one
+measured bootstrap critical-path optimization. The former GitHub-hosted
+production watch is retired and is not part of the operating model.
 
 `components/SymposiumV0.tsx` remains the composition root.
 The direct-Postgres Next authority is already retired. Credential-free local
@@ -307,10 +311,13 @@ transactions, and UI were not rewritten. Exact local evidence is recorded in
 
 ## Remaining structural sequence
 
-1. Complete protected-main and exact-SHA release proof for the operability and
-   measured-performance candidate, then record the post-release bootstrap and
-   scheduled-watch evidence.
-2. Reconcile architecture and evidence documents, record limitations, run the
+1. Recompute the exact source inventory and identify concrete superseded code,
+   duplicate authorities, and oversized modules whose responsibilities can be
+   simplified without adding replacement layers.
+2. Retire one proven-obsolete path at a time. Each pass must be net simpler,
+   preferably net negative in modules and lines, locally verified, committed
+   on `main`, and pushed directly.
+3. Reconcile architecture and evidence documents, record limitations, run the
    complete final proof matrix, and stop.
 
 Assistant consolidation and sitewide design migration remain outside this

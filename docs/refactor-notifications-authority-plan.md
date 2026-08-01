@@ -147,10 +147,10 @@ removes nor modifies that route authority.
      panel, and to require all gateway operations.
 5. **Prove and release**
    - Run the complete matrix below on the exact candidate.
-   - Commit only this pass and its evidence, push a `codex/` topic branch, and
-     merge only through protected CI.
-   - Verify Vercel and Render at the exact merge SHA. If Render's path filter
-     skips the frontend-only change, deliberately deploy the same merge SHA
+   - Commit only this pass and its evidence directly on `main` after local
+     verification, then push `main`.
+   - Verify Vercel and Render at the exact pushed SHA. If Render's path filter
+     skips the frontend-only change, deliberately deploy the same pushed SHA
      before declaring one release identity.
 
 ## Focused proof requirements
