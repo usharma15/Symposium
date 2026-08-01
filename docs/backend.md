@@ -194,6 +194,34 @@ npm run api:smoke:writes
 
 This creates verification posts, comments, post actions, community calls, opportunities, note blocks, note publications, and assistant messages. Use it only against environments where test writes are acceptable.
 
+For the stricter authenticated live-sync proof, use two distinct, short-lived
+Clerk session tokens and pin the exact backend release being tested:
+
+```bash
+SYMPOSIUM_AUTHENTICATED_CANARY_ACK=authenticated-production-writes-with-automatic-cleanup \
+SYMPOSIUM_CANARY_EXPECTED_RELEASE=<40-character-backend-sha> \
+SYMPOSIUM_CANARY_TOKEN_A=<short-lived-clerk-session-token> \
+SYMPOSIUM_CANARY_TOKEN_B=<different-short-lived-clerk-session-token> \
+npm run authenticated-sync:canary
+```
+
+`authenticated-sync:canary` refuses non-HTTPS targets, missing or identical
+tokens, an unpinned release, and a missing acknowledgement. It opens isolated
+actor-A, actor-B, and anonymous event streams; proves exactly-once public
+fanout, cross-actor persisted comments, cursor replay after actor B disconnects,
+and owner-only Workspace delivery/readback. A later public ordering marker is
+the proof that actor B and the anonymous stream advanced beyond the private
+event without receiving it. Every namespaced post, comment, and Workspace draft
+is deleted in a `finally` cleanup path, including failed runs. Tokens, content,
+handles, and object identifiers are not written to the report.
+
+The environment-free `npm run authenticated-sync:check` runs the same
+orchestrator against a deterministic API/SSE fixture. It also injects duplicate
+replay and private-event leakage and proves that both faults fail closed with
+automatic cleanup. That check is part of `npm run verify`; the production-write
+canary is deliberately separate because short-lived credentials and explicit
+write acknowledgement are required.
+
 `/healthz` is a cheap process liveness check. `/readyz` is also database-silent: it reports the database and migration state verified during startup, current pool activity, the maintenance worker, release identifier, provider boundaries, and privacy-safe rolling request/live-stream operability without waking a suspended Neon compute or returning secret values. Request operability retains at most 512 aggregate samples for fifteen minutes; live-stream operability reports only capacity, connection, replay, and failure totals, never client identities. Server and query errors degrade immediately. A single marginal request-budget breach remains visible in counters, utilization, and timestamps; degradation begins on two violating requests in the window or one request at 125% budget utilization so an isolated cold-start edge does not falsely mark the whole service unhealthy. Capacity, replay, or delivery problems degrade live-stream status immediately. Use `/readyz?probe=database` only for an explicit deployment or incident check; it performs a live connection probe and refreshes migration state. Neither endpoint spends an Upstash command. In strict live mode readiness expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash for shared mutation limits, R2, a public R2 delivery URL, and the reserved owner handle binding. The AI tablet provider is reported separately because fallback mode remains a valid degraded state.
 
 Startup migrations run inside one transaction after taking the shared

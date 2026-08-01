@@ -49,6 +49,7 @@ export const verificationManifest = [
   stage("compatibility:check", "state-sync"),
   stage("client-recovery:check", "state-sync"),
   stage("live-transport:check", "state-sync"),
+  stage("authenticated-sync:check", "state-sync"),
   stage("live-routing:check", "state-sync"),
   stage("session-lifecycle:check", "state-sync"),
   stage("local-persistence:check", "state-sync"),

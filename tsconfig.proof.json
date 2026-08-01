@@ -7,6 +7,7 @@
   },
   "include": [
     "playwright.config.ts",
+    "scripts/authenticatedLiveSync*.ts",
     "scripts/browserCanary*.ts",
     "scripts/databaseRecoveryDrill*.ts",
     "scripts/recoveryDrillCore.ts",

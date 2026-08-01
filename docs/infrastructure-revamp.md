@@ -60,11 +60,11 @@ Status meanings:
 
 | Master pass | Current status | Source-grounded disposition | Remaining gate |
 | --- | --- | --- | --- |
-| 1. Safety rails, CI, evidence | **Complete** | The canonical manifest contains 71 stages; proof-kernel, isolated Chromium, retained evidence, protected pull requests, scheduled production watch, and exact-SHA release checks are established. | Preserve the gate; add a stage only when a new authority needs direct proof. |
+| 1. Safety rails, CI, evidence | **Complete** | The canonical manifest contains 72 stages; proof-kernel, isolated Chromium, retained evidence, protected pull requests, scheduled production watch, exact-SHA release checks, and an adversarial authenticated-sync canary harness are established. | Preserve the gate; add a stage only when a new authority needs direct proof. |
 | 2. Recovery, migration, operations | **Complete** | Migration locking/checksums, fresh and restored Postgres proof, Neon restore, R2/static coherence, browser recovery, fail-closed identity, and 65 migrations are implemented and released. | Keep evidence current during releases; do not introduce distributed fanout without a scaling trigger. |
 | 3. Compatibility and persistence modes | **Complete** | Canonical API, credential-free local preview, and unavailable modes are explicit; `dataStore.ts` and direct-Postgres Next authority are retired; every remaining Next route has a named compatibility, protected-delivery, or local-preview reason. | A retained supported mode is not debt merely because it is large. Reopen only when its caller or product requirement disappears. |
 | 4. Client shell and state ownership | **Substantially complete** | Navigation, inquiry, profile/social, discovery, live delivery, session, recovery, and transient surfaces have typed owners. `SymposiumV0.tsx` is 2,274 lines and primarily composes domain ports. | Final architecture audit must confirm no remaining shell policy is a competing owner. File size alone cannot justify extraction. |
-| 5. Shared content, editor, Workspace, attachments | **Complete for the authorized infrastructure scope** | The audit proved four Workspace consumers constructing 19 operations, including a duplicate document-create envelope in the global composer. `workspaceGateway.ts` now owns document, notebook, publication, discussion, access, and search HTTP contracts; `workspaceSnapshotStorage.ts` owns the actor-scoped private cache. PR #7 merged and exact release `9bd80cf6` is healthy. Shared editor, attachment, autosave, mutation-epoch, optimistic, and live/cross-tab owners remain unchanged. | Preserve the gateway/cache boundary. Authenticated production role coverage remains a release-proof limitation, not authorization to rewrite the editor. |
+| 5. Shared content, editor, Workspace, attachments | **Complete for the authorized infrastructure scope** | The audit proved four Workspace consumers constructing 19 operations, including a duplicate document-create envelope in the global composer. `workspaceGateway.ts` now owns document, notebook, publication, discussion, access, and search HTTP contracts; `workspaceSnapshotStorage.ts` owns the actor-scoped private cache. The new authenticated canary directly exercises public and owner-only Workspace delivery through the supported API/SSE paths. Shared editor, attachment, autosave, mutation-epoch, optimistic, and live/cross-tab owners remain unchanged. | Preserve the gateway/cache boundary. The harness is permanent; a real production run still requires two distinct short-lived Clerk sessions and must not be replaced by an auth bypass. |
 | 6. Messaging and Notifications | **Main-integrated; production proof pending** | Messaging is released behind one typed browser gateway and one draft-storage authority. Notifications now has one typed browser gateway for all eight domain operations and nine request shapes; the panel contains no raw route or API-client authority. | Complete exact-main-SHA GitHub CI, Vercel, Render, API, readiness, and authenticated browser proof. |
 | 7. Assistant substrate | **Product-paused / outside this sequence** | Context identity, evidence, actions, receipts, private persistence, and the three-tool authority boundary are strong; the 1,671-line browser controller still mixes transport and orchestration. | No capability expansion or speculative substrate pass. Reopen only by explicit user direction or a demonstrated Assistant regression/feature requirement. |
 | 8. Backend domains, contracts, and operability | **Bounded operability candidate implemented; release proof pending** | Shared transaction, mutation, receipt, audit, event, attachment, access, and notification kernels exist. The audit found no safe broad `foundation.ts` split, but production measurement found an avoidable serial bootstrap tail and operator-invisible request/live-stream health. The candidate parallelizes independent bootstrap tail reads, adds bounded privacy-safe readiness telemetry, and adds a database-idle-safe scheduled production watch. | Complete full proof and exact-SHA release, record post-release measurements, and execute no further backend split without a new measured failure or feature dependency. |
@@ -185,6 +185,35 @@ The cutover:
 
 The local-preview store remains load-bearing for credential-free laptop work.
 Deleting it would be a product decision, not infrastructure cleanup.
+
+## Authenticated multi-actor proof authority
+
+The canonical release verifier now contains `authenticated-sync:check`. It runs
+the production canary orchestrator against a deterministic API/SSE fixture and
+proves the three-actor sequence, durable reconnect replay, private filtering,
+canonical readback, exact-once rejection, and cleanup on both success and
+failure. Adversarial duplicate replay and private-event leakage are injected as
+negative controls; either fault fails the gate.
+
+`authenticated-sync:canary` is the credentialed execution of that same
+orchestrator. It is intentionally outside the environment-free verifier. The
+command requires an exact expected backend SHA, two distinct short-lived Clerk
+session tokens, HTTPS, and an explicit production-write acknowledgement. It
+never accepts development actor headers and never prints tokens, user content,
+handles, or created object identifiers.
+
+The canary uses the durable event order itself as the privacy proof: actor A
+creates a private Workspace draft, then a later public post update. Actor B and
+the anonymous client must receive the later marker without ever receiving the
+earlier private event, while actor A must receive and read back the draft. A
+separate disconnect/reconnect step resumes actor B from its last acknowledged
+cursor and requires the missed mutation exactly once. Namespaced post, comment,
+and draft artifacts are deleted in a `finally` path, and the successful path
+also proves cleanup events and canonical tombstone/absence readback.
+
+This closes the missing *test authority*. It does not manufacture a claim that
+the credentialed production command ran when two real session tokens were not
+available; that execution remains a separately recorded release proof.
 
 ## Compatibility route authority
 
