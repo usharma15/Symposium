@@ -7,7 +7,7 @@
 | Baseline | `9bd80cf6bb46b4434a8162b7787e26d34a36fd24` |
 | Scope | Rolling request/live-stream health, repository-owned production watch, and one measured bootstrap critical-path optimization |
 | Product boundary | No schema, product capability, presentation, authorization, persistence, or live-event contract change |
-| Status | Initial implementation released through PR #8 as `c820ab1a25706f1e81524a0c1d2b25eaf9cddca4`; production-discovered alert calibration pending protected release |
+| Status | Released through PR #8 as `c820ab1a25706f1e81524a0c1d2b25eaf9cddca4` and PR #9 as `bd4925ccc7649a64385c67b005619f1379335d62`; exact production proof complete |
 
 ## Measured baseline
 
@@ -110,6 +110,24 @@ server totals of 400.69 ms, 399.72 ms, and 335.68 ms. That first marginal
 budget observation is the production evidence for the alert calibration above;
 it was not erased or mislabeled as a successful within-budget sample.
 
+## Final release proof
+
+PR #9 advanced `main` to
+`bd4925ccc7649a64385c67b005619f1379335d62` after the verification, browser,
+aggregate-proof, and Vercel checks passed. Render auto-deployed that exact SHA
+and reported strict readiness with all 65 migrations applied, none pending,
+zero configuration issues, and zero warnings.
+
+The post-deployment deep smoke returned 23 profiles, 24 items, 12 communities,
+the `campus-events-board` community-call projection, and one opportunity. The
+same readiness window remained nominal with no server errors, query errors, or
+budget violations; the maximum observed request-budget utilization was 0.96.
+
+Manual production-watch run `30680581070` enforced that exact backend SHA and
+passed the public web, readiness, security-header, migration, and operability
+checks. Its 30-day artifact `production-watch-30680581070-1` has digest
+`sha256:79e2303274d110a012875ba36b754490642b35a144fba9b3dbb76ca3db430514`.
+
 ## Limitations
 
 - The in-process rolling window resets on deployment or process restart. Logs
@@ -121,5 +139,3 @@ it was not erased or mislabeled as a successful within-budget sample.
 - The API remains single-process for low-latency publication. Horizontal scale
   still requires a non-Postgres fanout transport while retaining durable cursor
   replay.
-- Post-release before/after bootstrap observations and the exact merge SHA must
-  be appended only after the protected release completes.
