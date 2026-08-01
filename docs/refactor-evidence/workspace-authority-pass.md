@@ -81,6 +81,8 @@ At the implementation checkpoint:
   completed successfully;
 - complete tracked-tree browser canary — 13/13 expected, 0 skipped, 0
   unexpected, and 0 flaky;
+- deterministic cache-precedence stress run after replacing the fixed timing
+  delay with an explicit response gate — 5/5 green;
 - isolated install audited 230 packages with 0 known vulnerabilities;
 - `git diff --check` — green.
 

@@ -472,6 +472,7 @@ test.describe("returning browser session", () => {
     const clean = watchDiagnostics(page);
     const secondPage = await context.newPage();
     const cleanSecondPage = watchDiagnostics(secondPage);
+    const canonicalReadGateController: { release: () => void } = { release: () => undefined };
     try {
       const firstSnapshot = page.waitForResponse((response) =>
         response.request().method() === "GET"
@@ -577,12 +578,13 @@ test.describe("returning browser session", () => {
         window.localStorage.setItem(key, JSON.stringify(snapshot));
       }, { documentId, staleTitle });
 
-      let delayedCanonicalRead = false;
+      const canonicalReadGate = new Promise<void>((resolve) => {
+        canonicalReadGateController.release = resolve;
+      });
       const delayWorkspaceRead = async (route: Route) => {
         const url = new URL(route.request().url());
-        if (!delayedCanonicalRead && route.request().method() === "GET" && url.pathname === "/api/workspace") {
-          delayedCanonicalRead = true;
-          await new Promise((resolve) => setTimeout(resolve, 700));
+        if (route.request().method() === "GET" && url.pathname === "/api/workspace") {
+          await canonicalReadGate;
         }
         await route.continue();
       };
@@ -593,6 +595,7 @@ test.describe("returning browser session", () => {
       );
       await page.reload();
       await expect(page.getByRole("heading", { name: staleTitle, exact: true })).toBeVisible();
+      canonicalReadGateController.release();
       expect((await canonicalReload).ok()).toBe(true);
       await expect(page.getByRole("heading", { name: canonicalTitle, exact: true })).toBeVisible();
       await expect(page.getByRole("heading", { name: staleTitle, exact: true })).toHaveCount(0);
@@ -617,6 +620,7 @@ test.describe("returning browser session", () => {
       await expect(secondPage.getByRole("button", { name: canonicalTitle, exact: true })).toHaveCount(0);
       cleanSecondPage();
     } finally {
+      canonicalReadGateController.release();
       await secondPage.close();
     }
     clean();
