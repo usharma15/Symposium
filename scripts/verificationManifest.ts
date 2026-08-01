@@ -75,6 +75,7 @@ export const verificationManifest = [
   stage("content-analytics:check", "collaboration"),
   stage("note-revision:check", "collaboration"),
   stage("workspace:check", "collaboration"),
+  stage("workspace-gateway:check", "collaboration"),
   stage("workspace-collaboration:check", "collaboration"),
   stage("scribble:check", "collaboration"),
   stage("assistant:check", "assistant"),

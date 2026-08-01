@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 const sessionCookie = {
   name: "symposium_entrance_session",
@@ -461,6 +461,164 @@ test.describe("returning browser session", () => {
 
     await page.keyboard.press("Escape");
     await expect(page.locator(".notifications-panel")).toHaveCount(0);
+    clean();
+  });
+
+  test("keeps Workspace gateway, cache precedence, persistence, and cross-tab revisions authoritative", async ({
+    context,
+    page
+  }) => {
+    test.setTimeout(90_000);
+    const clean = watchDiagnostics(page);
+    const secondPage = await context.newPage();
+    const cleanSecondPage = watchDiagnostics(secondPage);
+    try {
+      const firstSnapshot = page.waitForResponse((response) =>
+        response.request().method() === "GET"
+        && new URL(response.url()).pathname === "/api/workspace"
+      );
+      const secondSnapshot = secondPage.waitForResponse((response) =>
+        response.request().method() === "GET"
+        && new URL(response.url()).pathname === "/api/workspace"
+      );
+      await Promise.all([
+        page.goto("/workspace?view=notes"),
+        secondPage.goto("/workspace?view=notes")
+      ]);
+      expect((await firstSnapshot).ok()).toBe(true);
+      expect((await secondSnapshot).ok()).toBe(true);
+      await expect(page.getByRole("heading", { name: "Notes", exact: true })).toBeVisible();
+      await expect(secondPage.getByRole("heading", { name: "Notes", exact: true })).toBeVisible();
+
+      await page.getByRole("button", { name: "New draft" }).click();
+      const createRequest = page.waitForRequest((request) =>
+        request.method() === "POST"
+        && new URL(request.url()).pathname === "/api/workspace/documents"
+      );
+      const createResponse = page.waitForResponse((response) =>
+        response.request().method() === "POST"
+        && new URL(response.url()).pathname === "/api/workspace/documents"
+      );
+      await page.locator(".workspace-create-menu").getByRole("button", { name: /^Note\b/ }).click();
+      const createdRequest = await createRequest;
+      const createdResponse = await createResponse;
+      expect(createdResponse.ok()).toBe(true);
+      expect(createdRequest.headers()["idempotency-key"])
+        .toMatch(/^symposium:workspace-document-create:[0-9a-f-]{36}$/);
+      expect(createdRequest.postDataJSON()).toMatchObject({
+        actorHandle: "@udayan",
+        attachmentIds: [],
+        body: "",
+        kind: "note",
+        notebookId: null,
+        opportunity: null,
+        proposal: null,
+        publicationTarget: "undecided",
+        targetId: null,
+        title: "Untitled note"
+      });
+      const created = await createdResponse.json() as { document: { id: string; revision: number } };
+      const documentId = created.document.id;
+      await expect(page.getByTestId(`workspace-detail-${documentId}`)).toBeVisible();
+      await expect(secondPage.getByRole("button", { name: "Untitled note", exact: true })).toBeVisible();
+
+      const canonicalTitle = "Browser Workspace canonical revision";
+      const canonicalBody = "Browser proof: Workspace gateway revisions survive reload and another tab.";
+      await page.locator(".workspace-title-input").fill(canonicalTitle);
+      await page.locator(".workspace-editor .ProseMirror").fill(canonicalBody);
+      const saveRequest = page.waitForRequest((request) => {
+        if (request.method() !== "PATCH" || new URL(request.url()).pathname !== `/api/workspace/documents/${documentId}`) return false;
+        return (request.postDataJSON() as { checkpoint?: boolean }).checkpoint === true;
+      });
+      const saveResponse = page.waitForResponse((response) => {
+        if (response.request().method() !== "PATCH" || new URL(response.url()).pathname !== `/api/workspace/documents/${documentId}`) return false;
+        return (response.request().postDataJSON() as { checkpoint?: boolean }).checkpoint === true;
+      });
+      await page.getByRole("button", { name: "Save Draft" }).click();
+      const savedRequest = await saveRequest;
+      expect((await saveResponse).ok()).toBe(true);
+      expect(savedRequest.headers()["idempotency-key"])
+        .toMatch(/^symposium:workspace-document-checkpoint:[0-9a-f-]{36}$/);
+      expect(savedRequest.postDataJSON()).toMatchObject({
+        actorHandle: "@udayan",
+        attachmentIds: [],
+        body: canonicalBody,
+        checkpoint: true,
+        expectedRevision: created.document.revision,
+        kind: "note",
+        publicationTarget: "undecided",
+        title: canonicalTitle
+      });
+      await expect(page.locator(".workspace-save-state")).toHaveText(/Draft saved/);
+      await expect(secondPage.getByRole("button", { name: canonicalTitle, exact: true })).toBeVisible();
+
+      const staleTitle = "Browser Workspace stale cache";
+      await page.evaluate(({ documentId: id, staleTitle: title }) => {
+        const key = "symposium-workspace-v1:@udayan";
+        const raw = window.localStorage.getItem(key);
+        if (!raw) throw new Error("Workspace cache was not written.");
+        const snapshot = JSON.parse(raw) as {
+          documents: Array<{ id: string; title: string; body: string; document: unknown }>;
+        };
+        const document = snapshot.documents.find((candidate) => candidate.id === id);
+        if (!document) throw new Error("Saved Workspace document was absent from the cache.");
+        document.title = title;
+        document.body = "Stale cached body";
+        document.document = {
+          version: 1,
+          nodes: [{
+            id: "stale-cache-paragraph",
+            type: "paragraph",
+            content: [{ text: "Stale cached body" }],
+            align: "left",
+            indent: 0
+          }]
+        };
+        window.localStorage.setItem(key, JSON.stringify(snapshot));
+      }, { documentId, staleTitle });
+
+      let delayedCanonicalRead = false;
+      const delayWorkspaceRead = async (route: Route) => {
+        const url = new URL(route.request().url());
+        if (!delayedCanonicalRead && route.request().method() === "GET" && url.pathname === "/api/workspace") {
+          delayedCanonicalRead = true;
+          await new Promise((resolve) => setTimeout(resolve, 700));
+        }
+        await route.continue();
+      };
+      await page.route("**/api/workspace**", delayWorkspaceRead);
+      const canonicalReload = page.waitForResponse((response) =>
+        response.request().method() === "GET"
+        && new URL(response.url()).pathname === "/api/workspace"
+      );
+      await page.reload();
+      await expect(page.getByRole("heading", { name: staleTitle, exact: true })).toBeVisible();
+      expect((await canonicalReload).ok()).toBe(true);
+      await expect(page.getByRole("heading", { name: canonicalTitle, exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: staleTitle, exact: true })).toHaveCount(0);
+      await expect(page.getByTestId(`workspace-card-${documentId}`).getByText(canonicalBody, { exact: true })).toBeVisible();
+      await page.unroute("**/api/workspace**", delayWorkspaceRead);
+
+      page.once("dialog", (dialog) => void dialog.accept());
+      const deleteRequest = page.waitForRequest((request) =>
+        request.method() === "DELETE"
+        && new URL(request.url()).pathname === `/api/workspace/documents/${documentId}`
+      );
+      const deleteResponse = page.waitForResponse((response) =>
+        response.request().method() === "DELETE"
+        && new URL(response.url()).pathname === `/api/workspace/documents/${documentId}`
+      );
+      await page.getByTestId(`workspace-card-${documentId}`).getByTitle("Delete draft").click();
+      const deletedRequest = await deleteRequest;
+      expect((await deleteResponse).ok()).toBe(true);
+      expect(deletedRequest.headers()["idempotency-key"])
+        .toMatch(/^symposium:workspace-document-delete:[0-9a-f-]{36}$/);
+      expect(deletedRequest.postDataJSON()).toMatchObject({ actorHandle: "@udayan" });
+      await expect(secondPage.getByRole("button", { name: canonicalTitle, exact: true })).toHaveCount(0);
+      cleanSecondPage();
+    } finally {
+      await secondPage.close();
+    }
     clean();
   });
 

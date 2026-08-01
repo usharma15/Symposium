@@ -203,7 +203,8 @@ Profiles reuse the same collection coordinator and ordered browser transport as 
 - `features/attachments`: metadata generation, carousel, document/media previews, continuous virtualized PDF.js and DOCX reading surfaces, attachment-scoped reading/translation sessions shared across preview/modal/fullscreen, scroll-derived active-page context, parallel reconstructed translation pages for extracted and scanned documents, selectable PDF text, zoom and fullscreen
 - `features/discovery`: the typed global/community query, remote/local projection, stale-request, privacy, and bounded-merge authority
 - `features/profiles`: the typed profile, identity projection, social graph, follow, activity, cross-tab, cache, and settings authority plus privacy-aware views
-- `features/communities`, `features/rooms`, `features/workspace`, `features/search`: their respective presentation surfaces
+- `features/communities`, `features/rooms`, `features/search`: their respective presentation surfaces
+- `features/workspace`: Workspace presentation, autosave, optimistic projection, request epochs, live/cross-tab reconciliation, and collaboration orchestration; `workspaceGateway.ts` is the single browser HTTP authority for documents, notebooks, publication, discussion, access, and search, while `workspaceSnapshotStorage.ts` owns the actor-scoped private snapshot cache
 - `features/messages`: Messaging presentation and live/send orchestration; `messagingGateway.ts` owns all browser route, method, actor, cursor, revision, idempotency, and transport-error contracts, while `messageDraftStorage.ts` owns browser draft persistence and failed-send recovery
 - `features/notifications`: notification state/live projection and presentation; `notificationGateway.ts` is the single browser authority for list, unread, preference, read, and archive transport contracts, while the panel retains interaction, optimistic projection, recovery, and rendering
 - `features/assistant`: one mounted conversation controller plus bounded presentation modules for the shell, transcript messages, Evidence Map citation staging, Context Dock inspection, Quick Note persistence, and thread administration; those modules do not create competing assistant state owners
@@ -280,6 +281,13 @@ The notification repository owns page/unread reads and read convergence. Domain 
     locally verified: one typed gateway owns all eight domain operations
     and nine request shapes; presentation contains no raw Notifications route,
     API-client, or fetch authority. Exact-SHA production proof remains pending.
+20. Replace Workspace browser HTTP and snapshot-cache authority. Implemented
+    and locally verified: one typed gateway owns 19 document, notebook,
+    publication, discussion, access, and search operations, and one storage
+    module owns the actor-scoped private snapshot cache. Workspace hooks retain
+    autosave, optimistic projection, mutation epochs, collaboration state, and
+    live/cross-tab reconciliation without constructing routes or request
+    envelopes. Exact-SHA release proof remains pending.
 
 ## Checkpoint gates
 
