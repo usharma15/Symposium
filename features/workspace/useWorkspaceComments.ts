@@ -1,17 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createClientMutationId } from "@/features/api/symposiumApiClient";
+import { createClientMutationId, symposiumApi } from "@/features/api/symposiumApiClient";
 import { useCrossTabItemTransport } from "@/features/live-sync/useCrossTabItemTransport";
 import type { ViewActionOptions } from "@/features/actions/actionTypes";
 import type { InquiryAttachment, InquiryComment } from "@/lib/mockData";
 import { commentActionActive, findCommentInTree } from "@/lib/symposiumCore";
 import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import { reconcileWorkspaceComments } from "@/features/workspace/workspaceCommentState";
-import {
-  workspaceGateway,
-  type WorkspaceCommentResponse
-} from "@/features/workspace/workspaceGateway";
+
+type WorkspaceCommentResponse = {
+  comments: InquiryComment[];
+  comment?: InquiryComment;
+  active?: boolean;
+};
 
 type WorkspaceDiscussionChangeMessage = {
   type: "workspace-discussion-change";
@@ -64,7 +66,10 @@ export const useWorkspaceComments = (noteId: string, actorHandle: string) => {
   const refresh = useCallback(async (quiet = false) => {
     if (!quiet) setStatus("Synchronising draft discussion…");
     try {
-      const result = await workspaceGateway.listComments(actorHandle, noteId);
+      const result = await symposiumApi.request<WorkspaceCommentResponse>(
+        `/api/workspace/documents/${encodeURIComponent(noteId)}/comments?actorHandle=${encodeURIComponent(actorHandle)}`,
+        { cache: "no-store" }
+      );
       const reconciled = applyComments(result.comments);
       setError(null);
       setStatus("Draft discussion current");
@@ -145,13 +150,21 @@ export const useWorkspaceComments = (noteId: string, actorHandle: string) => {
   ) => {
     setStatus(parentId ? "Saving reply…" : "Saving comment…");
     try {
-      const result = await workspaceGateway.addComment(actorHandle, noteId, {
-        body,
-        document,
-        stance,
-        parentId,
-        attachments
-      });
+      const result = await symposiumApi.request<WorkspaceCommentResponse>(
+        `/api/workspace/documents/${encodeURIComponent(noteId)}/comments`,
+        {
+          method: "POST",
+          idempotencyKey: createClientMutationId(parentId ? "workspace-comment-reply" : "workspace-comment-create"),
+          body: {
+            actorHandle,
+            body,
+            document,
+            stance,
+            parentId,
+            attachmentIds: attachments.map((attachment) => attachment.id)
+          }
+        }
+      );
       commit(result, parentId ? "Reply saved" : "Comment saved");
       return true;
     } catch (caught) {
@@ -170,13 +183,19 @@ export const useWorkspaceComments = (noteId: string, actorHandle: string) => {
   ) => {
     if (!comment.id) throw new Error("Comment not found.");
     setStatus("Saving comment edit…");
-    const result = await workspaceGateway.updateComment(
-      actorHandle,
-      noteId,
-      { ...comment, id: comment.id },
-      body,
-      document,
-      attachments
+    const result = await symposiumApi.request<WorkspaceCommentResponse>(
+      `/api/workspace/documents/${encodeURIComponent(noteId)}/comments/${encodeURIComponent(comment.id)}`,
+      {
+        method: "PATCH",
+        idempotencyKey: createClientMutationId("workspace-comment-update"),
+        body: {
+          actorHandle,
+          body,
+          document,
+          expectedRevision: comment.revision ?? 1,
+          attachmentIds: attachments.map((attachment) => attachment.id)
+        }
+      }
     );
     return commit(result, "Comment edited");
   }, [actorHandle, commit, noteId]);
@@ -185,10 +204,14 @@ export const useWorkspaceComments = (noteId: string, actorHandle: string) => {
     const comment = findCommentInTree(commentsRef.current, commentId);
     if (!comment) throw new Error("Comment not found.");
     setStatus("Deleting comment…");
-    const result = await workspaceGateway.deleteComment(actorHandle, noteId, {
-      id: commentId,
-      revision: comment.revision
-    });
+    const result = await symposiumApi.request<WorkspaceCommentResponse>(
+      `/api/workspace/documents/${encodeURIComponent(noteId)}/comments/${encodeURIComponent(commentId)}`,
+      {
+        method: "DELETE",
+        idempotencyKey: createClientMutationId("workspace-comment-delete"),
+        body: { actorHandle, expectedRevision: comment.revision ?? 1 }
+      }
+    );
     return commit(result, "Comment deleted");
   }, [actorHandle, commit, noteId]);
 
@@ -202,13 +225,13 @@ export const useWorkspaceComments = (noteId: string, actorHandle: string) => {
     const comment = findCommentInTree(commentsRef.current, commentId);
     if (!comment) return;
     const active = action === "read" ? undefined : !commentActionActive(comment, action, actorHandle);
-    void workspaceGateway.applyCommentAction(
-      actorHandle,
-      noteId,
-      commentId,
-      action,
-      active,
-      options
+    void symposiumApi.request<WorkspaceCommentResponse>(
+      `/api/workspace/documents/${encodeURIComponent(noteId)}/comments/${encodeURIComponent(commentId)}/actions`,
+      {
+        method: "POST",
+        idempotencyKey: createClientMutationId(`workspace-comment-${action}`),
+        body: { actorHandle, action, active, trigger: options?.trigger, surface: "workspace" }
+      }
     ).then((result) => commit(result, action === "read" ? "Draft discussion current" : "Comment action saved"))
       .catch((caught) => {
         const message = caught instanceof Error ? caught.message : "Comment action could not be saved.";

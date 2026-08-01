@@ -1,5 +1,4 @@
-import { createPost, getSnapshot } from "@/lib/localPreviewStore";
-import type { CreatePostInput } from "@/lib/localPreviewStoreTypes";
+import { createPost, getSnapshot, type CreatePostInput } from "@/lib/dataStore";
 import type { ContentKind, RoomId } from "@/lib/mockData";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";

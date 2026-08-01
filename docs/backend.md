@@ -5,7 +5,7 @@ This repo now has two runtime surfaces:
 - `next dev` / Vercel: the laptop-first SYMPOSIUM interface.
 - `npm run api:dev` / Render: the live TypeScript backend.
 
-The existing Next API routes remain in place for local preview, Clerk profile synchronization, protected attachment delivery, and compatibility fallback. When `SYMPOSIUM_API_URL` is set on Vercel, ordinary browser requests and the authenticated live-event stream connect directly to Render with the Clerk bearer token. This removes the Vercel function hop from normal traffic. A failed direct GET or idempotent mutation may retry through the compatibility bridge; application errors never replay. When the backend URL is not set, non-production development uses the explicit `lib/localPreviewStore.ts` adapter over `.data/symposium.json`. Production without the canonical backend fails closed with a no-store 503; it never reads or writes the local JSON world.
+The existing Next API routes remain in place for local preview, Clerk profile synchronization, protected attachment delivery, and compatibility fallback. When `SYMPOSIUM_API_URL` is set on Vercel, ordinary browser requests and the authenticated live-event stream connect directly to Render with the Clerk bearer token. This removes the Vercel function hop from normal traffic. A failed direct GET or idempotent mutation may retry through the compatibility bridge; application errors never replay. When the backend URL is not set, local development keeps using the existing `.data/symposium.json` fallback.
 
 Current production endpoints:
 
@@ -194,35 +194,7 @@ npm run api:smoke:writes
 
 This creates verification posts, comments, post actions, community calls, opportunities, note blocks, note publications, and assistant messages. Use it only against environments where test writes are acceptable.
 
-For the stricter authenticated live-sync proof, use two distinct, short-lived
-Clerk session tokens and pin the exact backend release being tested:
-
-```bash
-SYMPOSIUM_AUTHENTICATED_CANARY_ACK=authenticated-production-writes-with-automatic-cleanup \
-SYMPOSIUM_CANARY_EXPECTED_RELEASE=<40-character-backend-sha> \
-SYMPOSIUM_CANARY_TOKEN_A=<short-lived-clerk-session-token> \
-SYMPOSIUM_CANARY_TOKEN_B=<different-short-lived-clerk-session-token> \
-npm run authenticated-sync:canary
-```
-
-`authenticated-sync:canary` refuses non-HTTPS targets, missing or identical
-tokens, an unpinned release, and a missing acknowledgement. It opens isolated
-actor-A, actor-B, and anonymous event streams; proves exactly-once public
-fanout, cross-actor persisted comments, cursor replay after actor B disconnects,
-and owner-only Workspace delivery/readback. A later public ordering marker is
-the proof that actor B and the anonymous stream advanced beyond the private
-event without receiving it. Every namespaced post, comment, and Workspace draft
-is deleted in a `finally` cleanup path, including failed runs. Tokens, content,
-handles, and object identifiers are not written to the report.
-
-The environment-free `npm run authenticated-sync:check` runs the same
-orchestrator against a deterministic API/SSE fixture. It also injects duplicate
-replay and private-event leakage and proves that both faults fail closed with
-automatic cleanup. That check is part of `npm run verify`; the production-write
-canary is deliberately separate because short-lived credentials and explicit
-write acknowledgement are required.
-
-`/healthz` is a cheap process liveness check. `/readyz` is also database-silent: it reports the database and migration state verified during startup, current pool activity, the maintenance worker, release identifier, provider boundaries, and privacy-safe rolling request/live-stream operability without waking a suspended Neon compute or returning secret values. Request operability retains at most 512 aggregate samples for fifteen minutes; live-stream operability reports only capacity, connection, replay, and failure totals, never client identities. Server and query errors degrade immediately. A single marginal request-budget breach remains visible in counters, utilization, and timestamps; degradation begins on two violating requests in the window or one request at 125% budget utilization so an isolated cold-start edge does not falsely mark the whole service unhealthy. Capacity, replay, or delivery problems degrade live-stream status immediately. Use `/readyz?probe=database` only for an explicit deployment or incident check; it performs a live connection probe and refreshes migration state. Neither endpoint spends an Upstash command. In strict live mode readiness expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash for shared mutation limits, R2, a public R2 delivery URL, and the reserved owner handle binding. The AI tablet provider is reported separately because fallback mode remains a valid degraded state.
+`/healthz` is a cheap process liveness check. `/readyz` is also database-silent: it reports the database and migration state verified during startup, current pool activity, the maintenance worker, release identifier, and provider boundaries without waking a suspended Neon compute or returning secret values. Use `/readyz?probe=database` only for an explicit deployment or incident check; it performs a live connection probe and refreshes migration state. Neither endpoint spends an Upstash command. In strict live mode readiness expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash for shared mutation limits, R2, a public R2 delivery URL, and the reserved owner handle binding. The AI tablet provider is reported separately because fallback mode remains a valid degraded state.
 
 Startup migrations run inside one transaction after taking the shared
 `symposium:database-migrations:v1` advisory lock. The migration ledger stores
@@ -281,8 +253,6 @@ The durable API follows one mutation rule: domain changes, idempotency receipts,
 The production browser opens the authenticated SSE stream directly against Render. The legacy Next stream route is a short `307` compatibility redirect, so stale clients cannot leave a Vercel function running until its runtime ceiling.
 
 The current single-instance Render service delivers committed events through its in-process event bus. An SSE connection performs one bounded durable replay when it connects, then holds no PostgreSQL session while it waits. Do not reintroduce a PostgreSQL `LISTEN` bridge for this deployment: a permanent listener prevents Neon from scaling to zero. If the API is horizontally scaled later, use a non-Postgres fan-out transport and retain the durable cursor replay as the recovery path.
-
-The live-stream registry is the capacity and privacy-safe telemetry authority. It enforces twelve streams per client and 500 per process while recording only aggregate active/peak connections, resume attempts, capacity rejection, replay counts, replay failure/truncation, backlog, and write-pressure signals. Database-silent readiness exposes those aggregates without requesting bootstrap or waking Neon. Release verification may query readiness and enforce an expected backend SHA locally; docs-only and frontend-only commits intentionally do not rebuild Render.
 
 The public entry routes remain prerendered for fast CDN delivery. Their CSP deliberately uses the App Router-compatible inline bootstrap mode instead of a per-request nonce: static HTML is built before a request nonce exists, and combining the two prevents React and Next from hydrating. `npm run build` verifies the emitted static artifacts and the matching middleware policy together.
 

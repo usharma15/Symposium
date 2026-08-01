@@ -1,6 +1,6 @@
 import { jsonError } from "@/lib/api";
 import { LocalAttachmentStoreError, readLocalAttachment } from "@/lib/localAttachmentStore";
-import { localPreviewRouteUnavailableResponse, localPreviewRuntimeAllowed } from "@/lib/runtimeSafety";
+import { localDataFallbackAllowed, localPreviewRouteUnavailableResponse } from "@/lib/runtimeSafety";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ type Context = {
 const headerFileName = (fileName: string) => fileName.replace(/["\r\n]/g, "_");
 
 export async function GET(_request: Request, context: Context) {
-  if (!localPreviewRuntimeAllowed()) return localPreviewRouteUnavailableResponse();
+  if (!localDataFallbackAllowed()) return localPreviewRouteUnavailableResponse();
 
   const { attachmentId } = await context.params;
 

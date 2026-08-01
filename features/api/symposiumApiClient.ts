@@ -16,11 +16,8 @@ export type SymposiumApiRequestOptions = {
 };
 
 export type SymposiumApiRuntime = {
-  accessTokenRequired?: boolean;
   backendUrl?: string | null;
   getAccessToken?: () => Promise<string | null>;
-  onRecoverableFailure?: () => void;
-  onTransportSuccess?: () => void;
 };
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -104,45 +101,18 @@ export const createSymposiumApiClient = (
   };
 
   const request = async <T>(path: string, options: SymposiumApiRequestOptions = {}): Promise<T> => {
-    const requestRuntime = runtime;
     const sourceActorHandle =
       options.actorHandle ?? symposiumApiActorHandle(path, options.body);
-    const resolved = resolveSymposiumApiRequest(
-      path,
-      options,
-      requestRuntime.backendUrl
-    );
+    const resolved = resolveSymposiumApiRequest(path, options, runtime.backendUrl);
     const headers = new Headers(options.headers);
     const hasBody = resolved.body !== undefined;
     if (hasBody && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     if (options.idempotencyKey) headers.set("Idempotency-Key", options.idempotencyKey);
 
     if (resolved.direct) {
-      let token: string | null = null;
-      try {
-        token = await requestRuntime.getAccessToken?.() ?? null;
-      } catch (cause) {
-        if (requestRuntime.accessTokenRequired) {
-          requestRuntime.onRecoverableFailure?.();
-          throw new SymposiumApiError(
-            "Authentication is temporarily unavailable.",
-            { cause }
-          );
-        }
-      }
-      if (requestRuntime.accessTokenRequired && !token) {
-        requestRuntime.onRecoverableFailure?.();
-        throw new SymposiumApiError(
-          "Authentication is temporarily unavailable."
-        );
-      }
+      const token = await runtime.getAccessToken?.().catch(() => null);
       if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
-      if (
-        !token &&
-        !requestRuntime.accessTokenRequired &&
-        sourceActorHandle &&
-        !headers.has("x-symposium-handle")
-      ) {
+      if (!token && sourceActorHandle && !headers.has("x-symposium-handle")) {
         headers.set("x-symposium-handle", sourceActorHandle);
       }
     } else if (sourceActorHandle && !headers.has("x-symposium-handle")) {
@@ -181,34 +151,22 @@ export const createSymposiumApiClient = (
     } catch (cause) {
       const mutationCanReplay = resolved.method === "GET" || Boolean(options.idempotencyKey);
       if (!resolved.direct || !mutationCanReplay || options.signal?.aborted) {
-        if (!options.signal?.aborted) {
-          requestRuntime.onRecoverableFailure?.();
-        }
         throw new SymposiumApiError("Could not reach the live service.", { cause });
       }
       try {
         response = await fetchRequest(path, false);
       } catch (fallbackCause) {
-        if (!options.signal?.aborted) {
-          requestRuntime.onRecoverableFailure?.();
-        }
         throw new SymposiumApiError("Could not reach the live service.", { cause: fallbackCause });
       }
     }
 
     const payload = await parseResponseBody(response);
     if (!response.ok) {
-      if (response.status >= 500) {
-        requestRuntime.onRecoverableFailure?.();
-      } else {
-        requestRuntime.onTransportSuccess?.();
-      }
       throw new SymposiumApiError(errorMessage(payload, `Live request failed (${response.status}).`), {
         status: response.status,
         payload
       });
     }
-    requestRuntime.onTransportSuccess?.();
     return payload as T;
   };
 
@@ -217,39 +175,12 @@ export const createSymposiumApiClient = (
     body: Blob,
     options: { actorHandle?: string; signal?: AbortSignal } = {}
   ): Promise<T> => {
-    const requestRuntime = runtime;
-    const resolved = resolveSymposiumApiRequest(
-      path,
-      { method: "PUT" },
-      requestRuntime.backendUrl
-    );
+    const resolved = resolveSymposiumApiRequest(path, { method: "PUT" }, runtime.backendUrl);
     const headers = new Headers({ "Content-Type": "application/octet-stream" });
     if (resolved.direct) {
-      let token: string | null = null;
-      try {
-        token = await requestRuntime.getAccessToken?.() ?? null;
-      } catch (cause) {
-        if (requestRuntime.accessTokenRequired) {
-          requestRuntime.onRecoverableFailure?.();
-          throw new SymposiumApiError(
-            "Authentication is temporarily unavailable.",
-            { cause }
-          );
-        }
-      }
-      if (requestRuntime.accessTokenRequired && !token) {
-        requestRuntime.onRecoverableFailure?.();
-        throw new SymposiumApiError(
-          "Authentication is temporarily unavailable."
-        );
-      }
+      const token = await runtime.getAccessToken?.().catch(() => null);
       if (token) headers.set("Authorization", `Bearer ${token}`);
-      else if (
-        !requestRuntime.accessTokenRequired &&
-        options.actorHandle
-      ) {
-        headers.set("x-symposium-handle", options.actorHandle);
-      }
+      else if (options.actorHandle) headers.set("x-symposium-handle", options.actorHandle);
     }
 
     let response: Response;
@@ -262,24 +193,15 @@ export const createSymposiumApiClient = (
         signal: options.signal
       });
     } catch (cause) {
-      if (!options.signal?.aborted) {
-        requestRuntime.onRecoverableFailure?.();
-      }
       throw new SymposiumApiError("Could not reach attachment storage.", { cause });
     }
     const payload = await parseResponseBody(response);
     if (!response.ok) {
-      if (response.status >= 500) {
-        requestRuntime.onRecoverableFailure?.();
-      } else {
-        requestRuntime.onTransportSuccess?.();
-      }
       throw new SymposiumApiError(errorMessage(payload, `Attachment upload failed (${response.status}).`), {
         status: response.status,
         payload
       });
     }
-    requestRuntime.onTransportSuccess?.();
     return payload as T;
   };
 

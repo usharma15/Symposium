@@ -1,18 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import { useCrossTabItemTransport } from "@/features/live-sync/useCrossTabItemTransport";
-import type { WorkspaceGrantRoleContract } from "@/packages/contracts/src";
+import type { WorkspaceAccessResourceContract, WorkspaceGrantRoleContract } from "@/packages/contracts/src";
 import type {
   WorkspaceAccessOverview,
+  WorkspaceCollaboratorSearchResponse,
   WorkspaceDirectGrant
 } from "@/lib/workspaceTypes";
-import {
-  workspaceGateway,
-  type WorkspaceAccessTarget
-} from "@/features/workspace/workspaceGateway";
 
-export type { WorkspaceAccessTarget } from "@/features/workspace/workspaceGateway";
+export type WorkspaceAccessTarget = {
+  type: WorkspaceAccessResourceContract;
+  id: string;
+};
 
 type WorkspaceChangeMessage = {
   type: "workspace-change";
@@ -30,7 +31,11 @@ const isWorkspaceChangeMessage = (value: unknown): value is WorkspaceChangeMessa
 };
 
 const messageForError = (error: unknown, fallback: string) =>
-  error instanceof Error ? error.message : fallback;
+  error instanceof SymposiumApiError || error instanceof Error ? error.message : fallback;
+
+const targetPath = (target: WorkspaceAccessTarget) => target.type === "document"
+  ? `/api/workspace/documents/${encodeURIComponent(target.id)}/access`
+  : `/api/workspace/notebooks/${encodeURIComponent(target.id)}/access`;
 
 export const useWorkspaceAccess = (
   target: WorkspaceAccessTarget | null,
@@ -48,7 +53,10 @@ export const useWorkspaceAccess = (
     if (!target) return null;
     if (!quiet) setLoading(true);
     try {
-      const next = await workspaceGateway.getAccess(actorHandle, target);
+      const next = await symposiumApi.request<WorkspaceAccessOverview>(
+        `${targetPath(target)}?actorHandle=${encodeURIComponent(actorHandle)}`,
+        { cache: "no-store" }
+      );
       setAccess(next);
       setError(null);
       return next;
@@ -89,7 +97,11 @@ export const useWorkspaceAccess = (
     setStatus("Sharing…");
     setError(null);
     try {
-      const result = await workspaceGateway.grantAccess(actorHandle, target, granteeHandle, role);
+      const result = await symposiumApi.request<{ access: WorkspaceAccessOverview }>(targetPath(target), {
+        method: "POST",
+        idempotencyKey: createClientMutationId(`workspace-${target.type}-access-grant`),
+        body: { actorHandle, granteeHandle, role }
+      });
       setAccess(result.access);
       setStatus("Access granted");
       await onChanged();
@@ -113,12 +125,13 @@ export const useWorkspaceAccess = (
     setStatus("Updating access…");
     setError(null);
     try {
-      const result = await workspaceGateway.updateAccess(
-        actorHandle,
-        target,
-        granteeHandle,
-        grant,
-        role
+      const result = await symposiumApi.request<{ access: WorkspaceAccessOverview }>(
+        `${targetPath(target)}/${encodeURIComponent(granteeHandle)}`,
+        {
+          method: "PATCH",
+          idempotencyKey: createClientMutationId(`workspace-${target.type}-access-update`),
+          body: { actorHandle, role, expectedRevision: grant.revision }
+        }
       );
       setAccess(result.access);
       setStatus("Access updated");
@@ -139,7 +152,14 @@ export const useWorkspaceAccess = (
     setStatus(granteeHandle === actorHandle ? "Leaving…" : "Removing access…");
     setError(null);
     try {
-      const result = await workspaceGateway.revokeAccess(actorHandle, target, granteeHandle, grant);
+      const result = await symposiumApi.request<{ access: WorkspaceAccessOverview | null }>(
+        `${targetPath(target)}/${encodeURIComponent(granteeHandle)}`,
+        {
+          method: "DELETE",
+          idempotencyKey: createClientMutationId(`workspace-${target.type}-access-revoke`),
+          body: { actorHandle, expectedRevision: grant.revision }
+        }
+      );
       setAccess(result.access);
       await onChanged();
       if (!result.access) onLostAccess();
@@ -155,7 +175,11 @@ export const useWorkspaceAccess = (
   }, [actorHandle, onChanged, onLostAccess, target]);
 
   const searchPeople = useCallback(async (query: string) => {
-    return workspaceGateway.searchCollaborators(actorHandle, query);
+    const parameters = new URLSearchParams({ query, actorHandle, limit: "12" });
+    return symposiumApi.request<WorkspaceCollaboratorSearchResponse>(
+      `/api/workspace/collaborators?${parameters}`,
+      { cache: "no-store" }
+    );
   }, [actorHandle]);
 
   return { access, loading, busy, status, error, refresh, invite, updateRole, remove, searchPeople };

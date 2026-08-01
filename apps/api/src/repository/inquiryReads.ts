@@ -633,15 +633,13 @@ export const getBoundedBootstrap = async (rawRequesterHandle?: string | null): P
     listPublicCommunities(requesterHandle)
   ]);
   const profiles = { ...recent.profiles };
-  const [requiredProfiles, communityCalls] = await Promise.all([
-    listProfilesByHandles([
-      defaultProfile.handle,
-      ...(requesterHandle ? [requesterHandle] : [])
-    ]),
-    listPublicCommunityCallMap(communities, requesterHandle)
+  const requiredProfiles = await listProfilesByHandles([
+    defaultProfile.handle,
+    ...(requesterHandle ? [requesterHandle] : [])
   ]);
   Object.assign(profiles, requiredProfiles);
   const fallbackProfile = profiles[defaultProfile.handle] ?? publicProfile(defaultProfile);
+  const communityCalls = await listPublicCommunityCallMap(communities, requesterHandle);
   return {
     profiles,
     items: recent.items,

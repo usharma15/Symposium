@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {
   liveBackendUnavailableMessage,
   liveBackendUnavailableResponse,
-  localPreviewRuntimeAllowed,
+  localDataFallbackAllowed,
   localPreviewRouteUnavailableResponse
 } from "@/lib/runtimeSafety";
 import { actorHandle } from "@/apps/api/src/repository/foundation";
@@ -19,9 +19,9 @@ import { isCrossSiteMutation } from "@/lib/requestSecurity";
 import { reportCheck } from "@/scripts/checkReport";
 
 const main = async () => {
-  assert.equal(localPreviewRuntimeAllowed("development"), true);
-  assert.equal(localPreviewRuntimeAllowed("test"), true);
-  assert.equal(localPreviewRuntimeAllowed("production"), false);
+  assert.equal(localDataFallbackAllowed("development"), true);
+  assert.equal(localDataFallbackAllowed("test"), true);
+  assert.equal(localDataFallbackAllowed("production"), false);
 
   const unavailable = liveBackendUnavailableResponse();
   assert.equal(unavailable.status, 503);
@@ -171,14 +171,14 @@ const main = async () => {
       createLiveBackendProxy
     } = await import("@/lib/liveBackendClient");
     const missingDevelopment = await createLiveBackendProxy({
-      localPreviewAllowed: () => true,
+      localFallbackAllowed: () => true,
       reportError: () => assert.fail("development fallback must not report an error")
     })("/v1/bootstrap");
     assert.equal(missingDevelopment, null);
 
     const reported: unknown[][] = [];
     const missingProduction = await createLiveBackendProxy({
-      localPreviewAllowed: () => false,
+      localFallbackAllowed: () => false,
       reportError: (...values) => reported.push(values)
     })("/v1/bootstrap");
     assert.equal(missingProduction?.status, 503);
@@ -188,7 +188,7 @@ const main = async () => {
     const configuredProxy = createLiveBackendProxy({
       backendUrl: "https://api.example/",
       getToken: async () => "server-token",
-      localPreviewAllowed: () => true,
+      localFallbackAllowed: () => true,
       reportError: (...values) => assert.fail(`unexpected proxy error: ${String(values[0])}`),
       fetchImpl: async (input, init) => {
         forwardedRequests.push({ input, init });
@@ -245,7 +245,7 @@ const main = async () => {
       fetchImpl: async () => {
         throw new TypeError("unreachable");
       },
-      localPreviewAllowed: () => true,
+      localFallbackAllowed: () => true,
       reportError: () => {
         unreachableReports += 1;
       }

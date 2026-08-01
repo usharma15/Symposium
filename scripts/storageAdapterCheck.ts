@@ -111,9 +111,7 @@ try {
   assert.equal(privateUrl.pathname, `/v1/storage/private/${canonicalKey}`);
   assert.equal(verifyPrivateFilesystemDownload(canonicalKey, expires, signature), true);
   assert.equal(verifyPrivateFilesystemDownload(`${canonicalKey}-tampered`, expires, signature), false);
-  const tamperedSignature = `${signature.slice(0, -1)}${signature.endsWith("0") ? "1" : "0"}`;
-  assert.notEqual(tamperedSignature, signature);
-  assert.equal(verifyPrivateFilesystemDownload(canonicalKey, expires, tamperedSignature), false);
+  assert.equal(verifyPrivateFilesystemDownload(canonicalKey, expires, `${signature.slice(0, -1)}0`), false);
   assert.equal(
     verifyPrivateFilesystemDownload(canonicalKey, String(Math.floor(Date.now() / 1000) - 1), signature),
     false

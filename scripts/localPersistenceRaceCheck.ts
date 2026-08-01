@@ -20,7 +20,7 @@ const main = async () => {
   try {
     for (const key of databaseEnvironmentKeys) delete process.env[key];
     process.chdir(root);
-    const { createPost, getSnapshot } = await import("@/lib/localPreviewStore");
+    const { createPost, getSnapshot } = await import("@/lib/dataStore");
 
     for (let iteration = 0; iteration < 12; iteration += 1) {
       await rm(path.join(root, ".data"), { recursive: true, force: true });

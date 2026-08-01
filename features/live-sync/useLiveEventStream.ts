@@ -5,13 +5,6 @@ import {
   liveEventCursorIsAfter,
   type ServerSentEvent
 } from "@/features/live-sync/liveEventTransport";
-import {
-  browserRecoveryCoordinator
-} from "@/features/recovery/browserRecoveryCoordinator";
-import {
-  symposiumRecoveryCanAttempt,
-  symposiumRecoveryRetryDelayMs
-} from "@/features/recovery/symposiumRecoveryModel";
 
 export type LiveEventEnvelope = {
   cursor?: string;
@@ -24,11 +17,6 @@ type LiveEventBatch<T> = {
 
 export const liveEventsPath = (basePath: string, cursor: string) =>
   `${basePath}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`;
-
-export const liveEventScopeKey = (
-  authSessionKey?: string | null,
-  backendUrl?: string | null
-) => `${authSessionKey ?? ""}::${backendUrl ?? ""}`;
 
 export const useLiveEventStream = <T extends LiveEventEnvelope>({
   authSessionKey,
@@ -45,10 +33,10 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
   backendUrl?: string | null;
   enabled: boolean;
   getAccessToken?: () => Promise<string | null>;
-  onConnected: (scopeKey: string) => void;
-  onEvent: (event: T, scopeKey: string) => void;
-  onMalformedEvent: (scopeKey: string) => void;
-  onReconnecting: (scopeKey: string) => void;
+  onConnected: () => void;
+  onEvent: (event: T) => void;
+  onMalformedEvent: () => void;
+  onReconnecting: () => void;
   pollIntervalMs?: number;
 }) => {
   const callbacksRef = useRef({ onConnected, onEvent, onMalformedEvent, onReconnecting });
@@ -56,12 +44,12 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
   const getAccessTokenRef = useRef(getAccessToken);
   getAccessTokenRef.current = getAccessToken;
   const cursorRef = useRef("");
-  const cursorScopeKeyRef = useRef(liveEventScopeKey(authSessionKey, backendUrl));
+  const cursorScopeKeyRef = useRef(`${authSessionKey ?? ""}::${backendUrl ?? ""}`);
 
   useEffect(() => {
     if (!enabled) return undefined;
 
-    const cursorScopeKey = liveEventScopeKey(authSessionKey, backendUrl);
+    const cursorScopeKey = `${authSessionKey ?? ""}::${backendUrl ?? ""}`;
     if (cursorScopeKeyRef.current !== cursorScopeKey) cursorRef.current = "";
     cursorScopeKeyRef.current = cursorScopeKey;
 
@@ -71,40 +59,24 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
     let pollInFlight = false;
     let source: EventSource | null = null;
     let streamController: AbortController | null = null;
-    let reconnectAttempt = 0;
     let reconnectTimer: number | null = null;
     const directBackendUrl = backendUrl?.replace(/\/$/, "") ?? null;
-    const recoveryCanAttempt = () =>
-      symposiumRecoveryCanAttempt(
-        browserRecoveryCoordinator.getSnapshot()
-      );
-    const directAccessToken = async () => {
-      if (!directBackendUrl) return null;
-      try {
-        const token = await getAccessTokenRef.current?.() ?? null;
-        if (!token) throw new Error("Live authentication token unavailable.");
-        return token;
-      } catch (error) {
-        browserRecoveryCoordinator.reportTransportFailure();
-        throw error;
-      }
-    };
 
     const acceptEvent = (event: T) => {
       if (event.cursor) {
         if (!liveEventCursorIsAfter(event.cursor, cursorRef.current)) return;
         cursorRef.current = event.cursor;
       }
-      callbacksRef.current.onEvent(event, cursorScopeKey);
+      callbacksRef.current.onEvent(event);
     };
 
     const fetchEvents = async () => {
-      if (!recoveryCanAttempt() || pollInFlight) return;
+      if (document.hidden || pollInFlight) return;
       const controller = new AbortController();
       pollController = controller;
       pollInFlight = true;
       try {
-        const token = await directAccessToken();
+        const token = directBackendUrl ? await getAccessTokenRef.current?.().catch(() => null) : null;
         const data = await symposiumApi.request<LiveEventBatch<T>>(
           liveEventsPath(directBackendUrl ? `${directBackendUrl}/v1/events` : "/api/events", cursorRef.current),
           {
@@ -116,7 +88,7 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
         if (closed || controller.signal.aborted) return;
         for (const event of data.events ?? []) acceptEvent(event);
         if (data.cursor && liveEventCursorIsAfter(data.cursor, cursorRef.current)) cursorRef.current = data.cursor;
-        callbacksRef.current.onConnected(cursorScopeKey);
+        callbacksRef.current.onConnected();
       } finally {
         if (pollController === controller) pollController = null;
         pollInFlight = false;
@@ -144,14 +116,14 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
       if (closed) return;
       if (message.event === "symposium-ready" || message.event === "symposium-heartbeat") {
         stopPolling();
-        callbacksRef.current.onConnected(cursorScopeKey);
+        callbacksRef.current.onConnected();
         return;
       }
       if (message.event !== "symposium-event") return;
       try {
         acceptEvent(JSON.parse(message.data) as T);
       } catch {
-        callbacksRef.current.onMalformedEvent(cursorScopeKey);
+        callbacksRef.current.onMalformedEvent();
       }
     };
 
@@ -169,12 +141,7 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
     };
 
     const connectDirectStream = async () => {
-      if (
-        !directBackendUrl ||
-        closed ||
-        !recoveryCanAttempt() ||
-        streamController
-      ) return;
+      if (!directBackendUrl || closed || document.hidden || streamController) return;
       const controller = new AbortController();
       streamController = controller;
       let restartAfterAbort = false;
@@ -190,13 +157,13 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
           watchdogTimer = null;
           if (closed || controller.signal.aborted) return;
           restartAfterAbort = true;
-          callbacksRef.current.onReconnecting(cursorScopeKey);
+          callbacksRef.current.onReconnecting();
           controller.abort();
         }, timeoutMs);
       };
       armWatchdog(10_000);
       try {
-        const token = await directAccessToken();
+        const token = await getAccessTokenRef.current?.().catch(() => null);
         await consumeLiveEventStream({
           url: liveEventsPath(`${directBackendUrl}/v1/events/stream`, cursorRef.current),
           token,
@@ -205,72 +172,52 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
             if (closed || controller.signal.aborted) return;
             armWatchdog(22_000);
             stopPolling();
-            reconnectAttempt = 0;
-            browserRecoveryCoordinator.reportTransportSuccess();
-            callbacksRef.current.onConnected(cursorScopeKey);
+            callbacksRef.current.onConnected();
           },
           onEvent: (message) => {
             armWatchdog(22_000);
-            reconnectAttempt = 0;
-            browserRecoveryCoordinator.reportTransportSuccess();
             acceptStreamEvent(message);
           }
         });
-        if (!closed && !controller.signal.aborted) {
-          callbacksRef.current.onReconnecting(cursorScopeKey);
-        }
+        if (!closed && !controller.signal.aborted) callbacksRef.current.onReconnecting();
       } catch (error) {
         if (!controller.signal.aborted) {
-          callbacksRef.current.onReconnecting(cursorScopeKey);
+          callbacksRef.current.onReconnecting();
         }
       } finally {
         clearWatchdog();
         const ownsStream = streamController === controller;
         if (ownsStream) streamController = null;
-        if (
-          ownsStream &&
-          !closed &&
-          recoveryCanAttempt() &&
-          (restartAfterAbort || !controller.signal.aborted)
-        ) {
+        if (ownsStream && !closed && !document.hidden && (restartAfterAbort || !controller.signal.aborted)) {
           startPolling();
           clearReconnect();
           reconnectTimer = window.setTimeout(() => {
             reconnectTimer = null;
             void connectDirectStream();
-          }, symposiumRecoveryRetryDelayMs(reconnectAttempt, {
-            baseMs: 750,
-            maximumMs: 30_000
-          }));
-          reconnectAttempt += 1;
+          }, 750);
         }
       }
     };
 
     const connectLocalStream = () => {
-      if (
-        closed ||
-        !recoveryCanAttempt() ||
-        source ||
-        !("EventSource" in window)
-      ) return;
+      if (closed || document.hidden || source || !("EventSource" in window)) return;
       source = new EventSource(liveEventsPath("/api/events/stream", cursorRef.current));
       source.onopen = () => {
         if (!closed) {
           stopPolling();
-          callbacksRef.current.onConnected(cursorScopeKey);
+          callbacksRef.current.onConnected();
         }
       };
       source.addEventListener("symposium-ready", () => {
         if (!closed) {
           stopPolling();
-          callbacksRef.current.onConnected(cursorScopeKey);
+          callbacksRef.current.onConnected();
         }
       });
       source.addEventListener("symposium-heartbeat", () => {
         if (!closed) {
           stopPolling();
-          callbacksRef.current.onConnected(cursorScopeKey);
+          callbacksRef.current.onConnected();
         }
       });
       source.addEventListener("symposium-event", (message) => {
@@ -278,19 +225,19 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
         try {
           acceptEvent(JSON.parse((message as MessageEvent<string>).data) as T);
         } catch {
-          callbacksRef.current.onMalformedEvent(cursorScopeKey);
+          callbacksRef.current.onMalformedEvent();
         }
       });
       source.onerror = () => {
         if (!closed) {
-          callbacksRef.current.onReconnecting(cursorScopeKey);
+          callbacksRef.current.onReconnecting();
           startPolling();
         }
       };
     };
 
     const connect = () => {
-      if (!recoveryCanAttempt()) return;
+      if (document.hidden) return;
       if (directBackendUrl) void connectDirectStream();
       else {
         startPolling();
@@ -298,48 +245,40 @@ export const useLiveEventStream = <T extends LiveEventEnvelope>({
       }
     };
 
-    const unsubscribeRecovery = browserRecoveryCoordinator.subscribe(
-      (next, previous) => {
-        const nextCanAttempt = symposiumRecoveryCanAttempt(next);
-        const previousCanAttempt = symposiumRecoveryCanAttempt(previous);
-        if (!nextCanAttempt) {
-          clearReconnect();
-          stopPolling();
-          abortPoll();
-          stopStream();
-          if (previous.online && !next.online) {
-            callbacksRef.current.onReconnecting(cursorScopeKey);
-          }
-          return;
-        }
-        if (
-          !previousCanAttempt ||
-          next.resumeEpoch !== previous.resumeEpoch
-        ) {
-          reconnectAttempt = 0;
-          clearReconnect();
-          connect();
-          if (
-            (!previous.online && next.online) ||
-            next.lastCause === "transport"
-          ) {
-            void fetchEvents().catch(() => undefined);
-          }
-        }
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearReconnect();
+        stopPolling();
+        abortPoll();
+        stopStream();
+        return;
       }
-    );
-    if (recoveryCanAttempt()) {
       connect();
-    } else {
-      const recovery = browserRecoveryCoordinator.getSnapshot();
-      if (!recovery.online) {
-        callbacksRef.current.onReconnecting(cursorScopeKey);
-      }
-    }
+    };
+    const handleOnline = () => {
+      if (document.hidden) return;
+      clearReconnect();
+      connect();
+      void fetchEvents().catch(() => undefined);
+    };
+    const handleOffline = () => {
+      clearReconnect();
+      stopPolling();
+      abortPoll();
+      stopStream();
+      callbacksRef.current.onReconnecting();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    connect();
 
     return () => {
       closed = true;
-      unsubscribeRecovery();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
       clearReconnect();
       stopStream();
       stopPolling();

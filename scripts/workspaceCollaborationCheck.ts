@@ -50,7 +50,6 @@ const main = async () => {
     accessHook,
     commentsHook,
     workspaceDocumentsHook,
-    workspaceGateway,
     sharingDialog,
     workspaceView,
     navigatorDocument,
@@ -78,7 +77,6 @@ const main = async () => {
     source("features/workspace/useWorkspaceAccess.ts"),
     source("features/workspace/useWorkspaceComments.ts"),
     source("features/workspace/useWorkspaceDocuments.ts"),
-    source("features/workspace/workspaceGateway.ts"),
     source("features/workspace/WorkspaceSharingDialog.tsx"),
     source("features/workspace/WorkspaceView.tsx"),
     source("features/workspace/WorkspaceNavigatorDocument.tsx"),
@@ -158,8 +156,7 @@ const main = async () => {
 
   assert.match(accessHook, /symposium-workspace-change/);
   assert.match(accessHook, /channelName: "symposium-workspace-sync-v1"/);
-  assert.match(accessHook, /workspaceGateway\.grantAccess/);
-  assert.match(workspaceGateway, /mutationId\(`workspace-\$\{target\.type\}-access-grant`\)/);
+  assert.match(accessHook, /createClientMutationId\(`workspace-\$\{target\.type\}-access-grant`\)/);
   assert.match(commentsHook, /channelName: "symposium-workspace-sync-v1"/);
   assert.match(commentsHook, /window\.dispatchEvent\(new Event\("symposium-workspace-change"\)\)/);
   assert.match(workspaceDocumentsHook, /channelName: "symposium-workspace-sync-v1"/);

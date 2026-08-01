@@ -398,9 +398,7 @@ try {
   const privateDelivery = await fetch(privateUrl);
   assert.equal(privateDelivery.status, 200);
   assert.deepEqual(Buffer.from(await privateDelivery.arrayBuffer()), privateBytes);
-  const tamperedPrivate = await fetch(
-    `${privateUrl.slice(0, -1)}${privateUrl.endsWith("0") ? "1" : "0"}`
-  );
+  const tamperedPrivate = await fetch(`${privateUrl.slice(0, -1)}0`);
   assert.equal(tamperedPrivate.status, 404);
 
   const databaseEvidence = await pool.query<{

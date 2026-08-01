@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | In progress; structural checkpoints continue while LOC governance is explicitly on standby |
+| Status | In progress; safe checkpoint implemented, mid-pass and release LOC gates not met |
 | Prepared | July 30, 2026 |
 | Repository | `/Users/udayansharma/Documents/Science Rebirth` |
 | Exact baseline SHA | `5d89eadd83c1d3042b3eb320c0cb81ae9522d21d` |
@@ -23,25 +23,14 @@ This is the execution charter for the next pass. It deliberately sets a
 material result threshold. Another few-hundred-line cleanup is useful work,
 but it is not this pass.
 
-> **Current execution addendum, July 31, 2026:** checkpoint 11 implements C6
-> authentication and entrance lifecycle authority. One typed controller and
-> pure reducer now own browser-session entry, Clerk account admission,
-> abortable exact-user synchronization, read/live/social gates, local preview,
-> sign-out, and entrance replay. Authenticated bootstrap caches and inquiry,
-> profile, and analytics cross-tab transports are exact-viewer scoped; direct
-> account replacement cannot present or hydrate the previous viewer, and a
-> server-authenticated return cannot present the shell or subscribe to live
-> delivery before exact client identity admission.
-> `SymposiumV0.tsx` contains no authentication or entrance transition policy
-> and is 2,279 lines. The exact candidate is 493 tracked source files / 130,206
-> physical / 122,024 nonblank. Per explicit product direction, LOC reduction is
-> on standby: these
-> figures remain informational drift evidence, the original 114,999 completion
-> contract is not met, and no repository reduction credit or Pass 04
-> completion is claimed. Operational recovery evidence is the next
-> infrastructure priority; ephemeral modal and cross-domain view composition
-> remain legitimate shell responsibilities. Exact C6 evidence is in
-> [`refactor-evidence/pass-04/checkpoint-11.md`](refactor-evidence/pass-04/checkpoint-11.md).
+> **Current execution addendum, July 30, 2026:** checkpoint 05 is released at
+> `b0ce00548a29e2111d74c4e90acb9bcf27404bf0` with 476 files / 125,725
+> physical / 117,682 nonblank. It is green but explicitly incomplete, 10,726
+> physical lines above the Pass 04 ceiling. The next authority replacement is
+> prepared in
+> [`refactor-pass-04-checkpoint-06-plan.md`](refactor-pass-04-checkpoint-06-plan.md).
+> The exact checkpoint 05 evidence remains in
+> [`refactor-evidence/pass-04/checkpoint-05.md`](refactor-evidence/pass-04/checkpoint-05.md).
 
 The threshold is an acceptance gate, not permission to game the count. If
 11,544 safe deletions cannot be proved, the implementation must stop at a
@@ -484,7 +473,7 @@ later work cannot silently regain the removed lines.
 - `npm run proof:check`;
 - `npm run loc:baseline`;
 - `npm run loc:check` against the lowered ceiling;
-- eight isolated browser canaries with no skip, retry, flake, console error,
+- six isolated browser canaries with no skip, retry, flake, console error,
   page error, request error, hydration error, or unexpected result;
 - additional authenticated/two-session scenarios for every changed live-sync
   domain;

@@ -1,7 +1,6 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { jsonError } from "@/lib/api";
-import { getSnapshot, upsertProfile } from "@/lib/localPreviewStore";
-import type { CreateProfileInput } from "@/lib/localPreviewStoreTypes";
+import { getSnapshot, upsertProfile, type CreateProfileInput } from "@/lib/dataStore";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 
@@ -33,19 +32,6 @@ export async function POST(request: Request) {
   const email = user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress;
   const name = user.fullName || user.username || email?.split("@")[0] || "Symposium member";
   const handle = handleFromIdentity(name, email, user.username);
-
-  const live = await proxyLiveApiRequest(request, {
-    body: {
-      clerkUserId: clerkAuth.userId,
-      email,
-      name,
-      handle,
-      imageUrl: user.imageUrl
-    },
-    actorHandle: handle
-  });
-  if (live) return live;
-
   const existingProfile = (await getSnapshot().catch(() => null))?.profiles[handle];
   const input: CreateProfileInput = {
     name: existingProfile?.name ?? name,
@@ -59,6 +45,19 @@ export async function POST(request: Request) {
     bio: existingProfile?.bio ?? "A participant in the current inquiry thread.",
     fields: existingProfile?.fields ?? ["Inquiry"]
   };
+
+  const live = await proxyLiveApiRequest(request, {
+    body: {
+      clerkUserId: clerkAuth.userId,
+      email,
+      name,
+      handle,
+      imageUrl: user.imageUrl
+    },
+    actorHandle: handle
+  });
+  if (live) return live;
+
   const profile = await upsertProfile(input);
   return Response.json({ profile });
 }

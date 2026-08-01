@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { OpportunityApplicationContract } from "@/packages/contracts/src";
-import { getSnapshot } from "@/lib/localPreviewStore";
+import { getSnapshot } from "@/lib/dataStore";
 import {
   deleteLocalOwnerAttachments,
   localAttachmentsForOwner,

@@ -1,9 +1,5 @@
 # Major Refactor Pass 01 — Proof Kernel and Refactor Control Plane
 
-> **Historical plan.** As of August 1, 2026, its topic-branch, pull-request,
-> GitHub Actions, and remote-enforcement instructions are retired. Current work
-> stays on `main`, is verified locally, committed, and pushed directly.
-
 ## Document control
 
 | Field | Value |

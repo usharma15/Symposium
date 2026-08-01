@@ -1,4 +1,4 @@
-import type { PostAction } from "@/lib/symposiumCore";
+import type { PostAction } from "@/lib/dataStore";
 import { profile, type InquiryComment, type InquiryItem } from "@/lib/mockData";
 import {
   commentActionActive,

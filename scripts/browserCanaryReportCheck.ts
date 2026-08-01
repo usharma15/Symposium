@@ -4,17 +4,10 @@ import { fileURLToPath } from "node:url";
 
 const expectedCanaries = [
   "symposium-canary.spec.ts\0first session enters the isolated local preview",
-  "symposium-canary.spec.ts\0replays entrance and retires the previous local session on sign-out",
   "symposium-canary.spec.ts\0serializes simultaneous local preview writes without loss",
   "symposium-canary.spec.ts\0hydrates canonical routes and preserves in-app history",
   "symposium-canary.spec.ts\0keeps Paper and Thought design identities stable across theme and reload",
   "symposium-canary.spec.ts\0keeps the authored-artifact layouts inside desktop and mobile viewports",
-  "symposium-canary.spec.ts\0keeps profile activity, social navigation, and follow state authoritative across reload",
-  "symposium-canary.spec.ts\0keeps global and community discovery authoritative across rapid queries",
-  "symposium-canary.spec.ts\0keeps Notifications transport and optimistic recovery authoritative",
-  "symposium-canary.spec.ts\0keeps Workspace gateway, cache precedence, persistence, and cross-tab revisions authoritative",
-  "symposium-canary.spec.ts\0routes canonical live events without a bootstrap refresh",
-  "symposium-canary.spec.ts\0replays missed live events after offline recovery without a reload",
   "symposium-canary.spec.ts\0creates, edits, and durably reloads a titleless Thought"
 ].sort();
 

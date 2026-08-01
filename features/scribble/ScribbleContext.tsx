@@ -20,15 +20,6 @@ import {
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import { useCrossTabItemTransport } from "@/features/live-sync/useCrossTabItemTransport";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
-import {
-  browserRecoveryCoordinator
-} from "@/features/recovery/browserRecoveryCoordinator";
-import {
-  symposiumRecoveryRetryDelayMs
-} from "@/features/recovery/symposiumRecoveryModel";
-import {
-  useSymposiumRecoveryRefresh
-} from "@/features/recovery/useSymposiumRecovery";
 import { emptySymposiumDocument, newDocumentBlockId, type SymposiumDocumentNode } from "@/lib/documentModel";
 import type { InquiryAttachment, InquiryComment, InquiryItem, ResearchProfile } from "@/lib/mockData";
 import type {
@@ -424,38 +415,30 @@ export function ScribbleProvider({
 
   useEffect(() => {
     if (!dirtyRef.current || conflict) return;
-    const delay = retryAttempt
-      ? symposiumRecoveryRetryDelayMs(retryAttempt - 1)
-      : 900;
-    const timer = window.setTimeout(() => {
-      if (browserRecoveryCoordinator.canAttempt()) void saveNow();
-    }, delay);
+    const delay = retryAttempt ? Math.min(30_000, 1000 * (2 ** (retryAttempt - 1))) : 900;
+    const timer = window.setTimeout(() => void saveNow(), delay);
     return () => window.clearTimeout(timer);
   }, [body, conflict, documentValue, retryAttempt, saveNow]);
 
-  useSymposiumRecoveryRefresh(() => {
-    void saveNow();
-  });
-
   useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") void saveNow({ keepalive: true });
+    };
     const handlePageHide = () => void saveNow({ keepalive: true });
+    const handleOnline = () => void saveNow();
     const handleLiveChange = (event: Event) => {
       const revision = Number((event as CustomEvent<{ revision?: number }>).detail?.revision ?? 0);
       if (revision && revision <= serverRevisionRef.current) return;
       void refresh().catch(() => undefined);
     };
-    const unsubscribeRecovery = browserRecoveryCoordinator.subscribe(
-      (next, previous) => {
-        if (previous.visible && !next.visible) {
-          void saveNow({ keepalive: true });
-        }
-      }
-    );
+    document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("online", handleOnline);
     window.addEventListener("symposium-scribble-change", handleLiveChange);
     return () => {
-      unsubscribeRecovery();
+      document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("online", handleOnline);
       window.removeEventListener("symposium-scribble-change", handleLiveChange);
     };
   }, [refresh, saveNow]);

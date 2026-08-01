@@ -16,27 +16,6 @@ The following systems are established and should be reused rather than rebuilt:
 - Migration-aware readiness, request correlation, maintenance, and release gates.
 - A production-fail-closed Next bridge plus an explicit local-preview adapter.
 
-The Next bridge has one runtime-mode authority. A valid `SYMPOSIUM_API_URL`
-selects the canonical API; absence of that URL selects credential-free local
-preview only outside production; production without it is unavailable and
-returns a no-store 503. `lib/localPreviewStore.ts` owns the serialized atomic
-JSON world for the supported laptop preview and refuses to open in production
-or when database credentials are configured. Canonical repositories never
-import it, and browser features receive action types from the domain core
-rather than from a persistence implementation.
-
-The remaining Next compatibility surface also has explicit ownership. The
-Assistant, Conversations, and Notifications families are routed by three
-optional catch-all modules backed by typed allowlists, rather than 22 thin
-files that independently selected methods and local fallbacks. The allowlists
-preserve 31 logical method contracts, reject an unknown path with a private
-no-store 404, and reject an unsupported method with a private no-store 405.
-They do not turn the catch-alls into arbitrary API proxies. Persisted local
-preview routes, Clerk synchronization, local attachment transport, protected
-attachment delivery, and the short live-stream redirect remain separate
-because those are genuine Next runtime boundaries rather than proxy
-boilerplate.
-
 ## Target dependency direction
 
 ```text
@@ -58,8 +37,6 @@ backend routes -> domain services -> repositories -> Postgres/R2/Redis
 Dependencies may point down this graph, never back into the application shell. A feature owns its policy and rendering. Shared modules own only invariants consumed by more than one feature.
 
 Provider calls are also traffic-shaped. Public reads and process health checks remain local except for their authoritative Postgres read; they do not spend Redis commands. Redis is reserved for distributed authenticated-mutation limits. Live events commit durably to Postgres, publish through the active process bus, and replay from a cursor on connect or reconnect rather than polling or publishing into an unused provider channel.
-
-Operational telemetry follows the same bounded authority model. Every completed API request contributes a privacy-safe aggregate cost sample to a 512-entry, fifteen-minute rolling window; the event-stream registry owns both capacity and aggregate connection/replay/failure signals. Database-silent readiness exposes those summaries without route inputs, actor keys, message bodies, drafts, credentials, or evidence content. A scheduled repository watch verifies public availability, security headers, a valid Render release identity, migration convergence, and non-degraded runtime summaries without probing bootstrap or waking Neon. Manual release-time dispatch can additionally require an exact backend SHA; routine scheduled runs do not equate frontend-only or docs-only `main` commits with a Render release.
 
 The cached public shell uses a static-compatible CSP. Per-request nonce policies are not applied to prerendered HTML because build-time script tags cannot carry a request-time nonce; the production build gate inspects every static shell artifact and its matching CSP mode so a security-header change cannot silently block hydration. Resource authorization remains enforced at the API and repository boundaries rather than depending on the browser policy.
 
@@ -145,70 +122,19 @@ The shared item mutation coordinator records per-item epochs and pending mutatio
 
 Optimistic action membership and metrics use a clock-independent action-state guard. Stale live events remain unable to reverse the latest local intent, regardless of request duration. Protection is retired only when a bootstrap request that began after the mutation confirms both membership and metric direction. This avoids timer-based snap-back while still allowing later canonical changes to converge.
 
-The client collection is normalized into `byId` plus stable order before it reaches the shell. Synchronous refs and React state are updated through one entity-store boundary, so mutation handlers, live events, bootstrap replacement, persistence, and rendering cannot maintain divergent copies. `features/inquiry/useInquiryController.ts` is the inquiry authority that composes that entity store with bounded post reads, optimistic post/comment commands, mutation ordering, action reconciliation, passive-view deduplication, live input, cross-tab delivery, and cached snapshot persistence. Mutation ordering remains implemented by `features/mutations/itemMutationCoordinator.ts`; action reconciliation remains implemented by `features/live-sync/inquiryActionReconciler.ts`. The shell invokes typed inquiry commands and routes global live events, but it cannot read or mutate `/api/posts`, replace the inquiry collection, publish item messages, or persist item snapshots directly.
-
-`features/profiles/useProfileController.ts` is the profile and social authority.
-It composes profile/bootstrap reads, authenticated identity projection, settings
-writes, following state, follow mutation ordering, social-list caching,
-revision-safe live merges, and ordered cross-tab profile delivery.
-`features/profiles/useProfileActivityController.ts` is its activity subauthority:
-it owns scoped cursor state, request deduplication and stale-response rejection,
-bounded subject hydration, viewer-scoped caching, optimistic action totals, and
-canonical live convergence. The shell supplies narrow typed inquiry and
-community bridges and routes global live events, but it cannot request
-bootstrap, authentication sync, profiles, follows, or profile activity
-directly.
-
-`features/discovery/useDiscoveryController.ts` is the single global and
-community discovery authority. It owns overlay/query state, debounced and
-abortable search requests, actor- and query-scoped stale-response isolation,
-bounded inquiry/profile merging, community result IDs, local privacy-safe
-fallback, and canonical profile reprojection. Pure title/content
-classification, published-recency fallback ordering, and viewer-scoped result
-keys belong to `features/discovery/discoveryModel.ts`. The shell renders the
-typed result and supplies the inquiry merge port; it cannot request search or
-derive a competing fallback result.
-
-`features/live-sync/useSymposiumLiveController.ts` is the single global
-live-event delivery authority. It composes the cursor-monotonic stream,
-polling fallback, cross-tab analytics invalidation, bounded Assistant,
-messaging, and notification buffers, browser-domain invalidation events, and
-connection recovery. `features/live-sync/symposiumLiveEventRouter.ts` owns the
-pure ordered classification policy and typed ports into inquiry, profile,
-activity, editor, and fallback-refresh authorities. Transport callbacks and
-private buffers are keyed by actor/backend session; a delayed callback or
-buffer accepted for a previous viewer is ineligible for the current viewer.
-The shell supplies narrow domain ports and cannot classify event families,
-retain event buffers, or subscribe to the transport directly.
-
-`features/session/useSymposiumSessionController.ts` is the single
-authentication and entrance lifecycle authority. Its pure reducer in
-`features/session/symposiumSessionLifecycle.ts` owns browser-session entry,
-Clerk identity admission, exact-user synchronization, local preview,
-sign-out, and the read/live/social gates projected to the rest of the
-application. A direct account transition masks the previous viewer until the
-new viewer's canonical bootstrap commits; abort signals and identity epochs
-reject delayed account work. Authenticated bootstrap caches and inquiry,
-profile, and analytics cross-tab transports are keyed by exact Clerk user.
-Unresolved identity cannot consume those transports, and legacy unscoped
-bootstrap data remains readable only by local preview.
+The client collection is normalized into `byId` plus stable order before it reaches the shell. Synchronous refs and React state are updated through one entity-store boundary, so mutation handlers, live events, bootstrap replacement, persistence, and rendering cannot maintain divergent copies. Mutation ordering is owned by `features/mutations/itemMutationCoordinator.ts`; action reconciliation is owned by `features/live-sync/inquiryActionReconciler.ts`, not by UI components.
 
 Profiles reuse the same collection coordinator and ordered browser transport as inquiry items. Follow relationships use a relationship-specific coordinator that tracks the pending desired state and the last authoritative relationship revision, so refreshes and delayed events cannot reverse a follow or unfollow while its request is outstanding. Profile, follow, post, comment, and action writes all use the shared JSON API client and idempotency-key policy.
 
 ## Frontend ownership
 
-`SymposiumV0.tsx` is the application composition root: cross-domain port wiring, ephemeral modal selection, and invocation of typed feature commands. Authentication and entrance lifecycle belong to `useSymposiumSessionController`; canonical view state belongs to `useSymposiumViewController`; inquiry reads, writes, live/cross-tab convergence, and item persistence belong to `useInquiryController`; profile, identity projection, follow, social-list, and profile-activity state belong to `useProfileController` and its activity subcontroller; global and community search belongs to `useDiscoveryController`; global live-event delivery and routing belong to `useSymposiumLiveController`. The shell owns zero direct feature HTTP requests, zero event-family policy, and zero authentication or entrance transition policy. HTTP normalization, retry identities, SSE lifecycle, mutation ordering, routing, and reconciliation remain delegated to shared infrastructure. Rendering and feature policy are owned below it:
+`SymposiumV0.tsx` is the application controller: authentication lifecycle, route-level state, mutation invocation, persistence decisions, and composition. HTTP normalization, retry identities, SSE/polling lifecycle, browser cross-tab delivery, mutation ordering, and reconciliation are delegated to shared infrastructure. Rendering and feature policy are owned below it:
 
 - `features/posts`: composers, feed cards, detail views, edit surfaces, post action presentation
-- `features/inquiry`: the typed inquiry entity, read, mutation, convergence, cross-tab, and persistence authority
 - `features/comments`: discussion trees, reply-window paging, comment ownership and actions
 - `features/attachments`: metadata generation, carousel, document/media previews, continuous virtualized PDF.js and DOCX reading surfaces, attachment-scoped reading/translation sessions shared across preview/modal/fullscreen, scroll-derived active-page context, parallel reconstructed translation pages for extracted and scanned documents, selectable PDF text, zoom and fullscreen
-- `features/discovery`: the typed global/community query, remote/local projection, stale-request, privacy, and bounded-merge authority
-- `features/profiles`: the typed profile, identity projection, social graph, follow, activity, cross-tab, cache, and settings authority plus privacy-aware views
-- `features/communities`, `features/rooms`, `features/search`: their respective presentation surfaces
-- `features/workspace`: Workspace presentation, autosave, optimistic projection, request epochs, live/cross-tab reconciliation, and collaboration orchestration; `workspaceGateway.ts` is the single browser HTTP authority for documents, notebooks, publication, discussion, access, and search, while `workspaceSnapshotStorage.ts` owns the actor-scoped private snapshot cache
-- `features/messages`: Messaging presentation and live/send orchestration; `messagingGateway.ts` owns all browser route, method, actor, cursor, revision, idempotency, and transport-error contracts, while `messageDraftStorage.ts` owns browser draft persistence and failed-send recovery
-- `features/notifications`: notification state/live projection and presentation; `notificationGateway.ts` is the single browser authority for list, unread, preference, read, and archive transport contracts, while the panel retains interaction, optimistic projection, recovery, and rendering
+- `features/profiles`: activity projection, privacy-aware tabs, social graph and settings
+- `features/communities`, `features/rooms`, `features/workspace`, `features/messages`, `features/search`: their respective surfaces
 - `features/assistant`: one mounted conversation controller plus bounded presentation modules for the shell, transcript messages, Evidence Map citation staging, Context Dock inspection, Quick Note persistence, and thread administration; those modules do not create competing assistant state owners
 - `features/entities`, `features/live-sync`, `features/navigation`, `features/actions`: shared client invariants and contracts
 - `features/api`: same-origin JSON requests, structured failures, and retry-safe mutation identities
@@ -221,25 +147,7 @@ Assistant context identity and context-type projection are canonicalized once in
 
 The canonical browser-history state machine is owned by `features/navigation/useCanonicalBrowserHistory.ts`. The shell supplies and restores view snapshots, but it does not directly implement browser index, popstate, or direct-entry fallback policy.
 
-Browser-session entry is server-coordinated. `app/SymposiumPage.tsx` reads a non-persistent session cookie, `features/entrance/useBrowserSessionEntrance.ts` establishes the marker on the first visit, and `useSymposiumSessionController` owns the resulting five-second approach, authentication admission, and replay on sign-out. `features/bootstrap/cachedBootstrap.ts` owns best-effort cached entity/profile hydration. Local preview retains compatible legacy cache data; an authenticated session accepts only a snapshot written for its exact Clerk user and purges the acceleration state when identity is retired or replaced. Exact Clerk-user identity and viewer-scoped profile first-page projections extend that acceleration boundary to returning authenticated profile routes; the same existing API reads always revalidate them, cursor continuations remain network-only, and no provider request is added. Browser storage quota or removal failure is non-fatal and cannot fail a live mutation or sign-out. Server-rendered shell values, including timestamps, must be deterministic across server and browser locales to preserve hydration.
-
-A server-authenticated returning request still withholds the shell and live
-transport until Clerk resolves the exact client user and that user's cached or
-canonical identity is admitted. The server boolean can avoid a false sign-in
-panel, but it cannot authorize a default profile frame because it carries no
-profile projection.
-
-Browser/runtime recovery is owned by
-`features/recovery/browserRecoveryCoordinator.ts` and its pure model. One
-coordinator observes online, focus, visibility, page restoration, and
-recoverable transport transitions. Hidden tabs synchronously suspend live
-delivery; a monotonic recovery epoch wakes session bootstrap, notifications,
-messaging, Assistant, analytics, and Scribble refreshers without each feature
-installing competing browser listeners. Live delivery retains its exact-user
-cursor and uses bounded backoff before replay. Authenticated API and direct
-live requests fail closed when Clerk cannot supply a token; they never
-downgrade to handle trust. Domain mutation idempotency, conflict handling, and
-optimistic reconciliation remain with their owning domain controllers.
+Browser-session entry is server-coordinated. `app/SymposiumPage.tsx` reads a non-persistent session cookie and renders subsequent tabs directly into their canonical route; `features/entrance/useBrowserSessionEntrance.ts` establishes the marker on the first visit. The first browser-session visit alone owns the five-second entrance. `features/bootstrap/cachedBootstrap.ts` owns best-effort cached entity/profile hydration so later tabs do not wait for Clerk synchronization or the live bootstrap request before rendering useful content. Exact Clerk-user identity and viewer-scoped profile first-page projections extend that acceleration boundary to returning authenticated profile routes; the same existing API reads always revalidate them, cursor continuations remain network-only, and no provider request is added. Browser storage quota pressure is non-fatal and cannot fail a live mutation. Server-rendered shell values, including timestamps, must be deterministic across server and browser locales to preserve hydration.
 
 ## Backend ownership
 
@@ -262,34 +170,6 @@ The notification repository owns page/unread reads and read convergence. Domain 
 11. Add server-authoritative entity revisions and a shared cross-tab mutation coordinator. Complete for posts, comments, profiles, follows, bootstrap, live events, and the current edit/delete mutation envelope.
 12. Extract the client API, live-event, and browser-transport kernels and extend idempotent mutation coverage to profiles and follows. Complete.
 13. Construct the unified Patronage Hall domain. Complete for proposal contracts, creation and editing, Office drafts, exact-revision publication, canonical proposal and contribution-ledger storage, local/live persistence, feed and detail projections, and payment/private-capital feature gates. Provider payment ingestion remains intentionally unopened.
-14. Replace shell-owned global and community discovery. Complete: one typed controller now owns both search requests, query/result state, actor-scoped isolation, abort policy, local fallback, and bounded entity composition.
-15. Replace shell-owned authentication and entrance lifecycle. Complete: one typed controller and pure reducer now own browser entry, exact-user account admission, cache/cross-tab scope, read/live/social gates, local preview, and sign-out replay.
-16. Replace distributed browser/runtime recovery policy. Complete for the
-    current client: one coordinator owns availability and transport recovery
-    epochs, live delivery suspends and replays through it, authenticated
-    token loss fails closed, session bootstrap retries under exact-user
-    guards, and feature refreshers consume the shared resume signal.
-17. Consolidate canonical Next compatibility authority. Complete for the
-    Assistant, Conversations, and Notifications families: 22 distributed
-    route modules are retired, three allowlisted dispatchers preserve all 31
-    logical method contracts, and every remaining route module has a named
-    local-preview, protected-boundary, or canonical-compatibility reason.
-18. Replace Messaging browser transport and draft-storage authority.
-    Complete: one typed gateway owns 23 domain operations and one storage
-    authority owns draft keys, validation, failure behavior, and ordered-send
-    recovery; the presentation component owns neither raw routes nor direct
-    `localStorage` access.
-19. Replace Notifications browser transport authority. Main-integrated and
-    locally verified: one typed gateway owns all eight domain operations
-    and nine request shapes; presentation contains no raw Notifications route,
-    API-client, or fetch authority. Exact-SHA production proof remains pending.
-20. Replace Workspace browser HTTP and snapshot-cache authority. Implemented
-    and locally verified: one typed gateway owns 19 document, notebook,
-    publication, discussion, access, and search operations, and one storage
-    module owns the actor-scoped private snapshot cache. Workspace hooks retain
-    autosave, optimistic projection, mutation epochs, collaboration state, and
-    live/cross-tab reconciliation without constructing routes or request
-    envelopes. Exact-SHA release proof remains pending.
 
 ## Checkpoint gates
 

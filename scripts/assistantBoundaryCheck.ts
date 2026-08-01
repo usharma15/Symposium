@@ -78,7 +78,7 @@ import {
 import {
   DELETE as deleteAssistantConversationRoute,
   PATCH as updateAssistantConversationRoute
-} from "@/app/api/assistant/[[...segments]]/route";
+} from "@/app/api/assistant/conversations/[...segments]/route";
 import {
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
@@ -1976,10 +1976,6 @@ const assistantController = [
   assistantControllerModel
 ].join("\n");
 const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
-const liveController = readFileSync(
-  "features/live-sync/useSymposiumLiveController.ts",
-  "utf8"
-);
 const canonicalRoutes = readFileSync("features/navigation/canonicalRoute.ts", "utf8");
 const assistantPage = readFileSync("app/assistant/page.tsx", "utf8");
 const assistantThreadPage = readFileSync("app/assistant/threads/[threadId]/page.tsx", "utf8");
@@ -2280,15 +2276,9 @@ assert.match(shell, /title=\{assistantOpen \? "Collapse AI Workspace to Tablet" 
 assert.match(shell, /aria-expanded=\{tabletOpen \|\| assistantOpen\}/);
 assert.match(shell, /\{tabletOpen \|\| assistantOpen \? \([\s\S]*?mode=\{assistantOpen \? "workspace" : "compact"\}/);
 assert.match(shell, /assistantThreadId: assistantController\.conversationId \?\? null/);
-assert.match(
-  shell,
-  /enabled:\s+sessionController\.readsEnabled &&\s+\(tabletOpen \|\| assistantOpen\)/,
-  "Assistant private reads must remain suspended outside the admitted viewer session."
-);
+assert.match(shell, /enabled: tabletOpen \|\| assistantOpen/);
 assert.match(shell, /liveEvents: assistantEvents/);
-assert.match(liveController, /appendAssistantEvent/);
-assert.match(liveController, /setAssistantBuffer/);
-assert.doesNotMatch(shell, /event\.kind\.startsWith\("assistant\."\)|setAssistantEvents/);
+assert.match(shell, /event\.kind\.startsWith\("assistant\."\)/);
 assert.match(tablet, /Expand to AI Workspace/);
 assert.match(tablet, /Collapse to AI Tablet/);
 assert.match(tablet, /Search chats/);
@@ -2368,11 +2358,7 @@ assert.match(assistantPage, /kind: "assistant"/);
 assert.match(assistantThreadPage, /kind: "assistant", threadId/);
 assert.match(shell, /assistantBackdropForView/);
 assert.match(shell, /assistantBackdropRender/);
-assert.match(
-  shell,
-  /expandAssistant\(tabletContext\)/,
-  "Assistant expansion must capture its origin through the surface authority."
-);
+assert.match(shell, /setAssistantOriginContext\(tabletContext\)/);
 assert.match(shell, /const assistantVisibleContext =/);
 assert.match(shell, /assistantOpen && assistantBackdrop === "messages"/);
 assert.match(shell, /context: assistantVisibleContext/);

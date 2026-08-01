@@ -6,8 +6,6 @@ import {
   type MigrationStatus
 } from "../db/migrate";
 import { getMaintenanceStatus } from "../services/maintenance";
-import { getLiveStreamOperabilityStatus } from "../services/liveStreamRegistry";
-import { getRequestOperabilityStatus } from "../services/operability";
 import {
   attachmentStorageMode,
   databaseUrl,
@@ -41,10 +39,6 @@ export type RuntimeReadiness = {
   migrations: MigrationStatus;
   databaseActivity: ReturnType<typeof getDatabaseActivityStatus>;
   databaseProbe: "startup" | "deep";
-  operability: {
-    requests: ReturnType<typeof getRequestOperabilityStatus>;
-    liveStreams: ReturnType<typeof getLiveStreamOperabilityStatus>;
-  };
   release: string | null;
 };
 
@@ -74,8 +68,6 @@ export const getRuntimeReadiness = async (
   const issues = [...deploymentEnvIssues()];
   const warnings = deploymentEnvWarnings();
   const maintenance = getMaintenanceStatus();
-  const requestOperability = getRequestOperabilityStatus();
-  const liveStreamOperability = getLiveStreamOperabilityStatus();
   const checks: RuntimeCheck[] = [];
   let migrations = getCachedMigrationStatus();
 
@@ -206,12 +198,6 @@ export const getRuntimeReadiness = async (
       `${maintenance.lastStorageDeletionResult?.failed} attachment deletion job(s) are awaiting a storage retry.`
     );
   }
-  if (requestOperability.status === "degraded") {
-    warnings.push("Recent request-cost, query, or server-error telemetry is degraded.");
-  }
-  if (liveStreamOperability.status === "degraded") {
-    warnings.push("Recent live-stream capacity, replay, or delivery telemetry is degraded.");
-  }
 
   const requiredFailures = checks
     .filter((check) => check.required && !check.ok)
@@ -232,10 +218,6 @@ export const getRuntimeReadiness = async (
     migrations,
     databaseActivity: getDatabaseActivityStatus(),
     databaseProbe: options.probeDatabase ? "deep" : "startup",
-    operability: {
-      requests: requestOperability,
-      liveStreams: liveStreamOperability
-    },
     release: env.APP_VERSION ?? env.RENDER_GIT_COMMIT ?? env.VERCEL_GIT_COMMIT_SHA ?? null
   };
 };

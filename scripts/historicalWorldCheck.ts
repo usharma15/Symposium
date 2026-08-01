@@ -10,11 +10,6 @@ import { allHistoricalAssets } from "../lib/historicalWorld/assets";
 import { historicalProfiles } from "../lib/historicalWorld/characters";
 import { historicalCommunities } from "../lib/historicalWorld/communities";
 import { historicalInquiryItems, historicalWorldCounts } from "../lib/historicalWorld/content";
-import {
-  historicalWorldAssetFixtureRevision,
-  historicalWorldFixtureRevision,
-  historicalWorldFixtureRevisionsApplied
-} from "../apps/api/src/repository/historicalWorldFixtures";
 
 const foundationSource = readFileSync(join(process.cwd(), "apps/api/src/repository/foundation.ts"), "utf8");
 
@@ -52,18 +47,6 @@ assert.match(
   /const seedDatabase = async \(\) => \{\s*if \(!hasDatabase\(\)\) return;/,
   "The approved one-time historical replacement must not be disabled by the legacy seed flag."
 );
-assert.equal(historicalWorldFixtureRevisionsApplied([]), false);
-assert.equal(historicalWorldFixtureRevisionsApplied([{ id: historicalWorldFixtureRevision }]), false);
-assert.equal(historicalWorldFixtureRevisionsApplied([
-  { id: historicalWorldFixtureRevision },
-  { id: historicalWorldAssetFixtureRevision }
-]), true);
-assert.equal(historicalWorldFixtureRevisionsApplied([
-  { id: historicalWorldAssetFixtureRevision },
-  { id: historicalWorldFixtureRevision },
-  { id: historicalWorldFixtureRevision },
-  { id: "unrelated-revision" }
-]), true);
 assert.ok(historicalInquiryItems.every((entry) => Number.isFinite(Date.parse(entry.createdAt ?? ""))));
 assert.ok(historicalInquiryItems.every((entry) => !/strategy\s*2032/i.test(`${entry.title} ${entry.body}`)));
 
@@ -190,7 +173,7 @@ for (const fileName of normalizedPaperFileNames.filter((name) => name !== "plato
 assert.ok(!existsSync(join(process.cwd(), "public/historical-world/images/71baeb5b116f780a78c3edf795671b5e.jpg")));
 
 const fixtureSource = readFileSync(join(process.cwd(), "apps/api/src/repository/historicalWorldFixtures.ts"), "utf8");
-const localStoreSource = readFileSync(join(process.cwd(), "lib/localPreviewStore.ts"), "utf8");
+const localStoreSource = readFileSync(join(process.cwd(), "lib/dataStore.ts"), "utf8");
 for (const requiredBoundary of [
   "historical_world_snapshots",
   "clerk_user_id IS NOT NULL",

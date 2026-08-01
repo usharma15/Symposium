@@ -123,7 +123,7 @@ const main = async () => {
   const posts = await readFile(path.join(root, "apps/api/src/repository/posts.ts"), "utf8");
   const foundation = await readFile(path.join(root, "apps/api/src/repository/foundation.ts"), "utf8");
   const projection = await readFile(path.join(root, "apps/api/src/repository/inquiryProjection.ts"), "utf8");
-  const localStore = await readFile(path.join(root, "lib/localPreviewStore.ts"), "utf8");
+  const localStore = await readFile(path.join(root, "lib/dataStore.ts"), "utf8");
   assert.match(migration, /0064_authored_artifact_design_assignments/);
   assert.match(migration, /design_assignment JSONB/);
   assert.match(migration, /symposium_posts_design_fnv1a_32\(id \|\| ':muse:v1'\) % 2/);

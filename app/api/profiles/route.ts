@@ -1,5 +1,4 @@
-import { getSnapshot, upsertProfile } from "@/lib/localPreviewStore";
-import type { CreateProfileInput } from "@/lib/localPreviewStoreTypes";
+import { getSnapshot, upsertProfile, type CreateProfileInput } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { publicResearchProfile, searchPublicProfileEntries } from "@/lib/publicProfile";

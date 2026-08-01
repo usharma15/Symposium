@@ -57,15 +57,7 @@ import { FeedPost } from "@/features/posts/PostViews";
 import { InfiniteFeedBoundary } from "@/features/feeds/InfiniteFeedBoundary";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
-import { commentTimestampScore } from "@/features/profiles/profileActivityModel";
-import type {
-  ProfileActivityKind,
-  ProfileCommentActivityKind,
-  ProfileSettingsDraft,
-  ProfileSocialLists,
-  ProfileSocialView,
-  ProfileTab
-} from "@/features/profiles/profileTypes";
+import type { ProfileSocialView, ProfileTab } from "@/features/navigation/canonicalRoute";
 import {
   ContentQuoteCard,
   type QuoteActionHandler
@@ -78,14 +70,18 @@ import {
   useContentTranslation
 } from "@/features/translation/ContentTranslationControl";
 
-export type {
-  ProfileActivityKind,
-  ProfileCommentActivityKind,
-  ProfileSettingsDraft,
-  ProfileSocialLists,
-  ProfileSocialView,
-  ProfileTab
-} from "@/features/profiles/profileTypes";
+export type { ProfileTab } from "@/features/navigation/canonicalRoute";
+export type ProfileActivityKind = "authored" | "comments" | "fork" | "signal" | "save";
+export type ProfileCommentActivityKind = Exclude<ProfileActivityKind, "authored">;
+export type ProfileSocialLists = { following: string[]; followers: string[] };
+export type { ProfileSocialView } from "@/features/navigation/canonicalRoute";
+export type ProfileSettingsDraft = {
+  avatarUrl?: string;
+  name: string;
+  bio: string;
+  likesPublic: boolean;
+  resharesPublic: boolean;
+};
 
 type ProfileCommentActivity = {
   id: string;
@@ -121,6 +117,11 @@ const initial = profileInitials;
 const commentAuthoredByProfile = (comment: InquiryComment, person: ResearchProfile) =>
   !isDeletedComment(comment) &&
   (comment.authorHandle ? cleanHandle(comment.authorHandle) === person.handle : comment.author === person.name);
+
+export const commentTimestampScore = (comment: InquiryComment) => {
+  const parsed = comment.createdAt ? Date.parse(comment.createdAt) : Number.NaN;
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
 
 const profileCommentActivityLabels: Record<ProfileCommentActivityKind, string> = {
   comments: "Comment",
@@ -175,6 +176,19 @@ const collectProfileComments = (
   for (const item of items) visit(item, item.comments);
   return activities.sort((a, b) => b.recency - a.recency);
 };
+
+export const updateCommentsForProfile = (
+  comments: InquiryComment[],
+  person: ResearchProfile
+): InquiryComment[] =>
+  comments.map((comment) => ({
+    ...comment,
+    author:
+      !isDeletedComment(comment) && comment.authorHandle && cleanHandle(comment.authorHandle) === person.handle
+        ? person.name
+        : comment.author,
+    replies: updateCommentsForProfile(comment.replies ?? [], person)
+  }));
 
 export const itemAuthoredByProfile = (item: InquiryItem, person: ResearchProfile) =>
   !isDeletedPost(item) && (item.authorHandle ? item.authorHandle === person.handle : item.author === person.name);

@@ -21,7 +21,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import type { PostAction } from "@/lib/symposiumCore";
+import type { PostAction } from "@/lib/dataStore";
 import {
   profile,
   type InquiryAttachment,

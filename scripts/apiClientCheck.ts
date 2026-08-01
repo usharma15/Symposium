@@ -134,55 +134,6 @@ const main = async () => {
   await directClient.request("/api/posts?limit=24", { cache: "no-store" });
   assert.equal(directRequests[0]?.input, "https://api.example/v1/posts?limit=24");
   assert.equal(new Headers(directRequests[0]?.init?.headers).get("Authorization"), "Bearer token-1");
-  let authenticatedTransportCalls = 0;
-  let authenticatedTransportFailures = 0;
-  const missingTokenClient = createSymposiumApiClient(async () => {
-    authenticatedTransportCalls += 1;
-    return jsonResponse({ ok: true });
-  }, {
-    accessTokenRequired: true,
-    backendUrl: "https://api.example",
-    getAccessToken: async () => null,
-    onRecoverableFailure: () => {
-      authenticatedTransportFailures += 1;
-    }
-  });
-  const missingToken = await missingTokenClient
-    .request("/api/posts?limit=24", { actorHandle: "@ada" })
-    .catch((error) => error);
-  assert.ok(missingToken instanceof SymposiumApiError);
-  assert.match(missingToken.message, /Authentication is temporarily unavailable/);
-  assert.equal(authenticatedTransportCalls, 0);
-  assert.equal(authenticatedTransportFailures, 1);
-
-  let recoveredTransportFailures = 0;
-  let recoveredTransportSuccesses = 0;
-  const recoveredClient = createSymposiumApiClient(
-    async (_input, init) => {
-      assert.equal(
-        new Headers(init?.headers).get("x-symposium-handle"),
-        null,
-        "an authenticated request must never downgrade to handle trust"
-      );
-      return jsonResponse({ ok: true });
-    },
-    {
-      accessTokenRequired: true,
-      backendUrl: "https://api.example",
-      getAccessToken: async () => "recovered-token",
-      onRecoverableFailure: () => {
-        recoveredTransportFailures += 1;
-      },
-      onTransportSuccess: () => {
-        recoveredTransportSuccesses += 1;
-      }
-    }
-  );
-  await recoveredClient.request("/api/posts?limit=24", {
-    actorHandle: "@ada"
-  });
-  assert.equal(recoveredTransportFailures, 0);
-  assert.equal(recoveredTransportSuccesses, 1);
   await directClient.request("/api/assistant/actions/office-post-drafts", {
     method: "POST",
     actorHandle: "@ada",
@@ -384,9 +335,6 @@ const main = async () => {
     "cross-transport idempotency hash equivalence after response loss",
     "lifecycle keepalive propagation",
     "authenticated binary upload routing",
-    "fail-closed authenticated token recovery",
-    "authenticated handle-downgrade prevention",
-    "transport recovery reporting",
     "shared prepared-upload transport for profile photos",
     "structured API errors",
     "retry retention policy",

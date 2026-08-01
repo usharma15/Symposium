@@ -8,15 +8,9 @@ import {
   type StoredLiveEvent
 } from "../services/events";
 import {
+  maxLiveStreamsPerProcess,
   subscribeLocalLiveEvents
 } from "../services/liveBus";
-import {
-  acquireLiveStream,
-  recordLiveReplayEvents,
-  recordLiveStreamProblem,
-  releaseLiveStream,
-  resetLiveStreamRegistry
-} from "../services/liveStreamRegistry";
 import { getActorFromRequest } from "../services/auth";
 import { cleanHandle } from "@/lib/symposiumCore";
 
@@ -30,12 +24,31 @@ const limitFromQuery = (value?: string) => {
   return Number.isFinite(parsed) ? parsed : 50;
 };
 
+const activeStreamsByClient = new Map<string, number>();
+let activeStreamCount = 0;
+const maxStreamsPerClient = 12;
 const replayPageSize = 100;
 const maxReplayEventsPerConnection = 1000;
 
+const acquireStream = (clientKey: string) => {
+  const clientCount = activeStreamsByClient.get(clientKey) ?? 0;
+  if (clientCount >= maxStreamsPerClient || activeStreamCount >= maxLiveStreamsPerProcess) return false;
+  activeStreamsByClient.set(clientKey, clientCount + 1);
+  activeStreamCount += 1;
+  return true;
+};
+
+const releaseStream = (clientKey: string) => {
+  const clientCount = activeStreamsByClient.get(clientKey) ?? 0;
+  if (clientCount <= 1) activeStreamsByClient.delete(clientKey);
+  else activeStreamsByClient.set(clientKey, clientCount - 1);
+  activeStreamCount = Math.max(0, activeStreamCount - 1);
+};
+
 export const registerEventRoutes = (app: FastifyInstance) => {
   app.addHook("onClose", () => {
-    resetLiveStreamRegistry();
+    activeStreamsByClient.clear();
+    activeStreamCount = 0;
   });
 
   app.get<{ Querystring: EventQuery }>("/v1/events", async (request, reply) => {
@@ -61,8 +74,7 @@ export const registerEventRoutes = (app: FastifyInstance) => {
     const actor = await getActorFromRequest(request);
     const actorHandle = actor.handle ? cleanHandle(actor.handle) : null;
     const clientKey = actorHandle ? `actor:${actorHandle}` : `ip:${request.ip}`;
-    if (!acquireLiveStream(clientKey, Boolean(cursor))) {
-      request.log.warn({ event: "live_stream_capacity_rejected" }, "Live event stream capacity rejected.");
+    if (!acquireStream(clientKey)) {
       return reply.status(429).send({ error: "Too many live event streams.", requestId: request.id });
     }
     reply.hijack();
@@ -70,7 +82,6 @@ export const registerEventRoutes = (app: FastifyInstance) => {
     const stream = reply.raw;
     let closed = false;
     let replaying = true;
-    let terminationProblem: "write_backpressure" | "write_failed" | null = null;
     const pendingLiveEvents: StoredLiveEvent[] = [];
 
     const send = (eventName: string, data: unknown, id?: string) => {
@@ -78,13 +89,11 @@ export const registerEventRoutes = (app: FastifyInstance) => {
       try {
         const frame = `${id ? `id: ${id}\n` : ""}event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
         if (!stream.write(frame)) {
-          terminationProblem = "write_backpressure";
           stream.destroy();
           return false;
         }
         return true;
       } catch {
-        terminationProblem = "write_failed";
         stream.destroy();
         return false;
       }
@@ -109,17 +118,13 @@ export const registerEventRoutes = (app: FastifyInstance) => {
           requestedPageSize
         );
         const events = await listEventsSince(cursor, pageLimit, actorHandle);
-        recordLiveReplayEvents(events.length);
         for (const event of events) {
           if (!sendLiveEvent(event)) return false;
           replayed += 1;
         }
         if (events.length < pageLimit) return true;
       }
-      if (!closed) {
-        recordLiveStreamProblem("replay_truncated");
-        stream.end();
-      }
+      if (!closed) stream.end();
       return false;
     };
 
@@ -149,10 +154,7 @@ export const registerEventRoutes = (app: FastifyInstance) => {
       if (!visibleToActor(event)) return;
       if (replaying) {
         pendingLiveEvents.push(event);
-        if (pendingLiveEvents.length > maxReplayEventsPerConnection) {
-          recordLiveStreamProblem("replay_backlog");
-          stream.destroy();
-        }
+        if (pendingLiveEvents.length > maxReplayEventsPerConnection) stream.destroy();
       } else {
         sendLiveEvent(event);
       }
@@ -166,15 +168,13 @@ export const registerEventRoutes = (app: FastifyInstance) => {
       closed = true;
       unsubscribe();
       clearInterval(heartbeat);
-      releaseLiveStream(clientKey);
-      if (terminationProblem) recordLiveStreamProblem(terminationProblem);
+      releaseStream(clientKey);
     };
 
     request.raw.on("close", cleanup);
     stream.on("error", cleanup);
 
     const replayComplete = await flushMissedEvents().catch((error) => {
-      recordLiveStreamProblem("replay_failed");
       app.log.warn(error, "Could not send initial live events.");
       stream.destroy();
       return false;

@@ -1,22 +1,9 @@
 import assert from "node:assert/strict";
 import { createCrossTabItemSync } from "@/features/live-sync/crossTabItemSync";
-import { scopedCrossTabTransportName } from "@/features/live-sync/useCrossTabItemTransport";
 
 type Item = { id: string; value: string };
 let time = 1_000;
 const now = () => time;
-assert.equal(
-  scopedCrossTabTransportName("symposium-item-sync-v1", "user-a"),
-  "symposium-item-sync-v1:user-a"
-);
-assert.notEqual(
-  scopedCrossTabTransportName("symposium-item-sync-v1", "user-a"),
-  scopedCrossTabTransportName("symposium-item-sync-v1", "user-b")
-);
-assert.equal(
-  scopedCrossTabTransportName("symposium-item-sync-v1", null),
-  null
-);
 const first = createCrossTabItemSync<Item>({ now, protectionWindowMs: 100, sourceId: "tab-a" });
 const second = createCrossTabItemSync<Item>({ now, protectionWindowMs: 100, sourceId: "tab-b" });
 
@@ -71,8 +58,6 @@ console.log(
       ok: true,
       checked: [
         "immediate cross-tab optimistic state",
-        "exact-viewer transport namespace isolation",
-        "unresolved-viewer transport suspension",
         "monotonic commit and rollback ordering",
         "stale bootstrap and live-event rejection",
         "creation preservation",

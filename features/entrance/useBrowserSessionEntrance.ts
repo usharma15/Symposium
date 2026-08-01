@@ -7,30 +7,6 @@ const entranceSeenStorageKey = "symposium-entrance-seen-v2";
 const fallbackPresenceChannel = "symposium-browser-presence-v2";
 const fallbackProbeMs = 80;
 
-const readSessionMarker = () => {
-  try {
-    return window.sessionStorage.getItem(entranceSeenStorageKey) === "true";
-  } catch {
-    return false;
-  }
-};
-
-const writeSessionMarker = (key: string, value: string) => {
-  try {
-    window.sessionStorage.setItem(key, value);
-  } catch {
-    // The cookie and in-memory decision remain authoritative.
-  }
-};
-
-const removeSessionMarker = (key: string) => {
-  try {
-    window.sessionStorage.removeItem(key);
-  } catch {
-    // Entrance replay still proceeds in memory.
-  }
-};
-
 const hasBrowserSessionMarker = () =>
   document.cookie
     .split(";")
@@ -39,12 +15,8 @@ const hasBrowserSessionMarker = () =>
 
 const markBrowserSession = () => {
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  try {
-    document.cookie = `${entranceSessionCookieName}=1; Path=/; SameSite=Lax${secure}`;
-    return hasBrowserSessionMarker();
-  } catch {
-    return false;
-  }
+  document.cookie = `${entranceSessionCookieName}=1; Path=/; SameSite=Lax${secure}`;
+  return hasBrowserSessionMarker();
 };
 
 type PresenceMessage = { kind: "probe" | "present"; senderId: string; targetId?: string };
@@ -53,45 +25,38 @@ export const useBrowserSessionEntrance = (initialDecision: boolean | null = null
   const [shouldPlayEntrance, setShouldPlayEntrance] = useState<boolean | null>(initialDecision);
 
   const replayEntrance = useCallback(() => {
-    removeSessionMarker("symposium-entry-complete");
-    writeSessionMarker(entranceSeenStorageKey, "true");
+    window.sessionStorage.removeItem("symposium-entry-complete");
+    window.sessionStorage.setItem(entranceSeenStorageKey, "true");
     markBrowserSession();
     setShouldPlayEntrance(true);
   }, []);
 
   useEffect(() => {
     if (initialDecision === false) {
-      writeSessionMarker(entranceSeenStorageKey, "true");
+      window.sessionStorage.setItem(entranceSeenStorageKey, "true");
       return;
     }
-    const seenInThisTab = readSessionMarker();
+    const seenInThisTab = window.sessionStorage.getItem(entranceSeenStorageKey) === "true";
     if (seenInThisTab || hasBrowserSessionMarker()) {
-      writeSessionMarker(entranceSeenStorageKey, "true");
+      window.sessionStorage.setItem(entranceSeenStorageKey, "true");
       setShouldPlayEntrance(false);
       return;
     }
 
     if (markBrowserSession()) {
-      writeSessionMarker(entranceSeenStorageKey, "true");
+      window.sessionStorage.setItem(entranceSeenStorageKey, "true");
       setShouldPlayEntrance(true);
       return;
     }
 
     if (typeof BroadcastChannel === "undefined") {
-      writeSessionMarker(entranceSeenStorageKey, "true");
+      window.sessionStorage.setItem(entranceSeenStorageKey, "true");
       setShouldPlayEntrance(true);
       return;
     }
 
     const senderId = window.crypto.randomUUID();
-    let channel: BroadcastChannel;
-    try {
-      channel = new BroadcastChannel(fallbackPresenceChannel);
-    } catch {
-      writeSessionMarker(entranceSeenStorageKey, "true");
-      setShouldPlayEntrance(true);
-      return;
-    }
+    const channel = new BroadcastChannel(fallbackPresenceChannel);
     let peerPresent = false;
     const receivePresence = (event: MessageEvent<PresenceMessage>) => {
       const message = event.data;
@@ -105,7 +70,7 @@ export const useBrowserSessionEntrance = (initialDecision: boolean | null = null
     channel.addEventListener("message", receivePresence);
     channel.postMessage({ kind: "probe", senderId } satisfies PresenceMessage);
     const decisionTimer = window.setTimeout(() => {
-      writeSessionMarker(entranceSeenStorageKey, "true");
+      window.sessionStorage.setItem(entranceSeenStorageKey, "true");
       setShouldPlayEntrance(!peerPresent);
     }, fallbackProbeMs);
 

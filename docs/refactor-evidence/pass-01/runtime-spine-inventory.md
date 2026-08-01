@@ -690,7 +690,7 @@ Browser storage accelerates rendering, protects unsent work, carries navigation 
 | `symposium-auth-records` | Up to four 24-hour identity cache records; `features/identity/cachedIdentity.ts` | Clerk + backend remain authoritative |
 | `symposium-auth-handle` | Legacy identity key removed during sync/sign-out; `components/SymposiumV0.tsx` | Cleanup-only compatibility key; no current writer/reader |
 | `symposium-profile-read-cache-v2` | Bounded 24-hour profile activity/social read cache; `features/profiles/profileReadCache.ts` | Read acceleration only |
-| `symposium-workspace-v1:${handle}` | Workspace snapshot cache; `features/workspace/workspaceSnapshotStorage.ts` | Server/local preview workspace remains authoritative |
+| `symposium-workspace-v1:${handle}` | Workspace snapshot cache; `features/workspace/useWorkspaceDocuments.ts` | Server/local preview workspace remains authoritative |
 | `symposium-scribble-v1:${handle}` | Scribble body, dirty state, base revision; `features/scribble/ScribbleContext.tsx` | Recovery/autosave cache; server revision resolves conflicts |
 | `symposium:message-draft:${handle}:${conversationId}` | Revisioned unsent message draft and conflict recovery; `features/messages/MessagesSection.tsx`, `messageDraftState.ts` | Local unsent recovery plus canonical server draft |
 | `symposium:document-viewer-session:v1` | Per-browser-session bounded document reading/view state; `features/attachments/documentViewerSession.ts` | Presentation continuity, not content persistence |

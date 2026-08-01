@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { getSnapshot } from "@/lib/localPreviewStore";
+import { getSnapshot } from "@/lib/dataStore";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { publicResearchProfile } from "@/lib/publicProfile";

@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createClientMutationId } from "@/features/api/symposiumApiClient";
+import {
+  createClientMutationId,
+  symposiumApi,
+  SymposiumApiError
+} from "@/features/api/symposiumApiClient";
 import { useCrossTabItemTransport } from "@/features/live-sync/useCrossTabItemTransport";
 import type {
   CreateWorkspaceDocumentInputContract,
@@ -11,17 +15,13 @@ import type {
   WorkspaceDocument,
   WorkspaceNotebook,
   WorkspacePublicationResponse,
+  WorkspaceSearchResponse,
   WorkspaceSnapshot
 } from "@/lib/workspaceTypes";
 import {
   normalizeWorkspaceSnapshot,
   workspaceDocumentMetadataUpdate
 } from "@/features/workspace/workspaceNavigator";
-import { workspaceGateway } from "@/features/workspace/workspaceGateway";
-import {
-  readWorkspaceSnapshot,
-  writeWorkspaceSnapshot
-} from "@/features/workspace/workspaceSnapshotStorage";
 
 type WorkspaceChangeMessage = {
   type: "workspace-change";
@@ -37,9 +37,30 @@ const isWorkspaceChangeMessage = (value: unknown): value is WorkspaceChangeMessa
 };
 
 const emptySnapshot: WorkspaceSnapshot = { workspace: null, notebooks: [], documents: [] };
+const cacheKey = (handle: string) => `symposium-workspace-v1:${handle}`;
+
+const cacheSnapshot = (handle: string, snapshot: WorkspaceSnapshot) => {
+  try {
+    window.localStorage.setItem(cacheKey(handle), JSON.stringify(snapshot));
+  } catch {
+    // The server remains authoritative when browser storage is unavailable or full.
+  }
+};
+
+const cachedSnapshot = (handle: string) => {
+  try {
+    const raw = window.localStorage.getItem(cacheKey(handle));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<WorkspaceSnapshot>;
+    if (!Array.isArray(parsed.documents) || !Array.isArray(parsed.notebooks)) return null;
+    return parsed as WorkspaceSnapshot;
+  } catch {
+    return null;
+  }
+};
 
 const messageForError = (error: unknown, fallback: string) =>
-  error instanceof Error ? error.message : fallback;
+  error instanceof SymposiumApiError || error instanceof Error ? error.message : fallback;
 
 export const useWorkspaceDocuments = (actorHandle: string) => {
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>(emptySnapshot);
@@ -56,7 +77,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     const normalized = normalizeWorkspaceSnapshot(next);
     snapshotRef.current = normalized;
     setSnapshot(normalized);
-    writeWorkspaceSnapshot(actorHandle, normalized);
+    cacheSnapshot(actorHandle, normalized);
   }, [actorHandle]);
 
   const applyMutationSnapshot = useCallback((next: WorkspaceSnapshot) => {
@@ -72,7 +93,10 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
       requestId === refreshRequestRef.current && mutationEpoch === mutationEpochRef.current;
     if (!options.quiet) setStatus("Synchronising workspace…");
     try {
-      const next = await workspaceGateway.getSnapshot(actorHandle);
+      const next = await symposiumApi.request<WorkspaceSnapshot>(
+        `/api/workspace?actorHandle=${encodeURIComponent(actorHandle)}`,
+        { cache: "no-store" }
+      );
       if (!isCurrentRequest()) return snapshotRef.current;
       applySnapshot(next);
       setError(null);
@@ -109,7 +133,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
   useEffect(() => {
     mutationEpochRef.current += 1;
     refreshRequestRef.current += 1;
-    const cached = readWorkspaceSnapshot(actorHandle);
+    const cached = cachedSnapshot(actorHandle);
     if (cached) {
       applySnapshot(cached);
       setStatus("Checking workspace…");
@@ -128,7 +152,11 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
 
   const createDocument = useCallback(async (input: CreateWorkspaceDocumentInputContract) => {
     setStatus("Creating draft…");
-    const result = await workspaceGateway.createDocument(actorHandle, input);
+    const result = await symposiumApi.request<{ document: WorkspaceDocument }>("/api/workspace/documents", {
+      method: "POST",
+      idempotencyKey: createClientMutationId("workspace-document-create"),
+      body: { ...input, actorHandle }
+    });
     applyMutationSnapshot({
       ...snapshotRef.current,
       documents: [
@@ -143,7 +171,14 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
 
   const updateDocument = useCallback(async (noteId: string, input: UpdateWorkspaceDocumentInputContract) => {
     setStatus(input.checkpoint ? "Saving draft…" : "Autosaving…");
-    const result = await workspaceGateway.updateDocument(actorHandle, noteId, input);
+    const result = await symposiumApi.request<{ document: WorkspaceDocument }>(
+      `/api/workspace/documents/${encodeURIComponent(noteId)}`,
+      {
+        method: "PATCH",
+        idempotencyKey: createClientMutationId(input.checkpoint ? "workspace-document-checkpoint" : "workspace-document-autosave"),
+        body: { ...input, actorHandle }
+      }
+    );
     applyMutationSnapshot({
       ...snapshotRef.current,
       documents: snapshotRef.current.documents.map((document) => document.id === noteId ? result.document : document)
@@ -161,7 +196,11 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
 
   const deleteDocument = useCallback(async (document: WorkspaceDocument) => {
     setStatus("Deleting draft…");
-    await workspaceGateway.deleteDocument(actorHandle, document);
+    await symposiumApi.request(`/api/workspace/documents/${encodeURIComponent(document.id)}`, {
+      method: "DELETE",
+      idempotencyKey: createClientMutationId("workspace-document-delete"),
+      body: { actorHandle, expectedRevision: document.revision }
+    });
     applyMutationSnapshot({
       ...snapshotRef.current,
       documents: snapshotRef.current.documents.filter((candidate) => candidate.id !== document.id)
@@ -172,7 +211,11 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
 
   const createNotebook = useCallback(async (name: string) => {
     setStatus("Creating notebook…");
-    const result = await workspaceGateway.createNotebook(actorHandle, name);
+    const result = await symposiumApi.request<{ notebook: WorkspaceNotebook }>("/api/workspace/notebooks", {
+      method: "POST",
+      idempotencyKey: createClientMutationId("workspace-notebook-create"),
+      body: { actorHandle, name }
+    });
     applyMutationSnapshot({
       ...snapshotRef.current,
       notebooks: [
@@ -187,7 +230,14 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
 
   const renameNotebook = useCallback(async (notebook: WorkspaceNotebook, name: string) => {
     setStatus("Renaming notebook…");
-    const result = await workspaceGateway.renameNotebook(actorHandle, notebook, name);
+    const result = await symposiumApi.request<{ notebook: WorkspaceNotebook }>(
+      `/api/workspace/notebooks/${encodeURIComponent(notebook.id)}`,
+      {
+        method: "PATCH",
+        idempotencyKey: createClientMutationId("workspace-notebook-update"),
+        body: { actorHandle, name, expectedRevision: notebook.revision }
+      }
+    );
     applyMutationSnapshot({
       ...snapshotRef.current,
       notebooks: snapshotRef.current.notebooks.map((candidate) => candidate.id === notebook.id ? result.notebook : candidate),
@@ -200,7 +250,18 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
 
   const deleteNotebook = useCallback(async (notebook: WorkspaceNotebook) => {
     setStatus("Deleting notebook and its notes…");
-    const result = await workspaceGateway.deleteNotebookWithContents(actorHandle, notebook);
+    const result = await symposiumApi.request<{
+      notebookId: string;
+      deletedDocumentIds: string[];
+      cleanupPending?: boolean;
+    }>(
+      `/api/workspace/notebooks/${encodeURIComponent(notebook.id)}/with-contents`,
+      {
+        method: "DELETE",
+        idempotencyKey: createClientMutationId("workspace-notebook-delete-with-contents"),
+        body: { actorHandle, expectedRevision: notebook.revision }
+      }
+    );
     const deletedDocumentIds = new Set(result.deletedDocumentIds);
     applyMutationSnapshot({
       ...snapshotRef.current,
@@ -217,7 +278,10 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
   }, [actorHandle, announceChange, applyMutationSnapshot, refresh]);
 
   const search = useCallback(async (query: string, options?: { kind?: string; notebookId?: string | null }) => {
-    return workspaceGateway.search(actorHandle, query, options);
+    const parameters = new URLSearchParams({ query, actorHandle, limit: "24" });
+    if (options?.kind) parameters.set("kind", options.kind);
+    if (options && "notebookId" in options && options.notebookId) parameters.set("notebookId", options.notebookId);
+    return symposiumApi.request<WorkspaceSearchResponse>(`/api/workspace/search?${parameters}`, { cache: "no-store" });
   }, [actorHandle]);
 
   const publishDocument = useCallback(async (
@@ -225,10 +289,13 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     publicationTarget?: "paper" | "thought" | "proposal" | "opportunity"
   ) => {
     setStatus("Publishing exact saved revision…");
-    const result: WorkspacePublicationResponse = await workspaceGateway.publishDocument(
-      actorHandle,
-      document,
-      publicationTarget
+    const result = await symposiumApi.request<WorkspacePublicationResponse>(
+      `/api/workspace/documents/${encodeURIComponent(document.id)}/publish`,
+      {
+        method: "POST",
+        idempotencyKey: createClientMutationId("workspace-document-publish"),
+        body: { actorHandle, expectedRevision: document.revision, publicationTarget }
+      }
     );
     mutationEpochRef.current += 1;
     await refresh({ quiet: true });

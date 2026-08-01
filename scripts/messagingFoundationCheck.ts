@@ -390,18 +390,11 @@ const main = async () => {
   const attachmentRoutes = readFileSync("apps/api/src/routes/attachmentRoutes.ts", "utf8");
   const attachmentClient = readFileSync("features/attachments/attachmentUploadClient.ts", "utf8");
   const client = readFileSync("features/messages/MessagesSection.tsx", "utf8");
-  const gateway = readFileSync("features/messages/messagingGateway.ts", "utf8");
-  const draftStorage = readFileSync("features/messages/messageDraftStorage.ts", "utf8");
-  const messageAuthority = [client, gateway, draftStorage].join("\n");
   const unreadButton = readFileSync("features/messages/MessagesUnreadButton.tsx", "utf8");
   const eventRoutes = readFileSync("apps/api/src/routes/eventRoutes.ts", "utf8");
   const events = readFileSync("apps/api/src/services/events.ts", "utf8");
   const styles = readFileSync("styles/89-messages.css", "utf8");
   const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
-  const liveController = readFileSync(
-    "features/live-sync/useSymposiumLiveController.ts",
-    "utf8"
-  );
   const messageAttachmentRoute = readFileSync("app/api/message-attachments/[attachmentId]/route.ts", "utf8");
   const protectedAttachmentRoute = readFileSync("lib/protectedAttachmentRoute.ts", "utf8");
   const discardAttachmentRoute = readFileSync("app/api/attachments/[attachmentId]/route.ts", "utf8");
@@ -462,7 +455,7 @@ const main = async () => {
   assert.match(migration, /WHERE status = 'invited'/);
   assert.match(migration, /DELETE FROM notifications WHERE kind = 'group_invite'/);
   assert.match(client, /Math\.min\(textarea\.scrollHeight, 288\)/);
-  assert.match(messageAuthority, /symposium:message-draft/);
+  assert.match(client, /symposium:message-draft/);
   assert.match(client, /preserveLocal: draftStateRef\.current\.dirty/);
   assert.match(client, /draftSaveTimerRef/);
   assert.match(client, /conversationLoadEpochRef/);
@@ -472,7 +465,7 @@ const main = async () => {
   assert.match(client, /loadConversationSummary\(conversationId\)/);
   assert.match(client, /mergeConversationPageAfterProjectionChange/);
   assert.match(client, /projectionEpoch !== \(messageProjectionEpochByConversationRef\.current\.get\(conversationId\) \?\? 0\)/);
-  assert.match(messageAuthority, /message-draft-save/);
+  assert.match(client, /message-draft-save/);
   assert.match(client, /draftRetryAttemptRef/);
   assert.match(client, /Held in this tab · cloud sync pending/);
   assert.match(client, /setSearchResults\(\(current\) => current\?\.map\(updateStar\) \?\? current\)/);
@@ -484,7 +477,7 @@ const main = async () => {
   assert.match(client, /liveEvent\.kind === "conversation\.draft\.updated" \|\| liveEvent\.kind === "conversation\.read"/);
   assert.match(client, /Transfer ownership/);
   assert.match(client, /Leave group/);
-  assert.match(messageAuthority, /messages\/\$\{messageId\}\/context/);
+  assert.match(client, /messages\/\$\{messageId\}\/context/);
   assert.match(client, /Return to latest/);
   assert.match(client, /className="message-attachment message-attachment-video"/);
   assert.doesNotMatch(client, /\}, 80\)/);
@@ -538,12 +531,9 @@ const main = async () => {
   assert.match(shell, /data-view=\{assistantOpen \? "assistant" : messagesOpen \? "messages"/);
   assert.match(shell, /onMessage=\{/);
   assert.match(shell, /notificationEvents/);
-  assert.match(
-    liveController,
-    /setMessagingBuffer\(\(current\) =>[\s\S]*appendScopedLiveEvent\(current, authSessionKey, incoming, 1000\)/
-  );
-  assert.doesNotMatch(shell, /setMessagingEvents|event\.kind\.startsWith\("message\."\)/);
+  assert.match(shell, /setMessagingEvents\(\(current\) => \[\.\.\.current, event\]\.slice\(-1000\)\)/);
   assert.doesNotMatch(shell, /event\.kind === "conversation\.invited"/);
+  assert.match(shell, /event\.kind\.startsWith\("notification\."\)/);
   assert.match(routes, /\/v1\/conversations\/:id\/participants/);
   assert.match(routes, /\/v1\/conversations\/:id\/leave/);
   assert.match(routes, /\/v1\/conversations\/:id\/messages\/:messageId\/context/);
@@ -552,10 +542,9 @@ const main = async () => {
   assert.match(unreadButton, /\/api\/conversations\/unread/);
   assert.doesNotMatch(unreadButton, /\}, 80\)/);
   assert.match(unreadButton, /latestUnreadChangingEventKey/);
-  assert.match(unreadButton, /useSymposiumRecoveryRefresh/);
-  assert.doesNotMatch(unreadButton, /addEventListener\("focus"/);
-  assert.doesNotMatch(unreadButton, /addEventListener\("online"/);
-  assert.doesNotMatch(unreadButton, /addEventListener\("visibilitychange"/);
+  assert.match(unreadButton, /window\.addEventListener\("focus", refreshWhenActive\)/);
+  assert.match(unreadButton, /window\.addEventListener\("online", refreshWhenActive\)/);
+  assert.match(unreadButton, /document\.addEventListener\("visibilitychange", refreshWhenActive\)/);
   assert.match(unreadButton, /retryTimerRef\.current = window\.setTimeout/);
   assert.match(unreadButton, /aria-label=\{title\}/);
   assert.match(unreadButton, /data-unread-state=\{loadState\}/);

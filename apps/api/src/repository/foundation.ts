@@ -23,12 +23,7 @@ import {
 } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { seededCommunityCallMap } from "@/lib/communityFixtures";
-import {
-  historicalWorldFixtureRevisions,
-  historicalWorldFixtureRevisionsApplied,
-  syncHistoricalWorldAssetFixtures,
-  syncHistoricalWorldFixtures
-} from "./historicalWorldFixtures";
+import { syncHistoricalWorldAssetFixtures, syncHistoricalWorldFixtures } from "./historicalWorldFixtures";
 import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
 import { activeCommunityAnnouncements } from "@/lib/communityAnnouncements";
 import { postTypeForItem } from "@/lib/postSemantics";
@@ -453,12 +448,6 @@ export const insertProfile = async (
 const seedDatabase = async () => {
   if (!hasDatabase()) return;
   await ensureDatabase();
-  const fixtureRevisions = await getPool().query<{ id: string }>(
-    "SELECT id FROM fixture_revisions WHERE id = ANY($1::text[])",
-    [[...historicalWorldFixtureRevisions]]
-  );
-  if (historicalWorldFixtureRevisionsApplied(fixtureRevisions.rows)) return;
-
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");

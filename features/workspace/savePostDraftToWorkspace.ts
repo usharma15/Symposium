@@ -3,12 +3,12 @@
 import {
   createClientMutationId,
   shouldRetainRetryMutation,
+  symposiumApi,
   SymposiumApiError
 } from "@/features/api/symposiumApiClient";
 import { publishCrossTabMessage } from "@/features/live-sync/useCrossTabItemTransport";
 import type { ContentQuote, ContentQuoteSource, InquiryAttachment } from "@/lib/mockData";
 import type { OpportunityPostInputContract, PatronageProposalInputContract, VersionedDocumentContract } from "@/packages/contracts/src";
-import { workspaceGateway } from "@/features/workspace/workspaceGateway";
 
 type ComposerDraft = {
   title: string;
@@ -100,7 +100,11 @@ export const savePostDraftToWorkspace = async ({
   const mutation = acquireMutation(JSON.stringify(payload));
   onStatus("Saving draft to Notes");
   try {
-    await workspaceGateway.createDocument(actorHandle, payload, mutation.idempotencyKey);
+    await symposiumApi.request("/api/workspace/documents", {
+      method: "POST",
+      idempotencyKey: mutation.idempotencyKey,
+      body: { ...payload, actorHandle }
+    });
   } catch (error) {
     if (!shouldRetainRetryMutation(error)) clearMutation(mutation.fingerprintKey);
     const message =

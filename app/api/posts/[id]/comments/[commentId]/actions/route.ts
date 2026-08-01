@@ -1,8 +1,7 @@
-import { applyCommentAction, getSnapshot } from "@/lib/localPreviewStore";
+import { applyCommentAction, getSnapshot, type CommentAction } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { localCommunityReadAllowed } from "@/lib/localCommunityAuthorization";
-import type { CommentAction } from "@/lib/symposiumCore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

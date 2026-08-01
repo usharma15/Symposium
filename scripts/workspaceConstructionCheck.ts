@@ -191,7 +191,6 @@ const main = async () => {
     attachmentRepository,
     attachmentOwnership,
     workspaceHook,
-    workspaceGateway,
     workspaceView,
     workspaceRoute,
     workspaceRouteSupport,
@@ -223,7 +222,6 @@ const main = async () => {
     readFile(path.join(root, "apps/api/src/repository/attachments.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/services/attachmentOwnership.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/useWorkspaceDocuments.ts"), "utf8"),
-    readFile(path.join(root, "features/workspace/workspaceGateway.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/WorkspaceView.tsx"), "utf8"),
     readFile(path.join(root, "app/api/workspace/route.ts"), "utf8"),
     readFile(path.join(root, "lib/workspaceRouteSupport.ts"), "utf8"),
@@ -288,8 +286,7 @@ const main = async () => {
   assert.match(attachmentRepository, /input\.ownerType === "note" \|\| input\.ownerType === "note_comment" \|\| input\.ownerType === "opportunity_application" \? null : publicObjectUrl/);
   assert.match(attachmentOwnership, /row\.ownerId === null && row\.uploaderHandle !== input\.uploaderHandle/);
   assert.match(workspaceHook, /symposium-workspace-sync-v1/);
-  assert.match(workspaceHook, /workspaceGateway\.getSnapshot/);
-  assert.match(workspaceGateway, /cache: "no-store"/);
+  assert.match(workspaceHook, /cache: "no-store"/);
   assert.match(workspaceHook, /normalizeWorkspaceSnapshot/);
   assert.match(workspaceHook, /updateDocumentMetadata/);
   assert.match(workspaceView, /Search notes, authors, notebooks, content, comments, attachments/);
@@ -320,8 +317,8 @@ const main = async () => {
   assert.match(workspaceComments, /recordContentView\(client, "note_comment"/);
   assert.match(workspaceComments, /ownerType: "note_comment"/);
   assert.match(workspaceCommentsHook, /symposium-workspace-discussion-sync-v1/);
-  assert.match(workspaceCommentsHook, /workspaceGateway\.listComments/);
-  assert.match(workspaceGateway, /mutationId\("workspace-comment-update"\)/);
+  assert.match(workspaceCommentsHook, /cache: "no-store"/);
+  assert.match(workspaceCommentsHook, /createClientMutationId\("workspace-comment-update"\)/);
   assert.match(commentThread, /allowReplies\?: boolean/);
   assert.match(commentThread, /allowReshares !== false/);
   assert.match(commentThread, /allowQuotes !== false/);
@@ -428,8 +425,7 @@ const main = async () => {
   assert.match(workspaceHook, /requestId === refreshRequestRef\.current && mutationEpoch === mutationEpochRef\.current/);
   assert.match(workspaceHook, /applyMutationSnapshot/);
   assert.match(workspaceHook, /applyMutationSnapshot[\s\S]*setLoading\(false\)/);
-  assert.match(workspaceHook, /workspaceGateway\.deleteNotebookWithContents/);
-  assert.match(workspaceGateway, /\/with-contents/);
+  assert.match(workspaceHook, /\/with-contents/);
   assert.match(workspaceHook, /void refresh\(\{ quiet: true \}\)\.catch/);
   assert.doesNotMatch(workspaceHook, /its drafts are now in All/);
   const feedPostSource = postViews.slice(

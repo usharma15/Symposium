@@ -10,7 +10,6 @@ import {
   responsePayloadBytes,
   runWithRequestCost
 } from "@/apps/api/src/services/requestCosts";
-import { prepareApiPersistence } from "@/apps/api/src/server";
 
 const server = readFileSync("apps/api/src/server.ts", "utf8");
 const rateLimit = readFileSync("apps/api/src/services/rateLimit.ts", "utf8");
@@ -33,11 +32,7 @@ const shellViews = readFileSync("features/shell/SymposiumShellViews.tsx", "utf8"
 const nextConfig = readFileSync("next.config.mjs", "utf8");
 const profileRepository = readFileSync("apps/api/src/repository/profiles.ts", "utf8");
 const profileActions = readFileSync("apps/api/src/repository/actions.ts", "utf8");
-const foundation = readFileSync("apps/api/src/repository/foundation.ts", "utf8");
-const profileActivityController = readFileSync(
-  "features/profiles/useProfileActivityController.ts",
-  "utf8"
-);
+const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
 const packageJson = readFileSync("package.json", "utf8");
 const renderBlueprint = readFileSync("render.yaml", "utf8");
 const renderDirectory = "public/symposium-renders";
@@ -90,22 +85,6 @@ assert.match(maintenance, /created_at < now\(\) - interval '365 days'/);
 assert.match(maintenance, /scheduleDatabaseMaintenanceAfterActivity/);
 assert.doesNotMatch(maintenance, /setInterval\(/);
 assert.match(server, /snapshot\.queryCount > 0\) scheduleDatabaseMaintenanceAfterActivity\(\)/);
-assert.match(
-  foundation,
-  /SELECT id FROM fixture_revisions WHERE id = ANY\(\$1::text\[\]\)[\s\S]*historicalWorldFixtureRevisionsApplied\(fixtureRevisions\.rows\)[\s\S]*getPool\(\)\.connect\(\)/,
-  "The first live read must skip fixture locks and transactions when every fixture revision is already applied."
-);
-assert.match(apiEnv, /SYMPOSIUM_SEED_ON_BOOT: booleanFromEnv\(true\)/);
-assert.match(
-  renderBlueprint,
-  /SYMPOSIUM_SEED_ON_BOOT[\s\S]*value: "true"/,
-  "Render must prime the one-query fixture fast path before admitting user traffic."
-);
-assert.match(
-  server,
-  /await prepareApiPersistence\(\);[\s\S]*startDatabaseMaintenance\(\);[\s\S]*await app\.listen/,
-  "Schema and configured live-data priming must finish before maintenance and network admission."
-);
 assert.match(readiness, /options: \{ probeDatabase\?: boolean \}/);
 assert.match(readiness, /getCachedMigrationStatus\(\)/);
 assert.match(readiness, /databaseProbe: options\.probeDatabase \? "deep" : "startup"/);
@@ -123,50 +102,9 @@ assert.equal(avifRenderFiles.length, 22);
 assert.ok(avifRenderBytes < 4 * 1024 * 1024, "Versioned room renders must stay below a 4 MB deployment budget.");
 assert.match(profileActions, /query\.includeSummary[\s\S]*profileActivityCountSummary/);
 assert.match(profileRepository, /listProfileActivitySubjects/);
-assert.match(
-  profileActivityController,
-  /const requestSummary =[\s\S]*?!append && \(forceSummary \|\| !existingSnapshot\.totals\)/
-);
-assert.match(profileActivityController, /includeSummary: String\(requestSummary\)/);
-assert.match(profileActivityController, /data\.items\?\.length \|\| data\.profiles/);
-
-const verifyStartupPreparation = async () => {
-  const startupCalls: string[] = [];
-  await prepareApiPersistence({
-    seedOnBoot: true,
-    ensureDatabase: async () => { startupCalls.push("migrate"); },
-    ensureLiveData: async () => { startupCalls.push("prime"); }
-  });
-  assert.deepEqual(startupCalls, ["migrate", "prime"]);
-
-  const lazyStartupCalls: string[] = [];
-  await prepareApiPersistence({
-    seedOnBoot: false,
-    ensureDatabase: async () => { lazyStartupCalls.push("migrate"); },
-    ensureLiveData: async () => { lazyStartupCalls.push("prime"); }
-  });
-  assert.deepEqual(lazyStartupCalls, ["migrate"]);
-
-  const migrationFailureCalls: string[] = [];
-  await assert.rejects(
-    prepareApiPersistence({
-      seedOnBoot: true,
-      ensureDatabase: async () => {
-        migrationFailureCalls.push("migrate");
-        throw new Error("migration failed");
-      },
-      ensureLiveData: async () => { migrationFailureCalls.push("prime"); }
-    }),
-    /migration failed/
-  );
-  assert.deepEqual(migrationFailureCalls, ["migrate"]);
-
-  await assert.rejects(prepareApiPersistence({
-    seedOnBoot: true,
-    ensureDatabase: async () => {},
-    ensureLiveData: async () => { throw new Error("priming failed"); }
-  }), /priming failed/);
-};
+assert.match(shell, /const requestSummary = !append && \(forceSummary \|\| !existingSnapshot\.totals\)/);
+assert.match(shell, /includeSummary: String\(requestSummary\)/);
+assert.match(shell, /data\.items\?\.length \|\| data\.profiles/);
 
 const measuredCost = createRequestCostState();
 runWithRequestCost(measuredCost, () => {
@@ -197,9 +135,4 @@ finishDelayedQuery?.();
 assert.equal(delayedCost.queryCount, 1, "Database timing must retain the originating request after async context changes.");
 assert.equal(delayedCost.queryDurationMs, 9);
 
-const main = async () => {
-  await verifyStartupPreparation();
-  console.log("Provider cost boundary checks passed.");
-};
-
-void main();
+console.log("Provider cost boundary checks passed.");

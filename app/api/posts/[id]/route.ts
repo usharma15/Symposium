@@ -1,5 +1,4 @@
-import { deletePost, getSnapshot, updatePost } from "@/lib/localPreviewStore";
-import type { UpdatePostInput } from "@/lib/localPreviewStoreTypes";
+import { deletePost, getSnapshot, updatePost, type UpdatePostInput } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 import { deleteLocalOpportunityApplicationsForPost } from "@/lib/localOpportunityApplicationStore";
