@@ -224,6 +224,18 @@ const main = async () => {
     path.join(root, "features/notifications/notificationGateway.ts"),
     "utf8"
   );
+  const workspaceDocumentsSource = await readFile(
+    path.join(root, "features/workspace/useWorkspaceDocuments.ts"),
+    "utf8"
+  );
+  const workspaceGatewaySource = await readFile(
+    path.join(root, "features/workspace/workspaceGateway.ts"),
+    "utf8"
+  );
+  const workspaceSnapshotStorageSource = await readFile(
+    path.join(root, "features/workspace/workspaceSnapshotStorage.ts"),
+    "utf8"
+  );
   assert.match(
     symposiumSource,
     /useSymposiumViewController/,
@@ -328,6 +340,44 @@ const main = async () => {
       `${operation} must remain owned by the Notifications gateway.`
     );
   }
+  for (const file of files) {
+    const fileName = relative(file);
+    if (!fileName.startsWith("features/workspace/") || fileName === "features/workspace/workspaceGateway.ts") continue;
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(
+      source,
+      /\bsymposiumApi\.request|["'`]\/api\/workspace/,
+      `${fileName} must consume the Workspace gateway instead of constructing HTTP transport.`
+    );
+  }
+  for (const operation of [
+    "getSnapshot",
+    "createDocument",
+    "updateDocument",
+    "deleteNotebookWithContents",
+    "publishDocument",
+    "listComments",
+    "applyCommentAction",
+    "getAccess",
+    "grantAccess",
+    "revokeAccess",
+    "searchCollaborators"
+  ]) {
+    assert.ok(
+      workspaceGatewaySource.includes(operation),
+      `${operation} must remain owned by the Workspace gateway.`
+    );
+  }
+  assert.doesNotMatch(
+    workspaceDocumentsSource,
+    /localStorage|symposium-workspace-v1:/,
+    "Workspace document orchestration must not own private snapshot persistence."
+  );
+  assert.match(
+    workspaceSnapshotStorageSource,
+    /symposium-workspace-v1:/,
+    "Private Workspace snapshot persistence must remain owned by workspaceSnapshotStorage."
+  );
   assert.match(
     symposiumSource,
     /useInquiryController/,
@@ -678,6 +728,7 @@ const main = async () => {
     "single authentication and entrance lifecycle authority",
     "single browser and transport recovery authority",
     "single transient-surface lifecycle authority",
+    "single Workspace HTTP and private snapshot-storage authority",
     "extracted feature ownership",
     "acyclic feature dependencies"
   ]);

@@ -60,16 +60,16 @@ Status meanings:
 
 | Master pass | Current status | Source-grounded disposition | Remaining gate |
 | --- | --- | --- | --- |
-| 1. Safety rails, CI, evidence | **Complete** | The canonical manifest contains 69 stages; proof-kernel, isolated Chromium, retained evidence, protected pull requests, and exact-SHA release checks are established. | Preserve the gate; add a stage only when a new authority needs direct proof. |
+| 1. Safety rails, CI, evidence | **Complete** | The canonical manifest contains 70 stages; proof-kernel, isolated Chromium, retained evidence, protected pull requests, and exact-SHA release checks are established. | Preserve the gate; add a stage only when a new authority needs direct proof. |
 | 2. Recovery, migration, operations | **Complete** | Migration locking/checksums, fresh and restored Postgres proof, Neon restore, R2/static coherence, browser recovery, fail-closed identity, and 65 migrations are implemented and released. | Keep evidence current during releases; do not introduce distributed fanout without a scaling trigger. |
 | 3. Compatibility and persistence modes | **Complete** | Canonical API, credential-free local preview, and unavailable modes are explicit; `dataStore.ts` and direct-Postgres Next authority are retired; every remaining Next route has a named compatibility, protected-delivery, or local-preview reason. | A retained supported mode is not debt merely because it is large. Reopen only when its caller or product requirement disappears. |
 | 4. Client shell and state ownership | **Substantially complete** | Navigation, inquiry, profile/social, discovery, live delivery, session, recovery, and transient surfaces have typed owners. `SymposiumV0.tsx` is 2,274 lines and primarily composes domain ports. | Final architecture audit must confirm no remaining shell policy is a competing owner. File size alone cannot justify extraction. |
-| 5. Shared content, editor, Workspace, attachments | **Substantially complete; audit-gated** | Shared document/editor capability policies, titleless Thoughts, Workspace revisions/publication/collaboration, and shared attachment ownership exist and are extensively tested. `useWorkspaceDocuments.ts` still constructs its transport operations, with adjacent comments/access hooks doing likewise. | Certify current ownership or implement one gateway/cache authority only if a caller/cache/failure-mode map proves duplicated responsibility. Do not rewrite the editor for size. |
+| 5. Shared content, editor, Workspace, attachments | **Implemented and locally verified; release proof pending** | The audit proved four Workspace consumers constructing 19 operations, including a duplicate document-create envelope in the global composer. `workspaceGateway.ts` now owns document, notebook, publication, discussion, access, and search HTTP contracts; `workspaceSnapshotStorage.ts` owns the actor-scoped private cache. Shared editor, attachment, autosave, mutation-epoch, optimistic, and live/cross-tab owners remain unchanged. | Complete protected-main integration and exact-SHA release proof. Reopen only for a demonstrated failure mode; do not rewrite the editor for size. |
 | 6. Messaging and Notifications | **Main-integrated; production proof pending** | Messaging is released behind one typed browser gateway and one draft-storage authority. Notifications now has one typed browser gateway for all eight domain operations and nine request shapes; the panel contains no raw route or API-client authority. | Complete exact-main-SHA GitHub CI, Vercel, Render, API, readiness, and authenticated browser proof. |
 | 7. Assistant substrate | **Product-paused / outside this sequence** | Context identity, evidence, actions, receipts, private persistence, and the three-tool authority boundary are strong; the 1,671-line browser controller still mixes transport and orchestration. | No capability expansion or speculative substrate pass. Reopen only by explicit user direction or a demonstrated Assistant regression/feature requirement. |
 | 8. Backend domains and contracts | **Partially complete; audit-gated** | Shared transaction, mutation, receipt, audit, event, attachment, access, and notification kernels exist. `foundation.ts` is 1,253 lines with 29 repository importers (35 total API importers), so an indiscriminate split has high blast radius. Recent bootstrap work removed a measured query-cost failure without broad rewrites. | Measure modification fanout, query cost, row mapping, access lookup, receipts, and bootstrap projections. Execute at most one cutover only if it removes demonstrated duplicate machinery or a failure mode. |
 | 9. Sitewide design-system migration | **Product-blocked / outside this sequence** | No approved sitewide replacement family has been opened. Existing authored-artifact and layered CSS behavior remains protected. | Requires explicit design approval and a separate visual migration. Do not infer authorization from this ledger. |
-| 10. Final retirement and architecture audit | **Closeout pending** | Major compatibility authorities are retired and protected release flow is live, but this document and the Messaging evidence were stale and Passes 5-10 had no authoritative disposition. | Finish documentary reconciliation, execute Notifications, audit Workspace/backend, record limitations, run final local/browser/database/CI/production proof, then stop. |
+| 10. Final retirement and architecture audit | **Closeout pending** | Major compatibility authorities are retired, protected release flow is live, the master ledger is reconciled, and Notifications plus Workspace now have bounded browser authorities. The conditional backend leverage audit and final release proof remain. | Finish the backend audit, reconcile its disposition, record limitations, run final local/browser/database/CI/production proof, then stop. |
 
 The ledger retires neither zero-loss requirements nor evidence merely because
 a pass is old. It also does not turn an audit candidate into authorization to
@@ -79,7 +79,7 @@ one authority already exists is a valid closeout result.
 ## Released authority sequence
 
 The current released production baseline is
-`c4a7a44d56d4ef721bdebd62773705a664f91d24`. It includes:
+`be8ab672abdf25d461cc4723586b5c58f4c2b68d`. It includes:
 
 1. canonical mutation/read-model and local persistence boundaries;
 2. canonical view and browser-history authority;
@@ -94,8 +94,13 @@ The current released production baseline is
    and
 10. consolidated Assistant, Conversations, and Notifications compatibility
     route authority;
-11. one browser Messaging transport and draft-storage authority; and
-12. measured bootstrap query-cost reduction plus startup fixture priming.
+11. one browser Messaging transport and draft-storage authority;
+12. measured bootstrap query-cost reduction plus startup fixture priming; and
+13. one browser Notifications transport authority.
+
+The present candidate adds one browser Workspace HTTP authority and one
+actor-scoped snapshot-storage authority. It is not part of the released
+sequence until protected-main integration completes.
 
 `components/SymposiumV0.tsx` remains the composition root.
 The direct-Postgres Next authority is already retired. Credential-free local
@@ -249,23 +254,41 @@ API-client authority. The implementation contract is
 `docs/refactor-notifications-authority-plan.md`; exact local evidence is
 `docs/refactor-evidence/notifications-authority-pass.md`.
 
+## Workspace browser authority
+
+The bounded Shared Content/Workspace audit found a real competing browser
+authority rather than a file-size concern. `useWorkspaceDocuments.ts`,
+`useWorkspaceComments.ts`, `useWorkspaceAccess.ts`, and
+`savePostDraftToWorkspace.ts` independently constructed Workspace routes,
+actor bodies, revision fields, idempotency scopes, and cache behavior. The
+Workspace hook and global composer also duplicated document creation.
+
+`features/workspace/workspaceGateway.ts` is now the one injectable HTTP
+authority for 19 document, notebook, publication, discussion, access, and
+search operations. `features/workspace/workspaceSnapshotStorage.ts` owns the
+existing actor-scoped private snapshot cache and preserves fail-open behavior
+when storage is malformed, unavailable, or full. The hooks retain autosave,
+stale-request suppression, mutation epochs, optimistic projection,
+collaboration state, and live/cross-tab invalidation. The shared document
+model, editor capability policies, private attachment delivery, publication
+transactions, and UI were not rewritten. Exact local evidence is recorded in
+`docs/refactor-evidence/workspace-authority-pass.md`.
+
 ## Remaining structural sequence
 
-1. Verify the exact Notifications main SHA in GitHub CI, Vercel, Render,
-   readiness, API, and browser evidence.
-2. Run a read-only shared-content/Workspace ownership audit. Implement a
-   gateway/cache cutover only if the audit proves a competing authority or
-   concrete failure mode; otherwise certify the existing structure.
-3. Run a read-only backend leverage audit around `foundation.ts`, row mapping,
+1. Complete protected-main and exact-SHA release proof for the Workspace
+   authority candidate, while retaining the recorded Notifications production
+   limitation until Render/API identity is independently proven.
+2. Run a read-only backend leverage audit around `foundation.ts`, row mapping,
    access lookup, receipts, and bootstrap projections. Execute at most one
    evidence-backed cutover; otherwise close the pass with the audit evidence.
-4. Reconcile architecture and evidence documents, record limitations, run the
+3. Reconcile architecture and evidence documents, record limitations, run the
    complete final proof matrix, and stop.
 
 Assistant consolidation and sitewide design migration remain outside this
 sequence until explicitly reopened. The revamp is complete when Notifications
-has one browser transport authority, the two conditional audits have honest
-dispositions, docs match source, all temporary paths are retired or justified,
-and the final exact-SHA proof is green. Beyond that boundary, infrastructure
-work requires a demonstrated failure mode, measurable bottleneck, or explicit
-product/runtime decision.
+and Workspace have one browser transport authority, the backend conditional
+audit has an honest disposition, docs match source, all temporary paths are
+retired or justified, and the final exact-SHA proof is green. Beyond that
+boundary, infrastructure work requires a demonstrated failure mode, measurable
+bottleneck, or explicit product/runtime decision.
