@@ -1,0 +1,103 @@
+name: Symposium production watch
+
+on:
+  schedule:
+    - cron: "23 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      expected_release:
+        description: Optional exact Render release SHA to enforce for a release-time proof
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: symposium-production-watch
+  cancel-in-progress: true
+
+jobs:
+  production-watch:
+    name: Production readiness and operability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EXPECTED_RELEASE: ${{ inputs.expected_release || '' }}
+      WEB_URL: https://www.symposiumsci.com/
+      READY_URL: https://symposium-api-ue3p.onrender.com/readyz
+
+    steps:
+      - name: Capture public web and API evidence
+        shell: bash
+        run: |
+          mkdir -p evidence
+          curl --fail-with-body --location --retry 2 --retry-all-errors --max-time 20 \
+            --dump-header evidence/web-headers.txt \
+            --output evidence/web.html \
+            --write-out '{"httpCode":%{http_code},"timeTotal":%{time_total},"timeStartTransfer":%{time_starttransfer},"bytes":%{size_download}}\n' \
+            "$WEB_URL" > evidence/web-timing.json
+          curl --fail-with-body --location --retry 2 --retry-all-errors --max-time 20 \
+            --dump-header evidence/ready-headers.txt \
+            --output evidence/ready.json \
+            --write-out '{"httpCode":%{http_code},"timeTotal":%{time_total},"timeStartTransfer":%{time_starttransfer},"bytes":%{size_download}}\n' \
+            "$READY_URL" > evidence/ready-timing.json
+
+      - name: Enforce release, readiness, security, and operability
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+          const web = read("evidence/web-timing.json");
+          const timing = read("evidence/ready-timing.json");
+          const ready = read("evidence/ready.json");
+          const failures = [];
+          if (web.httpCode !== 200) failures.push(`web status ${web.httpCode}`);
+          if (web.timeStartTransfer > 5) failures.push(`web TTFB ${web.timeStartTransfer}s`);
+          if (timing.httpCode !== 200) failures.push(`readiness status ${timing.httpCode}`);
+          if (timing.timeStartTransfer > 5) failures.push(`readiness TTFB ${timing.timeStartTransfer}s`);
+          if (ready.ok !== true || ready.status !== "ready" || ready.strict !== true) failures.push("strict readiness is not ready");
+          if (!/^[0-9a-f]{40}$/i.test(ready.release ?? "")) failures.push(`invalid release identity ${ready.release}`);
+          if (process.env.EXPECTED_RELEASE && ready.release !== process.env.EXPECTED_RELEASE) {
+            failures.push(`release ${ready.release} != ${process.env.EXPECTED_RELEASE}`);
+          }
+          if (!Array.isArray(ready.migrations?.pendingMigrationIds)) failures.push("migration status unavailable");
+          else if (ready.migrations.pendingMigrationIds.length) failures.push("pending migrations");
+          if (!Array.isArray(ready.issues)) failures.push("readiness issues unavailable");
+          else if (ready.issues.length) failures.push(`readiness issues: ${ready.issues.join(", ")}`);
+          if (!Array.isArray(ready.warnings)) failures.push("readiness warnings unavailable");
+          else if (ready.warnings.length) failures.push(`readiness warnings: ${ready.warnings.join(", ")}`);
+          if (!ready.operability?.requests || !ready.operability?.liveStreams) failures.push("operability telemetry unavailable");
+          if (ready.operability?.requests?.status === "degraded") failures.push("request operability degraded");
+          if (ready.operability?.liveStreams?.status === "degraded") failures.push("live-stream operability degraded");
+          const headers = fs.readFileSync("evidence/web-headers.txt", "utf8").toLowerCase();
+          for (const required of ["content-security-policy:", "strict-transport-security:", "x-content-type-options:"]) {
+            if (!headers.includes(required)) failures.push(`missing ${required}`);
+          }
+          fs.writeFileSync("evidence/result.json", JSON.stringify({
+            ok: failures.length === 0,
+            checkedAt: new Date().toISOString(),
+            expectedRelease: process.env.EXPECTED_RELEASE || null,
+            exactReleaseEnforced: Boolean(process.env.EXPECTED_RELEASE),
+            observedRelease: ready.release,
+            web,
+            readiness: timing,
+            requestOperability: ready.operability?.requests?.status ?? null,
+            liveStreamOperability: ready.operability?.liveStreams?.status ?? null,
+            failures
+          }, null, 2));
+          if (failures.length) {
+            console.error(failures.join("\n"));
+            process.exit(1);
+          }
+          NODE
+
+      - name: Retain watch evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: production-watch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30

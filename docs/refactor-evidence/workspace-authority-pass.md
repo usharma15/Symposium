@@ -8,7 +8,7 @@
 | Branch | `codex/workspace-authority-closeout` |
 | Scope | Shared Content/Workspace ownership audit and justified browser-authority cutover |
 | Product boundary | No editor, presentation, attachment, publication, Assistant, or design-system expansion |
-| Status | Implemented and locally verified; protected-main and exact-SHA release proof pending |
+| Status | Released through protected PR #7; exact Render release verified, with the authenticated production-role limitation retained below |
 
 ## Audit disposition
 
@@ -86,8 +86,12 @@ At the implementation checkpoint:
 - isolated install audited 230 packages with 0 known vulnerabilities;
 - `git diff --check` — green.
 
-Protected GitHub checks, merge-SHA deployments, readiness, and production smoke
-remain release gates and must be recorded before closeout.
+Protected PR #7 merged as
+`9bd80cf6bb46b4434a8162b7787e26d34a36fd24`. Production strict readiness later
+reported that exact release, all 65 migrations applied, none pending, and no
+issues or warnings. The public web and Workspace route returned HTTP 200. The
+authenticated role matrix remains limited as recorded below rather than being
+silently promoted to proof.
 
 ## Limitations
 
