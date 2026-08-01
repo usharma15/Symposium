@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
 import type { StoredLiveEvent } from "./events";
 
-export const maxLiveStreamsPerProcess = 500;
+import { maxLiveStreamsPerProcess } from "./liveStreamRegistry";
+export { maxLiveStreamsPerProcess } from "./liveStreamRegistry";
 
 const bus = new EventEmitter();
 bus.setMaxListeners(maxLiveStreamsPerProcess);

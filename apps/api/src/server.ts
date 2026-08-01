@@ -30,6 +30,7 @@ import {
   shouldSampleRequestCost,
   type RequestCostState
 } from "./services/requestCosts";
+import { recordRequestOperability } from "./services/operability";
 
 type ApiPersistencePreparationOptions = {
   seedOnBoot?: boolean;
@@ -86,6 +87,7 @@ export const buildApp = async (options: { logger?: boolean } = {}) => {
       statusCode: reply.statusCode,
       responseBytes: responsePayloadBytes(payload)
     });
+    recordRequestOperability(snapshot);
     if (snapshot.queryCount > 0) scheduleDatabaseMaintenanceAfterActivity();
     const log = {
       event: snapshot.violations.length ? "request_cost_budget_exceeded" : "request_cost_sample",
