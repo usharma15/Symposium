@@ -3,6 +3,7 @@ import type {
   AssistantMessageInputContract,
   AssistantActionProposalContract,
   AssistantActionReceiptContract,
+  AssistantContextConfigurationContract,
   AssistantQuickNoteContract,
   AssistantQuickNoteResultContract,
   AssistantThreadStateContract,
@@ -17,6 +18,12 @@ export type AssistantContext = NonNullable<
 >;
 
 export type AssistantNewThreadContextMode = "current" | "blank";
+
+export const defaultAssistantContextConfiguration: AssistantContextConfigurationContract = {
+  historyScope: "recent",
+  knowledgeScope: "sources_and_general",
+  siteSearch: "when_requested"
+};
 
 export type AssistantMessageView = {
   id: string;

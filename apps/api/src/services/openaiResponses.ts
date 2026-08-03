@@ -5,6 +5,7 @@ import {
   contentTranslationModelOutputSchema,
   documentTranslationModelOutputSchema,
   type AssistantActionProposalDraftContract,
+  type AssistantContextConfigurationContract,
   type AssistantEvidenceClaimDraftContract,
   type AssistantQuickNoteDraftContract,
   type AssistantRequestIntentContract,
@@ -32,6 +33,12 @@ import {
 } from "./translationLanguages";
 
 type AssistantHistoryMessage = { role: "user" | "assistant"; body: string };
+
+const defaultAssistantContextConfiguration: AssistantContextConfigurationContract = {
+  historyScope: "recent",
+  knowledgeScope: "sources_and_general",
+  siteSearch: "when_requested"
+};
 
 type OpenAIUsage = {
   input_tokens?: number;
@@ -289,6 +296,20 @@ export const assistantGeneralInstructions = [
   "Never claim you already changed, saved, published, messaged, searched, or attached anything."
 ].join("\n");
 
+export const assistantContextConfigurationInstructions = (
+  configuration: AssistantContextConfigurationContract
+) => configuration.knowledgeScope === "sources_only"
+  ? [
+      "CONTEXT RECIPE: SOURCES ONLY.",
+      "Use the conversation to understand the request, but use only supplied Symposium source evidence for factual claims.",
+      "Do not fill gaps from general knowledge. If the supplied sources do not answer the question, say what evidence is missing."
+    ].join("\n")
+  : [
+      "CONTEXT RECIPE: SOURCES + GENERAL KNOWLEDGE.",
+      "Use supplied Symposium sources as visible grounding and general knowledge where helpful.",
+      "Clearly distinguish statements supported by supplied passages from background knowledge or inference, and never cite a passage for more than it states."
+    ].join("\n");
+
 export const assistantDraftEditInstructions = [
   "An ACTIVE PRIVATE DRAFT has been server-authorized for this conversation.",
   "Only when the latest user request explicitly asks to change, edit, revise, rewrite, shorten, expand, tighten, fix, remove, add, append, integrate, incorporate, merge, replace, rename, retitle, update, polish, improve, or make a change to that active draft, set action.tool to office.document.edit_draft.",
@@ -402,6 +423,7 @@ export const assistantMaxOutputTokens = (
 
 export const assistantRenderedInput = (input: {
   history: AssistantHistoryMessage[];
+  contextConfiguration?: AssistantContextConfigurationContract;
   context: unknown | null;
   attachedContexts?: unknown[];
   evidencePackets?: AssistantEvidencePacket[];
@@ -419,10 +441,13 @@ export const assistantRenderedInput = (input: {
       assistantTranslationPrompt(input.context, input.message)
     ].join("\n");
   }
+  const configuration = input.contextConfiguration ?? defaultAssistantContextConfiguration;
   const grounded = Boolean(input.context) || Boolean(input.evidencePackets?.length);
+  const contextual = grounded || configuration.knowledgeScope === "sources_only";
   return [
     [
-      grounded ? assistantInstructions : assistantGeneralInstructions,
+      contextual ? assistantInstructions : assistantGeneralInstructions,
+      assistantContextConfigurationInstructions(configuration),
       ...(input.draftSession ? [assistantDraftEditInstructions] : [])
     ].join("\n"),
     ...input.history.map((entry) => `${entry.role}: ${entry.body}`),
@@ -842,6 +867,7 @@ const responseText = (payload: OpenAIResponsePayload) => {
 export const callAssistantModel = async (input: {
   ownerHandle: string;
   history: AssistantHistoryMessage[];
+  contextConfiguration?: AssistantContextConfigurationContract;
   context: unknown | null;
   attachedContexts?: unknown[];
   evidencePackets?: AssistantEvidencePacket[];
@@ -860,14 +886,19 @@ export const callAssistantModel = async (input: {
   const translating = input.intent === "translate";
   if (translating && !input.targetLanguage) throw new Error("A translation language is required.");
   if (translating && !input.context) throw new Error("A source context is required for source translation.");
+  const configuration = input.contextConfiguration ?? defaultAssistantContextConfiguration;
   const grounded = Boolean(input.context) || Boolean(input.evidencePackets?.length);
+  const contextual = grounded || configuration.knowledgeScope === "sources_only";
   const baseInstructions = translating
     ? assistantTranslationInstructions(input.targetLanguage!)
-    : grounded
+    : contextual
       ? assistantInstructions
       : assistantGeneralInstructions;
   const instructions = [
     baseInstructions,
+    ...(!translating
+      ? [assistantContextConfigurationInstructions(configuration)]
+      : []),
     ...(!translating && input.draftSession ? [assistantDraftEditInstructions] : [])
   ].join("\n");
   const turnPrompt = translating
@@ -943,7 +974,7 @@ export const callAssistantModel = async (input: {
             : input.evidencePackets?.length
               ? "symposium-draft-edit-evidence-v1"
               : "symposium-draft-edit-v1"
-        : grounded
+        : contextual
           ? visionInputs.length
             ? "symposium-contextual-tablet-vision-v1"
             : input.evidencePackets?.length

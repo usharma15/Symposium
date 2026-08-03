@@ -3285,6 +3285,29 @@ export const migrations: Migration[] = [
       ALTER TABLE comments
         DROP COLUMN IF EXISTS deleted;
     `
+  },
+  {
+    id: "0066_assistant_context_configuration",
+    sql: `
+      ALTER TABLE ai_conversations
+        ADD COLUMN IF NOT EXISTS context_configuration JSONB NOT NULL DEFAULT
+          '{"historyScope":"recent","knowledgeScope":"sources_and_general","siteSearch":"when_requested"}'::jsonb;
+
+      ALTER TABLE ai_conversations
+        DROP CONSTRAINT IF EXISTS ai_conversations_context_configuration_check;
+      ALTER TABLE ai_conversations
+        ADD CONSTRAINT ai_conversations_context_configuration_check CHECK (
+          jsonb_typeof(context_configuration) = 'object'
+          AND context_configuration ?& ARRAY['historyScope', 'knowledgeScope', 'siteSearch']
+          AND (context_configuration - 'historyScope' - 'knowledgeScope' - 'siteSearch') = '{}'::jsonb
+          AND context_configuration->>'historyScope' IN ('focused', 'recent', 'extended')
+          AND context_configuration->>'knowledgeScope' IN ('sources_only', 'sources_and_general')
+          AND context_configuration->>'siteSearch' IN ('when_requested', 'off')
+        );
+
+      COMMENT ON COLUMN ai_conversations.context_configuration IS
+        'Owner-controlled, per-thread model context recipe. Defaults preserve pre-0066 Assistant behavior.';
+    `
   }
 ];
 

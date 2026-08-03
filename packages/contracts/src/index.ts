@@ -1781,6 +1781,12 @@ export const assistantContextSchema = z.object({
   metadata: z.record(z.string().max(80), z.union([z.string().max(1000), z.number(), z.boolean(), z.null()])).default({})
 });
 
+export const assistantContextConfigurationSchema = z.object({
+  historyScope: z.enum(["focused", "recent", "extended"]).default("recent"),
+  knowledgeScope: z.enum(["sources_only", "sources_and_general"]).default("sources_and_general"),
+  siteSearch: z.enum(["when_requested", "off"]).default("when_requested")
+}).strict();
+
 export const assistantMessageInputSchema = z.object({
   conversationId: z.string().uuid().optional(),
   projectId: z.string().uuid().optional(),
@@ -1794,6 +1800,11 @@ export const assistantMessageInputSchema = z.object({
   contextType: z.enum(["general", "room", "post", "community", "note"]).default("general"),
   contextId: z.string().trim().min(1).max(240).optional(),
   context: assistantContextSchema.nullable().default(null),
+  contextConfiguration: assistantContextConfigurationSchema.default({
+    historyScope: "recent",
+    knowledgeScope: "sources_and_general",
+    siteSearch: "when_requested"
+  }),
   draftSession: assistantDraftEditSessionSchema.nullable().default(null)
 }).superRefine((input, context) => {
   if (input.conversationId && input.projectId) {
@@ -1844,6 +1855,11 @@ export const assistantContextUpdateInputSchema = z.discriminatedUnion("mode", [
   }),
   z.object({
     mode: z.literal("clear"),
+    expectedRevision: z.number().int().positive()
+  }),
+  z.object({
+    mode: z.literal("configure"),
+    configuration: assistantContextConfigurationSchema,
     expectedRevision: z.number().int().positive()
   })
 ]);
@@ -2593,6 +2609,7 @@ export const assistantThreadSummarySchema = z.object({
   activeSourceId: z.string().uuid().nullable(),
   originSourceId: z.string().uuid().nullable(),
   contextRevision: z.number().int().positive(),
+  contextConfiguration: assistantContextConfigurationSchema,
   sourceCount: z.number().int().nonnegative(),
   sourceRevisionCount: z.number().int().nonnegative(),
   createdAt: isoDateTimeStringSchema,
@@ -2638,10 +2655,12 @@ export const assistantProjectDeleteResultSchema = z.object({
 
 export const assistantContextUpdateResultSchema = z.object({
   thread: assistantThreadStateSchema,
-  message: assistantMessageSchema
+  message: assistantMessageSchema.optional()
 });
 
-export const assistantSourceUpdateResultSchema = assistantContextUpdateResultSchema;
+export const assistantSourceUpdateResultSchema = assistantContextUpdateResultSchema.extend({
+  message: assistantMessageSchema
+});
 
 export const assistantThreadUpdateResultSchema = z.object({
   thread: assistantThreadStateSchema
@@ -2835,6 +2854,7 @@ export type ConfirmAssistantOfficePostDraftInputContract = z.infer<typeof confir
 export type ConfirmAssistantOfficeDraftEditInputContract = z.infer<typeof confirmAssistantOfficeDraftEditInputSchema>;
 export type AssistantEvidenceClaimDraftContract = z.infer<typeof assistantEvidenceClaimDraftSchema>;
 export type AssistantContextContract = z.infer<typeof assistantContextSchema>;
+export type AssistantContextConfigurationContract = z.infer<typeof assistantContextConfigurationSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
 export type AssistantMessageContract = z.infer<typeof assistantMessageSchema>;
 export type AssistantThreadSourceContract = z.infer<typeof assistantThreadSourceSchema>;

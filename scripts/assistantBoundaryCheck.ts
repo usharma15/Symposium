@@ -3,7 +3,11 @@ import { readFileSync } from "node:fs";
 import { actualCostMicros, conservativeInputTokenCeiling, reserveCostMicros, usdToMicros } from "@/apps/api/src/services/aiBudget";
 import { assistantDailyLimitFor } from "@/apps/api/src/services/assistantQuota";
 import { assistantQuotaAfterReservation } from "@/apps/api/src/services/assistantUsage";
-import { assistantThreadSources } from "@/apps/api/src/repository/assistant";
+import {
+  assistantContextConfiguration,
+  assistantHistoryLimit,
+  assistantThreadSources
+} from "@/apps/api/src/repository/assistant";
 import {
   assistantGeneralInstructions,
   assistantGeneralPrompt,
@@ -37,6 +41,7 @@ import {
 } from "@/apps/api/src/repository/documentTranslations";
 import {
   assistantContextUpdateInputSchema,
+  assistantContextConfigurationSchema,
   assistantConversationListQuerySchema,
   assistantProjectDeleteResultSchema,
   assistantMessageInputSchema,
@@ -323,6 +328,7 @@ const threadSummaryFixture = {
   activeSourceId: historicalSourceId,
   originSourceId: historicalSourceId,
   contextRevision: 1,
+  contextConfiguration: assistantContextConfigurationSchema.parse({}),
   sourceCount: 1,
   sourceRevisionCount: 1,
   createdAt: "2026-07-20T19:00:00.000Z",
@@ -539,6 +545,16 @@ assert.equal(translationLanguageSelectionRegex.test("san"), false);
 assert.equal(assistantMaxOutputTokens("translate"), 1200);
 assert.equal(assistantMaxOutputTokens("answer", { draftEdit: true }), 1200);
 assert.equal(assistantMaxOutputTokens("answer", { actionDraft: true }), 2000);
+const defaultContextConfiguration = assistantContextConfigurationSchema.parse({});
+assert.deepEqual(defaultContextConfiguration, {
+  historyScope: "recent",
+  knowledgeScope: "sources_and_general",
+  siteSearch: "when_requested"
+});
+assert.deepEqual(assistantContextConfiguration({ historyScope: "invalid" }), defaultContextConfiguration);
+assert.equal(assistantHistoryLimit({ ...defaultContextConfiguration, historyScope: "focused" }), 2);
+assert.equal(assistantHistoryLimit(defaultContextConfiguration), 6);
+assert.equal(assistantHistoryLimit({ ...defaultContextConfiguration, historyScope: "extended" }), 12);
 assert.doesNotMatch(assistantRenderedInput({
   history: [{ role: "assistant", body: "Earlier answer must not inflate translation input." }],
   context: validInput.context,
@@ -555,6 +571,19 @@ const generalRenderedInput = assistantRenderedInput({
 assert.match(generalRenderedInput, /Earlier general answer/);
 assert.match(generalRenderedInput, /no Symposium view or source attached/i);
 assert.doesNotMatch(generalRenderedInput, /ACTIVE VIEW|ATTACHED SOURCES|A bounded claim/);
+const sourcesOnlyRenderedInput = assistantRenderedInput({
+  history: [],
+  contextConfiguration: {
+    historyScope: "focused",
+    knowledgeScope: "sources_only",
+    siteSearch: "off"
+  },
+  context: null,
+  message: "Answer only from my sources.",
+  intent: "answer"
+});
+assert.match(sourcesOnlyRenderedInput, /CONTEXT RECIPE: SOURCES ONLY/);
+assert.match(sourcesOnlyRenderedInput, /Do not fill gaps from general knowledge/);
 const resolvedActionFollowupInput = assistantRenderedInput({
   history: [
     {
@@ -2061,7 +2090,11 @@ assert.match(repository, /mode === "clear"/);
 assert.match(repository, /active_source_id = NULL/);
 assert.match(repository, /active_context_key = NULL/);
 assert.match(repository, /JSON\.stringify\(source \? \[source\] : \[\]\)/);
-assert.match(repository, /grounding: context \? "sources" : "none"/);
+assert.match(repository, /grounding: contextConfiguration\.knowledgeScope === "sources_only"/);
+assert.match(repository, /LIMIT \$2/);
+assert.match(repository, /assistantHistoryLimit/);
+assert.match(repository, /contextConfiguration\.siteSearch === "when_requested"/);
+assert.match(repository, /mode === "configure"/);
 assert.match(repository, /Attach a Symposium source before starting a source translation/);
 assert.match(repository, /new Date\(source\.attachedAt\)\.toISOString\(\)/);
 assert.match(migration, /0056_recover_assistant_sources_and_message_activity/);
@@ -2080,6 +2113,8 @@ assert.match(migration, /pinned_at TIMESTAMPTZ/);
 assert.match(migration, /archived_at TIMESTAMPTZ/);
 assert.match(migration, /deleted_at TIMESTAMPTZ/);
 assert.match(migration, /metadata_revision INTEGER NOT NULL DEFAULT 1/);
+assert.match(migration, /0066_assistant_context_configuration/);
+assert.match(migration, /context_configuration JSONB NOT NULL DEFAULT/);
 assert.match(migration, /ai_conversations_active_library_idx/);
 assert.match(migration, /ai_conversations_archived_library_idx/);
 assert.match(migration, /ai_conversations_title_trgm_idx/);

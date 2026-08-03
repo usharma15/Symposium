@@ -6,6 +6,8 @@ export type AssistantSiteSearchScope = "site" | "office" | "messages";
 export type AssistantSiteSearchRequest = {
   query: string;
   scopes: AssistantSiteSearchScope[];
+  authorQuery?: string;
+  recency?: "recent";
 };
 
 type SearchRow = {
@@ -59,16 +61,30 @@ export const assistantNoteTargetTitleForPrompt = (request: string) => {
 };
 
 const ignoredSearchTokens = new Set([
-  "a", "about", "across", "add", "all", "an", "and", "anything", "append", "called", "chat", "chats",
+  "a", "about", "across", "add", "all", "an", "and", "anything", "append", "are", "called", "can", "cant", "cannot", "chat", "chats",
   "comment", "comments", "community", "communities", "conversation", "conversations", "incorporate", "integrate", "into",
-  "dig", "dm", "dms", "down", "draft", "drafts", "everything", "everywhere", "find", "for", "from", "hall",
-  "in", "look", "message", "messages", "my", "note", "notebook", "notebooks", "notes",
-  "named", "office", "on", "our", "paper", "papers", "please", "post", "posts", "related",
-  "pull", "retrieve", "room", "scan", "search", "site", "sitewide", "something", "symposium", "the",
-  "them", "this", "thought", "thoughts", "through", "titled", "track", "up", "workspace", "you"
+  "could", "dig", "dm", "dms", "do", "down", "draft", "drafts", "everything", "everywhere", "find", "for", "from", "hall",
+  "he", "her", "hers", "him", "his", "how", "i", "in", "is", "it", "its", "latest", "lately", "look", "me", "message", "messages", "my",
+  "named", "newest", "note", "notebook", "notebooks", "notes", "office", "on", "our", "paper", "papers", "please", "post", "posts", "recent",
+  "related", "pull", "retrieve", "room", "scan", "search", "site", "sitewide", "something", "stuff", "symposium", "the",
+  "them", "this", "thought", "thoughts", "through", "titled", "track", "up", "what", "when", "where", "which", "who", "why", "will", "with",
+  "workspace", "would", "you"
 ]);
 
-const cleanSearchQuery = (request: string) => {
+const authorQueryForPrompt = (request: string) => {
+  const possessive = request.match(
+    /(?:^|\s)(@?[\p{L}\p{N}_.-]{2,80})['’]s\s+(?:posts?|papers?|thoughts?|comments?)\b/iu
+  )?.[1];
+  if (possessive) return possessive.replace(/^@/, "").trim();
+  const byline = request.match(
+    /\b(?:posts?|papers?|thoughts?|comments?)\s+(?:written\s+)?by\s+["“]?(@?[^?.!,;"”]{2,80})["”]?/iu
+  )?.[1];
+  return byline?.replace(/^@/, "").trim() ?? null;
+};
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const cleanSearchQuery = (request: string, authorQuery: string | null) => {
   const noteTargetTitle = assistantNoteTargetTitleForPrompt(request);
   const quoted = Array.from(request.matchAll(/["“]([^"”]{2,160})["”]/g))
     .map((match) => match[1]?.trim())
@@ -79,7 +95,12 @@ const cleanSearchQuery = (request: string) => {
   const requestWithoutTarget = noteTargetTitle
     ? request.replace(noteTargetTitle, " ")
     : request;
-  const normalized = requestWithoutTarget
+  const requestWithoutAuthor = authorQuery
+    ? requestWithoutTarget
+        .replace(new RegExp(`${escapeRegExp(authorQuery)}['’]s`, "iu"), " ")
+        .replace(new RegExp(`@?${escapeRegExp(authorQuery)}`, "iu"), " ")
+    : requestWithoutTarget;
+  const normalized = requestWithoutAuthor
     .normalize("NFKC")
     .replace(/\b(?:can|could|would|will)\s+you\b/gi, " ")
     .replace(/\bfor\s+me\b/gi, " ")
@@ -92,7 +113,8 @@ const cleanSearchQuery = (request: string) => {
 };
 
 export const assistantSiteSearchRequestForPrompt = (
-  request: string
+  request: string,
+  previousUserRequests: string[] = []
 ): AssistantSiteSearchRequest | null => {
   const normalized = request.normalize("NFKC");
   if (
@@ -106,29 +128,63 @@ export const assistantSiteSearchRequestForPrompt = (
   const allScopes = allScopeLanguage.test(normalized);
   const scopes = (Object.keys(scopeLanguage) as AssistantSiteSearchScope[])
     .filter((scope) => allScopes || scopeLanguage[scope].test(normalized));
-  if (!scopes.length) return null;
+  const authorQuery = authorQueryForPrompt(normalized);
+  const query = cleanSearchQuery(normalized, authorQuery);
+  const recency = /\b(?:recent|latest|newest|lately)\b/i.test(normalized)
+    ? "recent" as const
+    : undefined;
+  if (scopes.length && (query.length >= 2 || (authorQuery && scopes.includes("site")))) {
+    return {
+      query,
+      scopes,
+      ...(authorQuery ? { authorQuery } : {}),
+      ...(recency ? { recency } : {})
+    };
+  }
 
-  const query = cleanSearchQuery(normalized);
-  if (query.length < 2) return null;
-  return { query, scopes };
+  const followUpSearch = normalized.length <= 160 && (
+    /\b(?:can'?t|cant|cannot|can)\s+(?:you\s+)?search\b/i.test(normalized) ||
+    /\b(?:search|look)\s+(?:again|for\s+it)\b/i.test(normalized)
+  );
+  if (!followUpSearch) return null;
+  for (const previousRequest of [...previousUserRequests].reverse()) {
+    const inherited = assistantSiteSearchRequestForPrompt(previousRequest);
+    if (inherited) return inherited;
+  }
+  return null;
 };
 
 const prefixTsQuery = (query: string) =>
   (query.toLocaleLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])
     .slice(0, 12)
     .map((token) => `'${token.replace(/'/g, "''")}':*`)
-    .join(" & ");
+    .join(" | ");
 
 const siteMatches = async (
   client: PoolClient,
   owner: string,
   query: string,
   prefixQuery: string,
-  limit: number
+  limit: number,
+  authorQuery?: string,
+  recent = false
 ) => (await client.query<SearchRow>(
   `WITH search_query AS (
      SELECT websearch_to_tsquery('english', $1) AS exact_value,
             to_tsquery('simple', $2) AS prefix_value
+   ), resolved_author AS (
+     SELECT profile.handle
+     FROM profiles profile
+     WHERE $5::text IS NOT NULL
+       AND (
+         lower(ltrim(profile.handle, '@')) = lower(ltrim($5, '@'))
+         OR lower(profile.name) = lower($5)
+       )
+     ORDER BY CASE
+       WHEN lower(ltrim(profile.handle, '@')) = lower(ltrim($5, '@')) THEN 0
+       ELSE 1
+     END, profile.handle
+     LIMIT 1
    ), visible_posts AS NOT MATERIALIZED (
      SELECT post.id, post.title, post.body, post.search_text, post.revision,
             post.created_at, post.community_id
@@ -137,6 +193,10 @@ const siteMatches = async (
      WHERE post.deleted_at IS NULL
        AND post.room <> 'office'
        AND post.kind <> 'draft'
+       AND (
+         $5::text IS NULL
+         OR EXISTS (SELECT 1 FROM resolved_author author WHERE author.handle = post.author_handle)
+       )
        AND (
          post.community_id IS NULL
          OR post.post_type = 'paper'
@@ -161,7 +221,8 @@ const siteMatches = async (
             )::float AS rank,
             post.created_at
      FROM visible_posts post CROSS JOIN search_query
-     WHERE to_tsvector('english', post.search_text) @@ search_query.exact_value
+     WHERE $1 = ''
+        OR to_tsvector('english', post.search_text) @@ search_query.exact_value
         OR to_tsvector('simple', post.search_text) @@ search_query.prefix_value
      UNION ALL
      SELECT 'site'::text, 'comment'::text, comment.id,
@@ -179,14 +240,16 @@ const siteMatches = async (
      JOIN visible_posts post ON post.id = comment.post_id
      CROSS JOIN search_query
      WHERE comment.deleted_at IS NULL
-       AND (to_tsvector('english', comment.body) @@ search_query.exact_value
+       AND ($1 = ''
+         OR to_tsvector('english', comment.body) @@ search_query.exact_value
          OR to_tsvector('simple', comment.body) @@ search_query.prefix_value)
    )
    SELECT scope, "entityType", "entityId", title, excerpt, route, revision, rank, "markerId"
    FROM matches
-   ORDER BY rank DESC, created_at DESC, "entityId" DESC
+   ORDER BY CASE WHEN $6::boolean THEN created_at END DESC,
+            rank DESC, created_at DESC, "entityId" DESC
    LIMIT $4`,
-  [query, prefixQuery, owner, limit]
+  [query, prefixQuery, owner, limit, authorQuery ?? null, recent]
 )).rows;
 
 const officeMatches = async (
@@ -337,11 +400,22 @@ export const searchAssistantSite = async (
 ): Promise<AssistantContextContract[]> => {
   const boundedLimit = Math.max(0, Math.min(5, limit));
   const prefixQuery = prefixTsQuery(request.query);
-  if (!boundedLimit || !prefixQuery) return [];
+  if (!boundedLimit || (!prefixQuery && !request.authorQuery)) return [];
 
   const perScopeLimit = Math.min(5, Math.max(2, boundedLimit));
   const resultSets = await Promise.all(request.scopes.map((scope) => {
-    if (scope === "site") return siteMatches(client, owner, request.query, prefixQuery, perScopeLimit);
+    if (scope === "site") {
+      return siteMatches(
+        client,
+        owner,
+        request.query,
+        prefixQuery,
+        perScopeLimit,
+        request.authorQuery,
+        request.recency === "recent"
+      );
+    }
+    if (!prefixQuery) return [];
     if (scope === "office") return officeMatches(client, owner, prefixQuery, perScopeLimit);
     return messageMatches(client, owner, request.query, perScopeLimit);
   }));

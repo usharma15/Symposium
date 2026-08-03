@@ -26,6 +26,29 @@ assert.deepEqual(
   assistantSiteSearchRequestForPrompt("Search everywhere for photosynthesis priors."),
   { query: "photosynthesis priors", scopes: ["site", "office", "messages"] }
 );
+assert.deepEqual(
+  assistantSiteSearchRequestForPrompt(
+    "can you search through heisenberg's posts about quantum stuff? what are his recent thoughts on it?"
+  ),
+  {
+    query: "quantum",
+    scopes: ["site"],
+    authorQuery: "heisenberg",
+    recency: "recent"
+  }
+);
+assert.deepEqual(
+  assistantSiteSearchRequestForPrompt(
+    "cant you search?",
+    ["can you search through heisenberg's posts about quantum stuff? what are his recent thoughts on it?"]
+  ),
+  {
+    query: "quantum",
+    scopes: ["site"],
+    authorQuery: "heisenberg",
+    recency: "recent"
+  }
+);
 assert.equal(
   assistantSiteSearchRequestForPrompt("Do not search my messages for this."),
   null
@@ -142,8 +165,13 @@ const main = async () => {
 
   assert.equal(calls.length, 3);
   assert.ok(calls.every((call) => call.values.includes("search-check")));
+  assert.equal(calls[0]!.values[1], "'protein':* | 'folding':*");
   assert.match(calls[0]!.text, /post\.deleted_at IS NULL/);
   assert.match(calls[0]!.text, /community_memberships viewer/);
+  assert.match(calls[0]!.text, /resolved_author/);
+  assert.match(calls[0]!.text, /profile\.handle/);
+  assert.match(calls[0]!.text, /CASE WHEN \$6::boolean THEN created_at/);
+  assert.match(calls[0]!.text, /to_tsquery\('simple', \$2\)/);
   assert.match(calls[1]!.text, /workspace_note_grants direct/);
   assert.match(calls[1]!.text, /workspace_notebook_grants inherited/);
   assert.match(calls[2]!.text, /viewer\.cleared_through_sequence/);
@@ -160,6 +188,28 @@ const main = async () => {
   assert.equal(contexts[3]!.entityType, "assistant_message");
   assert.equal(contexts[3]!.route, "/assistant/threads/00000000-0000-4000-8000-000000000705");
   assert.equal(contexts[3]!.metadata.revision, undefined);
+
+  const authorCalls: Array<{ text: string; values: unknown[] }> = [];
+  const authorClient = {
+    query: async (text: string, values: unknown[]) => {
+      authorCalls.push({ text, values });
+      return { rows: [] };
+    }
+  } as unknown as PoolClient;
+  await searchAssistantSite(authorClient, "search-check", {
+    query: "quantum",
+    scopes: ["site"],
+    authorQuery: "heisenberg",
+    recency: "recent"
+  }, 5);
+  assert.deepEqual(authorCalls[0]!.values, [
+    "quantum",
+    "'quantum':*",
+    "search-check",
+    5,
+    "heisenberg",
+    true
+  ]);
   const rendered = assistantRenderedInput({
     history: [],
     context: null,

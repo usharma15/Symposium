@@ -9,6 +9,7 @@ import {
 } from "@/features/assistant/assistantThreadOrdering";
 import {
   assistantThreadSummary,
+  defaultAssistantContextConfiguration,
   initialAssistantMessageFor,
   type AssistantContext,
   type AssistantMessageView,
@@ -18,6 +19,7 @@ import {
 } from "@/features/assistant/assistantControllerModel";
 import type {
   AssistantContextUpdateResultContract,
+  AssistantContextConfigurationContract,
   AssistantProjectContract,
   AssistantProjectDeleteResultContract,
   AssistantProjectListResultContract,
@@ -126,6 +128,9 @@ export function useAssistantController({
   const projectMutationRetryRef = useRef(new Map<string, RetryMutation>());
   const processedLiveEventKeysRef = useRef<string[]>([]);
   const newThreadContextModeRef = useRef<AssistantNewThreadContextMode>("current");
+  const newThreadContextConfigurationRef = useRef<AssistantContextConfigurationContract>(
+    defaultAssistantContextConfiguration
+  );
   const threadSearchRef = useRef("");
   const threadLibraryViewRef = useRef<AssistantThreadLibraryView>("all");
   const selectedProjectIdRef = useRef<string | null>(null);
@@ -152,6 +157,8 @@ export function useAssistantController({
   ]);
   const [newThreadContextMode, setNewThreadContextModeState] =
     useState<AssistantNewThreadContextMode>("current");
+  const [newThreadContextConfiguration, setNewThreadContextConfigurationState] =
+    useState<AssistantContextConfigurationContract>(defaultAssistantContextConfiguration);
   const [draft, setDraftState] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<InquiryAttachmentContract[]>([]);
   const [attachmentUploading, setAttachmentUploading] = useState(false);
@@ -462,6 +469,8 @@ export function useAssistantController({
     attachmentDraftsRef.current.set(currentDraftKey(), pendingAttachments);
     threadRequestRef.current += 1;
     newThreadContextModeRef.current = mode;
+    newThreadContextConfigurationRef.current = defaultAssistantContextConfiguration;
+    setNewThreadContextConfigurationState(defaultAssistantContextConfiguration);
     setNewThreadContextModeState(mode);
     setConversationId(undefined);
     loadedConversationIdRef.current = null;
@@ -833,6 +842,8 @@ export function useAssistantController({
     loadedConversationIdRef.current = null;
     requestedAttemptRef.current = null;
     newThreadContextModeRef.current = "current";
+    newThreadContextConfigurationRef.current = defaultAssistantContextConfiguration;
+    setNewThreadContextConfigurationState(defaultAssistantContextConfiguration);
     setNewThreadContextModeState("current");
     setThread(null);
     setThreads([]);
@@ -1146,7 +1157,10 @@ export function useAssistantController({
       );
       setThread(result.thread);
       replaceThreadSummary(result.thread);
-      setMessages((current) => [...current, result.message]);
+      const resultMessage = result.message;
+      if (resultMessage) {
+        setMessages((current) => [...current, resultMessage]);
+      }
       retry.current = null;
       broadcastThreadChange(id);
       return result;
@@ -1195,6 +1209,29 @@ export function useAssistantController({
       retry: contextRetryRef,
       mutationId: `assistant-context-${mode}`,
       failureMessage: "The research thread context could not be changed."
+    });
+  }, [actorHandle, runContextMutation, thread?.contextRevision]);
+
+  const changeContextConfiguration = useCallback(async (
+    configuration: AssistantContextConfigurationContract
+  ) => {
+    const id = conversationIdRef.current;
+    if (!id) {
+      newThreadContextConfigurationRef.current = configuration;
+      setNewThreadContextConfigurationState(configuration);
+      return null;
+    }
+    return runContextMutation<AssistantContextUpdateResultContract>({
+      endpoint: "context",
+      input: {
+        actorHandle,
+        mode: "configure",
+        configuration,
+        expectedRevision: thread?.contextRevision
+      },
+      retry: contextRetryRef,
+      mutationId: "assistant-context-configure",
+      failureMessage: "The chat context recipe could not be changed."
     });
   }, [actorHandle, runContextMutation, thread?.contextRevision]);
 
@@ -1411,6 +1448,9 @@ export function useAssistantController({
       : newThreadContextModeRef.current === "current"
         ? contextRef.current
         : null;
+    const contextConfiguration = id
+      ? thread?.contextConfiguration ?? defaultAssistantContextConfiguration
+      : newThreadContextConfigurationRef.current;
     const detectedIntent = assistantRequestIntentFor(message);
     if (pendingAttachments.length && detectedIntent.translationRequested) {
       setError("Whole-file translation is paused in this limited beta. Ask for a summary or explanation instead; page translation remains available from an opened Symposium document page.");
@@ -1444,6 +1484,7 @@ export function useAssistantController({
       id,
       message,
       selectedContext,
+      contextConfiguration,
       projectId: submissionProjectId,
       attachmentIds: submittedAttachmentIds,
       draftSession: options?.draftSession ?? null
@@ -1482,6 +1523,7 @@ export function useAssistantController({
               : "general",
             contextId: selectedContext?.entityId,
             context: selectedContext,
+            contextConfiguration,
             draftSession: options?.draftSession ?? null
           }
         }
@@ -1620,6 +1662,9 @@ export function useAssistantController({
       : newThreadContextMode === "current"
         ? context
         : null,
+    contextConfiguration: conversationId
+      ? thread?.contextConfiguration ?? defaultAssistantContextConfiguration
+      : newThreadContextConfiguration,
     newThreadContextMode,
     contextKey,
     conversationId,
@@ -1669,6 +1714,7 @@ export function useAssistantController({
     refreshProjects,
     refreshSelectedThread,
     changeThreadContext,
+    changeContextConfiguration,
     changeSavedSource,
     synchronizeThreadMutation,
     submit

@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import type { PoolClient } from "pg";
 import {
   assistantContextSchema,
+  assistantContextConfigurationSchema,
   assistantContextUpdateInputSchema,
   assistantConversationListQuerySchema,
   assistantMessageSchema,
@@ -14,6 +15,7 @@ import {
   isSafeInternalRoute,
   inquiryAttachmentSchema,
   type AssistantContextContract,
+  type AssistantContextConfigurationContract,
   type AssistantActionReceiptContract,
   type AssistantContextUpdateResultContract,
   type AssistantMessageContract,
@@ -115,6 +117,7 @@ type ConversationRow = {
   activeSourceId: string | null;
   originSourceId: string | null;
   contextRevision: number;
+  contextConfiguration: unknown;
   createdAt: Date | string;
   updatedAt: Date | string;
   lastMessageAt: Date | string;
@@ -136,6 +139,7 @@ type PreparedAssistant = {
   actionRequest: AssistantActionRequestResolution;
   userMessage: AssistantMessageContract;
   thread: AssistantThreadStateContract;
+  contextConfiguration: AssistantContextConfigurationContract;
   input: ParsedInput;
   dailyLimit: number;
   remainingToday: number;
@@ -157,6 +161,23 @@ export const assistantThreadSources = (value: unknown): AssistantThreadSourceCon
 
 const isoString = (value: Date | string) => new Date(value).toISOString();
 
+export const assistantContextConfiguration = (
+  value: unknown
+): AssistantContextConfigurationContract => {
+  const parsed = assistantContextConfigurationSchema.safeParse(value);
+  return parsed.success
+    ? parsed.data
+    : assistantContextConfigurationSchema.parse({});
+};
+
+export const assistantHistoryLimit = (
+  configuration: AssistantContextConfigurationContract
+) => configuration.historyScope === "focused"
+  ? 2
+  : configuration.historyScope === "extended"
+    ? 12
+    : 6;
+
 const assistantThreadState = (row: ConversationRow): AssistantThreadStateContract => {
   const sources = assistantThreadSources(row.contextSources);
   return {
@@ -173,6 +194,7 @@ const assistantThreadState = (row: ConversationRow): AssistantThreadStateContrac
     activeSourceId: row.activeSourceId,
     originSourceId: row.originSourceId,
     contextRevision: row.contextRevision,
+    contextConfiguration: assistantContextConfiguration(row.contextConfiguration),
     sourceCount: sources.filter((source) => source.included).length,
     sourceRevisionCount: sources.length,
     sources,
@@ -499,6 +521,7 @@ const conversationSelect = `
   active_source_id AS "activeSourceId",
   origin_source_id AS "originSourceId",
   context_revision AS "contextRevision",
+  context_configuration AS "contextConfiguration",
   created_at AS "createdAt",
   updated_at AS "updatedAt",
   last_message_at AS "lastMessageAt"
@@ -1001,6 +1024,48 @@ export const updateAssistantConversationContext = async (
       });
     }
 
+    if (input.mode === "configure") {
+      const configuration = assistantContextConfigurationSchema.parse(
+        input.configuration
+      );
+      const updated = await client.query<ConversationRow>(
+        `UPDATE ai_conversations
+         SET context_configuration = $3::jsonb,
+             context_revision = context_revision + 1,
+             updated_at = now()
+         WHERE id = $1 AND owner_handle = $2
+         RETURNING ${conversationSelect}`,
+        [conversationId, owner, JSON.stringify(configuration)]
+      );
+      const response: AssistantContextUpdateResultContract = {
+        thread: assistantThreadState(updated.rows[0]!)
+      };
+      await stageAuditLog(client, {
+        actorHandle: owner,
+        action: "assistant.context.update",
+        subjectType: "ai_conversation",
+        subjectId: conversationId,
+        metadata: mutationAuditMetadata(mutation, {
+          mode: "configure",
+          configuration,
+          contextRevision: response.thread.contextRevision
+        })
+      });
+      await completeMutation(client, owner, mutation, response);
+      const event = await stageEvent(client, {
+        kind: "assistant.context.updated",
+        actorHandle: owner,
+        subjectType: "ai_conversation",
+        subjectId: conversationId,
+        visibility: "private",
+        payload: {
+          mode: "configure",
+          contextRevision: response.thread.contextRevision
+        }
+      });
+      return { value: response, events: [event] };
+    }
+
     if (input.mode === "clear") {
       const sources = assistantThreadSources(row.contextSources).map((source) => ({
         ...source,
@@ -1333,11 +1398,12 @@ const prepareAssistant = async (
          context_type,
          context_id,
          context_sources,
+         context_configuration,
          active_context_key,
          active_source_id,
          origin_source_id
        )
-       VALUES ($1, $2, 'research_thread', $3, $4, $5, $6::jsonb, $7, $8, $8)
+       VALUES ($1, $2, 'research_thread', $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $9)
        RETURNING ${conversationSelect}`,
       [
         owner,
@@ -1346,6 +1412,7 @@ const prepareAssistant = async (
         input.context ? input.contextType : "general",
         input.context ? input.contextId ?? input.context.entityId ?? null : null,
         JSON.stringify(source ? [source] : []),
+        JSON.stringify(input.contextConfiguration),
         source?.key ?? null,
         source?.id ?? null
       ]
@@ -1376,18 +1443,25 @@ const prepareAssistant = async (
     );
     if (!ownedConversation.rowCount) throw new TRPCError({ code: "NOT_FOUND", message: "AI conversation not found." });
     conversationRow = ownedConversation.rows[0]!;
+    const historyLimit = assistantHistoryLimit(
+      assistantContextConfiguration(conversationRow.contextConfiguration)
+    );
     const historyResult = await client.query<HistoryMessage>(
       `SELECT role, body FROM (
          SELECT role, body, created_at
          FROM ai_messages
          WHERE conversation_id = $1 AND role IN ('user', 'assistant')
          ORDER BY created_at DESC
-         LIMIT 6
+         LIMIT $2
        ) recent ORDER BY created_at ASC`,
-      [conversationId]
+      [conversationId, historyLimit]
     );
     history = historyResult.rows;
   }
+
+  const contextConfiguration = assistantContextConfiguration(
+    conversationRow.contextConfiguration
+  );
 
   const attachmentIds = input.attachmentIds;
   const attachmentRows = attachmentIds.length
@@ -1520,8 +1594,11 @@ const prepareAssistant = async (
     blocks: evidenceBlocks,
     packets: evidencePackets
   } = buildAssistantEvidence(validatedSources, activeSource?.id ?? null);
-  const siteSearchRequest = input.intent === "answer"
-    ? assistantSiteSearchRequestForPrompt(input.message)
+  const siteSearchRequest = input.intent === "answer" && contextConfiguration.siteSearch === "when_requested"
+    ? assistantSiteSearchRequestForPrompt(
+        input.message,
+        history.filter((message) => message.role === "user").map((message) => message.body)
+      )
     : null;
   if (siteSearchRequest) {
     if (evidence.length >= 5) {
@@ -1663,6 +1740,7 @@ const prepareAssistant = async (
       } satisfies AssistantActionRequestResolution;
   const renderedInput = assistantRenderedInput({
     history,
+    contextConfiguration,
     context,
     attachedContexts,
     evidencePackets,
@@ -1704,7 +1782,12 @@ const prepareAssistant = async (
       activeSourceId: activeSource?.id ?? null,
       attachedSourceIds: evidenceSources.filter((source) => source.id !== activeSource?.id).map((source) => source.id),
       visionAttachmentIds,
-      grounding: context ? "sources" : "none",
+      grounding: contextConfiguration.knowledgeScope === "sources_only"
+        ? "sources_only"
+        : context
+          ? "sources_and_general"
+          : "none",
+      contextConfiguration,
       contextType: conversationRow.contextType,
       actionFollowup: actionRequest.followup,
       actionRequestTool: actionRequest.tool,
@@ -1744,6 +1827,7 @@ const prepareAssistant = async (
       actionRequest,
       userMessage: messageFromRow(userMessage.rows[0]!),
       thread: assistantThreadState({ ...conversationRow, contextSources: sources }),
+      contextConfiguration,
       input,
       dailyLimit: reservation.dailyLimit,
       remainingToday: reservation.remainingToday
@@ -2054,6 +2138,7 @@ export const askAssistant = async (
     result = await callAssistantModel({
       ownerHandle: owner,
       history: prepared.history,
+      contextConfiguration: prepared.contextConfiguration,
       context: prepared.context,
       attachedContexts: prepared.attachedContexts,
       evidencePackets: prepared.evidencePackets,

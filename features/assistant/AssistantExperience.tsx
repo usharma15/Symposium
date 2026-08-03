@@ -61,6 +61,7 @@ export function AssistantExperience({
   const {
     actorHandle,
     context,
+    contextConfiguration,
     activeContext,
     conversationId,
     thread,
@@ -106,6 +107,7 @@ export function AssistantExperience({
     useCurrentView,
     clearContext,
     changeThreadContext,
+    changeContextConfiguration,
     changeSavedSource,
     synchronizeThreadMutation,
     submit
@@ -765,6 +767,7 @@ export function AssistantExperience({
           ) : (
             <AssistantContextDock
               context={context}
+              configuration={contextConfiguration}
               activeContext={activeContext}
               thread={thread}
               open={contextDockOpen}
@@ -773,6 +776,7 @@ export function AssistantExperience({
               onToggle={() => setContextDockOpen((current) => !current)}
               onUseCurrentView={useCurrentView}
               onClearContext={clearContext}
+              onConfigurationChange={(configuration) => void changeContextConfiguration(configuration)}
               onContextChange={(change) => void changeThreadContext(change)}
               onSourceChange={(source, action) => void changeSavedSource(source, action)}
             />

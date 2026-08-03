@@ -11,6 +11,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
+  const renderBlueprint = readFileSync(new URL("../render.yaml", import.meta.url), "utf8");
   const packageManifest = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8")
   ) as {
@@ -23,8 +24,10 @@ const main = async () => {
   assert.equal(packageManifest.scripts?.["db:push"], undefined);
   assert.equal(packageManifest.dependencies?.["drizzle-orm"], undefined);
   assert.equal(packageManifest.devDependencies?.["drizzle-kit"], undefined);
-  assert.equal(latestMigrationId, "0065_comment_deletion_reconciliation");
-  assert.equal(migrationIds.length, 65);
+  assert.match(renderBlueprint, /autoDeployTrigger: commit/);
+  assert.doesNotMatch(renderBlueprint, /autoDeployTrigger: checksPass/);
+  assert.equal(latestMigrationId, "0066_assistant_context_configuration");
+  assert.equal(migrationIds.length, 66);
   const migrationSql = migrations.map((migration) => migration.sql).join("\n");
   const commentDeletionMigration = migrations.find(
     ({ id }) => id === "0065_comment_deletion_reconciliation"
@@ -32,6 +35,12 @@ const main = async () => {
   assert.ok(commentDeletionMigration);
   assert.match(commentDeletionMigration.sql, /WHERE deleted IS TRUE[\s\S]*deleted_at IS NULL/);
   assert.match(commentDeletionMigration.sql, /DROP COLUMN IF EXISTS deleted/);
+  const assistantContextConfigurationMigration = migrations.find(
+    ({ id }) => id === "0066_assistant_context_configuration"
+  );
+  assert.ok(assistantContextConfigurationMigration);
+  assert.match(assistantContextConfigurationMigration.sql, /context_configuration JSONB NOT NULL DEFAULT/);
+  assert.match(assistantContextConfigurationMigration.sql, /ai_conversations_context_configuration_check/);
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");

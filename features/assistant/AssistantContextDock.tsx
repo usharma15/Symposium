@@ -10,9 +10,11 @@ import {
   Link2,
   Minimize2,
   RefreshCw,
+  SlidersHorizontal,
   X
 } from "lucide-react";
 import type {
+  AssistantContextConfigurationContract,
   AssistantThreadSourceContract,
   AssistantThreadStateContract
 } from "@/packages/contracts/src";
@@ -21,6 +23,7 @@ import { assistantContextKey } from "@/lib/assistantContext";
 
 export function AssistantContextDock({
   context,
+  configuration,
   activeContext,
   thread,
   open,
@@ -29,10 +32,12 @@ export function AssistantContextDock({
   onToggle,
   onUseCurrentView,
   onClearContext,
+  onConfigurationChange,
   onContextChange,
   onSourceChange
 }: {
   context: AssistantContext;
+  configuration: AssistantContextConfigurationContract;
   activeContext: AssistantContext | null;
   thread: AssistantThreadStateContract | null;
   open: boolean;
@@ -41,6 +46,9 @@ export function AssistantContextDock({
   onToggle: () => void;
   onUseCurrentView: () => void;
   onClearContext: () => void;
+  onConfigurationChange: (
+    configuration: AssistantContextConfigurationContract
+  ) => void;
   onContextChange: (
     mode: "use" | "attach" | "refresh" | "clear"
   ) => void;
@@ -63,6 +71,9 @@ export function AssistantContextDock({
   const includedCount =
     thread?.sources.filter((source) => source.included).length ?? 0;
   const orderedSources = [...(thread?.sources ?? [])].reverse();
+  const updateConfiguration = (
+    change: Partial<AssistantContextConfigurationContract>
+  ) => onConfigurationChange({ ...configuration, ...change });
 
   return (
     <section
@@ -106,6 +117,77 @@ export function AssistantContextDock({
       </div>
       {open ? (
         <div className="tablet-context-dock-body">
+          <section className="tablet-context-recipe" aria-label="Chat context recipe">
+            <header>
+              <span><SlidersHorizontal size={13} /></span>
+              <div>
+                <strong>Context recipe</strong>
+                <small>Choose what each answer is allowed to carry and use.</small>
+              </div>
+            </header>
+            <fieldset disabled={busy}>
+              <legend>Conversation memory</legend>
+              <div className="tablet-context-options tablet-context-options-three">
+                {([
+                  ["focused", "Focused", "Last exchange"],
+                  ["recent", "Recent", "3 exchanges"],
+                  ["extended", "Extended", "6 exchanges"]
+                ] as const).map(([value, label, detail]) => (
+                  <button
+                    type="button"
+                    key={value}
+                    aria-pressed={configuration.historyScope === value}
+                    onClick={() => updateConfiguration({ historyScope: value })}
+                  >
+                    <strong>{label}</strong>
+                    <small>{detail}</small>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <fieldset disabled={busy}>
+              <legend>Knowledge boundary</legend>
+              <div className="tablet-context-options">
+                <button
+                  type="button"
+                  aria-pressed={configuration.knowledgeScope === "sources_only"}
+                  onClick={() => updateConfiguration({ knowledgeScope: "sources_only" })}
+                >
+                  <strong>Sources only</strong>
+                  <small>Say when evidence is missing</small>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={configuration.knowledgeScope === "sources_and_general"}
+                  onClick={() => updateConfiguration({ knowledgeScope: "sources_and_general" })}
+                >
+                  <strong>Sources + knowledge</strong>
+                  <small>Label what comes from where</small>
+                </button>
+              </div>
+            </fieldset>
+            <fieldset disabled={busy}>
+              <legend>Symposium search</legend>
+              <div className="tablet-context-options">
+                <button
+                  type="button"
+                  aria-pressed={configuration.siteSearch === "when_requested"}
+                  onClick={() => updateConfiguration({ siteSearch: "when_requested" })}
+                >
+                  <strong>When I ask</strong>
+                  <small>Authorized, bounded results</small>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={configuration.siteSearch === "off"}
+                  onClick={() => updateConfiguration({ siteSearch: "off" })}
+                >
+                  <strong>Off</strong>
+                  <small>Never search this chat</small>
+                </button>
+              </div>
+            </fieldset>
+          </section>
           {!thread ? (
             <div
               className={`tablet-context-start${
