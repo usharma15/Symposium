@@ -36,6 +36,7 @@ import {
   createWorkspaceDocumentInTransaction,
   undoAssistantWorkspaceDraftEditInTransaction
 } from "./workspaceDocuments";
+import { assistantNoteTargetTitleForPrompt } from "./assistantSiteSearch";
 
 type ActionMessageRow = {
   id: string;
@@ -107,6 +108,49 @@ export const findAuthorizedAssistantDraftInTransaction = async (
     revision: draft.revision,
     kind: draft.kind,
     ...modelBlocks
+  };
+};
+
+export const findExplicitAssistantNoteTargetInTransaction = async (
+  client: PoolClient,
+  request: string,
+  handle: string
+): Promise<AssistantDraftModelContext | null> => {
+  const title = assistantNoteTargetTitleForPrompt(request);
+  if (!title) return null;
+  const result = await client.query<{
+    id: string;
+    title: string;
+    revision: number;
+    kind: string;
+    body: string;
+    document: unknown;
+  }>(
+    `SELECT note.id::text, note.title, note.revision, note.kind, note.body,
+            note.content_document AS document
+     FROM notes note
+     WHERE note.owner_handle = $1
+       AND lower(note.title) = lower($2)
+       AND note.lifecycle = 'draft'
+       AND note.visibility = 'private'
+       AND note.deleted_at IS NULL
+     ORDER BY note.updated_at DESC, note.id DESC
+     LIMIT 2
+     FOR SHARE OF note`,
+    [handle, title]
+  );
+  if (result.rows.length !== 1) return null;
+  const draft = result.rows[0]!;
+  const parsedDocument = versionedDocumentSchema.safeParse(draft.document);
+  const document = parsedDocument.success
+    ? parsedDocument.data
+    : plainTextDocument(draft.body);
+  return {
+    documentId: draft.id,
+    title: draft.title,
+    revision: draft.revision,
+    kind: draft.kind,
+    ...assistantDraftModelBlocks(document)
   };
 };
 

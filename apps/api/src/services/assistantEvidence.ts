@@ -212,7 +212,8 @@ const evidenceBlocksForSource = (
 
 export const buildAssistantEvidence = (
   validations: AssistantSourceValidation[],
-  activeSourceId: string | null
+  activeSourceId: string | null,
+  sourceOffset = 0
 ): {
   evidence: AssistantMessageContract["evidence"];
   blocks: AssistantEvidenceBlock[];
@@ -228,7 +229,7 @@ export const buildAssistantEvidence = (
       capturedEntityRevision,
       validation.currentEntityRevision
     );
-    const sourceBlocks = evidenceBlocksForSource(validation, index);
+    const sourceBlocks = evidenceBlocksForSource(validation, index + sourceOffset);
     evidence.push({
       sourceId: validation.source.id,
       key: validation.source.key,
@@ -244,7 +245,7 @@ export const buildAssistantEvidence = (
     });
     blocks.push(...sourceBlocks);
     packets.push({
-      sourceRef: `S${index + 1}`,
+      sourceRef: `S${index + sourceOffset + 1}`,
       title: validation.source.context.title,
       surface: validation.source.context.surface,
       savedSourceRevision: validation.source.revision,

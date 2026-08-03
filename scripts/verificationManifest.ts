@@ -76,6 +76,7 @@ export const verificationManifest = [
   stage("assistant-draft-studio:check", "assistant"),
   stage("assistant-provider:check", "assistant"),
   stage("assistant-evidence:check", "assistant"),
+  stage("assistant-site-search:check", "assistant"),
   stage("assistant-vision:check", "assistant"),
   stage("patronage:check", "product"),
   stage("opportunity:check", "product"),

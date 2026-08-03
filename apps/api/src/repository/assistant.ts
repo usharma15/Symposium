@@ -88,9 +88,14 @@ import {
 import { actorHandle, ensureLiveData, ensureProfileHandle } from "./foundation";
 import {
   applyAssistantOfficeDraftEditForMessageInTransaction,
-  findAuthorizedAssistantDraftInTransaction
+  findAuthorizedAssistantDraftInTransaction,
+  findExplicitAssistantNoteTargetInTransaction
 } from "./assistantActions";
 import type { AssistantDraftModelContext } from "../services/assistantDraftEdits";
+import {
+  assistantSiteSearchRequestForPrompt,
+  searchAssistantSite
+} from "./assistantSiteSearch";
 
 type ParsedInput = ReturnType<typeof assistantMessageInputSchema.parse>;
 type HistoryMessage = { role: "user" | "assistant"; body: string };
@@ -1515,6 +1520,44 @@ const prepareAssistant = async (
     blocks: evidenceBlocks,
     packets: evidencePackets
   } = buildAssistantEvidence(validatedSources, activeSource?.id ?? null);
+  const siteSearchRequest = input.intent === "answer"
+    ? assistantSiteSearchRequestForPrompt(input.message)
+    : null;
+  if (siteSearchRequest) {
+    if (evidence.length >= 5) {
+      evidence.splice(4);
+      evidencePackets.splice(4);
+      evidenceBlocks.splice(
+        0,
+        evidenceBlocks.length,
+        ...evidenceBlocks.filter((block) => !block.ref.startsWith("S5."))
+      );
+    }
+    const searchContexts = await searchAssistantSite(
+      client,
+      owner,
+      siteSearchRequest,
+      5 - evidence.length
+    );
+    const searchValidations: AssistantSourceValidation[] = searchContexts.map((searchContext) => {
+      const searchSource = sourceForContext(searchContext);
+      return {
+        source: searchSource,
+        accessStatus: "verified",
+        currentEntityRevision: typeof searchContext.metadata.revision === "number"
+          ? searchContext.metadata.revision
+          : null
+      };
+    });
+    const searchedEvidence = buildAssistantEvidence(
+      searchValidations,
+      null,
+      evidence.length
+    );
+    evidence.push(...searchedEvidence.evidence);
+    evidenceBlocks.push(...searchedEvidence.blocks);
+    evidencePackets.push(...searchedEvidence.packets);
+  }
   const visionAttachmentIds = Array.from(new Set(
     evidenceSources.flatMap((source) => {
       const sourceContext = source.context;
@@ -1604,7 +1647,13 @@ const prepareAssistant = async (
         conversationId,
         owner
       )
-    : null;
+    : input.intent === "answer"
+      ? await findExplicitAssistantNoteTargetInTransaction(
+          client,
+          input.message,
+          owner
+        )
+      : null;
   const actionRequest = input.intent === "answer"
     ? assistantActionRequestForTurn(input.message, history)
     : {

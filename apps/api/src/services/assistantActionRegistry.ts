@@ -294,13 +294,13 @@ const explicitlyRequestsActiveDraftEdit = (latestRequest: string) => {
     ? normalized.slice(0, quotedSourceBoundary)
     : normalized;
   if (
-    /\b(?:do\s+not|don't|dont|never)\s+(?:please\s+)?(?:change|edit|revise|rewrite|shorten|expand|tighten|fix|remove|add|replace|rename|retitle|update|polish|improve|make)\b/i
+    /\b(?:do\s+not|don't|dont|never)\s+(?:please\s+)?(?:change|edit|revise|rewrite|shorten|expand|tighten|fix|remove|add|append|integrate|incorporate|merge|replace|rename|retitle|update|polish|improve|make)\b/i
       .test(request)
   ) {
     return false;
   }
   return (
-    /(?:^|[.!?:;,]\s*)(?:please\s+)?(?:(?:now|okay|ok|alright|so|yes|yeah|yep|yup|sure|right|great)(?:,\s*|\s+)(?:(?:like|just)\s+)?)?(?:(?:(?:can|could|will|would)\s+you|let'?s|i\s+(?:need|want)\s+you\s+to|i(?:'d|\s+would)\s+like\s+you\s+to)\s+)?(?:please\s+)?(?:change|edit|revise|rewrite|shorten|expand|tighten|fix|remove|add|replace|rename|retitle|update|polish|improve|make)\b/i
+    /(?:^|[.!?:;,]\s*)(?:please\s+)?(?:(?:now|okay|ok|alright|so|yes|yeah|yep|yup|sure|right|great)(?:,\s*|\s+)(?:(?:like|just)\s+)?)?(?:(?:(?:can|could|will|would)\s+you|let'?s|i\s+(?:need|want)\s+you\s+to|i(?:'d|\s+would)\s+like\s+you\s+to)\s+)?(?:please\s+)?(?:change|edit|revise|rewrite|shorten|expand|tighten|fix|remove|add|append|integrate|incorporate|merge|replace|rename|retitle|update|polish|improve|make)\b/i
       .test(request) ||
     /^(?:(?:ok(?:ay)?|yes|yeah|yep|yup|sure|alright|right|great|perfect)(?:[,!.\s-]+|$))?(?:(?:that|this)\s+(?:works|is\s+(?:good|fine)|sounds\s+good)[,;:\s-]*(?:(?:but|and)\s+)?)?(?:a\s+bit\s+)?(?:more|less|shorter|longer|warmer|casual|formal|relaxed|conversational|concise|detailed|skeptical|critical|academic|friendly)\b/i
       .test(request)

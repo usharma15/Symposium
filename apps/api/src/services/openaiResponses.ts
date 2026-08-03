@@ -267,7 +267,7 @@ export const assistantInstructions = [
   "For every other request, set action.tool to none, action.postKind to none, and return empty action title and body strings. Quick Note requests use the Quick Note fields, not an Office action.",
   "Never use office.document.edit_draft unless an ACTIVE PRIVATE DRAFT is explicitly supplied by the application. For every non-edit action, return an empty editOperations array.",
   "The action is a proposal only. Never claim it ran, and never propose sending, publishing, sharing, changing access, deleting, or any other action.",
-  "Never claim you already changed, saved, published, messaged, or searched anything. A Quick Note or Office draft is only saved after the user confirms the separate interface action."
+  "Never claim you already changed, saved, published, or messaged anything. When SOURCE EVIDENCE PACKETS are supplied for an explicit search request, you may accurately say the application found those bounded results; never imply that you searched beyond the supplied packets. A Quick Note or Office draft is only saved after the user confirms the separate interface action."
 ].join("\n");
 
 export const assistantGeneralInstructions = [
@@ -291,7 +291,7 @@ export const assistantGeneralInstructions = [
 
 export const assistantDraftEditInstructions = [
   "An ACTIVE PRIVATE DRAFT has been server-authorized for this conversation.",
-  "Only when the latest user request explicitly asks to change, edit, revise, rewrite, shorten, expand, tighten, fix, remove, add, replace, rename, retitle, update, polish, improve, or make a change to that active draft, set action.tool to office.document.edit_draft.",
+  "Only when the latest user request explicitly asks to change, edit, revise, rewrite, shorten, expand, tighten, fix, remove, add, append, integrate, incorporate, merge, replace, rename, retitle, update, polish, improve, or make a change to that active draft, set action.tool to office.document.edit_draft.",
   "Interpret natural edit language conversationally when the active draft is clear. Requests such as 'yeah, make it warmer', 'let's tighten the opening', or 'make that more relaxed and conversational' are explicit draft edits; incorporate their refinements without making the user restate the draft.",
   "For an active draft edit, action.title must be the current draft title, action.body must be a concise plain-language summary of the proposed changes, action.postKind must be none, and editOperations must contain only the smallest necessary operations.",
   "Use only block IDs supplied in ACTIVE PRIVATE DRAFT. A block with editable false is protected and must never be replaced or deleted. Protected blocks include citations, references, attachments, equations, drawings, lists, and code.",
@@ -419,9 +419,10 @@ export const assistantRenderedInput = (input: {
       assistantTranslationPrompt(input.context, input.message)
     ].join("\n");
   }
+  const grounded = Boolean(input.context) || Boolean(input.evidencePackets?.length);
   return [
     [
-      input.context ? assistantInstructions : assistantGeneralInstructions,
+      grounded ? assistantInstructions : assistantGeneralInstructions,
       ...(input.draftSession ? [assistantDraftEditInstructions] : [])
     ].join("\n"),
     ...input.history.map((entry) => `${entry.role}: ${entry.body}`),
@@ -434,7 +435,7 @@ export const assistantRenderedInput = (input: {
           input.message,
           input.evidencePackets
         )
-      : input.context
+      : grounded
       ? assistantPrompt(
           input.context,
           input.message,
@@ -859,9 +860,10 @@ export const callAssistantModel = async (input: {
   const translating = input.intent === "translate";
   if (translating && !input.targetLanguage) throw new Error("A translation language is required.");
   if (translating && !input.context) throw new Error("A source context is required for source translation.");
+  const grounded = Boolean(input.context) || Boolean(input.evidencePackets?.length);
   const baseInstructions = translating
     ? assistantTranslationInstructions(input.targetLanguage!)
-    : input.context
+    : grounded
       ? assistantInstructions
       : assistantGeneralInstructions;
   const instructions = [
@@ -876,7 +878,7 @@ export const callAssistantModel = async (input: {
           input.message,
           input.evidencePackets
         )
-    : input.context
+    : grounded
       ? assistantPrompt(
           input.context,
           input.message,
@@ -941,7 +943,7 @@ export const callAssistantModel = async (input: {
             : input.evidencePackets?.length
               ? "symposium-draft-edit-evidence-v1"
               : "symposium-draft-edit-v1"
-        : input.context
+        : grounded
           ? visionInputs.length
             ? "symposium-contextual-tablet-vision-v1"
             : input.evidencePackets?.length

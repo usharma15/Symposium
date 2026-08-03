@@ -510,6 +510,9 @@ function AssistantDraftEditCard({
               : "Awaiting review"}
         </small>
       </header>
+      <p>
+        <strong>Destination:</strong> {proposal.title} · revision {proposal.expectedRevision}
+      </p>
       <p>{proposal.body}</p>
       <ol className="tablet-action-edit-plan">
         {proposal.editOperations.map((operation, index) => (

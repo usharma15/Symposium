@@ -868,6 +868,7 @@ const sourceBoundaryChecks = () => {
   assert.match(studioSource, /Live AI edits|Live/);
   assert.match(studioSource, /never publishes it/);
   assert.match(actionCardSource, /Undo AI edit/);
+  assert.match(actionCardSource, /Destination:<\/strong>[\s\S]*proposal\.title[\s\S]*proposal\.expectedRevision/);
   assert.match(routesSource, /office-draft-edits\/undo/);
   assert.doesNotMatch(routesSource, /office-draft-edits.*publish/);
 };
