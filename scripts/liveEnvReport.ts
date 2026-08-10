@@ -156,14 +156,14 @@ const frontend = section([
 const optional = section([
   check(
     "OPENAI_API_KEY",
-    "AI tablet model provider",
+    "Assistant model provider",
     true,
     isSet(env.OPENAI_API_KEY),
     env.OPENAI_API_KEY ? "configured" : "fallback mode"
   ),
   check(
     "SYMPOSIUM_AI_MODEL",
-    "AI tablet model name",
+    "Assistant model name",
     true,
     isSet(process.env.SYMPOSIUM_AI_MODEL),
     process.env.SYMPOSIUM_AI_MODEL ? "configured" : "defaulted"

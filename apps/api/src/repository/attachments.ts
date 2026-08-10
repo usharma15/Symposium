@@ -192,7 +192,7 @@ const assertUploadAllowance = async (
   ) {
     throw new TRPCError({
       code: "TOO_MANY_REQUESTS",
-      message: "The AI Tablet's 24-hour upload allowance has been reached. Existing chat files remain available."
+      message: "The Assistant's 24-hour upload allowance has been reached. Existing chat files remain available."
     });
   }
   if (

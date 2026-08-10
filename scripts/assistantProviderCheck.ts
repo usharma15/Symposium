@@ -154,7 +154,7 @@ const main = async () => {
     prompt_cache_key: string;
   };
   assert.equal(contextualAssistantPayload.prompt_cache_key, "symposium-contextual-tablet-v3");
-  assert.match(contextualAssistantPayload.instructions, /contextual AI tablet/i);
+  assert.match(contextualAssistantPayload.instructions, /contextual Assistant/i);
   assert.match(contextualAssistantPayload.input.at(-1)?.content ?? "", /ACTIVE VIEW/);
   assert.match(contextualAssistantPayload.input.at(-1)?.content ?? "", /provider-check-hidden-view/);
 

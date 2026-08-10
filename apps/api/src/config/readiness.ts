@@ -185,7 +185,7 @@ export const getRuntimeReadiness = async (
     },
     {
       key: "ai_provider",
-      label: "AI tablet provider",
+      label: "Assistant provider",
       configured: Boolean(env.OPENAI_API_KEY),
       required: false,
       ok: true,

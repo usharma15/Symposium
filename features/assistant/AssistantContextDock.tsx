@@ -106,12 +106,12 @@ export function AssistantContextDock({
           <button
             type="button"
             className="assistant-collapse-control"
-            title="Collapse to AI Tablet"
-            aria-label="Collapse to AI Tablet"
+            title="Collapse Assistant"
+            aria-label="Collapse Assistant"
             onClick={onCollapse}
           >
             <Minimize2 size={15} />
-            <span>Tablet</span>
+            <span>Assistant</span>
           </button>
         ) : null}
       </div>

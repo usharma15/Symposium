@@ -165,7 +165,7 @@ reportCheck([
     "shared desktop in-post top line and fixed Opportunity review rails",
     "compact applicant feed, document swiper, and candidate detail rail",
     "detail-only candidate actions and concise contact metadata",
-    "persistent global Search, Scribble, New Post, and AI Tablet launchers",
+    "persistent global Search, Scribble, New Post, and Assistant launchers",
     "fixed-first document attachment selector",
     "day and night maroon semantic treatment",
     "legacy API compatibility without legacy storage writes"

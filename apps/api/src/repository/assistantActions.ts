@@ -781,7 +781,7 @@ export const confirmAssistantOfficeNoteDraft = async (
   if (!hasDatabase()) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: "AI Assistant actions require the live workspace."
+      message: "Assistant actions require the live workspace."
     });
   }
   await ensureLiveData();
@@ -800,7 +800,7 @@ export const confirmAssistantOfficeDraftEdit = async (
   if (!hasDatabase()) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: "AI Assistant actions require the live workspace."
+      message: "Assistant actions require the live workspace."
     });
   }
   await ensureLiveData();
@@ -819,7 +819,7 @@ export const undoAssistantOfficeDraftEdit = async (
   if (!hasDatabase()) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: "AI Assistant actions require the live workspace."
+      message: "Assistant actions require the live workspace."
     });
   }
   await ensureLiveData();
@@ -838,7 +838,7 @@ export const confirmAssistantOfficePostDraft = async (
   if (!hasDatabase()) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: "AI Assistant actions require the live workspace."
+      message: "Assistant actions require the live workspace."
     });
   }
   await ensureLiveData();

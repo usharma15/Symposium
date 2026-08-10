@@ -157,7 +157,7 @@
 }
 
 .topbar-actions .icon-button[title="Open notebook"],
-.topbar-actions .icon-button[title="Open AI tablet"] {
+.topbar-actions .icon-button[title="Open Assistant"] {
   display: none;
 }
 

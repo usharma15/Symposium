@@ -896,9 +896,9 @@ export function useAssistantController({
       setMonthlyBudgetUsd(status.quota.monthlyBudgetUsd);
       setProviderEnabled(status.enabled);
       setProviderConfigured(status.providerConfigured);
-      if (!status.enabled) setError("The AI Tablet is currently switched off.");
+      if (!status.enabled) setError("The Assistant is currently switched off.");
       else if (!status.providerConfigured) {
-        setError("The AI Tablet model provider is not configured.");
+        setError("The Assistant model provider is not configured.");
       }
     }).catch((caught) => {
       if (!cancelled) {
@@ -1618,7 +1618,7 @@ export function useAssistantController({
         draftRef.current = message;
         setDraftState(message);
         setPendingAttachments(submittedAttachments);
-        setError(errorMessage(caught, "The AI Tablet could not complete this request."));
+        setError(errorMessage(caught, "The Assistant could not complete this request."));
       }
     } finally {
       submissionLockRef.current = false;

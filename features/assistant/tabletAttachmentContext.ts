@@ -47,7 +47,7 @@ export const buildTabletAttachmentContext = (
       ? `Extracted structured attachment preview:\n${structuredPreview}`
       : metadata.pdfTextStatus === "none"
         ? "No machine-readable text was found in the PDF preview. Visual PDF understanding is not active."
-        : "Attachment contents are not extracted in the current tablet context.";
+        : "Attachment contents are not extracted in the current Assistant context.";
 
   return [
     `Attachment: ${attachment.fileName}`,

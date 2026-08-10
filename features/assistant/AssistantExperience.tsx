@@ -334,12 +334,12 @@ export function AssistantExperience({
       }`}
       data-assistant-mode={mode}
       data-mobile-pane={mobilePane}
-      aria-label={mode === "workspace" ? "AI Workspace" : "AI Tablet"}
+      aria-label={mode === "workspace" ? "Assistant workspace" : "Assistant"}
     >
       {mode === "compact" ? (
         <header className="tablet-header assistant-header">
           <div>
-            <span><BrainCircuit size={16} />AI Tablet</span>
+            <span><BrainCircuit size={16} />Assistant</span>
           </div>
           <div className="assistant-header-actions">
             {activeDraftReceipt ? (
@@ -354,17 +354,17 @@ export function AssistantExperience({
                 <span>{compactDraftOpen ? "Chat" : "Draft"}</span>
               </button>
             ) : null}
-            <button type="button" title="Expand to AI Workspace" onClick={onExpand}>
+            <button type="button" title="Expand Assistant" onClick={onExpand}>
               <Maximize2 size={16} /><span>Expand</span>
             </button>
-            <button type="button" title="Close AI Tablet" onClick={onClose}>
+            <button type="button" title="Close Assistant" onClick={onClose}>
               <X size={16} />
             </button>
           </div>
         </header>
       ) : null}
 
-      <nav className="assistant-mobile-nav" aria-label="AI Workspace panels">
+      <nav className="assistant-mobile-nav" aria-label="Assistant panels">
         <button type="button" aria-pressed={mobilePane === "threads"} className={mobilePane === "threads" ? "active" : ""} onClick={() => setMobilePane("threads")}>
           <History size={14} />Chats
         </button>
@@ -592,7 +592,7 @@ export function AssistantExperience({
         ) : null}
 
         <div className="tablet-transcript" aria-live="polite" ref={transcriptRef}>
-          {threadLoading ? <article className="tablet-message assistant pending"><span>Tablet</span><p>Loading research threads…</p></article> : null}
+          {threadLoading ? <article className="tablet-message assistant pending"><span>Assistant</span><p>Loading research threads…</p></article> : null}
           {messages.map((message) => (
             <AssistantMessageCard
               actorHandle={actorHandle}
@@ -602,7 +602,7 @@ export function AssistantExperience({
               onSaved={(id) => void synchronizeThreadMutation(id)}
             />
           ))}
-          {busy ? <article className="tablet-message assistant pending"><span>Tablet</span><p>{activeContext ? "Reading the context and thinking…" : "Thinking…"}</p></article> : null}
+          {busy ? <article className="tablet-message assistant pending"><span>Assistant</span><p>{activeContext ? "Reading the context and thinking…" : "Thinking…"}</p></article> : null}
         </div>
 
         {error ? <div className="tablet-error" role="alert">{error}</div> : null}

@@ -664,7 +664,7 @@ const staticBoundaryChecks = () => {
   assert.match(repository, /assistant\.action\.completed/);
   assert.match(route, /withWriteActor\(request, \{[\s\S]*scope: "assistant-action"/);
   assert.match(proxy, /export const POST = assistantMutationRoute/);
-  assert.match(proxy, /AI Assistant actions require the live workspace/);
+  assert.match(proxy, /Assistant actions require the live workspace/);
   assert.doesNotMatch(proxy, /localStorage|fallback/i);
   assert.match(card, /Not saved yet/);
   assert.match(card, /Nothing is created until/);

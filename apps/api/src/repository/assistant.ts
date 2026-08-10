@@ -2117,13 +2117,13 @@ export const askAssistant = async (
 ): Promise<AssistantResponseContract> => {
   const input = assistantMessageInputSchema.parse(rawInput);
   if (!env.SYMPOSIUM_AI_ENABLED) {
-    return unavailableResponse(input, "disabled", "The AI Tablet is currently switched off. It only runs when the shared cost-controlled beta is explicitly enabled.");
+    return unavailableResponse(input, "disabled", "The Assistant is currently switched off. It only runs when the shared cost-controlled beta is explicitly enabled.");
   }
   if (!env.OPENAI_API_KEY) {
-    return unavailableResponse(input, "provider_not_configured", "The AI Tablet is ready, but the model provider key has not been configured yet.");
+    return unavailableResponse(input, "provider_not_configured", "The Assistant is ready, but the model provider key has not been configured yet.");
   }
   if (!hasDatabase()) {
-    return unavailableResponse(input, "disabled", "The AI Tablet will not spend money without its durable usage ledger. Connect the live database first.");
+    return unavailableResponse(input, "disabled", "The Assistant will not spend money without its durable usage ledger. Connect the live database first.");
   }
 
   const owner = await ensureProfileHandle(actorHandle(actor));

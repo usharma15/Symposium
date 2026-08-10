@@ -4743,12 +4743,12 @@ function SymposiumExperience({
       <button
         className={`pocket pocket-right bottom-action bottom-action-tablet tablet-launcher${tabletOpen ? " active" : ""}`}
         type="button"
-        title={assistantOpen ? "Collapse AI Workspace to Tablet" : tabletOpen ? "Expand AI Tablet" : "Open AI Tablet"}
+        title={assistantOpen ? "Collapse Assistant" : tabletOpen ? "Expand Assistant" : "Open Assistant"}
         aria-expanded={tabletOpen || assistantOpen}
         onClick={toggleTablet}
       >
         <BrainCircuit size={18} />
-        <span>AI Tablet</span>
+        <span>Assistant</span>
       </button>
 
       {tabletOpen || assistantOpen ? (

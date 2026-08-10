@@ -38,7 +38,7 @@ export function AssistantMessageCard({
     >
       <span>
         {message.role === "assistant"
-          ? "Tablet"
+          ? "Assistant"
           : message.role === "system"
             ? "Context"
             : "You"}

@@ -1052,7 +1052,7 @@ const staticBoundaryChecks = () => {
   assert.match(route, /\/v1\/assistant\/actions\/office-post-drafts/);
   assert.match(route, /assistant\.action\.office-post\.create-draft/);
   assert.match(proxy, /export const POST = assistantMutationRoute/);
-  assert.match(proxy, /AI Assistant actions require the live workspace/);
+  assert.match(proxy, /Assistant actions require the live workspace/);
   assert.doesNotMatch(proxy, /localStorage|fallback/i);
   assert.match(card, /Private draft only · not published/);
   assert.match(card, /Nothing is created until you confirm, and nothing is published/);

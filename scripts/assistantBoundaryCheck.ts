@@ -2307,15 +2307,15 @@ assert.match(shell, /const collapseAssistantToTablet = \(threadId: string \| nul
 assert.match(restoreViewBlock, /isAssistantCollapse[\s\S]*?replaceViewSnapshot\([\s\S]*?assistantOpen: isAssistantCollapse \? false[\s\S]*?assistantThreadId: isAssistantCollapse[\s\S]*?collapsedAssistantThreadId/);
 assert.doesNotMatch(restoreViewBlock, /setTabletOpen\(false\)/);
 assert.doesNotMatch(navigateViewBlock, /setTabletOpen\(false\)/);
-assert.match(shell, /title=\{assistantOpen \? "Collapse AI Workspace to Tablet" : tabletOpen \? "Expand AI Tablet" : "Open AI Tablet"\}/);
+assert.match(shell, /title=\{assistantOpen \? "Collapse Assistant" : tabletOpen \? "Expand Assistant" : "Open Assistant"\}/);
 assert.match(shell, /aria-expanded=\{tabletOpen \|\| assistantOpen\}/);
 assert.match(shell, /\{tabletOpen \|\| assistantOpen \? \([\s\S]*?mode=\{assistantOpen \? "workspace" : "compact"\}/);
 assert.match(shell, /assistantThreadId: assistantController\.conversationId \?\? null/);
 assert.match(shell, /enabled: tabletOpen \|\| assistantOpen/);
 assert.match(shell, /liveEvents: assistantEvents/);
 assert.match(shell, /event\.kind\.startsWith\("assistant\."\)/);
-assert.match(tablet, /Expand to AI Workspace/);
-assert.match(tablet, /Collapse to AI Tablet/);
+assert.match(tablet, /Expand Assistant/);
+assert.match(tablet, /Collapse Assistant/);
 assert.match(tablet, /Search chats/);
 assert.match(tablet, /data-mobile-pane=\{mobilePane\}/);
 assert.match(tablet, /aria-pressed=\{mobilePane === "threads"\}/);
@@ -2539,4 +2539,4 @@ assert.doesNotMatch(env, /SYMPOSIUM_AI_OWNER_DAILY_LIMIT/);
 assert.match(renderBlueprint, /SYMPOSIUM_AI_USER_DAILY_LIMIT[\s\S]*value: "10"/);
 assert.doesNotMatch(renderBlueprint, /SYMPOSIUM_AI_OWNER_DAILY_LIMIT/);
 
-console.log("AI Tablet cost and context boundary checks passed.");
+console.log("Assistant cost and context boundary checks passed.");
