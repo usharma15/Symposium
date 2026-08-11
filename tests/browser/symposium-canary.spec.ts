@@ -86,6 +86,9 @@ test.describe("returning browser session", () => {
     await expect.poll(() => renderedPdfCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.width > 0)).toBe(true);
     await expect(renderedPdfPage.locator(".attachment-pdf-text-layer span").first()).toBeVisible();
     await expect(renderedPdfPage.getByRole("status", { name: "Preparing page…" })).toHaveCount(0);
+    await page.reload();
+    await expect(page).toHaveURL(/\/posts\/paper-bell-epr$/);
+    await expect(page.locator("main.symposium-shell")).toHaveAttribute("data-room", "library");
     await page.getByRole("navigation", { name: "View history" }).getByTitle("Back").click();
     await expect(page).toHaveURL(/\/rooms\/library$/);
     clean();

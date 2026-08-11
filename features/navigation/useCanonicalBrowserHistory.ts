@@ -8,6 +8,23 @@ import {
 } from "@/features/navigation/canonicalRoute";
 import { snapshotForCanonicalRoute, type ViewSnapshot } from "@/features/navigation/viewState";
 
+const symposiumHistoryStateVersion = 1;
+const persistedViewStackLimit = 50;
+
+const isStoredViewSnapshot = (value: unknown): value is ViewSnapshot => {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<ViewSnapshot>;
+  return typeof candidate.activeRoom === "string"
+    && typeof candidate.profileTab === "string"
+    && Boolean(candidate.workspaceView && typeof candidate.workspaceView === "object")
+    && Boolean(candidate.commentSegmentStacks && typeof candidate.commentSegmentStacks === "object")
+    && typeof candidate.scrollY === "number"
+    && Number.isFinite(candidate.scrollY);
+};
+
+const storedSnapshots = (value: unknown) =>
+  Array.isArray(value) ? value.filter(isStoredViewSnapshot) : [];
+
 type HistoryOptions = {
   snapshotView: () => ViewSnapshot;
   restoreView: (snapshot: ViewSnapshot) => void;
@@ -39,10 +56,21 @@ export function useCanonicalBrowserHistory({ snapshotView, restoreView, routeFor
     setViewFuture(future);
   };
 
-  const replaceCurrentBrowserView = (snapshot: ViewSnapshot) => {
+  const replaceCurrentBrowserView = (
+    snapshot: ViewSnapshot,
+    history = viewHistoryRef.current,
+    future = viewFutureRef.current
+  ) => {
     const state = window.history.state && typeof window.history.state === "object" ? window.history.state : {};
     window.history.replaceState(
-      { ...state, symposiumHistoryIndex: browserHistoryIndexRef.current, symposiumView: snapshot },
+      {
+        ...state,
+        symposiumHistoryStateVersion,
+        symposiumHistoryIndex: browserHistoryIndexRef.current,
+        symposiumView: snapshot,
+        symposiumViewHistory: history.slice(-persistedViewStackLimit),
+        symposiumViewFuture: future.slice(0, persistedViewStackLimit)
+      },
       "",
       window.location.href
     );
@@ -58,12 +86,19 @@ export function useCanonicalBrowserHistory({ snapshotView, restoreView, routeFor
   };
 
   const recordNavigation = (currentSnapshot: ViewSnapshot, nextSnapshot: ViewSnapshot) => {
-    replaceHistory([...viewHistoryRef.current, currentSnapshot]);
+    const nextHistory = [...viewHistoryRef.current, currentSnapshot];
+    replaceCurrentBrowserView(currentSnapshot, viewHistoryRef.current, []);
+    replaceHistory(nextHistory);
     replaceFuture([]);
-    replaceCurrentBrowserView(currentSnapshot);
     browserHistoryIndexRef.current += 1;
     window.history.pushState(
-      { symposiumHistoryIndex: browserHistoryIndexRef.current },
+      {
+        symposiumHistoryStateVersion,
+        symposiumHistoryIndex: browserHistoryIndexRef.current,
+        symposiumView: nextSnapshot,
+        symposiumViewHistory: nextHistory.slice(-persistedViewStackLimit),
+        symposiumViewFuture: []
+      },
       "",
       canonicalRouteHref(routeForViewRef.current(nextSnapshot))
     );
@@ -103,8 +138,27 @@ export function useCanonicalBrowserHistory({ snapshotView, restoreView, routeFor
       browserHistoryIndexRef.current =
         typeof state.symposiumHistoryIndex === "number" ? state.symposiumHistoryIndex : 0;
       browserHistoryInitializedRef.current = true;
-      replaceCurrentBrowserView(snapshotViewRef.current());
+      const storedView = state.symposiumHistoryStateVersion === symposiumHistoryStateVersion
+        && isStoredViewSnapshot(state.symposiumView)
+        ? state.symposiumView
+        : null;
+      const storedViewMatchesLocation = storedView
+        ? canonicalRouteHref(routeForViewRef.current(storedView)) === canonicalRouteHref(
+            parseCanonicalRoute(window.location.pathname, window.location.search)
+          )
+        : false;
+      if (storedView && storedViewMatchesLocation) {
+        replaceHistory(storedSnapshots(state.symposiumViewHistory));
+        replaceFuture(storedSnapshots(state.symposiumViewFuture));
+        restoreViewRef.current(storedView);
+        replaceCurrentBrowserView(storedView);
+      } else {
+        resetHistory();
+        replaceCurrentBrowserView(snapshotViewRef.current());
+      }
     }
+
+    const persistCurrentView = () => replaceCurrentBrowserView(snapshotViewRef.current());
 
     const handlePopState = (event: PopStateEvent) => {
       const currentSnapshot = snapshotViewRef.current();
@@ -130,8 +184,12 @@ export function useCanonicalBrowserHistory({ snapshotView, restoreView, routeFor
       );
     };
 
+    window.addEventListener("pagehide", persistCurrentView);
     window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("pagehide", persistCurrentView);
+      window.removeEventListener("popstate", handlePopState);
+    };
   }, []);
 
   return {
