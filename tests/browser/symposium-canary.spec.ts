@@ -94,6 +94,72 @@ test.describe("returning browser session", () => {
     clean();
   });
 
+  test("restores the exact comment viewport and deep reply window after reload", async ({ page, request }) => {
+    const clean = watchDiagnostics(page);
+    const postResponse = await request.post("/api/posts", {
+      data: {
+        title: "",
+        body: "A browser-only thread used to prove that reading position survives refresh.",
+        kind: "thought",
+        postType: "thought",
+        room: "amphitheater",
+        authorHandle: "@udayan",
+        attachmentIds: []
+      }
+    });
+    expect(postResponse.ok()).toBe(true);
+    const postId = ((await postResponse.json()) as { item: { id: string } }).item.id;
+    const commentIds: string[] = [];
+    let parentId: string | null = null;
+    for (let depth = 1; depth <= 7; depth += 1) {
+      const commentResponse = await request.post(`/api/posts/${postId}/comments`, {
+        data: {
+          body: `Reload-preservation reply depth ${depth}.`,
+          stance: "Comment",
+          parentId,
+          authorHandle: "@udayan",
+          attachmentIds: []
+        }
+      });
+      expect(commentResponse.ok()).toBe(true);
+      const commentId = ((await commentResponse.json()) as { comment: { id: string } }).comment.id;
+      commentIds.push(commentId);
+      parentId = commentId;
+    }
+
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await page.goto(`/posts/${postId}`);
+    await page.getByRole("button", { name: "Show more replies" }).click();
+    const segment = page.locator(".comment-segment");
+    const visibleStack = JSON.stringify([commentIds[5]]);
+    await expect(segment).toHaveAttribute("data-comment-segment-stack", visibleStack);
+    await expect(page.getByRole("button", { name: "Show previous replies" })).toBeVisible();
+
+    const anchor = page.getByTestId(`comment-${commentIds[6]}`);
+    await expect(anchor).toBeVisible();
+    await anchor.evaluate((element) => {
+      window.scrollBy({ top: element.getBoundingClientRect().top - 116, behavior: "auto" });
+    });
+    const anchorTop = await anchor.evaluate((element) => element.getBoundingClientRect().top);
+    expect(anchorTop).toBeGreaterThan(108);
+    expect(anchorTop).toBeLessThan(124);
+    await expect.poll(() => page.evaluate(() =>
+      Object.values((window.history.state?.symposiumView?.commentSegmentStacks ?? {}) as Record<string, string[]>).flat()
+    )).toContain(commentIds[5]);
+    await expect.poll(() => page.evaluate(() => window.history.state?.symposiumView?.scrollAnchor?.id ?? null))
+      .not.toBeNull();
+    const persistedDeepReplyTop = await anchor.evaluate((element) => element.getBoundingClientRect().top);
+
+    await page.reload();
+    await expect(segment).toHaveAttribute("data-comment-segment-stack", visibleStack);
+    await expect(page.getByRole("button", { name: "Show previous replies" })).toBeVisible();
+    await expect(anchor).toBeVisible();
+    await expect.poll(async () =>
+      Math.abs((await anchor.evaluate((element) => element.getBoundingClientRect().top)) - persistedDeepReplyTop)
+    ).toBeLessThanOrEqual(8);
+    clean();
+  });
+
   test("keeps Paper and Thought design identities stable across theme and reload", async ({ page }) => {
     const clean = watchDiagnostics(page);
     await page.goto("/posts/paper-bell-epr");

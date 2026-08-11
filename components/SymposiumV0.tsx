@@ -681,6 +681,9 @@ function SymposiumExperience({
   const connectionSyncStatusRef = useRef<string>(liveStatus.loading);
   const commentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const visibleCommentSegmentStacksRef = useRef<CommentSegmentStacks>({});
+  const scrollRestoreGenerationRef = useRef(0);
+  const scrollRestoreCleanupRef = useRef<(() => void) | null>(null);
+  const persistCurrentBrowserViewRef = useRef<() => void>(() => undefined);
   const actionVersionsRef = useRef<Record<string, number>>({});
   const actionReconcilerRef = useRef(createInquiryActionReconciler());
   const {
@@ -2724,6 +2727,7 @@ function SymposiumExperience({
       commentSegmentStacksRef.current = next;
       return next;
     });
+    window.requestAnimationFrame(() => persistCurrentBrowserViewRef.current());
   };
 
   const registerVisibleCommentSegmentStack = (key: string, stack: string[]) => {
@@ -2746,12 +2750,24 @@ function SymposiumExperience({
     const targetTop = 132;
     const comments = Array.from(document.querySelectorAll<HTMLElement>(".comment[id]"));
     const visibleComments = comments
-      .map((comment) => ({ comment, rect: comment.getBoundingClientRect() }))
+      .map((comment) => {
+        let depth = 0;
+        let parent = comment.parentElement?.closest<HTMLElement>(".comment") ?? null;
+        while (parent) {
+          depth += 1;
+          parent = parent.parentElement?.closest<HTMLElement>(".comment") ?? null;
+        }
+        return { comment, depth, rect: comment.getBoundingClientRect() };
+      })
       .filter(({ rect }) => rect.bottom > 0 && rect.top < window.innerHeight);
     const anchor =
-      visibleComments.find(({ rect }) => rect.top <= targetTop && rect.bottom >= targetTop) ??
+      visibleComments
+        .filter(({ rect }) => rect.top <= targetTop && rect.bottom >= targetTop)
+        .sort((first, second) => second.depth - first.depth)[0] ??
       visibleComments.sort(
-        (first, second) => Math.abs(first.rect.top - targetTop) - Math.abs(second.rect.top - targetTop)
+        (first, second) =>
+          Math.abs(first.rect.top - targetTop) - Math.abs(second.rect.top - targetTop) ||
+          second.depth - first.depth
       )[0];
     if (!anchor) return null;
     const segment = anchor.comment.closest<HTMLElement>(".comment-segment[data-comment-segment-key]");
@@ -2784,7 +2800,28 @@ function SymposiumExperience({
   };
 
   const restoreScrollPosition = (snapshot: ViewSnapshot) => {
+    scrollRestoreCleanupRef.current?.();
+    const generation = scrollRestoreGenerationRef.current + 1;
+    scrollRestoreGenerationRef.current = generation;
+    const timers: number[] = [];
+    const stopForUser = () => {
+      if (scrollRestoreGenerationRef.current === generation) {
+        scrollRestoreGenerationRef.current += 1;
+      }
+      cleanup();
+    };
+    const cleanup = () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("wheel", stopForUser);
+      window.removeEventListener("touchstart", stopForUser);
+      window.removeEventListener("pointerdown", stopForUser);
+      window.removeEventListener("keydown", stopForUser);
+      if (scrollRestoreCleanupRef.current === cleanup) {
+        scrollRestoreCleanupRef.current = null;
+      }
+    };
     const scroll = () => {
+      if (scrollRestoreGenerationRef.current !== generation) return;
       if (snapshot.scrollAnchor) {
         const anchor = document.getElementById(snapshot.scrollAnchor.id);
         if (anchor) {
@@ -2795,13 +2832,17 @@ function SymposiumExperience({
       }
       window.scrollTo({ top: snapshot.scrollY, behavior: "auto" });
     };
-    window.setTimeout(() => {
-      window.requestAnimationFrame(() => {
+    window.addEventListener("wheel", stopForUser, { passive: true });
+    window.addEventListener("touchstart", stopForUser, { passive: true });
+    window.addEventListener("pointerdown", stopForUser, { passive: true });
+    window.addEventListener("keydown", stopForUser);
+    scrollRestoreCleanupRef.current = cleanup;
+    [0, 80, 180, 360, 700, 1_200, 2_000, 3_200, 5_000].forEach((delay, index, delays) => {
+      timers.push(window.setTimeout(() => {
         window.requestAnimationFrame(scroll);
-      });
-    }, 0);
-    window.setTimeout(scroll, 120);
-    window.setTimeout(scroll, 320);
+        if (index === delays.length - 1) cleanup();
+      }, delay));
+    });
   };
 
   const restoreView = (snapshot: ViewSnapshot) => {
@@ -2843,6 +2884,7 @@ function SymposiumExperience({
     canGoForward: hasViewFuture,
     goBack,
     goForward,
+    persistCurrentView,
     recordNavigation,
     replaceCanonicalRoute,
     resetHistory
@@ -2855,6 +2897,9 @@ function SymposiumExperience({
         (nameOrHandle) => findProfile(nameOrHandle)?.handle ?? nameOrHandle
       )
   });
+  persistCurrentBrowserViewRef.current = persistCurrentView;
+
+  useEffect(() => () => scrollRestoreCleanupRef.current?.(), []);
 
   const collapseAssistantToTablet = (threadId: string | null) => {
     assistantCollapseThreadIdRef.current = threadId;

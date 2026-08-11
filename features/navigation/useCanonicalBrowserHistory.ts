@@ -109,6 +109,8 @@ export function useCanonicalBrowserHistory({ snapshotView, restoreView, routeFor
     replaceFuture([]);
   };
 
+  const persistCurrentView = () => replaceCurrentBrowserView(snapshotViewRef.current());
+
   const goBack = () => {
     if (!viewHistoryRef.current.length) {
       const hallSnapshot = snapshotForCanonicalRoute({ kind: "hall" });
@@ -158,7 +160,17 @@ export function useCanonicalBrowserHistory({ snapshotView, restoreView, routeFor
       }
     }
 
-    const persistCurrentView = () => replaceCurrentBrowserView(snapshotViewRef.current());
+    let scrollPersistenceTimer: number | null = null;
+    const scheduleScrollPersistence = () => {
+      if (scrollPersistenceTimer !== null) window.clearTimeout(scrollPersistenceTimer);
+      scrollPersistenceTimer = window.setTimeout(() => {
+        scrollPersistenceTimer = null;
+        persistCurrentView();
+      }, 120);
+    };
+    const persistHiddenView = () => {
+      if (document.visibilityState === "hidden") persistCurrentView();
+    };
 
     const handlePopState = (event: PopStateEvent) => {
       const currentSnapshot = snapshotViewRef.current();
@@ -185,10 +197,17 @@ export function useCanonicalBrowserHistory({ snapshotView, restoreView, routeFor
     };
 
     window.addEventListener("pagehide", persistCurrentView);
+    window.addEventListener("beforeunload", persistCurrentView);
     window.addEventListener("popstate", handlePopState);
+    window.addEventListener("scroll", scheduleScrollPersistence, { passive: true });
+    document.addEventListener("visibilitychange", persistHiddenView);
     return () => {
+      if (scrollPersistenceTimer !== null) window.clearTimeout(scrollPersistenceTimer);
       window.removeEventListener("pagehide", persistCurrentView);
+      window.removeEventListener("beforeunload", persistCurrentView);
       window.removeEventListener("popstate", handlePopState);
+      window.removeEventListener("scroll", scheduleScrollPersistence);
+      document.removeEventListener("visibilitychange", persistHiddenView);
     };
   }, []);
 
@@ -197,6 +216,7 @@ export function useCanonicalBrowserHistory({ snapshotView, restoreView, routeFor
     canGoForward: viewFuture.length > 0,
     goBack,
     goForward,
+    persistCurrentView,
     recordNavigation,
     replaceCanonicalRoute,
     resetHistory
