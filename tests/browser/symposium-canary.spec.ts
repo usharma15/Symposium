@@ -203,8 +203,8 @@ test.describe("returning browser session", () => {
     const clean = watchDiagnostics(page);
 
     for (const sample of [
-      { kind: "paper", postType: "paper", room: "library", title: "Browser rail proof paper", width: 1440, height: 1000 },
-      { kind: "thought", postType: "thought", room: "amphitheater", title: "", width: 390, height: 844 }
+      { kind: "paper", postType: "paper", room: "library", title: "Browser rail proof paper", width: 1440, height: 1000, railWidening: 12 },
+      { kind: "thought", postType: "thought", room: "amphitheater", title: "", width: 390, height: 844, railWidening: 6 }
     ] as const) {
       await page.setViewportSize({ width: sample.width, height: sample.height });
       const body = `Browser rail proof for ${sample.postType} detail content.`;
@@ -249,6 +249,7 @@ test.describe("returning browser session", () => {
         const detailStyle = getComputedStyle(detail);
         const railLeft = detailRect.left + Number.parseFloat(detailStyle.paddingLeft);
         const railRight = detailRect.right - Number.parseFloat(detailStyle.paddingRight);
+        const railWidening = Number.parseFloat(detailStyle.getPropertyValue("--authored-content-rail-widening"));
         const required = (selector: string) => {
           const element = detail.querySelector<HTMLElement>(selector);
           if (!element) throw new Error(`Missing rail element: ${selector}`);
@@ -276,14 +277,22 @@ test.describe("returning browser session", () => {
           ":scope > .comments-section",
           ".comment-thread .comment-owner-actions"
         ];
+        const museRail = required(postType === "paper"
+          ? ".authored-paper-title-ceremony"
+          : ".authored-thought-opening-muse");
         return {
           railLeft,
           railRight,
+          railWidening,
+          museRail: { left: museRail.left, right: museRail.right },
           lefts: leftSelectors.map((selector) => ({ selector, value: required(selector).left })),
           rights: rightSelectors.map((selector) => ({ selector, value: required(selector).right }))
         };
       }, sample.postType);
 
+      expect(geometry.railWidening).toBe(sample.railWidening);
+      expect(Math.abs(geometry.museRail.left - (geometry.railLeft + geometry.railWidening)), `${sample.postType} muse left anchor`).toBeLessThanOrEqual(1);
+      expect(Math.abs(geometry.museRail.right - (geometry.railRight - geometry.railWidening)), `${sample.postType} muse right anchor`).toBeLessThanOrEqual(1);
       for (const measurement of geometry.lefts) {
         expect(Math.abs(measurement.value - geometry.railLeft), `${sample.postType} left rail: ${measurement.selector}`).toBeLessThanOrEqual(1);
       }

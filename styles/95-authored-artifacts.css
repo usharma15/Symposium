@@ -40,7 +40,8 @@
   min-height: 1060px;
   border: 0;
   border-radius: 0;
-  --post-detail-content-gutter: 76px;
+  --authored-content-rail-widening: 12px;
+  --post-detail-content-gutter: 64px;
   padding: 76px var(--post-detail-content-gutter) 270px;
   background-color: #e8dfc3;
   background-image: url("/symposium-artifacts/v1/paper-surface-study.png");
@@ -239,8 +240,8 @@
   z-index: 1;
   display: grid;
   grid-template-rows: 178px auto;
-  width: 100%;
-  margin-top: 2px;
+  width: calc(100% - var(--authored-content-rail-widening) - var(--authored-content-rail-widening));
+  margin: 2px var(--authored-content-rail-widening) 0;
 }
 
 .authored-paper-title-ceremony[data-paper-muse="urania"] {
@@ -294,7 +295,9 @@
 .detail-layout.paper-detail.authored-artifact-detail > .detail-main .authored-paper-title-ceremony h1 {
   position: relative;
   z-index: 4;
-  max-width: 760px;
+  width: calc(100% + var(--authored-content-rail-widening) + var(--authored-content-rail-widening));
+  max-width: calc(760px + var(--authored-content-rail-widening) + var(--authored-content-rail-widening));
+  margin-left: calc(-1 * var(--authored-content-rail-widening));
   margin-top: 0;
   color: var(--authored-title-ink);
   font-family: Georgia, "Times New Roman", serif;
@@ -320,7 +323,7 @@
   min-height: var(--authored-thought-muse-height-desktop);
   margin:
     var(--authored-thought-muse-margin-top-desktop)
-    0
+    var(--authored-content-rail-widening)
     var(--authored-thought-muse-margin-bottom-desktop);
   place-items: center;
   pointer-events: none;
@@ -795,7 +798,7 @@
     min-height: var(--authored-thought-muse-height-compact);
     margin:
       var(--authored-thought-muse-margin-top-compact)
-      0
+      var(--authored-content-rail-widening)
       var(--authored-thought-muse-margin-bottom-compact);
   }
 
@@ -808,7 +811,8 @@
   .detail-layout.authored-artifact-detail > .detail-main,
   .symposium-shell.night .detail-layout.authored-artifact-detail > .detail-main {
     min-height: 0;
-    --post-detail-content-gutter: 64px;
+    --authored-content-rail-widening: 8px;
+    --post-detail-content-gutter: 56px;
     padding: 70px var(--post-detail-content-gutter) 250px;
   }
 
@@ -838,7 +842,7 @@
     min-height: var(--authored-thought-muse-height-tablet);
     margin:
       var(--authored-thought-muse-margin-top-tablet)
-      0
+      var(--authored-content-rail-widening)
       var(--authored-thought-muse-margin-bottom-tablet);
   }
 
@@ -850,7 +854,8 @@
 @media (max-width: 520px) {
   .detail-layout.authored-artifact-detail > .detail-main,
   .symposium-shell.night .detail-layout.authored-artifact-detail > .detail-main {
-    --post-detail-content-gutter: 48px;
+    --authored-content-rail-widening: 6px;
+    --post-detail-content-gutter: 42px;
     padding: 58px var(--post-detail-content-gutter) 210px;
   }
 
@@ -880,7 +885,7 @@
     min-height: var(--authored-thought-muse-height-mobile);
     margin:
       var(--authored-thought-muse-margin-top-mobile)
-      0
+      var(--authored-content-rail-widening)
       var(--authored-thought-muse-margin-bottom-mobile);
   }
 
