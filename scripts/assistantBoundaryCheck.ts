@@ -85,6 +85,7 @@ import {
   PATCH as updateAssistantConversationRoute
 } from "@/app/api/assistant/conversations/[...segments]/route";
 import {
+  pdfPageNeedsVisualTranslationFallbackForClassification,
   pdfTextItemsToPlainText,
   resolvePdfDocumentUrl
 } from "@/features/attachments/pdfAttachmentClient";
@@ -798,6 +799,43 @@ assert.deepEqual(
     { id: "pdf-4-line-1", text: "A separate paragraph line continues here." }
   ]
 );
+assert.equal(pdfPageNeedsVisualTranslationFallbackForClassification({
+  pdfType: "TextBased",
+  pageCount: 8,
+  pagesNeedingOcr: [],
+  confidence: 1
+}, 3, 8), false);
+assert.equal(pdfPageNeedsVisualTranslationFallbackForClassification({
+  pdfType: "Mixed",
+  pageCount: 8,
+  pagesNeedingOcr: [2, 5],
+  confidence: 0.94
+}, 3, 8), true);
+assert.equal(pdfPageNeedsVisualTranslationFallbackForClassification({
+  pdfType: "Mixed",
+  pageCount: 8,
+  pagesNeedingOcr: [2, 5],
+  confidence: 0.94
+}, 4, 8), false);
+assert.equal(pdfPageNeedsVisualTranslationFallbackForClassification({
+  pdfType: "Scanned",
+  pageCount: 8,
+  pagesNeedingOcr: [],
+  confidence: 0.98
+}, 4, 8), true);
+assert.equal(pdfPageNeedsVisualTranslationFallbackForClassification({
+  pdfType: "TextBased",
+  pageCount: 8,
+  pagesNeedingOcr: [],
+  confidence: 0.62
+}, 4, 8), true);
+assert.equal(pdfPageNeedsVisualTranslationFallbackForClassification(null, 4, 8), true);
+assert.equal(pdfPageNeedsVisualTranslationFallbackForClassification({
+  pdfType: "TextBased",
+  pageCount: 7,
+  pagesNeedingOcr: [],
+  confidence: 1
+}, 4, 8), true);
 assert.deepEqual(
   restoreTranslationSegmentOrder(
     [{ id: "a", text: "First" }, { id: "b", text: "Second" }],
@@ -2410,8 +2448,8 @@ assert.match(shell, /attachmentPreviewViewContext/);
 assert.doesNotMatch(shell, /const \[attachmentViewContext,/);
 assert.match(attachmentViews, /new pdfjs\.TextLayer/);
 assert.match(attachmentViews, /readPdfPageText\(document, boundedPage\)/);
-assert.match(attachmentViews, /const imageDataUrl = await renderPdfPageTranslationImage\(document, boundedPage\)/);
-assert.doesNotMatch(attachmentViews, /pdfPageNeedsVisualTranslationFallback/);
+assert.match(attachmentViews, /await pdfPageNeedsVisualTranslationFallback\(document, boundedPage\)/);
+assert.match(attachmentViews, /needsVisualFallback[\s\S]*renderPdfPageTranslationImage\(document, boundedPage\)/);
 const visionTranslationCanvasBlock = attachmentViews.match(
   /if \(visionTranslationBlocks\.length\) \{([\s\S]*?)\n      return;\n    \}/
 )?.[1] ?? "";

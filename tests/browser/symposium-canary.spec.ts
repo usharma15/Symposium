@@ -94,6 +94,57 @@ test.describe("returning browser session", () => {
     clean();
   });
 
+  test("routes native PDF translation as text and scanned PDF translation through vision", async ({ page }) => {
+    const clean = watchDiagnostics(page);
+    const translationRequests: Array<{
+      sourcePages: Array<{ imageDataUrl?: string; segments: Array<{ id: string; text: string }> }>;
+    }> = [];
+    await page.route("**/api/assistant/document-translations", async (route) => {
+      const request = route.request().postDataJSON() as {
+        attachmentId: string;
+        sourceComplete: boolean;
+        sourcePages: Array<{ imageDataUrl?: string; segments: Array<{ id: string; text: string }> }>;
+      };
+      translationRequests.push(request);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "disabled",
+          attachmentId: request.attachmentId,
+          sourceFingerprint: "0".repeat(64),
+          sourceComplete: request.sourceComplete,
+          cached: false,
+          targetLanguage: null,
+          targetLanguageLabel: null,
+          translatedTitle: "",
+          pages: [],
+          message: "Translation provider disabled for browser routing proof.",
+          model: "browser-routing-proof",
+          createdAt: "2026-08-11T00:00:00.000Z"
+        })
+      });
+    });
+
+    const requestTranslation = async (postId: string, requestCount: number) => {
+      await page.goto(`/posts/${postId}`);
+      const pdf = page.locator(".attachment-pdf");
+      await expect(pdf.locator(".attachment-pdf-original-canvas").first()).toBeVisible();
+      await pdf.locator(".document-translate-button").click();
+      await pdf.locator(".document-translation-submit").click();
+      await expect.poll(() => translationRequests.length, { timeout: 20_000 }).toBe(requestCount);
+      return translationRequests[requestCount - 1]!;
+    };
+
+    const nativeRequest = await requestTranslation("paper-bell-epr", 1);
+    expect(nativeRequest.sourcePages[0]?.segments.length).toBeGreaterThan(0);
+    expect(nativeRequest.sourcePages[0]?.imageDataUrl).toBeUndefined();
+
+    const scannedRequest = await requestTranslation("paper-heisenberg-kinematics", 2);
+    expect(scannedRequest.sourcePages[0]?.imageDataUrl).toMatch(/^data:image\/jpeg;base64,/);
+    clean();
+  });
+
   test("restores the exact comment viewport and deep reply window after reload", async ({ page, request }) => {
     const clean = watchDiagnostics(page);
     const postResponse = await request.post("/api/posts", {

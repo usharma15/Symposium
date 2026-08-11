@@ -6,6 +6,7 @@ const expectedCanaries = [
   "symposium-canary.spec.ts\0first session enters the isolated local preview",
   "symposium-canary.spec.ts\0serializes simultaneous local preview writes without loss",
   "symposium-canary.spec.ts\0hydrates canonical routes and preserves in-app history",
+  "symposium-canary.spec.ts\0routes native PDF translation as text and scanned PDF translation through vision",
   "symposium-canary.spec.ts\0restores the exact comment viewport and deep reply window after reload",
   "symposium-canary.spec.ts\0keeps Paper and Thought design identities stable across theme and reload",
   "symposium-canary.spec.ts\0keeps the authored-artifact layouts inside desktop and mobile viewports",

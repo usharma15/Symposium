@@ -111,6 +111,7 @@
     "@clerk/backend": "3.8.4",
     "@clerk/nextjs": "7.5.9",
     "@fastify/cors": "11.2.0",
+    "@firecrawl/pdf-inspector-wasm": "1.14.1",
     "@tiptap/extension-link": "3.27.3",
     "@tiptap/extension-text-align": "3.27.3",
     "@tiptap/extension-text-style": "3.27.3",

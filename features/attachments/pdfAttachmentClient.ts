@@ -11,6 +11,13 @@ type PdfTextItem = {
   hasEOL?: boolean;
 };
 
+export type PdfTranslationClassification = {
+  pdfType: "TextBased" | "Scanned" | "ImageBased" | "Mixed";
+  pageCount: number;
+  pagesNeedingOcr: number[];
+  confidence: number;
+};
+
 export type PdfAttachmentViewContext = {
   attachmentId: string;
   fileName: string;
@@ -24,6 +31,64 @@ export type PdfAttachmentViewContext = {
 };
 
 let pdfModulePromise: Promise<typeof import("pdfjs-dist")> | null = null;
+let pdfInspectorModulePromise: Promise<typeof import("@firecrawl/pdf-inspector-wasm")> | null = null;
+const pdfTranslationClassificationByDocument = new WeakMap<object, Promise<PdfTranslationClassification | null>>();
+
+const minimumPdfTranslationClassificationConfidence = 0.8;
+
+const loadPdfInspectorModule = () => {
+  if (!pdfInspectorModulePromise) {
+    pdfInspectorModulePromise = import("@firecrawl/pdf-inspector-wasm").then(async (pdfInspector) => {
+      await pdfInspector.default();
+      return pdfInspector;
+    });
+  }
+  return pdfInspectorModulePromise;
+};
+
+export const pdfPageNeedsVisualTranslationFallbackForClassification = (
+  classification: PdfTranslationClassification | null,
+  pageNumber: number,
+  expectedPageCount: number
+) => {
+  if (
+    !classification ||
+    !Number.isInteger(pageNumber) ||
+    pageNumber < 1 ||
+    pageNumber > expectedPageCount ||
+    !Number.isInteger(classification.pageCount) ||
+    classification.pageCount !== expectedPageCount ||
+    !Number.isFinite(classification.confidence) ||
+    classification.confidence < minimumPdfTranslationClassificationConfidence ||
+    classification.confidence > 1 ||
+    !Array.isArray(classification.pagesNeedingOcr)
+  ) {
+    return true;
+  }
+  if (classification.pdfType === "Scanned" || classification.pdfType === "ImageBased") return true;
+  return classification.pagesNeedingOcr.includes(pageNumber - 1);
+};
+
+const classifyPdfForTranslation = (
+  document: import("pdfjs-dist").PDFDocumentProxy
+) => {
+  const cached = pdfTranslationClassificationByDocument.get(document);
+  if (cached) return cached;
+  const classification = Promise.all([loadPdfInspectorModule(), document.getData()])
+    .then(([pdfInspector, bytes]) => pdfInspector.classifyPdf(bytes) as PdfTranslationClassification)
+    .catch(() => null);
+  pdfTranslationClassificationByDocument.set(document, classification);
+  return classification;
+};
+
+export const pdfPageNeedsVisualTranslationFallback = async (
+  document: import("pdfjs-dist").PDFDocumentProxy,
+  pageNumber: number
+) => pdfPageNeedsVisualTranslationFallbackForClassification(
+  await classifyPdfForTranslation(document),
+  pageNumber,
+  document.numPages
+);
 
 export const resolvePdfDocumentUrl = (source: string, currentUrl: string) => {
   const resolved = new URL(source, currentUrl);
