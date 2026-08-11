@@ -40,7 +40,8 @@
   min-height: 1060px;
   border: 0;
   border-radius: 0;
-  padding: 76px 76px 270px;
+  --post-detail-content-gutter: 76px;
+  padding: 76px var(--post-detail-content-gutter) 270px;
   background-color: #e8dfc3;
   background-image: url("/symposium-artifacts/v1/paper-surface-study.png");
   background-position: 0 0;
@@ -475,12 +476,14 @@
 .symposium-shell.night .detail-layout.authored-artifact-detail .comment-thread.post-tone .comment-card.highlighted {
   border: 0;
   border-radius: 0;
-  padding: 0 82px 0 0;
+  padding: 0;
   background: transparent;
   box-shadow: none;
 }
 
 .detail-layout.authored-artifact-detail .comment-thread.post-tone .comment-card.highlighted {
+  margin-inline: 0;
+  padding: 8px 0;
   background: linear-gradient(90deg, rgba(119, 82, 39, 0.11), transparent 72%);
 }
 
@@ -805,7 +808,8 @@
   .detail-layout.authored-artifact-detail > .detail-main,
   .symposium-shell.night .detail-layout.authored-artifact-detail > .detail-main {
     min-height: 0;
-    padding: 70px 64px 250px;
+    --post-detail-content-gutter: 64px;
+    padding: 70px var(--post-detail-content-gutter) 250px;
   }
 
   .detail-layout.paper-detail.authored-artifact-detail > .detail-main,
@@ -846,7 +850,8 @@
 @media (max-width: 520px) {
   .detail-layout.authored-artifact-detail > .detail-main,
   .symposium-shell.night .detail-layout.authored-artifact-detail > .detail-main {
-    padding: 58px 48px 210px;
+    --post-detail-content-gutter: 48px;
+    padding: 58px var(--post-detail-content-gutter) 210px;
   }
 
   .detail-layout.paper-detail.authored-artifact-detail > .detail-main,
@@ -904,7 +909,7 @@
   .symposium-shell.night .detail-layout.authored-artifact-detail .comment-thread.post-tone .comment-card,
   .detail-layout.authored-artifact-detail .comment-thread.post-tone .comment-card.highlighted,
   .symposium-shell.night .detail-layout.authored-artifact-detail .comment-thread.post-tone .comment-card.highlighted {
-    padding-right: 52px;
+    padding-right: 0;
   }
 
   .authored-bottom-caricature {

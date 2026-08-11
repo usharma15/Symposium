@@ -1382,12 +1382,13 @@
 
 .detail-main {
   position: relative;
-  padding: 34px;
+  --post-detail-content-gutter: 34px;
+  padding: 34px var(--post-detail-content-gutter);
 }
 
 .detail-main > .post-owner-actions {
   top: 18px;
-  right: 18px;
+  right: var(--post-detail-content-gutter);
 }
 
 .detail-main > .post-detail-title {

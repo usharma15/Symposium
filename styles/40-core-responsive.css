@@ -33,6 +33,7 @@
 
   .detail-main,
   .profile-hero {
+    --post-detail-content-gutter: 22px;
     padding: 22px;
   }
 

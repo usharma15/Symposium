@@ -1149,7 +1149,7 @@ export function DetailView({
         Back to {room.feedLabel}
       </button>
 
-      <section className="detail-main" ref={detailRef}>
+      <section className="detail-main" data-detail-content-rail ref={detailRef}>
         {isPaper ? <PaperPerimeterFrame /> : isThought ? <ThoughtPerimeterFrame /> : null}
         {isPaper || isThought ? <AuthoredArtifactAssetPreload postType={isPaper ? "paper" : "thought"} /> : null}
         {interactionLocked ? (
@@ -1201,7 +1201,7 @@ export function DetailView({
             mode="detail"
           />
         ) : (
-          <ScribbleCitable source={postScribbleSource(item)}>
+          <ScribbleCitable source={postScribbleSource(item)} className="post-detail-document">
             {translation.showTranslation ? (
               <TranslatedContent
                 state={translation}

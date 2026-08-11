@@ -71,6 +71,12 @@
 .symposium-document-detail.document-margin-compact { padding-inline: 0; }
 .symposium-document-detail.document-margin-normal { padding-inline: clamp(0rem, 1.5vw, 0.75rem); }
 .symposium-document-detail.document-margin-generous { padding-inline: clamp(0.75rem, 4vw, 2.5rem); }
+.detail-main > .post-detail-document,
+.detail-main > .post-detail-document > .symposium-document-detail {
+  width: 100%;
+  max-width: 100%;
+}
+.detail-main > .post-detail-document > .symposium-document-detail { padding-inline: 0; }
 .symposium-document p,
 .symposium-document blockquote,
 .symposium-document h1,

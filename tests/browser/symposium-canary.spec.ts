@@ -199,6 +199,121 @@ test.describe("returning browser session", () => {
     clean();
   });
 
+  test("aligns post and comment detail content to one responsive rail", async ({ page, request }) => {
+    const clean = watchDiagnostics(page);
+
+    for (const sample of [
+      { kind: "paper", postType: "paper", room: "library", title: "Browser rail proof paper", width: 1440, height: 1000 },
+      { kind: "thought", postType: "thought", room: "amphitheater", title: "", width: 390, height: 844 }
+    ] as const) {
+      await page.setViewportSize({ width: sample.width, height: sample.height });
+      const body = `Browser rail proof for ${sample.postType} detail content.`;
+      const postResponse = await request.post("/api/posts", {
+        data: {
+          ...sample,
+          body,
+          authorHandle: "@udayan",
+          attachmentIds: [],
+          document: {
+            version: 1,
+            settings: { width: "standard", margin: "generous" },
+            nodes: [{
+              id: `browser-rail-${sample.postType}`,
+              type: "paragraph",
+              content: [{ text: body }],
+              align: "left",
+              indent: 0
+            }]
+          }
+        }
+      });
+      expect(postResponse.ok()).toBe(true);
+      const postId = ((await postResponse.json()) as { item: { id: string } }).item.id;
+      const commentBody = `Browser rail proof comment for ${sample.postType}.`;
+      const commentResponse = await request.post(`/api/posts/${postId}/comments`, {
+        data: {
+          body: commentBody,
+          stance: "Comment",
+          parentId: null,
+          authorHandle: "@udayan",
+          attachmentIds: []
+        }
+      });
+      expect(commentResponse.ok()).toBe(true);
+
+      await page.goto(`/posts/${postId}`);
+      await expect(page.getByText(body, { exact: true })).toBeVisible();
+      await expect(page.getByText(commentBody, { exact: true })).toBeVisible();
+      const geometry = await page.locator("[data-detail-content-rail]").evaluate((detail, postType) => {
+        const detailRect = detail.getBoundingClientRect();
+        const detailStyle = getComputedStyle(detail);
+        const railLeft = detailRect.left + Number.parseFloat(detailStyle.paddingLeft);
+        const railRight = detailRect.right - Number.parseFloat(detailStyle.paddingRight);
+        const required = (selector: string) => {
+          const element = detail.querySelector<HTMLElement>(selector);
+          if (!element) throw new Error(`Missing rail element: ${selector}`);
+          return element.getBoundingClientRect();
+        };
+        const leftSelectors = [
+          ".detail-byline-button",
+          ":scope > .content-translation-post",
+          ".post-detail-document .symposium-document-detail > [data-document-block-id]",
+          ":scope > .post-time-footer",
+          ":scope > .social-actions",
+          ":scope > .comments-section > h2",
+          ".comment-thread .comment-author",
+          ".comment-thread .symposium-document-comment [data-document-block-id]",
+          ".comment-thread .comment-time-footer",
+          ".comment-thread .comment-actions",
+          ".comment-thread .reply-button"
+        ];
+        if (postType === "paper") leftSelectors.unshift(".authored-paper-title-ceremony h1");
+        const rightSelectors = [
+          ":scope > .post-owner-actions",
+          ":scope > .content-translation-post",
+          ":scope > .post-detail-document",
+          ":scope > .social-actions",
+          ":scope > .comments-section",
+          ".comment-thread .comment-owner-actions"
+        ];
+        return {
+          railLeft,
+          railRight,
+          lefts: leftSelectors.map((selector) => ({ selector, value: required(selector).left })),
+          rights: rightSelectors.map((selector) => ({ selector, value: required(selector).right }))
+        };
+      }, sample.postType);
+
+      for (const measurement of geometry.lefts) {
+        expect(Math.abs(measurement.value - geometry.railLeft), `${sample.postType} left rail: ${measurement.selector}`).toBeLessThanOrEqual(1);
+      }
+      for (const measurement of geometry.rights) {
+        expect(Math.abs(measurement.value - geometry.railRight), `${sample.postType} right rail: ${measurement.selector}`).toBeLessThanOrEqual(1);
+      }
+    }
+
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto("/posts/paper-bell-epr");
+    const inlineAttachment = page.locator(".post-detail-document .post-attachments-detail").first();
+    await expect(inlineAttachment).toBeVisible();
+    const attachmentGeometry = await page.locator("[data-detail-content-rail]").evaluate((detail) => {
+      const detailRect = detail.getBoundingClientRect();
+      const detailStyle = getComputedStyle(detail);
+      const attachment = detail.querySelector<HTMLElement>(".post-detail-document .post-attachments-detail");
+      if (!attachment) throw new Error("Missing inline detail attachment");
+      const attachmentRect = attachment.getBoundingClientRect();
+      return {
+        railLeft: detailRect.left + Number.parseFloat(detailStyle.paddingLeft),
+        railRight: detailRect.right - Number.parseFloat(detailStyle.paddingRight),
+        attachmentLeft: attachmentRect.left,
+        attachmentRight: attachmentRect.right
+      };
+    });
+    expect(Math.abs(attachmentGeometry.attachmentLeft - attachmentGeometry.railLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(attachmentGeometry.attachmentRight - attachmentGeometry.railRight)).toBeLessThanOrEqual(1);
+    clean();
+  });
+
   test("creates, edits, and durably reloads a titleless Thought", async ({ page, browser }) => {
     const clean = watchDiagnostics(page);
     const initial = "Browser proof: titleless Thought creation persists.";

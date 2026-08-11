@@ -267,6 +267,48 @@
   min-width: 0;
 }
 
+/* A post detail gives every comment one local rail. Reply nesting still moves
+ * that whole rail inward, but the author, body, attachments, date and actions
+ * no longer introduce separate horizontal offsets inside it. */
+.detail-main .comment-card {
+  padding-right: 0;
+}
+
+.detail-main .comment-author {
+  max-width: calc(100% - 108px);
+}
+
+.detail-main .comment-leading-action,
+.detail-main .comment p,
+.detail-main .comment-time-footer,
+.detail-main .comment-actions,
+.detail-main .reply-button,
+.detail-main .reply-window-button,
+.detail-main .comment-composer.compact {
+  margin-left: 0;
+}
+
+.detail-main .comment-card .symposium-document-comment {
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
+}
+
+.detail-main .comment-attachments,
+.detail-main .comment-card > .quote-card-shell {
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
+}
+
+.detail-main .comment-card.highlighted {
+  padding-right: 10px;
+}
+
+.detail-main .comment-card.highlighted > .comment-owner-actions {
+  right: 10px;
+}
+
 .pocket {
   position: fixed;
   z-index: 28;
