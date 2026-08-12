@@ -61,6 +61,7 @@ export function WorkspaceView({
   onOpenSaved,
   onPublished,
   onOpenProfile,
+  onOpenPost,
   initialDocumentId,
   initialCommentId,
   initialViewState,
@@ -73,6 +74,7 @@ export function WorkspaceView({
   onOpenSaved: () => void;
   onPublished: (result: WorkspacePublicationResponse) => void;
   onOpenProfile: (handle: string) => void;
+  onOpenPost: (postId: string, commentId: string | null) => void;
   initialDocumentId?: string;
   initialCommentId?: string;
   initialViewState?: WorkspaceViewSnapshot;
@@ -186,6 +188,10 @@ export function WorkspaceView({
     }
   }, []);
 
+  const revealDocumentFromTop = useCallback(() => {
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+  }, []);
+
   const openDocument = useCallback((documentId: string, editing = false) => {
     if (documentId === selectedDocumentId) {
       if (editing) setEditSelected(true);
@@ -194,8 +200,13 @@ export function WorkspaceView({
     void afterSavingCurrent(() => {
       setSelectedDocumentId(documentId);
       setEditSelected(editing);
+      revealDocumentFromTop();
     });
-  }, [afterSavingCurrent, selectedDocumentId]);
+  }, [afterSavingCurrent, revealDocumentFromTop, selectedDocumentId]);
+
+  const openPostFromDocument = useCallback((postId: string, commentId: string | null) => {
+    void afterSavingCurrent(() => onOpenPost(postId, commentId));
+  }, [afterSavingCurrent, onOpenPost]);
 
   const clearSelectedDocument = useCallback(() => {
     void afterSavingCurrent(() => {
@@ -536,6 +547,7 @@ export function WorkspaceView({
             onUploadAttachment={uploadDraftAttachment}
             onUploadCommentAttachment={uploadDraftCommentAttachment}
             onOpenProfile={onOpenProfile}
+            onOpenPost={openPostFromDocument}
           />
         ) : (
           <section className="feed-stream workspace-feed" aria-label="Workspace drafts">

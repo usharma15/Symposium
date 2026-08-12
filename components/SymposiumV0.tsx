@@ -4691,6 +4691,7 @@ function SymposiumExperience({
             onOpenSaved={() => toggleOfficeMode("saved")}
             onPublished={acceptWorkspacePublication}
             onOpenProfile={openProfile}
+            onOpenPost={(postId, commentId) => openPost(postId, commentId, "thread")}
             initialDocumentId={workspaceView.selectedDocumentId ?? (initialRoute.kind === "workspace" ? initialRoute.noteId : undefined)}
             initialCommentId={initialRoute.kind === "workspace" ? initialRoute.commentId : undefined}
             initialViewState={workspaceView}

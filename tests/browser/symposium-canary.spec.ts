@@ -145,6 +145,87 @@ test.describe("returning browser session", () => {
     clean();
   });
 
+  test("opens Notes drafts at the top and returns from quoted posts to the exact Office view", async ({ page, request }) => {
+    const clean = watchDiagnostics(page);
+    const paragraphs = Array.from({ length: 70 }, (_, index) => ({
+      id: `office-origin-paragraph-${index + 1}`,
+      type: "paragraph" as const,
+      content: [{ text: `Office origin paragraph ${index + 1}. This keeps the private draft long enough to prove exact reading-position restoration.` }],
+      align: "left" as const,
+      indent: 0
+    }));
+    const quoteIndex = 35;
+    const documentNodes = [
+      ...paragraphs.slice(0, quoteIndex),
+      {
+        id: "office-origin-quoted-post",
+        type: "reference" as const,
+        resource: { type: "post" as const, id: "paper-bell-epr", label: "On the Einstein Podolsky Rosen paradox" },
+        source: {
+          kind: "post" as const,
+          sourceId: "paper-bell-epr",
+          sourcePostId: "paper-bell-epr",
+          author: "John Bell",
+          authorHandle: "@john_bell",
+          title: "On the Einstein Podolsky Rosen paradox",
+          body: "A quoted Paper retained inside this private Office draft.",
+          postTone: "paper" as const,
+          canonicalPath: "/posts/paper-bell-epr"
+        }
+      },
+      ...paragraphs.slice(quoteIndex)
+    ];
+    const body = paragraphs.map((node) => node.content[0]!.text).join("\n\n");
+    const created = await request.post("/api/workspace/documents", {
+      data: {
+        actorHandle: "@udayan",
+        title: "Office quote-origin browser proof",
+        body,
+        document: { version: 1, nodes: documentNodes },
+        kind: "note",
+        publicationTarget: "undecided",
+        notebookId: null,
+        targetId: null,
+        proposal: null,
+        opportunity: null,
+        attachmentIds: []
+      }
+    });
+    expect(created.ok()).toBe(true);
+    const noteId = ((await created.json()) as { document: { id: string } }).document.id;
+
+    await page.setViewportSize({ width: 1280, height: 620 });
+    await page.goto("/workspace?view=notes");
+    const card = page.getByTestId(`workspace-card-${noteId}`);
+    await expect(card).toBeVisible();
+    await card.evaluate((element) => {
+      const spacer = document.createElement("div");
+      spacer.dataset.workspaceOpenScrollProof = "true";
+      spacer.style.height = "680px";
+      element.parentElement?.prepend(spacer);
+      window.scrollTo({ top: 620, behavior: "auto" });
+    });
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(500);
+    await card.click();
+    const draft = page.getByTestId(`workspace-detail-${noteId}`);
+    await expect(draft).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(4);
+
+    const quotedPost = draft.locator('a.document-reference[href="/posts/paper-bell-epr"]');
+    await quotedPost.scrollIntoViewIfNeeded();
+    const draftScrollY = await page.evaluate(() => window.scrollY);
+    expect(draftScrollY).toBeGreaterThan(300);
+    await quotedPost.click();
+    await expect(page).toHaveURL(/\/posts\/paper-bell-epr$/);
+    await expect(page.locator("main.symposium-shell")).toHaveAttribute("data-room", "office");
+
+    await page.locator(".back-button").click();
+    await expect(page).toHaveURL(new RegExp(`/workspace\\?view=notes&note=${noteId}$`));
+    await expect(page.getByTestId(`workspace-detail-${noteId}`)).toBeVisible();
+    await expect.poll(async () => Math.abs(await page.evaluate(() => window.scrollY) - draftScrollY), { timeout: 10_000 }).toBeLessThan(12);
+    clean();
+  });
+
   test("restores the exact comment viewport and deep reply window after reload", async ({ page, request }) => {
     const clean = watchDiagnostics(page);
     const postResponse = await request.post("/api/posts", {

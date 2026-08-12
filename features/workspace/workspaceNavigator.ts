@@ -1,5 +1,30 @@
 import type { UpdateWorkspaceDocumentInputContract } from "@/packages/contracts/src";
 import type { WorkspaceDocument, WorkspaceSnapshot } from "@/lib/workspaceTypes";
+import { parseCanonicalRoute } from "@/features/navigation/canonicalRoute";
+
+export type WorkspacePostTarget = {
+  postId: string;
+  commentId: string | null;
+};
+
+export const workspacePostTargetFromHref = (
+  href: string,
+  currentUrl: string
+): WorkspacePostTarget | null => {
+  try {
+    const current = new URL(currentUrl);
+    const target = new URL(href, current);
+    if (target.origin !== current.origin) return null;
+    const route = parseCanonicalRoute(target.pathname, target.search);
+    if (route.kind !== "post") return null;
+    return {
+      postId: route.postId,
+      commentId: route.commentId ?? null
+    };
+  } catch {
+    return null;
+  }
+};
 
 export const sortWorkspaceDocuments = (documents: WorkspaceDocument[]) =>
   [...documents].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));

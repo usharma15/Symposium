@@ -17,7 +17,8 @@ import {
   normalizeWorkspaceSnapshot,
   runAfterWorkspaceSave,
   workspaceDocumentMetadataUpdate,
-  workspaceDocumentsInNotebook
+  workspaceDocumentsInNotebook,
+  workspacePostTargetFromHref
 } from "@/features/workspace/workspaceNavigator";
 import type { WorkspaceDocument } from "@/lib/workspaceTypes";
 import { reconcileWorkspaceComments } from "@/features/workspace/workspaceCommentState";
@@ -75,6 +76,34 @@ const workspaceDocument = (input: Partial<WorkspaceDocument> & Pick<WorkspaceDoc
 };
 
 const main = async () => {
+  assert.deepEqual(
+    workspacePostTargetFromHref(
+      "/posts/source-post?comment=source-comment",
+      "https://symposium.test/workspace?view=notes"
+    ),
+    { postId: "source-post", commentId: "source-comment" }
+  );
+  assert.deepEqual(
+    workspacePostTargetFromHref(
+      "https://symposium.test/posts/source-post",
+      "https://symposium.test/workspace?view=notes"
+    ),
+    { postId: "source-post", commentId: null }
+  );
+  assert.equal(
+    workspacePostTargetFromHref(
+      "https://outside.test/posts/source-post",
+      "https://symposium.test/workspace?view=notes"
+    ),
+    null
+  );
+  assert.equal(
+    workspacePostTargetFromHref(
+      "/profiles/source-author",
+      "https://symposium.test/workspace?view=notes"
+    ),
+    null
+  );
   assert.equal(createWorkspaceDocumentInputSchema.safeParse({
     title: "Generic note",
     body: "Research draft",

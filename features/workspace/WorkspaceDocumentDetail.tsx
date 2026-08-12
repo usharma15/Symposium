@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { ArrowLeft, Check, Clock3, Pencil, Send, Trash2, Users } from "lucide-react";
 import { SymposiumDocumentEditor, SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
 import type { AttachmentUploadHandler } from "@/features/attachments/AttachmentViews";
@@ -17,6 +17,7 @@ import { findCommentInTree, localDateTimeLabel, relativeTimeLabel } from "@/lib/
 import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import type { WorkspaceDocument, WorkspaceNotebook, WorkspacePublicationResponse } from "@/lib/workspaceTypes";
 import { workspaceDocumentLabel, workspaceKindLabel } from "@/features/workspace/WorkspaceDocumentCard";
+import { workspacePostTargetFromHref } from "@/features/workspace/workspaceNavigator";
 import { useWorkspaceComments } from "@/features/workspace/useWorkspaceComments";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 import { PatronageProposalFields } from "@/features/patronage/PatronageViews";
@@ -92,6 +93,7 @@ type WorkspaceDocumentDetailProps = {
   onUploadAttachment: AttachmentUploadHandler;
   onUploadCommentAttachment: AttachmentUploadHandler;
   onOpenProfile: (handle: string) => void;
+  onOpenPost: (postId: string, commentId: string | null) => void;
 };
 
 export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle, WorkspaceDocumentDetailProps>(function WorkspaceDocumentDetail({
@@ -109,7 +111,8 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
   onPublished,
   onUploadAttachment,
   onUploadCommentAttachment,
-  onOpenProfile
+  onOpenProfile,
+  onOpenPost
 }, ref) {
   const [editing, setEditing] = useState(initiallyEditing);
   const [title, setTitle] = useState(document.title);
@@ -334,8 +337,31 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
     }
   };
 
+  const openInternalPostReference = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) return;
+    const target = event.target instanceof Element ? event.target : null;
+    const link = target?.closest<HTMLAnchorElement>("a[href]");
+    if (!link || link.target === "_blank" || link.hasAttribute("download")) return;
+    const postTarget = workspacePostTargetFromHref(link.getAttribute("href") ?? "", window.location.href);
+    if (!postTarget) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onOpenPost(postTarget.postId, postTarget.commentId);
+  };
+
   return (
-    <div className="workspace-detail" data-testid={`workspace-detail-${document.id}`}>
+    <div
+      className="workspace-detail"
+      data-testid={`workspace-detail-${document.id}`}
+      onClickCapture={openInternalPostReference}
+    >
       <header className="workspace-detail-nav">
         <button type="button" onClick={onBack}><ArrowLeft size={17} />Notes</button>
         <div className="workspace-save-state" aria-live="polite">
