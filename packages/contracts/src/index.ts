@@ -1225,6 +1225,51 @@ export const postPageResponseSchema = z.object({
   nextCursor: z.string().nullable()
 });
 
+export const savedLibrarySubjectTypeSchema = z.enum(["post", "comment"]);
+export const savedLibraryFolderSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(80),
+  revision: z.number().int().positive(),
+  createdAt: isoDateTimeStringSchema,
+  updatedAt: isoDateTimeStringSchema,
+  itemCount: z.number().int().nonnegative().default(0)
+});
+export const savedLibraryEntrySchema = z.object({
+  subjectType: savedLibrarySubjectTypeSchema,
+  subjectId: z.string().min(1).max(240),
+  postId: z.string().min(1).max(240),
+  folderId: z.string().uuid().nullable(),
+  savedAt: isoDateTimeStringSchema,
+  archivedAt: isoDateTimeStringSchema.nullable(),
+  archiveExpiresAt: isoDateTimeStringSchema.nullable(),
+  revision: z.number().int().positive()
+});
+export const savedLibraryResponseSchema = z.object({
+  entries: z.array(savedLibraryEntrySchema).max(500),
+  folders: z.array(savedLibraryFolderSchema).max(100),
+  items: z.array(inquiryItemSchema).max(500),
+  profiles: z.record(z.string(), researchProfileSchema)
+});
+export const createSavedLibraryFolderInputSchema = z.object({
+  name: z.string().trim().min(1).max(80)
+});
+export const updateSavedLibraryFolderInputSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  expectedRevision: z.number().int().positive()
+});
+export const deleteSavedLibraryFolderInputSchema = z.object({
+  expectedRevision: z.number().int().positive()
+});
+export const updateSavedLibraryEntryInputSchema = z.object({
+  subjectType: savedLibrarySubjectTypeSchema,
+  subjectId: z.string().trim().min(1).max(240),
+  folderId: z.string().uuid().nullable().optional(),
+  archived: z.boolean().optional(),
+  expectedRevision: z.number().int().positive()
+}).refine((input) => input.folderId !== undefined || input.archived !== undefined, {
+  message: "Choose a folder or archive change."
+});
+
 export const searchResponseSchema = z.object({
   posts: z.array(inquiryItemSchema).max(50),
   profiles: z.array(researchProfileSchema).max(50),
@@ -2792,6 +2837,14 @@ export type ProfileAuthoredCommentActivityContract = z.infer<typeof profileAutho
 export type ProfileActivityQueryContract = z.infer<typeof profileActivityQuerySchema>;
 export type ProfileActivityCountsContract = z.infer<typeof profileActivityCountsSchema>;
 export type ProfileActivityResponseContract = z.infer<typeof profileActivityResponseSchema>;
+export type SavedLibrarySubjectTypeContract = z.infer<typeof savedLibrarySubjectTypeSchema>;
+export type SavedLibraryFolderContract = z.infer<typeof savedLibraryFolderSchema>;
+export type SavedLibraryEntryContract = z.infer<typeof savedLibraryEntrySchema>;
+export type SavedLibraryResponseContract = z.infer<typeof savedLibraryResponseSchema>;
+export type CreateSavedLibraryFolderInputContract = z.infer<typeof createSavedLibraryFolderInputSchema>;
+export type UpdateSavedLibraryFolderInputContract = z.infer<typeof updateSavedLibraryFolderInputSchema>;
+export type DeleteSavedLibraryFolderInputContract = z.infer<typeof deleteSavedLibraryFolderInputSchema>;
+export type UpdateSavedLibraryEntryInputContract = z.infer<typeof updateSavedLibraryEntryInputSchema>;
 export type AttachmentKindContract = z.infer<typeof attachmentKindSchema>;
 export type BootstrapResponseContract = z.infer<typeof bootstrapResponseSchema>;
 export type PostPageQueryContract = z.infer<typeof postPageQuerySchema>;

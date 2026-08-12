@@ -4,6 +4,7 @@ import { profile } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { LocalAttachmentStoreError } from "@/lib/localAttachmentStore";
 import { LocalWorkspaceStoreError } from "@/lib/localWorkspaceStore";
+import { LocalSavedLibraryStoreError } from "@/lib/localSavedLibraryStore";
 import { proxyLiveApiRequest } from "@/lib/liveBackendClient";
 
 export const workspaceActorHandle = (request: Request, bodyActorHandle?: string) => {
@@ -12,7 +13,7 @@ export const workspaceActorHandle = (request: Request, bodyActorHandle?: string)
 };
 
 export const workspaceRouteError = (error: unknown) => {
-  if (error instanceof LocalWorkspaceStoreError || error instanceof LocalAttachmentStoreError) {
+  if (error instanceof LocalWorkspaceStoreError || error instanceof LocalAttachmentStoreError || error instanceof LocalSavedLibraryStoreError) {
     return jsonError(error.message, error.status);
   }
   if (error instanceof ZodError) return jsonError(error.issues[0]?.message ?? "Invalid workspace request.", 400);

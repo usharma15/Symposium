@@ -81,6 +81,7 @@ export const verificationManifest = [
   stage("patronage:check", "product"),
   stage("opportunity:check", "product"),
   stage("profile:check", "product"),
+  stage("saved-library:check", "product"),
   stage("post-publishing:check", "product"),
   stage("entry-session:check", "product"),
   stage("typecheck:all", "typecheck"),

@@ -226,6 +226,86 @@ test.describe("returning browser session", () => {
     clean();
   });
 
+  test("shows every saved post and comment and organizes the Office library", async ({ page, request }) => {
+    const clean = watchDiagnostics(page);
+    const marker = Date.now().toString(36);
+    const postIds: string[] = [];
+    const commentIds: string[] = [];
+    const bodies = [1, 2, 3].map((index) => `Saved library browser proof ${marker} post ${index}.`);
+    for (let index = 0; index < bodies.length; index += 1) {
+      const postResponse = await request.post("/api/posts", {
+        data: {
+          title: `Saved library proof ${marker} paper ${index + 1}`,
+          body: bodies[index],
+          kind: "paper",
+          postType: "paper",
+          room: "library",
+          authorHandle: "@udayan",
+          attachmentIds: []
+        }
+      });
+      expect(postResponse.ok()).toBe(true);
+      const postId = ((await postResponse.json()) as { item: { id: string } }).item.id;
+      postIds.push(postId);
+      expect((await request.post(`/api/posts/${postId}/actions`, {
+        data: { action: "save", active: true, actorHandle: "@udayan" }
+      })).ok()).toBe(true);
+
+      if (index < 2) {
+        const commentResponse = await request.post(`/api/posts/${postId}/comments`, {
+          data: {
+            body: `Saved library browser proof ${marker} comment ${index + 1}.`,
+            stance: "Comment",
+            parentId: null,
+            authorHandle: "@udayan",
+            attachmentIds: []
+          }
+        });
+        expect(commentResponse.ok()).toBe(true);
+        const commentId = ((await commentResponse.json()) as { comment: { id: string } }).comment.id;
+        commentIds.push(commentId);
+        expect((await request.post(`/api/posts/${postId}/comments/${commentId}/actions`, {
+          data: { action: "save", active: true, actorHandle: "@udayan" }
+        })).ok()).toBe(true);
+      }
+    }
+
+    await page.goto("/workspace?view=saved");
+    await expect(page.getByRole("heading", { name: "All Saved", exact: true })).toBeVisible();
+    for (const postId of postIds) await expect(page.getByTestId(`saved-entry-post-${postId}`)).toBeVisible();
+    for (const commentId of commentIds) await expect(page.getByTestId(`saved-entry-comment-${commentId}`)).toBeVisible();
+    await expect(page.locator(".saved-library-card").filter({ hasText: marker })).toHaveCount(5);
+
+    const sort = page.locator(".saved-library-sort select");
+    await expect(sort.locator("option")).toHaveCount(10);
+    await sort.selectOption("oldest_saved");
+    const folderName = `Browser proof folder ${marker}`;
+    await page.locator(".saved-library-tabs").getByRole("button", { name: /Folders/ }).click();
+    await page.getByPlaceholder("Create a folder").fill(folderName);
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    await expect(page.getByRole("button", { name: new RegExp(folderName) })).toBeVisible();
+
+    await page.locator(".saved-library-tabs").getByRole("button", { name: /All Saved/ }).click();
+    const filedCard = page.getByTestId(`saved-entry-post-${postIds[0]}`);
+    await filedCard.locator("select").selectOption({ label: folderName });
+    await expect(page.getByText("Folder updated", { exact: true })).toBeVisible();
+
+    await page.locator(".saved-library-tabs").getByRole("button", { name: /Folders/ }).click();
+    const folderButton = page.getByRole("button", { name: new RegExp(`${folderName}\\s+1 item`) });
+    await expect(folderButton).toBeVisible();
+    await folderButton.click();
+    await expect(page.getByTestId(`saved-entry-post-${postIds[0]}`)).toBeVisible();
+    await page.getByTestId(`saved-entry-post-${postIds[0]}`).getByRole("button", { name: "Archive" }).click();
+    await expect(page.getByText("Moved to Archive for 60 days", { exact: true })).toBeVisible();
+
+    await page.locator(".saved-library-tabs").getByRole("button", { name: /Archived/ }).click();
+    const archivedCard = page.getByTestId(`saved-entry-post-${postIds[0]}`);
+    await expect(archivedCard).toContainText(/60 days left/);
+    await archivedCard.getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByText("Restored to All Saved", { exact: true })).toBeVisible();
+    clean();
+  });
+
   test("restores the exact comment viewport and deep reply window after reload", async ({ page, request }) => {
     const clean = watchDiagnostics(page);
     const postResponse = await request.post("/api/posts", {

@@ -28,6 +28,12 @@ const imports = async (file: string) => {
 };
 
 const apiRouteBaseline = "10fdc8fd2952a61ad3b47a86988926c8825c74b6";
+const postBaselineApiRoutes = new Map([
+  ["app/api/saved-library/entries/route.ts", "PATCH|runtime=nodejs|dynamic=force-dynamic"],
+  ["app/api/saved-library/folders/[id]/route.ts", "DELETE,PATCH|runtime=nodejs|dynamic=force-dynamic"],
+  ["app/api/saved-library/folders/route.ts", "POST|runtime=nodejs|dynamic=force-dynamic"],
+  ["app/api/saved-library/route.ts", "GET|runtime=nodejs|dynamic=force-dynamic"]
+]);
 const routeSignature = (source: string) => {
   const methods = [...source.matchAll(
     /export\s+(?:(?:async\s+)?function|const)\s+(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\b/g
@@ -46,15 +52,20 @@ const main = async () => {
   let routeMethodCount = 0;
   for (const { file, name } of apiRoutes) {
     const signature = routeSignature(await readFile(file, "utf8"));
-    assert.equal(
-      signature,
-      routeSignature(execFileSync("git", ["show", `${apiRouteBaseline}:${name}`], { encoding: "utf8" })),
-      `${name} changed its public method, runtime, or dynamic contract.`
+    const expectedPostBaselineSignature = postBaselineApiRoutes.get(name);
+    const expectedSignature = expectedPostBaselineSignature ?? routeSignature(
+      execFileSync("git", ["show", `${apiRouteBaseline}:${name}`], { encoding: "utf8" })
     );
+    assert.equal(signature, expectedSignature, `${name} changed its public method, runtime, or dynamic contract.`);
     routeMethodCount += signature.split("|")[0]?.split(",").filter(Boolean).length ?? 0;
   }
-  assert.equal(apiRoutes.length, 85);
-  assert.equal(routeMethodCount, 116);
+  assert.deepEqual(
+    [...postBaselineApiRoutes.keys()].filter((name) => !apiRoutes.some((route) => route.name === name)),
+    [],
+    "A post-baseline API route is missing."
+  );
+  assert.equal(apiRoutes.length, 89);
+  assert.equal(routeMethodCount, 121);
   const symposiumImporters: string[] = [];
   const featureGraph = new Map<string, string[]>();
   for (const file of files) {
@@ -160,7 +171,7 @@ const main = async () => {
 
   reportCheck([
     "single legacy shell entrypoint",
-    "exact 85-route and 116-method API surface preservation",
+    "exact 89-route and 121-method API surface preservation",
     "backend to frontend dependency isolation",
     "feature module independence",
     "shell and feature dependency boundaries",

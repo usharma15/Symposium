@@ -26,8 +26,8 @@ const main = async () => {
   assert.equal(packageManifest.devDependencies?.["drizzle-kit"], undefined);
   assert.match(renderBlueprint, /autoDeployTrigger: commit/);
   assert.doesNotMatch(renderBlueprint, /autoDeployTrigger: checksPass/);
-  assert.equal(latestMigrationId, "0066_assistant_context_configuration");
-  assert.equal(migrationIds.length, 66);
+  assert.equal(latestMigrationId, "0067_saved_library_organization");
+  assert.equal(migrationIds.length, 67);
   const migrationSql = migrations.map((migration) => migration.sql).join("\n");
   const commentDeletionMigration = migrations.find(
     ({ id }) => id === "0065_comment_deletion_reconciliation"
@@ -41,6 +41,13 @@ const main = async () => {
   assert.ok(assistantContextConfigurationMigration);
   assert.match(assistantContextConfigurationMigration.sql, /context_configuration JSONB NOT NULL DEFAULT/);
   assert.match(assistantContextConfigurationMigration.sql, /ai_conversations_context_configuration_check/);
+  const savedLibraryMigration = migrations.find(
+    ({ id }) => id === "0067_saved_library_organization"
+  );
+  assert.ok(savedLibraryMigration);
+  assert.match(savedLibraryMigration.sql, /CREATE TABLE IF NOT EXISTS saved_library_folders/);
+  assert.match(savedLibraryMigration.sql, /CREATE TABLE IF NOT EXISTS saved_library_entries/);
+  assert.match(savedLibraryMigration.sql, /archive_expires_at TIMESTAMPTZ/);
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");

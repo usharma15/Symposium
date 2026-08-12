@@ -214,6 +214,7 @@ import { createCommunityController } from "@/features/communities/communityContr
 import { CommunityGovernanceProvider } from "@/features/communities/CommunityGovernanceContext";
 import { createContentDeletionController } from "@/features/moderation/contentDeletionController";
 import { WorkspaceView } from "@/features/workspace/WorkspaceView";
+import { SavedLibraryView } from "@/features/saved/SavedLibraryView";
 import { savePostDraftToWorkspace } from "@/features/workspace/savePostDraftToWorkspace";
 import type { WorkspaceDocument, WorkspacePublicationResponse } from "@/lib/workspaceTypes";
 import { SearchModal } from "@/features/search/SearchModal";
@@ -1010,9 +1011,6 @@ function SymposiumExperience({
         key: `community:${selectedCommunityId}`,
         query: { communityId: selectedCommunityId, limit: 24 }
       };
-    }
-    if (activeRoom === "office" && officeMode === "saved") {
-      return { key: "office:saved", query: { saved: true, limit: 24 } };
     }
     if (activeRoom === "hall" || activeRoom === "office" || activeRoom === "communities") return null;
     if (activeRoom === "symposium") {
@@ -4682,6 +4680,15 @@ function SymposiumExperience({
             room={activeRoomData}
             onOpenSaved={() => toggleOfficeMode("saved")}
             onOpenNotes={() => toggleOfficeMode("notes")}
+          />
+        ) : activeRoom === "office" && officeMode === "saved" ? (
+          <SavedLibraryView
+            room={activeRoomData}
+            actorHandle={currentProfile.handle}
+            profiles={profiles}
+            onOpenNotes={() => toggleOfficeMode("notes")}
+            onSelect={(postId, commentId) => openPost(postId, commentId, "thread")}
+            onOpenProfile={openProfile}
           />
         ) : activeRoom === "office" && officeMode === "notes" ? (
           <WorkspaceView

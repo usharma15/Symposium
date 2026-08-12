@@ -3308,6 +3308,52 @@ export const migrations: Migration[] = [
       COMMENT ON COLUMN ai_conversations.context_configuration IS
         'Owner-controlled, per-thread model context recipe. Defaults preserve pre-0066 Assistant behavior.';
     `
+  },
+  {
+    id: "0067_saved_library_organization",
+    sql: `
+      CREATE TABLE IF NOT EXISTS saved_library_folders (
+        id UUID PRIMARY KEY,
+        owner_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        name TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 80),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS saved_library_folders_owner_name_idx
+        ON saved_library_folders (owner_handle, lower(name));
+      CREATE INDEX IF NOT EXISTS saved_library_folders_owner_updated_idx
+        ON saved_library_folders (owner_handle, updated_at DESC, id DESC);
+
+      CREATE TABLE IF NOT EXISTS saved_library_entries (
+        owner_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        subject_type TEXT NOT NULL CHECK (subject_type IN ('post', 'comment')),
+        subject_id TEXT NOT NULL,
+        post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+        folder_id UUID REFERENCES saved_library_folders(id) ON DELETE SET NULL,
+        source_action_revision INTEGER NOT NULL DEFAULT 1 CHECK (source_action_revision >= 1),
+        saved_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        archived_at TIMESTAMPTZ,
+        archive_expires_at TIMESTAMPTZ,
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (owner_handle, subject_type, subject_id),
+        CHECK (
+          (archived_at IS NULL AND archive_expires_at IS NULL)
+          OR (archived_at IS NOT NULL AND archive_expires_at IS NOT NULL AND archive_expires_at > archived_at)
+        )
+      );
+
+      CREATE INDEX IF NOT EXISTS saved_library_entries_owner_active_idx
+        ON saved_library_entries (owner_handle, archived_at, saved_at DESC, subject_type, subject_id);
+      CREATE INDEX IF NOT EXISTS saved_library_entries_folder_idx
+        ON saved_library_entries (owner_handle, folder_id, archived_at, saved_at DESC);
+      CREATE INDEX IF NOT EXISTS saved_library_entries_expiry_idx
+        ON saved_library_entries (archive_expires_at)
+        WHERE archive_expires_at IS NOT NULL;
+    `
   }
 ];
 
