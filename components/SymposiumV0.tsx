@@ -4689,6 +4689,16 @@ function SymposiumExperience({
             onOpenNotes={() => toggleOfficeMode("notes")}
             onSelect={(postId, commentId) => openPost(postId, commentId, "thread")}
             onOpenProfile={openProfile}
+            onAction={applyAction}
+            onCommentAction={applyCommentAction}
+            onQuote={beginQuote}
+            onOpenQuote={openQuotedSource}
+            onEditPost={setEditingPost}
+            onDeletePost={deletePost}
+            onEditComment={(itemId, commentId) => setEditingComment({ itemId, commentId })}
+            onDeleteComment={deleteComment}
+            onOpenAttachmentPreview={openAttachmentPreview}
+            onOpenCommentAttachmentPreview={openCommentAttachmentPreview}
           />
         ) : activeRoom === "office" && officeMode === "notes" ? (
           <WorkspaceView

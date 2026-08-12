@@ -158,6 +158,11 @@ for (const label of [
 ]) {
   assert.ok(view.includes(label), `Saved library interface must expose ${label}.`);
 }
+assert.match(view, /<FeedPost/);
+assert.match(view, /<ProfileCommentCard/);
+assert.match(view, /className="saved-library-folder-list"/);
+assert.doesNotMatch(view, /className="saved-library-heading"/);
+assert.doesNotMatch(view, /className="saved-library-folder-grid"/);
 
 const shell = source("components/SymposiumV0.tsx");
 assert.match(shell, /officeMode === "saved"[\s\S]{0,200}<SavedLibraryView/);
@@ -172,7 +177,7 @@ console.log(JSON.stringify({
     "private API routing",
     "post and comment action-ledger synchronization",
     "60-day archive expiry without source deletion",
-    "Notes-like All Saved, Folders and Archived interface"
+    "left-panel folders and header-free canonical feed rendering"
   ]
 }, null, 2));
 

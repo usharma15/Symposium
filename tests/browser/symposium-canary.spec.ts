@@ -271,34 +271,35 @@ test.describe("returning browser session", () => {
     }
 
     await page.goto("/workspace?view=saved");
-    await expect(page.getByRole("heading", { name: "All Saved", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /All Saved/ })).toHaveClass(/active/);
+    await expect(page.locator(".saved-library-heading")).toHaveCount(0);
+    await expect(page.locator(".saved-library-folder-grid")).toHaveCount(0);
     for (const postId of postIds) await expect(page.getByTestId(`saved-entry-post-${postId}`)).toBeVisible();
     for (const commentId of commentIds) await expect(page.getByTestId(`saved-entry-comment-${commentId}`)).toBeVisible();
-    await expect(page.locator(".saved-library-card").filter({ hasText: marker })).toHaveCount(5);
+    await expect(page.locator(".saved-library-feed-entry").filter({ hasText: marker })).toHaveCount(5);
+    for (const postId of postIds) await expect(page.getByTestId(`saved-entry-post-${postId}`).locator(".feed-post")).toBeVisible();
+    for (const commentId of commentIds) await expect(page.getByTestId(`saved-entry-comment-${commentId}`).locator(".profile-comment-card")).toBeVisible();
 
     const sort = page.locator(".saved-library-sort select");
     await expect(sort.locator("option")).toHaveCount(10);
     await sort.selectOption("oldest_saved");
     const folderName = `Browser proof folder ${marker}`;
-    await page.locator(".saved-library-tabs").getByRole("button", { name: /Folders/ }).click();
     await page.getByPlaceholder("Create a folder").fill(folderName);
     await page.getByRole("button", { name: "Create", exact: true }).click();
-    await expect(page.getByRole("button", { name: new RegExp(folderName) })).toBeVisible();
+    await expect(page.locator(".saved-library-folder-open").filter({ hasText: folderName })).toBeVisible();
 
-    await page.locator(".saved-library-tabs").getByRole("button", { name: /All Saved/ }).click();
     const filedCard = page.getByTestId(`saved-entry-post-${postIds[0]}`);
     await filedCard.locator("select").selectOption({ label: folderName });
     await expect(page.getByText("Folder updated", { exact: true })).toBeVisible();
 
-    await page.locator(".saved-library-tabs").getByRole("button", { name: /Folders/ }).click();
-    const folderButton = page.getByRole("button", { name: new RegExp(`${folderName}\\s+1 item`) });
+    const folderButton = page.getByRole("button", { name: new RegExp(`${folderName}\\s+1`) });
     await expect(folderButton).toBeVisible();
     await folderButton.click();
     await expect(page.getByTestId(`saved-entry-post-${postIds[0]}`)).toBeVisible();
     await page.getByTestId(`saved-entry-post-${postIds[0]}`).getByRole("button", { name: "Archive" }).click();
     await expect(page.getByText("Moved to Archive for 60 days", { exact: true })).toBeVisible();
 
-    await page.locator(".saved-library-tabs").getByRole("button", { name: /Archived/ }).click();
+    await page.getByRole("button", { name: /Archived/ }).click();
     const archivedCard = page.getByTestId(`saved-entry-post-${postIds[0]}`);
     await expect(archivedCard).toContainText(/60 days left/);
     await archivedCard.getByRole("button", { name: "Restore" }).click();

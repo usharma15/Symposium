@@ -83,7 +83,7 @@ export type ProfileSettingsDraft = {
   resharesPublic: boolean;
 };
 
-type ProfileCommentActivity = {
+export type ProfileCommentActivity = {
   id: string;
   item: InquiryItem;
   comment: InquiryComment;
@@ -694,7 +694,7 @@ export function ProfileView({
   );
 }
 
-function ProfileCommentCard({
+export function ProfileCommentCard({
   activity,
   community,
   onOpenCommunity,
