@@ -5,7 +5,10 @@
 }
 
 .saved-library-toolbar.workspace-toolbar {
-  grid-template-rows: repeat(6, auto);
+  align-content: start;
+  grid-template-rows: none;
+  grid-auto-rows: max-content;
+  gap: 8px;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: thin;
@@ -14,7 +17,6 @@
 
 .saved-library-tabs.workspace-tabs button {
   position: relative;
-  min-height: 58px;
 }
 
 .saved-library-tabs.workspace-tabs button small {

@@ -140,6 +140,7 @@ assert.match(migration, /saved_library_entries/);
 assert.match(migration, /archive_expires_at/);
 
 const view = source("features/saved/SavedLibraryView.tsx");
+const viewStyles = source("styles/89-saved-library.css");
 for (const label of [
   "All Saved",
   "Folders",
@@ -165,6 +166,7 @@ assert.match(view, /section === "folders" \|\| section === "folder"/);
 assert.match(view, /className="saved-library-folder-list"/);
 assert.doesNotMatch(view, /className="saved-library-heading"/);
 assert.doesNotMatch(view, /className="saved-library-folder-grid"/);
+assert.match(viewStyles, /\.saved-library-toolbar\.workspace-toolbar\s*\{[^}]*align-content:\s*start;[^}]*grid-template-rows:\s*none;[^}]*grid-auto-rows:\s*max-content;/);
 
 const shell = source("components/SymposiumV0.tsx");
 assert.match(shell, /officeMode === "saved"[\s\S]{0,200}<SavedLibraryView/);

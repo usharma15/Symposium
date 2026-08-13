@@ -276,6 +276,17 @@ test.describe("returning browser session", () => {
     await expect(page.getByPlaceholder("Create a folder")).toHaveCount(0);
     await expect(page.locator(".saved-library-heading")).toHaveCount(0);
     await expect(page.locator(".saved-library-folder-grid")).toHaveCount(0);
+    const sidebarControlHeights = async () => Promise.all([
+      page.locator(".saved-library-tabs").evaluate((element) => element.getBoundingClientRect().height),
+      page.locator(".saved-library-search").evaluate((element) => element.getBoundingClientRect().height),
+      page.locator(".saved-library-sort select").evaluate((element) => element.getBoundingClientRect().height),
+      page.locator(".saved-library-toolbar-foot > button").evaluate((element) => element.getBoundingClientRect().height)
+    ]);
+    const allSavedControlHeights = await sidebarControlHeights();
+    expect(allSavedControlHeights[0]).toBeLessThanOrEqual(64);
+    expect(allSavedControlHeights[1]).toBeLessThanOrEqual(44);
+    expect(allSavedControlHeights[2]).toBeLessThanOrEqual(40);
+    expect(allSavedControlHeights[3]).toBeLessThanOrEqual(36);
     for (const postId of postIds) await expect(page.getByTestId(`saved-entry-post-${postId}`)).toBeVisible();
     for (const commentId of commentIds) await expect(page.getByTestId(`saved-entry-comment-${commentId}`)).toBeVisible();
     await expect(page.locator(".saved-library-feed-entry").filter({ hasText: marker })).toHaveCount(5);
@@ -288,6 +299,7 @@ test.describe("returning browser session", () => {
     const folderName = `Browser proof folder ${marker}`;
     await page.getByRole("button", { name: /Folders/ }).click();
     await expect(page.getByRole("button", { name: /Folders/ })).toHaveClass(/active/);
+    expect(await sidebarControlHeights()).toEqual(allSavedControlHeights);
     await page.getByPlaceholder("Create a folder").fill(folderName);
     await page.getByRole("button", { name: "Create", exact: true }).click();
     await expect(page.locator(".saved-library-folder-open").filter({ hasText: folderName })).toBeVisible();
@@ -299,11 +311,13 @@ test.describe("returning browser session", () => {
     const folderButton = page.getByRole("button", { name: new RegExp(`${folderName}\\s+1`) });
     await expect(folderButton).toBeVisible();
     await folderButton.click();
+    expect(await sidebarControlHeights()).toEqual(allSavedControlHeights);
     await expect(page.getByTestId(`saved-entry-post-${postIds[0]}`)).toBeVisible();
     await page.getByTestId(`saved-entry-post-${postIds[0]}`).getByRole("button", { name: "Archive" }).click();
     await expect(page.getByText("Moved to Archive for 60 days", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: /Archived/ }).click();
+    expect(await sidebarControlHeights()).toEqual(allSavedControlHeights);
     const archivedCard = page.getByTestId(`saved-entry-post-${postIds[0]}`);
     await expect(archivedCard).toContainText(/60 days left/);
     await archivedCard.getByRole("button", { name: "Restore" }).click();
