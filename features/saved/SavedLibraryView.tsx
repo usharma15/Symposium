@@ -5,6 +5,7 @@ import {
   Archive,
   Bookmark,
   Folder,
+  FolderOpen,
   FolderPlus,
   Pencil,
   RefreshCw,
@@ -28,7 +29,7 @@ import type {
   SavedLibraryResponseContract
 } from "@/packages/contracts/src";
 
-type SavedSection = "all" | "folder" | "archived";
+type SavedSection = "all" | "folders" | "folder" | "archived";
 type SavedSort =
   | "recently_saved"
   | "oldest_saved"
@@ -286,7 +287,7 @@ export function SavedLibraryView({
       });
       setConfirmDeleteFolderId(null);
       if (selectedFolderId === folder.id) {
-        setSection("all");
+        setSection("folders");
         setSelectedFolderId(null);
       }
     }, "Folder removed; its saved items remain in All Saved");
@@ -298,6 +299,10 @@ export function SavedLibraryView({
   };
   const chooseArchived = () => {
     setSection("archived");
+    setSelectedFolderId(null);
+  };
+  const chooseFolders = () => {
+    setSection("folders");
     setSelectedFolderId(null);
   };
   const chooseFolder = (folderId: string) => {
@@ -327,53 +332,56 @@ export function SavedLibraryView({
           <p>Posts and comments you marked for return.</p>
         </div>
 
-        <nav className="saved-library-nav" aria-label="Saved library sections and folders">
+        <nav className="workspace-tabs saved-library-tabs" aria-label="Saved library sections">
           <button type="button" className={section === "all" ? "active" : ""} onClick={chooseAll}>
             <Bookmark size={16} /><span>All Saved</span><small>{activeCount}</small>
           </button>
-
-          <div className="saved-library-folder-heading">
-            <strong>Folders</strong><small>{library.folders.length}</small>
-          </div>
-          <form className="saved-library-folder-create" onSubmit={createFolder}>
-            <FolderPlus size={15} />
-            <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} maxLength={80} placeholder="Create a folder" />
-            <button type="submit" disabled={!newFolderName.trim() || busyKey === "folder:new"}>Create</button>
-          </form>
-          <div className="saved-library-folder-list" aria-label="Saved folders">
-            {library.folders.map((folder) => (
-              <div key={folder.id} className={`saved-library-folder-row${selectedFolderId === folder.id && section === "folder" ? " active" : ""}`} data-testid={`saved-folder-${folder.id}`}>
-                {editingFolderId === folder.id ? (
-                  <form onSubmit={(event) => { event.preventDefault(); renameFolder(folder); }}>
-                    <input value={editingFolderName} onChange={(event) => setEditingFolderName(event.target.value)} maxLength={80} autoFocus />
-                    <button type="submit" disabled={!editingFolderName.trim() || busyKey === `folder:${folder.id}`}>Save</button>
-                  </form>
-                ) : (
-                  <>
-                    <button type="button" className="saved-library-folder-open" onClick={() => chooseFolder(folder.id)}>
-                      <Folder size={15} />
-                      <span>{folder.name}</span>
-                      <small>{folder.itemCount}</small>
-                    </button>
-                    <div className="saved-library-folder-actions">
-                      <button type="button" title={`Rename ${folder.name}`} aria-label={`Rename ${folder.name}`} onClick={() => { setEditingFolderId(folder.id); setEditingFolderName(folder.name); setConfirmDeleteFolderId(null); }}><Pencil size={12} /></button>
-                      {confirmDeleteFolderId === folder.id ? (
-                        <button type="button" className="danger confirm" onClick={() => deleteFolder(folder)} disabled={busyKey === `folder:${folder.id}`}>Confirm</button>
-                      ) : (
-                        <button type="button" title={`Delete ${folder.name}`} aria-label={`Delete ${folder.name}`} onClick={() => { setConfirmDeleteFolderId(folder.id); setEditingFolderId(null); }}><Trash2 size={12} /></button>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
-            {!library.folders.length ? <p>No folders yet.</p> : null}
-          </div>
-
+          <button type="button" className={section === "folders" || section === "folder" ? "active" : ""} onClick={chooseFolders}>
+            <FolderOpen size={16} /><span>Folders</span><small>{library.folders.length}</small>
+          </button>
           <button type="button" className={section === "archived" ? "active" : ""} onClick={chooseArchived}>
             <Archive size={16} /><span>Archived</span><small>{archivedCount}</small>
           </button>
         </nav>
+
+        {section === "folders" || section === "folder" ? (
+          <div className="saved-library-folder-panel">
+            <form className="saved-library-folder-create" onSubmit={createFolder}>
+              <FolderPlus size={15} />
+              <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} maxLength={80} placeholder="Create a folder" />
+              <button type="submit" disabled={!newFolderName.trim() || busyKey === "folder:new"}>Create</button>
+            </form>
+            <div className="saved-library-folder-list" aria-label="Saved folders">
+              {library.folders.map((folder) => (
+                <div key={folder.id} className={`saved-library-folder-row${selectedFolderId === folder.id && section === "folder" ? " active" : ""}`} data-testid={`saved-folder-${folder.id}`}>
+                  {editingFolderId === folder.id ? (
+                    <form onSubmit={(event) => { event.preventDefault(); renameFolder(folder); }}>
+                      <input value={editingFolderName} onChange={(event) => setEditingFolderName(event.target.value)} maxLength={80} autoFocus />
+                      <button type="submit" disabled={!editingFolderName.trim() || busyKey === `folder:${folder.id}`}>Save</button>
+                    </form>
+                  ) : (
+                    <>
+                      <button type="button" className="saved-library-folder-open" onClick={() => chooseFolder(folder.id)}>
+                        <Folder size={15} />
+                        <span>{folder.name}</span>
+                        <small>{folder.itemCount}</small>
+                      </button>
+                      <div className="saved-library-folder-actions">
+                        <button type="button" title={`Rename ${folder.name}`} aria-label={`Rename ${folder.name}`} onClick={() => { setEditingFolderId(folder.id); setEditingFolderName(folder.name); setConfirmDeleteFolderId(null); }}><Pencil size={12} /></button>
+                        {confirmDeleteFolderId === folder.id ? (
+                          <button type="button" className="danger confirm" onClick={() => deleteFolder(folder)} disabled={busyKey === `folder:${folder.id}`}>Confirm</button>
+                        ) : (
+                          <button type="button" title={`Delete ${folder.name}`} aria-label={`Delete ${folder.name}`} onClick={() => { setConfirmDeleteFolderId(folder.id); setEditingFolderId(null); }}><Trash2 size={12} /></button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+              {!library.folders.length ? <p>No folders yet.</p> : null}
+            </div>
+          </div>
+        ) : null}
 
         <label className="workspace-search saved-library-search">
           <Search size={15} />

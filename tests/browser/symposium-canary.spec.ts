@@ -272,6 +272,8 @@ test.describe("returning browser session", () => {
 
     await page.goto("/workspace?view=saved");
     await expect(page.getByRole("button", { name: /All Saved/ })).toHaveClass(/active/);
+    await expect(page.locator(".saved-library-tabs").getByRole("button")).toHaveCount(3);
+    await expect(page.getByPlaceholder("Create a folder")).toHaveCount(0);
     await expect(page.locator(".saved-library-heading")).toHaveCount(0);
     await expect(page.locator(".saved-library-folder-grid")).toHaveCount(0);
     for (const postId of postIds) await expect(page.getByTestId(`saved-entry-post-${postId}`)).toBeVisible();
@@ -284,6 +286,8 @@ test.describe("returning browser session", () => {
     await expect(sort.locator("option")).toHaveCount(10);
     await sort.selectOption("oldest_saved");
     const folderName = `Browser proof folder ${marker}`;
+    await page.getByRole("button", { name: /Folders/ }).click();
+    await expect(page.getByRole("button", { name: /Folders/ })).toHaveClass(/active/);
     await page.getByPlaceholder("Create a folder").fill(folderName);
     await page.getByRole("button", { name: "Create", exact: true }).click();
     await expect(page.locator(".saved-library-folder-open").filter({ hasText: folderName })).toBeVisible();

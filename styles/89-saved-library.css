@@ -5,50 +5,22 @@
 }
 
 .saved-library-toolbar.workspace-toolbar {
-  grid-template-rows: auto auto auto auto auto;
+  grid-template-rows: repeat(6, auto);
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 253, 245, 0.24) transparent;
 }
 
-.saved-library-nav {
-  display: grid;
-  grid-template-rows: auto auto auto auto auto;
-  gap: 6px;
-  min-height: 0;
+.saved-library-tabs.workspace-tabs button {
+  position: relative;
+  min-height: 58px;
 }
 
-.saved-library-nav > button,
-.saved-library-folder-open {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 38px;
-  padding: 7px 9px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: rgba(255, 253, 245, 0.74);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.75rem;
-  font-weight: 760;
-  text-align: left;
-}
-
-.saved-library-nav > button:hover,
-.saved-library-nav > button.active,
-.saved-library-folder-row.active .saved-library-folder-open,
-.saved-library-folder-open:hover {
-  background: rgba(255, 253, 245, 0.92);
-  color: #14201f;
-}
-
-.saved-library-nav > button small,
-.saved-library-folder-open small {
+.saved-library-tabs.workspace-tabs button small {
+  position: absolute;
+  top: 5px;
+  right: 6px;
   min-width: 19px;
   padding: 2px 5px;
   border-radius: 999px;
@@ -59,27 +31,15 @@
   text-align: center;
 }
 
-.saved-library-nav > button:hover small,
-.saved-library-nav > button.active small,
-.saved-library-folder-row.active .saved-library-folder-open small,
-.saved-library-folder-open:hover small {
+.saved-library-tabs.workspace-tabs button:hover small,
+.saved-library-tabs.workspace-tabs button.active small {
   background: rgba(20, 32, 31, 0.1);
 }
 
-.saved-library-folder-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 3px 0;
-  color: rgba(255, 253, 245, 0.58);
-  font-size: 0.64rem;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
-.saved-library-folder-heading small {
-  font-size: 0.6rem;
+.saved-library-folder-panel {
+  display: grid;
+  gap: 6px;
+  min-height: 0;
 }
 
 .saved-library-folder-create {
@@ -173,15 +133,51 @@
 }
 
 .saved-library-folder-open {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
   min-width: 0;
   min-height: 34px;
   padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 253, 245, 0.74);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 760;
+  text-align: left;
+}
+
+.saved-library-folder-row.active .saved-library-folder-open,
+.saved-library-folder-open:hover {
+  background: rgba(255, 253, 245, 0.92);
+  color: #14201f;
 }
 
 .saved-library-folder-open span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.saved-library-folder-open small {
+  min-width: 19px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: rgba(255, 253, 245, 0.11);
+  color: inherit;
+  font-size: 0.6rem;
+  font-weight: 820;
+  text-align: center;
+}
+
+.saved-library-folder-row.active .saved-library-folder-open small,
+.saved-library-folder-open:hover small {
+  background: rgba(20, 32, 31, 0.1);
 }
 
 .saved-library-folder-actions {

@@ -160,6 +160,8 @@ for (const label of [
 }
 assert.match(view, /<FeedPost/);
 assert.match(view, /<ProfileCommentCard/);
+assert.match(view, /className="workspace-tabs saved-library-tabs"/);
+assert.match(view, /section === "folders" \|\| section === "folder"/);
 assert.match(view, /className="saved-library-folder-list"/);
 assert.doesNotMatch(view, /className="saved-library-heading"/);
 assert.doesNotMatch(view, /className="saved-library-folder-grid"/);
